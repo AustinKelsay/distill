@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { openDistillDatabase } from "../distill/db";
+import { openDistillElectronDatabase } from "../distill-electron/db";
 import {
   browseDbTable,
   chooseDefaultBrowseSort,
@@ -12,32 +12,32 @@ import {
   getDbExplorerSnapshot,
   quoteIdentifier,
   runDbQuery
-} from "../distill/db_inspector";
+} from "../distill-electron/db_inspector";
 import { DbBrowseResult, DbFilter, DbQueryResult } from "../shared/types";
 
-function withTempDistill(fn: (db: ReturnType<typeof openDistillDatabase>["db"]) => void): void {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-db-inspector-"));
-  const previous = process.env.DISTILL_HOME;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+function withTempDistillElectron(fn: (db: ReturnType<typeof openDistillElectronDatabase>["db"]) => void): void {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-db-inspector-"));
+  const previous = process.env.DISTILL_ELECTRON_HOME;
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
 
   try {
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      fn(distillDb.db);
+      fn(distillElectronDb.db);
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   } finally {
     if (previous === undefined) {
-      delete process.env.DISTILL_HOME;
+      delete process.env.DISTILL_ELECTRON_HOME;
     } else {
-      process.env.DISTILL_HOME = previous;
+      process.env.DISTILL_ELECTRON_HOME = previous;
     }
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
-function insertSource(db: ReturnType<typeof openDistillDatabase>["db"], id = 1): void {
+function insertSource(db: ReturnType<typeof openDistillElectronDatabase>["db"], id = 1): void {
   db.prepare(`
     INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
     VALUES (?, 'codex', 'Codex', 'installed', '2026-03-30T00:00:00Z', '{}')
@@ -59,7 +59,7 @@ function rowCellDetail(
 }
 
 test("db inspector discovers grouped tables and excludes sqlite internals", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     const snapshot = getDbExplorerSnapshot();
 
     assert.equal(snapshot.databaseExists, true);
@@ -74,7 +74,7 @@ test("db inspector discovers grouped tables and excludes sqlite internals", () =
 });
 
 test("db inspector picks the default browse sort and paginates session rows", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     insertSource(db);
 
     const insertSession = db.prepare(`
@@ -136,7 +136,7 @@ test("db inspector picks the default browse sort and paginates session rows", ()
 });
 
 test("db inspector preserves bigint browse counts", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     insertSource(db);
 
     db.prepare(`
@@ -187,7 +187,7 @@ test("db inspector preserves bigint browse counts", () => {
 });
 
 test("db inspector supports every structured filter operator and NULL handling", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     db.exec(`
       CREATE TABLE filter_cases (
         id INTEGER PRIMARY KEY,
@@ -239,7 +239,7 @@ test("db inspector supports every structured filter operator and NULL handling",
 });
 
 test("db inspector safely quotes identifiers and binds filter values", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     assert.equal(quoteIdentifier("value\"col"), "\"value\"\"col\"");
 
     db.exec(`
@@ -276,7 +276,7 @@ test("db inspector safely quotes identifiers and binds filter values", () => {
 });
 
 test("db inspector allows read-only custom query shapes", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     insertSource(db);
     db.prepare(`
       INSERT INTO sessions (
@@ -316,7 +316,7 @@ test("db inspector allows read-only custom query shapes", () => {
 });
 
 test("db inspector blocks mutating and multi-statement custom queries", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     const blockedQueries = [
       "INSERT INTO sessions (id) VALUES (1)",
       "UPDATE sessions SET title = 'x'",
@@ -344,7 +344,7 @@ test("db inspector blocks mutating and multi-statement custom queries", () => {
 });
 
 test("db inspector validates runtime browse and query request shapes", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     assert.throws(
       () => runDbQuery({} as unknown as { sql: string }),
       /Invalid DB query request\./
@@ -380,7 +380,7 @@ test("db inspector validates runtime browse and query request shapes", () => {
 });
 
 test("db inspector preserves duplicate custom query column names", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     const result = runDbQuery({
       sql: "SELECT 1 AS value, 2 AS value"
     });
@@ -394,7 +394,7 @@ test("db inspector preserves duplicate custom query column names", () => {
 });
 
 test("db inspector truncates large result sets and summarizes large cells", () => {
-  withTempDistill((db) => {
+  withTempDistillElectron((db) => {
     db.exec(`
       CREATE TABLE payload_rows (
         id INTEGER PRIMARY KEY,

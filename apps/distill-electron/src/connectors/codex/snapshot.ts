@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { getTextSha256 } from "../../distill/fs";
+import { getTextSha256 } from "../../distill-electron/fs";
 import { DiscoveredCapture } from "../../shared/types";
 import { CaptureSnapshot } from "../types";
 

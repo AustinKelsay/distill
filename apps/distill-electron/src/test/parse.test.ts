@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ensureDirectory } from "../distill/fs";
+import { ensureDirectory } from "../distill-electron/fs";
 import { parseClaudeCodeCapture } from "../connectors/claude_code/parse";
 import { snapshotClaudeCodeCapture } from "../connectors/claude_code/snapshot";
 import { parseCodexCapture } from "../connectors/codex/parse";
@@ -18,10 +18,11 @@ import {
 } from "./support/ingest_fixtures";
 
 function withTempHomes<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-parse-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-parse-"));
   const previous = {
     CODEX_HOME: process.env.CODEX_HOME,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    DROID_HOME: process.env.DROID_HOME,
     OPENCODE_DB_PATH: process.env.OPENCODE_DB_PATH,
     OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     OPENCODE_STATE_DIR: process.env.OPENCODE_STATE_DIR,
@@ -34,6 +35,7 @@ function withTempHomes<T>(fn: (root: string) => T): T {
 
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");
   process.env.CLAUDE_HOME = path.join(tempRoot, ".claude");
+  process.env.DROID_HOME = path.join(tempRoot, ".factory");
   process.env.OPENCODE_DB_PATH = path.join(tempRoot, ".local", "share", "opencode", "opencode.db");
   process.env.OPENCODE_CONFIG_DIR = path.join(tempRoot, ".config", "opencode");
   process.env.OPENCODE_STATE_DIR = path.join(tempRoot, ".local", "state", "opencode");

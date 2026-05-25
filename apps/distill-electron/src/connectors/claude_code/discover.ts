@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { listFilesRecursive } from "../../distill/fs";
-import { getClaudeHome } from "../../distill/paths";
+import { listFilesRecursive } from "../../distill-electron/fs";
+import { getClaudeHome } from "../../distill-electron/paths";
 import { DiscoveredCapture } from "../../shared/types";
 
 function extractSessionId(filePath: string): string | undefined {

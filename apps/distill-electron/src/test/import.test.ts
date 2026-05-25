@@ -6,10 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { sourceConnectors } from "../connectors";
 import { SourceConnector } from "../connectors/types";
-import { getCaptureContentRef, openDistillDatabase, readCaptureText, runInTransaction } from "../distill/db";
-import { ensureDirectory } from "../distill/fs";
-import { getInlineCaptureMaxBytes, readCaptureContentText, resolveCaptureBlobPath } from "../distill/raw_capture";
-import { runImport } from "../distill/import";
+import { getCaptureContentRef, openDistillElectronDatabase, readCaptureText, runInTransaction } from "../distill-electron/db";
+import { ensureDirectory } from "../distill-electron/fs";
+import { getInlineCaptureMaxBytes, readCaptureContentText, resolveCaptureBlobPath } from "../distill-electron/raw_capture";
+import { runImport } from "../distill-electron/import";
 import { DiscoveredCapture } from "../shared/types";
 import {
   getInstalledFixtureSourcePath,
@@ -19,9 +19,10 @@ import {
 } from "./support/ingest_fixtures";
 
 type SavedEnv = Record<
-  | "DISTILL_HOME"
+  | "DISTILL_ELECTRON_HOME"
   | "CODEX_HOME"
   | "CLAUDE_HOME"
+  | "DROID_HOME"
   | "OPENCODE_DB_PATH"
   | "OPENCODE_CONFIG_DIR"
   | "OPENCODE_STATE_DIR"
@@ -45,11 +46,12 @@ function restoreEnv(saved: SavedEnv): void {
 }
 
 function withTempEnv<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-test-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-test-"));
   const previous: SavedEnv = {
-    DISTILL_HOME: process.env.DISTILL_HOME,
+    DISTILL_ELECTRON_HOME: process.env.DISTILL_ELECTRON_HOME,
     CODEX_HOME: process.env.CODEX_HOME,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    DROID_HOME: process.env.DROID_HOME,
     OPENCODE_DB_PATH: process.env.OPENCODE_DB_PATH,
     OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     OPENCODE_STATE_DIR: process.env.OPENCODE_STATE_DIR,
@@ -62,9 +64,10 @@ function withTempEnv<T>(fn: (root: string) => T): T {
   };
 
   process.env.HOME = tempRoot;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");
   process.env.CLAUDE_HOME = path.join(tempRoot, ".claude");
+  process.env.DROID_HOME = path.join(tempRoot, ".factory");
   process.env.OPENCODE_DB_PATH = path.join(tempRoot, ".local", "share", "opencode", "opencode.db");
   process.env.OPENCODE_CONFIG_DIR = path.join(tempRoot, ".config", "opencode");
   process.env.OPENCODE_STATE_DIR = path.join(tempRoot, ".local", "state", "opencode");
@@ -116,7 +119,7 @@ test("runImport bootstraps the database and records discovered captures", () => 
         .prepare("SELECT event_type FROM activity_events ORDER BY id ASC")
         .all() as Array<{ event_type: string }>;
 
-      assert.equal(sourceCount.count, 3);
+      assert.equal(sourceCount.count, 4);
       assert.equal(captureCount.count, 2);
       assert.ok(captureRecordCount.count >= 2);
       assert.equal(sessionCount.count, 2);
@@ -128,7 +131,7 @@ test("runImport bootstraps the database and records discovered captures", () => 
         "capture_recorded",
         "projection_replaced"
       ]);
-      assert.equal(report.sourceSummaries.length, 3);
+      assert.equal(report.sourceSummaries.length, 4);
       assert.equal(report.sourceSummaries.every((summary) => summary.failedCaptures === 0), true);
     } finally {
       db.close();
@@ -198,7 +201,7 @@ test("runImport persists blob-backed raw content for the large shared fixture", 
   });
 });
 
-test("resolveCaptureBlobPath rejects paths outside the Distill blob root", () => {
+test("resolveCaptureBlobPath rejects paths outside the Distill Electron blob root", () => {
   withTempEnv(() => {
     assert.throws(() => resolveCaptureBlobPath("../escape.json"), /blob root|must be relative/i);
     assert.throws(() => resolveCaptureBlobPath("/tmp/escape.json"), /blob root|must be relative/i);
@@ -227,7 +230,12 @@ test("runImport is idempotent for unchanged raw captures", () => {
 
     assert.equal(captureCount.count, 2);
     assert.equal(second.sourceSummaries.every((summary) => summary.importedCaptures === 0), true);
-    assert.equal(second.sourceSummaries.filter((summary) => summary.kind !== "opencode").every((summary) => summary.skippedCaptures >= 1), true);
+    assert.equal(
+      second.sourceSummaries
+        .filter((summary) => summary.discoveredCaptures > 0)
+        .every((summary) => summary.skippedCaptures >= 1),
+      true
+    );
     assert.equal(second.sourceSummaries.every((summary) => summary.failedCaptures === 0), true);
 
     db.close();
@@ -858,7 +866,7 @@ test("runImport audits raw persistence failures and continues with later capture
       }
     );
 
-    const blobRoot = path.join(process.env.DISTILL_HOME ?? path.join(root, ".distill"), "blobs");
+    const blobRoot = path.join(process.env.DISTILL_ELECTRON_HOME ?? path.join(root, ".distill-electron"), "blobs");
     ensureDirectory(blobRoot);
     fs.writeFileSync(path.join(blobRoot, "captures"), "block blob subdirectories");
 
@@ -1343,7 +1351,7 @@ test("runImport migrates legacy activity events away from zero object ids", () =
   withTempEnv((root) => {
     writeFixtureFiles(root);
 
-    const databasePath = path.join(process.env.DISTILL_HOME ?? path.join(root, ".distill"), "distill.db");
+    const databasePath = path.join(process.env.DISTILL_ELECTRON_HOME ?? path.join(root, ".distill-electron"), "distill-electron.db");
     ensureDirectory(path.dirname(databasePath));
 
     const legacyDb = new DatabaseSync(databasePath);
@@ -1442,11 +1450,11 @@ test("runImport migrates legacy activity events away from zero object ids", () =
   });
 });
 
-test("openDistillDatabase migrates legacy failed capture statuses to failed_parse", () => {
+test("openDistillElectronDatabase migrates legacy failed capture statuses to failed_parse", () => {
   withTempEnv((root) => {
     writeFixtureFiles(root);
 
-    const databasePath = path.join(process.env.DISTILL_HOME ?? path.join(root, ".distill"), "distill.db");
+    const databasePath = path.join(process.env.DISTILL_ELECTRON_HOME ?? path.join(root, ".distill-electron"), "distill-electron.db");
     ensureDirectory(path.dirname(databasePath));
 
     const legacyDb = new DatabaseSync(databasePath);
@@ -1494,8 +1502,8 @@ test("openDistillDatabase migrates legacy failed capture statuses to failed_pars
       );
     legacyDb.close();
 
-    const distillDb = openDistillDatabase();
-    distillDb.close();
+    const distillElectronDb = openDistillElectronDatabase();
+    distillElectronDb.close();
 
     const db = new DatabaseSync(databasePath);
     const capture = db
@@ -1508,11 +1516,11 @@ test("openDistillDatabase migrates legacy failed capture statuses to failed_pars
   });
 });
 
-test("openDistillDatabase adds the legacy artifacts.message_id column before artifact writes resume", () => {
+test("openDistillElectronDatabase adds the legacy artifacts.message_id column before artifact writes resume", () => {
   withTempEnv((root) => {
     writeFixtureFiles(root);
 
-    const databasePath = path.join(process.env.DISTILL_HOME ?? path.join(root, ".distill"), "distill.db");
+    const databasePath = path.join(process.env.DISTILL_ELECTRON_HOME ?? path.join(root, ".distill-electron"), "distill-electron.db");
     ensureDirectory(path.dirname(databasePath));
 
     const legacyDb = new DatabaseSync(databasePath);
@@ -1538,14 +1546,14 @@ test("openDistillDatabase adds the legacy artifacts.message_id column before art
     `);
     legacyDb.close();
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      distillDb.db.prepare(`
+      distillElectronDb.db.prepare(`
         INSERT INTO artifacts (message_id, kind, metadata_json)
         VALUES (?, ?, ?)
       `).run(null, "tool_call", "{}");
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
 
     const db = new DatabaseSync(databasePath);
@@ -1565,11 +1573,11 @@ test("openDistillDatabase adds the legacy artifacts.message_id column before art
   });
 });
 
-test("openDistillDatabase backfills legacy artifact message links from the last projected message for shared provenance", () => {
+test("openDistillElectronDatabase backfills legacy artifact message links from the last projected message for shared provenance", () => {
   withTempEnv((root) => {
     writeFixtureFiles(root);
 
-    const databasePath = path.join(process.env.DISTILL_HOME ?? path.join(root, ".distill"), "distill.db");
+    const databasePath = path.join(process.env.DISTILL_ELECTRON_HOME ?? path.join(root, ".distill-electron"), "distill-electron.db");
     ensureDirectory(path.dirname(databasePath));
 
     const legacyDb = new DatabaseSync(databasePath);
@@ -1624,8 +1632,8 @@ test("openDistillDatabase backfills legacy artifact message links from the last 
       .run(40, null, 500, "tool_call", "{}", "2026-03-25T15:00:01Z");
     legacyDb.close();
 
-    const distillDb = openDistillDatabase();
-    distillDb.close();
+    const distillElectronDb = openDistillElectronDatabase();
+    distillElectronDb.close();
 
     const db = new DatabaseSync(databasePath);
     const artifact = db
@@ -1645,8 +1653,8 @@ test("openDistillDatabase backfills legacy artifact message links from the last 
 
 test("runInTransaction rejects async callbacks before executing their bodies", () => {
   withTempEnv(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.exec(`
       CREATE TABLE tx_async_guard (
@@ -1675,6 +1683,6 @@ test("runInTransaction rejects async callbacks before executing their bodies", (
     assert.equal(invoked, false);
     assert.equal(rowCount.count, 0);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });

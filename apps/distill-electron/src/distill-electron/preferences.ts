@@ -1,14 +1,15 @@
-import { openDistillDatabase } from "./db";
+import { openDistillElectronDatabase } from "./db";
 import { SourceColors } from "../shared/types";
 
 export const DEFAULT_SOURCE_COLORS: SourceColors = {
   codex: "#3dbf9a",
   claude_code: "#d4944a",
-  opencode: "#a88cd4"
+  opencode: "#a88cd4",
+  droid: "#4a8fd4"
 };
 
 export function getUserPreference(key: string): string | undefined {
-  const { db, close } = openDistillDatabase();
+  const { db, close } = openDistillElectronDatabase();
   try {
     const row = db.prepare("SELECT value FROM user_preferences WHERE key = ?").get(key) as
       | { value: string }
@@ -20,7 +21,7 @@ export function getUserPreference(key: string): string | undefined {
 }
 
 export function setUserPreference(key: string, value: string): void {
-  const { db, close } = openDistillDatabase();
+  const { db, close } = openDistillElectronDatabase();
   try {
     db.prepare(
       `INSERT INTO user_preferences (key, value, updated_at)

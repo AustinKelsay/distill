@@ -1,4 +1,4 @@
-import { buildDoctorReport } from "../distill/doctor";
+import { buildDoctorReport } from "../distill-electron/doctor";
 import { DiscoveredSource } from "../shared/types";
 
 function printHelp(): void {
@@ -32,7 +32,7 @@ function main(): void {
 
   const report = buildDoctorReport();
 
-  console.log(`Distill doctor scan at ${report.scannedAt}\n`);
+  console.log(`Distill Electron doctor scan at ${report.scannedAt}\n`);
   for (const source of report.sources) {
     console.log(formatSource(source));
     console.log("");

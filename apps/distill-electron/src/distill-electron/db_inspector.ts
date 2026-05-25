@@ -19,7 +19,7 @@ import {
   DbSortDirection,
   DbTableSummary
 } from "../shared/types";
-import { getDistillDatabasePath } from "./paths";
+import { getDistillElectronDatabasePath } from "./paths";
 
 type SQLitePrimitive = null | number | bigint | string | Uint8Array;
 
@@ -296,7 +296,7 @@ export function ensureSingleStatementSql(sql: string): string {
 }
 
 export function getDbExplorerSnapshot(): DbExplorerSnapshot {
-  const databasePath = getDistillDatabasePath();
+  const databasePath = getDistillElectronDatabasePath();
   if (!fs.existsSync(databasePath)) {
     return {
       databasePath,
@@ -330,7 +330,7 @@ export function getDbExplorerSnapshot(): DbExplorerSnapshot {
 
 export function browseDbTable(request: unknown): DbBrowseResult {
   const parsedRequest = parseBrowseRequest(request);
-  const databasePath = getDistillDatabasePath();
+  const databasePath = getDistillElectronDatabasePath();
   if (!fs.existsSync(databasePath)) {
     throw new Error(`Database file not found at ${databasePath}.`);
   }

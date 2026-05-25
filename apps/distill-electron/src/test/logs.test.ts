@@ -3,28 +3,28 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ensureDefaultLabels, toggleSessionLabel } from "../distill/curation";
-import { openDistillDatabase } from "../distill/db";
-import { exportApprovedSessions } from "../distill/export";
-import { getLogsPageData } from "../distill/logs";
+import { ensureDefaultLabels, toggleSessionLabel } from "../distill-electron/curation";
+import { openDistillElectronDatabase } from "../distill-electron/db";
+import { exportApprovedSessions } from "../distill-electron/export";
+import { getLogsPageData } from "../distill-electron/logs";
 
-function withTempDistill<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-logs-"));
-  const previous = process.env.DISTILL_HOME;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+function withTempDistillElectron<T>(fn: (root: string) => T): T {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-logs-"));
+  const previous = process.env.DISTILL_ELECTRON_HOME;
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
 
   try {
     return fn(tempRoot);
   } finally {
-    process.env.DISTILL_HOME = previous;
+    process.env.DISTILL_ELECTRON_HOME = previous;
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 test("getLogsPageData normalizes mixed sync, warning, and export entries", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO jobs (
@@ -75,7 +75,7 @@ test("getLogsPageData normalizes mixed sync, warning, and export entries", () =>
       ) VALUES (10, 'jsonl', 'train', '/tmp/train.jsonl', 7, ?, '2026-03-27T10:00:00Z')
     `).run(JSON.stringify({ exportedAt: "2026-03-27T10:00:00Z" }));
 
-    distillDb.close();
+    distillElectronDb.close();
 
     const logs = getLogsPageData();
 
@@ -94,9 +94,9 @@ test("getLogsPageData normalizes mixed sync, warning, and export entries", () =>
 });
 
 test("getLogsPageData surfaces legacy completed rows with failures as warning status", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO jobs (
@@ -122,7 +122,7 @@ test("getLogsPageData surfaces legacy completed rows with failures as warning st
       ]
     }));
 
-    distillDb.close();
+    distillElectronDb.close();
 
     const logs = getLogsPageData();
 
@@ -133,9 +133,9 @@ test("getLogsPageData surfaces legacy completed rows with failures as warning st
 });
 
 test("getLogsPageData prefers the persisted warning outcome when failure counts are zero", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO jobs (
@@ -156,7 +156,7 @@ test("getLogsPageData prefers the persisted warning outcome when failure counts 
       outcome: "warning"
     }));
 
-    distillDb.close();
+    distillElectronDb.close();
 
     const logs = getLogsPageData();
 
@@ -166,9 +166,9 @@ test("getLogsPageData prefers the persisted warning outcome when failure counts 
 });
 
 test("exportApprovedSessions entries appear in the logs feed", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -190,7 +190,7 @@ test("exportApprovedSessions entries appear in the logs feed", () => {
       (201, 40, 2, 'assistant', 'Here is a tighter launch draft.', 'bb', '2026-03-25T15:01:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(40, "train");

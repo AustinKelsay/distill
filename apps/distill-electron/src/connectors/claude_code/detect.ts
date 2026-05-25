@@ -1,5 +1,5 @@
-import { countFiles, countFilesMatching, findExecutable, pathExists } from "../../distill/fs";
-import { getClaudeHome } from "../../distill/paths";
+import { countFiles, countFilesMatching, findExecutable, pathExists } from "../../distill-electron/fs";
+import { getClaudeHome } from "../../distill-electron/paths";
 import { DiscoveredSource, SourcePathCheck } from "../../shared/types";
 
 export function detectClaudeCodeSource(): DiscoveredSource {

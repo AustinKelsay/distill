@@ -1,4 +1,4 @@
-import { exportApprovedSessions } from "../distill/export";
+import { exportApprovedSessions } from "../distill-electron/export";
 
 function printHelp(): void {
   console.log("Usage: npm run export -- [dataset]");
@@ -16,7 +16,7 @@ function main(): void {
   const dataset = process.argv[2] ?? "train";
   const report = exportApprovedSessions(dataset);
 
-  console.log(`Distill export at ${report.exportedAt}`);
+  console.log(`Distill Electron export at ${report.exportedAt}`);
   console.log(`Dataset: ${report.dataset}`);
   console.log(`Output: ${report.outputPath}`);
   console.log(`Records: ${report.recordCount}`);

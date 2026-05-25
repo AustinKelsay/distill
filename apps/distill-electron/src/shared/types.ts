@@ -1,4 +1,4 @@
-export type SourceKind = "codex" | "claude_code" | "opencode";
+export type SourceKind = "codex" | "claude_code" | "opencode" | "droid";
 
 export type InstallStatus = "installed" | "not_found" | "partial";
 
@@ -137,7 +137,7 @@ export type ParsedCapture = {
 export type ImportReport = {
   importedAt: string;
   databasePath: string;
-  distillHome: string;
+  distillElectronHome: string;
   sourceSummaries: ImportSourceSummary[];
   failedEntries: ImportFailureEntry[];
   captures: ImportedCapture[];
@@ -272,10 +272,11 @@ export type LogsPageData = {
 export type SourceColors = Record<string, string>;
 
 export type AppSettingsSnapshot = {
-  distillHome: string;
+  distillElectronHome: string;
   databasePath: string;
   codexHome: string;
   claudeHome: string;
+  droidHome: string;
   opencodeDatabasePath: string;
   opencodeConfigDir: string;
   opencodeStateDir: string;
@@ -283,9 +284,10 @@ export type AppSettingsSnapshot = {
   defaultLabels: string[];
   backgroundSyncIntervalMinutes: number;
   envOverrides: {
-    distillHome: boolean;
+    distillElectronHome: boolean;
     codexHome: boolean;
     claudeHome: boolean;
+    droidHome: boolean;
     opencodeDbPath: boolean;
     opencodeConfigDir: boolean;
     opencodeStateDir: boolean;

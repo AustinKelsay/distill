@@ -65,14 +65,14 @@ test("root docs point to the canonical docs package and discovery is non-normati
   const implementation = readRepoFile("IMPLEMENTATION.md");
   const discovery = readRepoFile("DISCOVERY.md");
 
-  assert.match(readme, /^# DISTILL/m);
+  assert.match(readme, /^# DISTILL ELECTRON/m);
   assert.match(readme, /## Status/);
   assert.match(readme, /alpha/i);
   assert.match(readme, /## Supported Sources Right Now/);
   assert.match(readme, /Codex CLI/);
   assert.match(readme, /Claude Code/);
   assert.match(readme, /OpenCode/);
-  assert.match(readme, /## DISTILL Flow/);
+  assert.match(readme, /## DISTILL ELECTRON Flow/);
   assert.match(readme, /Discover captures/);
   assert.match(readme, /Normalize into local SQLite/);
   assert.match(readme, /Export approved JSONL/);
@@ -80,7 +80,7 @@ test("root docs point to the canonical docs package and discovery is non-normati
   assert.match(readme, /npm run doctor/);
   assert.match(readme, /npm run import/);
   assert.match(readme, /npm start/);
-  assert.match(readme, /~\/\.distill/);
+  assert.match(readme, /~\/\.distill-electron/);
   assert.match(readme, /docs\/README\.md/);
   assert.match(readme, /intentionally simple/i);
 
@@ -153,6 +153,7 @@ test("ingest fixture manifest covers the required shared connector-contract corp
     "codex-archived-duplicate",
     "claude-mixed-blocks",
     "opencode-visible-meta",
+    "droid-session-mixed",
     "parse-failure-after-snapshot",
     "snapshot-failure-missing-source",
     "large-capture-blob"

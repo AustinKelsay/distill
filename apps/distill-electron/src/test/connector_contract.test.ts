@@ -9,6 +9,9 @@ import { snapshotClaudeCodeCapture } from "../connectors/claude_code/snapshot";
 import { discoverCodexCaptures } from "../connectors/codex/discover";
 import { parseCodexCapture } from "../connectors/codex/parse";
 import { snapshotCodexCapture } from "../connectors/codex/snapshot";
+import { discoverDroidCaptures } from "../connectors/droid/discover";
+import { parseDroidCapture } from "../connectors/droid/parse";
+import { snapshotDroidCapture } from "../connectors/droid/snapshot";
 import { discoverOpenCodeCaptures } from "../connectors/opencode/discover";
 import { parseOpenCodeCapture } from "../connectors/opencode/parse";
 import { snapshotOpenCodeCapture } from "../connectors/opencode/snapshot";
@@ -19,6 +22,7 @@ import {
 type SavedEnv = Record<
   | "CODEX_HOME"
   | "CLAUDE_HOME"
+  | "DROID_HOME"
   | "OPENCODE_DB_PATH"
   | "OPENCODE_CONFIG_DIR"
   | "OPENCODE_STATE_DIR"
@@ -41,10 +45,11 @@ function restoreEnv(saved: SavedEnv): void {
 }
 
 function withTempFixtureEnv<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-connector-contract-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-connector-contract-"));
   const previous: SavedEnv = {
     CODEX_HOME: process.env.CODEX_HOME,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    DROID_HOME: process.env.DROID_HOME,
     OPENCODE_DB_PATH: process.env.OPENCODE_DB_PATH,
     OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     OPENCODE_STATE_DIR: process.env.OPENCODE_STATE_DIR,
@@ -57,6 +62,7 @@ function withTempFixtureEnv<T>(fn: (root: string) => T): T {
 
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");
   process.env.CLAUDE_HOME = path.join(tempRoot, ".claude");
+  process.env.DROID_HOME = path.join(tempRoot, ".factory");
   process.env.OPENCODE_DB_PATH = path.join(tempRoot, ".local", "share", "opencode", "opencode.db");
   process.env.OPENCODE_CONFIG_DIR = path.join(tempRoot, ".config", "opencode");
   process.env.OPENCODE_STATE_DIR = path.join(tempRoot, ".local", "state", "opencode");
@@ -198,6 +204,27 @@ test("CC-003 OpenCode connector preserves visible meta parts and unknown structu
     assert.equal(parsed.messages.some((message) => message.messageKind === "meta"), true);
     assert.equal(parsed.messages.some((message) => message.role === "tool"), true);
     assert.deepEqual(parsed.artifacts.map((artifact) => artifact.kind), ["tool_call", "tool_result", "file", "file", "raw_json"]);
+    parsed.messages.forEach((message) => assertCanonicalMessageShape(message as unknown as Record<string, unknown>));
+    parsed.artifacts.forEach((artifact) => assertCanonicalArtifactShape(artifact as unknown as Record<string, unknown>));
+    parsed.rawRecords.forEach((rawRecord) => assertCanonicalRawRecordShape(rawRecord as unknown as Record<string, unknown>));
+  });
+});
+
+test("CC-004 Droid connector preserves transcript text while keeping tool and thinking payloads in canonical artifacts", () => {
+  withTempFixtureEnv((root) => {
+    installIngestFixtures(root, ["droid-session-mixed"]);
+
+    const [capture] = discoverDroidCaptures();
+    assert.ok(capture);
+    assert.equal(capture?.externalSessionId, "11111111-2222-3333-4444-555555555555");
+
+    const parsed = parseDroidCapture(capture!, snapshotDroidCapture(capture!));
+
+    assert.equal(parsed.session.externalSessionId, "11111111-2222-3333-4444-555555555555");
+    assert.equal(parsed.messages.some((message) => message.text.includes("<system-reminder>")), false);
+    assert.equal(parsed.messages.some((message) => message.messageKind === "meta"), true);
+    assert.equal(parsed.messages.some((message) => message.text.includes("ingest pipeline")), true);
+    assert.deepEqual(parsed.artifacts.map((artifact) => artifact.kind), ["raw_json", "tool_call", "tool_result"]);
     parsed.messages.forEach((message) => assertCanonicalMessageShape(message as unknown as Record<string, unknown>));
     parsed.artifacts.forEach((artifact) => assertCanonicalArtifactShape(artifact as unknown as Record<string, unknown>));
     parsed.rawRecords.forEach((rawRecord) => assertCanonicalRawRecordShape(rawRecord as unknown as Record<string, unknown>));

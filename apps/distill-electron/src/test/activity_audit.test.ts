@@ -3,56 +3,56 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { addSessionTag, ensureDefaultLabels, removeSessionTag, toggleSessionLabel } from "../distill/curation";
-import { openDistillDatabase } from "../distill/db";
+import { addSessionTag, ensureDefaultLabels, removeSessionTag, toggleSessionLabel } from "../distill-electron/curation";
+import { openDistillElectronDatabase } from "../distill-electron/db";
 
-function withTempDistill<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-activity-"));
-  const previous = process.env.DISTILL_HOME;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+function withTempDistillElectron<T>(fn: (root: string) => T): T {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-activity-"));
+  const previous = process.env.DISTILL_ELECTRON_HOME;
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
 
   try {
     return fn(tempRoot);
   } finally {
-    process.env.DISTILL_HOME = previous;
+    process.env.DISTILL_ELECTRON_HOME = previous;
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 function seedSession(sessionId: number): void {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    distillDb.db.prepare(`
+    distillElectronDb.db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
       VALUES (1, 'claude_code', 'Claude Code', 'installed', '2026-03-25T00:00:00Z', '{}')
     `).run();
 
-    distillDb.db.prepare(`
+    distillElectronDb.db.prepare(`
       INSERT INTO sessions (
         id, source_id, external_session_id, title, project_path, updated_at,
         message_count, raw_capture_count, metadata_json
       ) VALUES (?, 1, ?, 'Audited session', '/tmp/demo', '2026-03-25T15:00:00Z', 1, 1, '{}')
     `).run(sessionId, `session-${sessionId}`);
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 test("addSessionTag audits new assignments and ignores duplicates", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(10);
 
-    addSessionTag(10, " Distill ");
-    addSessionTag(10, "distill");
+    addSessionTag(10, " Distill-Electron ");
+    addSessionTag(10, "distill-electron");
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const assignments = distillDb.db.prepare(`
+      const assignments = distillElectronDb.db.prepare(`
         SELECT COUNT(*) AS count
         FROM tag_assignments
         WHERE object_type = 'session' AND object_id = 10
       `).get() as { count: number };
-      const events = distillDb.db.prepare(`
+      const events = distillElectronDb.db.prepare(`
         SELECT event_type, object_id, session_id, payload_json
         FROM activity_events
         ORDER BY id ASC
@@ -63,34 +63,34 @@ test("addSessionTag audits new assignments and ignores duplicates", () => {
       assert.deepEqual(events.map((event) => event.event_type), ["tag_added"]);
       assert.equal(events[0]?.object_id, 10);
       assert.equal(events[0]?.session_id, 10);
-      assert.equal(payload.tagName, "distill");
+      assert.equal(payload.tagName, "distill-electron");
       assert.equal(payload.origin, "manual");
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
 
 test("removeSessionTag audits actual deletions and ignores missing assignments", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(11);
     addSessionTag(11, "research");
 
-    const seededDb = openDistillDatabase();
+    const seededDb = openDistillElectronDatabase();
     const tag = seededDb.db.prepare("SELECT id FROM tags WHERE name = 'research'").get() as { id: number };
     seededDb.close();
 
     removeSessionTag(11, tag.id);
     removeSessionTag(11, tag.id);
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const assignments = distillDb.db.prepare(`
+      const assignments = distillElectronDb.db.prepare(`
         SELECT COUNT(*) AS count
         FROM tag_assignments
         WHERE object_type = 'session' AND object_id = 11
       `).get() as { count: number };
-      const events = distillDb.db.prepare(`
+      const events = distillElectronDb.db.prepare(`
         SELECT event_type, payload_json
         FROM activity_events
         ORDER BY id ASC
@@ -102,17 +102,17 @@ test("removeSessionTag audits actual deletions and ignores missing assignments",
       assert.equal(payload.tagName, "research");
       assert.equal(payload.origin, "manual");
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
 
 test("removeSessionTag ignores derived assignments and emits no manual removal audit", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(13);
 
     let tagId = 0;
-    const seededDb = openDistillDatabase();
+    const seededDb = openDistillElectronDatabase();
     try {
       tagId = (seededDb.db
         .prepare("INSERT INTO tags (name, kind) VALUES ('derived', 'general') RETURNING id")
@@ -128,7 +128,7 @@ test("removeSessionTag ignores derived assignments and emits no manual removal a
 
     removeSessionTag(13, tagId);
 
-    const verifyDb = openDistillDatabase();
+    const verifyDb = openDistillElectronDatabase();
     try {
       const assignments = verifyDb.db.prepare(`
         SELECT COUNT(*) AS count
@@ -149,20 +149,20 @@ test("removeSessionTag ignores derived assignments and emits no manual removal a
 });
 
 test("toggleSessionLabel audits enable and disable transitions", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(12);
 
     toggleSessionLabel(12, "train");
     toggleSessionLabel(12, "train");
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const assignments = distillDb.db.prepare(`
+      const assignments = distillElectronDb.db.prepare(`
         SELECT COUNT(*) AS count
         FROM label_assignments
         WHERE object_type = 'session' AND object_id = 12
       `).get() as { count: number };
-      const events = distillDb.db.prepare(`
+      const events = distillElectronDb.db.prepare(`
         SELECT event_type, object_id, session_id, payload_json
         FROM activity_events
         ORDER BY id ASC
@@ -179,21 +179,21 @@ test("toggleSessionLabel audits enable and disable transitions", () => {
       assert.equal(enabledPayload.enabled, true);
       assert.equal(disabledPayload.enabled, false);
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
 
 test("toggleSessionLabel removes conflicting dataset labels and audits both transitions", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(15);
 
     toggleSessionLabel(15, "train");
     toggleSessionLabel(15, "holdout");
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const labels = distillDb.db.prepare(`
+      const labels = distillElectronDb.db.prepare(`
         SELECT l.name
         FROM label_assignments la
         JOIN labels l ON l.id = la.label_id
@@ -201,7 +201,7 @@ test("toggleSessionLabel removes conflicting dataset labels and audits both tran
         AND la.object_id = 15
         ORDER BY l.name ASC
       `).all() as Array<{ name: string }>;
-      const events = distillDb.db.prepare(`
+      const events = distillElectronDb.db.prepare(`
         SELECT payload_json
         FROM activity_events
         ORDER BY id ASC
@@ -218,13 +218,13 @@ test("toggleSessionLabel removes conflicting dataset labels and audits both tran
         ]
       );
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
 
 test("toggleSessionLabel keeps orthogonal labels while review labels take priority", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(16);
 
     toggleSessionLabel(16, "holdout");
@@ -232,9 +232,9 @@ test("toggleSessionLabel keeps orthogonal labels while review labels take priori
     toggleSessionLabel(16, "sensitive");
     toggleSessionLabel(16, "exclude");
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const labels = distillDb.db.prepare(`
+      const labels = distillElectronDb.db.prepare(`
         SELECT l.name
         FROM label_assignments la
         JOIN labels l ON l.id = la.label_id
@@ -242,7 +242,7 @@ test("toggleSessionLabel keeps orthogonal labels while review labels take priori
         AND la.object_id = 16
         ORDER BY l.name ASC
       `).all() as Array<{ name: string }>;
-      const events = distillDb.db.prepare(`
+      const events = distillElectronDb.db.prepare(`
         SELECT payload_json
         FROM activity_events
         ORDER BY id ASC
@@ -258,17 +258,17 @@ test("toggleSessionLabel keeps orthogonal labels while review labels take priori
         ]
       );
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
 
 test("toggleSessionLabel ignores derived assignments when no manual label exists", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     seedSession(14);
     ensureDefaultLabels();
 
-    const seededDb = openDistillDatabase();
+    const seededDb = openDistillElectronDatabase();
     try {
       const label = seededDb.db
         .prepare("SELECT id FROM labels WHERE name = 'train' LIMIT 1")
@@ -284,7 +284,7 @@ test("toggleSessionLabel ignores derived assignments when no manual label exists
 
     toggleSessionLabel(14, "train");
 
-    const verifyDb = openDistillDatabase();
+    const verifyDb = openDistillElectronDatabase();
     try {
       const assignments = verifyDb.db.prepare(`
         SELECT COUNT(*) AS count
@@ -311,24 +311,24 @@ test("toggleSessionLabel ignores derived assignments when no manual label exists
 });
 
 test("curation operations are no-ops when the session is missing", () => {
-  withTempDistill(() => {
+  withTempDistillElectron(() => {
     addSessionTag(999, "ghost");
     removeSessionTag(999, 1);
     toggleSessionLabel(999, "train");
 
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      const activityCount = distillDb.db.prepare("SELECT COUNT(*) AS count FROM activity_events").get() as { count: number };
-      const tagAssignmentCount = distillDb.db.prepare("SELECT COUNT(*) AS count FROM tag_assignments").get() as { count: number };
-      const labelAssignmentCount = distillDb.db.prepare("SELECT COUNT(*) AS count FROM label_assignments").get() as { count: number };
-      const labelCount = distillDb.db.prepare("SELECT COUNT(*) AS count FROM labels").get() as { count: number };
+      const activityCount = distillElectronDb.db.prepare("SELECT COUNT(*) AS count FROM activity_events").get() as { count: number };
+      const tagAssignmentCount = distillElectronDb.db.prepare("SELECT COUNT(*) AS count FROM tag_assignments").get() as { count: number };
+      const labelAssignmentCount = distillElectronDb.db.prepare("SELECT COUNT(*) AS count FROM label_assignments").get() as { count: number };
+      const labelCount = distillElectronDb.db.prepare("SELECT COUNT(*) AS count FROM labels").get() as { count: number };
 
       assert.equal(activityCount.count, 0);
       assert.equal(tagAssignmentCount.count, 0);
       assert.equal(labelAssignmentCount.count, 0);
       assert.equal(labelCount.count, 0);
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });

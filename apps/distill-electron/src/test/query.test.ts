@@ -4,28 +4,28 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { addSessionTag, ensureDefaultLabels, toggleSessionLabel } from "../distill/curation";
-import { openDistillDatabase } from "../distill/db";
-import { getSessionDetail, listRecentSessions, searchSessions } from "../distill/query";
+import { addSessionTag, ensureDefaultLabels, toggleSessionLabel } from "../distill-electron/curation";
+import { openDistillElectronDatabase } from "../distill-electron/db";
+import { getSessionDetail, listRecentSessions, searchSessions } from "../distill-electron/query";
 import { escapeHtml } from "../shared/html";
 
-function withTempDistill<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-query-"));
-  const previous = process.env.DISTILL_HOME;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+function withTempDistillElectron<T>(fn: (root: string) => T): T {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-query-"));
+  const previous = process.env.DISTILL_ELECTRON_HOME;
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
 
   try {
     return fn(tempRoot);
   } finally {
-    process.env.DISTILL_HOME = previous;
+    process.env.DISTILL_ELECTRON_HOME = previous;
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 test("query layer derives a fallback title from normalized messages", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -55,14 +55,14 @@ test("query layer derives a fallback title from normalized messages", () => {
     assert.equal(detail?.title, "Please tighten the layout and spacing.");
     assert.equal(detail?.preview, "I will update the styles.");
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer ignores meta messages when deriving session previews", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -92,14 +92,14 @@ test("query layer ignores meta messages when deriving session previews", () => {
     assert.equal(sessions[0]?.preview, "I will inspect the repo first.");
     assert.equal(detail?.messages[1]?.messageKind, "meta");
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer exposes projection metadata on session detail and tolerates malformed legacy metadata", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -150,14 +150,14 @@ test("query layer exposes projection metadata on session detail and tolerates ma
     assert.equal(legacyDetail?.externalSessionId, "session-bad-metadata");
     assert.equal(legacyDetail?.rawCaptureCount, 1);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer searches normalized sessions through FTS", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -185,14 +185,14 @@ test("query layer searches normalized sessions through FTS", () => {
     assert.equal(results[0]?.title, "Search target");
     assert.match(results[0]?.snippet ?? "", /analytics/i);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer normalizes punctuation-heavy search input into a safe FTS query", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -217,14 +217,14 @@ test("query layer normalizes punctuation-heavy search input into a safe FTS quer
     assert.equal(results.length, 1);
     assert.equal(results[0]?.sessionId, 21);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer returns no results when search input yields zero FTS tokens", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -247,14 +247,14 @@ test("query layer returns no results when search input yields zero FTS tokens", 
 
     assert.deepEqual(searchSessions("!!! /// ???"), []);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer skips FTS when the requested limit clamps to zero", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -275,7 +275,7 @@ test("query layer skips FTS when the requested limit clamps to zero", () => {
       (104, 23, 1, 'user', 'analytics limit guard', 'limit-hash', '2026-03-25T13:41:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     const originalPrepare = DatabaseSync.prototype.prepare;
     let sawFtsPrepare = false;
@@ -301,9 +301,9 @@ test("query layer skips FTS when the requested limit clamps to zero", () => {
 });
 
 test("query layer returns session tags and labels after manual curation", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -320,7 +320,7 @@ test("query layer returns session tags and labels after manual curation", () => 
     db.close();
 
     ensureDefaultLabels();
-    addSessionTag(30, "distill");
+    addSessionTag(30, "distill-electron");
     toggleSessionLabel(30, "train");
 
     const sessions = listRecentSessions();
@@ -330,16 +330,16 @@ test("query layer returns session tags and labels after manual curation", () => 
     assert.deepEqual(session?.labels, ["train"]);
     assert.equal(session?.workflowState, "train_ready");
     assert.equal(detail?.tags.length, 1);
-    assert.equal(detail?.tags[0]?.name, "distill");
+    assert.equal(detail?.tags[0]?.name, "distill-electron");
     assert.equal(detail?.labels.length, 1);
     assert.equal(detail?.labels[0]?.name, "train");
   });
 });
 
 test("query layer returns the full session corpus and derives workflow states from labels", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -365,7 +365,7 @@ test("query layer returns the full session corpus and derives workflow states fr
       insertMessage.run(sessionId, `Message for session ${sessionId}`, `hash-${sessionId}`, updatedAt);
     }
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(100, "train");
@@ -392,9 +392,9 @@ test("query layer returns the full session corpus and derives workflow states fr
 });
 
 test("query layer treats conflicting dataset labels as needs_review", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -415,11 +415,11 @@ test("query layer treats conflicting dataset labels as needs_review", () => {
       (304, 104, 1, 'user', 'Ambiguous dataset labels need review.', 'hash-104', '2026-03-25T15:31:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
 
-    const labelDb = openDistillDatabase();
+    const labelDb = openDistillElectronDatabase();
     try {
       const labels = labelDb.db.prepare(`
         SELECT id
@@ -450,9 +450,9 @@ test("query layer treats conflicting dataset labels as needs_review", () => {
 });
 
 test("query layer includes workflow state and labels on search results for review sessions", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -473,7 +473,7 @@ test("query layer includes workflow state and labels on search results for revie
       (410, 140, 1, 'user', 'Investigate the review-only analytics session.', 'hash-review', '2026-03-25T18:00:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(140, "train");
@@ -488,9 +488,9 @@ test("query layer includes workflow state and labels on search results for revie
 });
 
 test("query layer ignores non-manual label assignments in list, detail, and search read models", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -511,11 +511,11 @@ test("query layer ignores non-manual label assignments in list, detail, and sear
       (411, 141, 1, 'user', 'Filter label origins in the query layer.', 'hash-manual-only', '2026-03-25T18:10:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
 
-    const labelDb = openDistillDatabase();
+    const labelDb = openDistillElectronDatabase();
     try {
       const labelRows = labelDb.db.prepare(`
         SELECT id, name
@@ -563,9 +563,9 @@ test("query layer ignores non-manual label assignments in list, detail, and sear
 });
 
 test("query layer returns artifact summaries for session detail", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -617,14 +617,14 @@ test("query layer returns artifact summaries for session detail", () => {
     assert.match(detail?.artifacts[0]?.payloadJson ?? "", /file_path/);
     assert.equal(detail?.artifacts[0]?.messageOrdinal, 1);
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer reads artifact/message relationships from direct artifact message links", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -664,14 +664,14 @@ test("query layer reads artifact/message relationships from direct artifact mess
     assert.equal(detail?.artifacts[0]?.messageOrdinal, 1);
     assert.equal(detail?.artifacts[0]?.messageRole, "assistant");
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 
 test("query layer prefers tool_result errors over partial output previews", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -701,7 +701,7 @@ test("query layer prefers tool_result errors over partial output previews", () =
     assert.equal(detail?.artifacts[0]?.summary, "Tool result: permission denied");
     assert.equal(detail?.artifacts[0]?.payloadPreview, "permission denied");
 
-    distillDb.close();
+    distillElectronDb.close();
   });
 });
 

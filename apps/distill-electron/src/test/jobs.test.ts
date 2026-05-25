@@ -3,21 +3,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import * as importModule from "../distill/import";
-import { openDistillDatabase } from "../distill/db";
-import { ensureDirectory } from "../distill/fs";
+import * as importModule from "../distill-electron/import";
+import { openDistillElectronDatabase } from "../distill-electron/db";
+import { ensureDirectory } from "../distill-electron/fs";
 import {
   enqueueSourceSyncJob,
   getBackgroundSyncStatus,
   markStaleRunningSyncJobsFailed,
   runNextSourceSyncJob
-} from "../distill/jobs";
-import { getLogsPageData } from "../distill/logs";
+} from "../distill-electron/jobs";
+import { getLogsPageData } from "../distill-electron/logs";
 
 type SavedEnv = Record<
-  | "DISTILL_HOME"
+  | "DISTILL_ELECTRON_HOME"
   | "CODEX_HOME"
   | "CLAUDE_HOME"
+  | "DROID_HOME"
   | "OPENCODE_DB_PATH"
   | "OPENCODE_CONFIG_DIR"
   | "OPENCODE_STATE_DIR"
@@ -40,11 +41,12 @@ function restoreEnv(saved: SavedEnv): void {
 }
 
 function withTempEnv<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-test-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-test-"));
   const previous: SavedEnv = {
-    DISTILL_HOME: process.env.DISTILL_HOME,
+    DISTILL_ELECTRON_HOME: process.env.DISTILL_ELECTRON_HOME,
     CODEX_HOME: process.env.CODEX_HOME,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    DROID_HOME: process.env.DROID_HOME,
     OPENCODE_DB_PATH: process.env.OPENCODE_DB_PATH,
     OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     OPENCODE_STATE_DIR: process.env.OPENCODE_STATE_DIR,
@@ -56,9 +58,10 @@ function withTempEnv<T>(fn: (root: string) => T): T {
   };
 
   process.env.HOME = tempRoot;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");
   process.env.CLAUDE_HOME = path.join(tempRoot, ".claude");
+  process.env.DROID_HOME = path.join(tempRoot, ".factory");
   process.env.OPENCODE_DB_PATH = path.join(tempRoot, ".local", "share", "opencode", "opencode.db");
   process.env.OPENCODE_CONFIG_DIR = path.join(tempRoot, ".config", "opencode");
   process.env.OPENCODE_STATE_DIR = path.join(tempRoot, ".local", "state", "opencode");
@@ -251,10 +254,10 @@ test("runNextSourceSyncJob records warning sync lifecycle and surfaces non-fatal
     enqueueSourceSyncJob("test");
     const status = runNextSourceSyncJob();
     const persistedStatus = getBackgroundSyncStatus();
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
 
     try {
-      const syncEvents = distillDb.db.prepare(`
+      const syncEvents = distillElectronDb.db.prepare(`
         SELECT event_type, object_id, payload_json
         FROM activity_events
         WHERE object_type = 'sync_job'
@@ -296,7 +299,7 @@ test("runNextSourceSyncJob records warning sync lifecycle and surfaces non-fatal
       assert.equal(syncEntry?.level, "info");
       assert.equal(syncEntry?.details?.failedEntries?.length, 1);
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
@@ -308,10 +311,10 @@ test("runNextSourceSyncJob records clean completed sync lifecycle when nothing f
     enqueueSourceSyncJob("manual");
     const status = runNextSourceSyncJob();
     const persistedStatus = getBackgroundSyncStatus();
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
 
     try {
-      const syncEvents = distillDb.db.prepare(`
+      const syncEvents = distillElectronDb.db.prepare(`
         SELECT event_type, object_id, payload_json
         FROM activity_events
         WHERE object_type = 'sync_job'
@@ -339,7 +342,7 @@ test("runNextSourceSyncJob records clean completed sync lifecycle when nothing f
       assert.equal(syncEntry?.status, "completed");
       assert.equal(syncEntry?.level, "info");
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
   });
 });
@@ -356,10 +359,10 @@ test("runNextSourceSyncJob records fatal sync failures at the job level", () => 
       enqueueSourceSyncJob("manual");
       const status = runNextSourceSyncJob();
       const persistedStatus = getBackgroundSyncStatus();
-      const distillDb = openDistillDatabase();
+      const distillElectronDb = openDistillElectronDatabase();
 
       try {
-        const syncEvents = distillDb.db.prepare(`
+        const syncEvents = distillElectronDb.db.prepare(`
           SELECT event_type, object_id, payload_json
           FROM activity_events
           WHERE object_type = 'sync_job'
@@ -385,7 +388,7 @@ test("runNextSourceSyncJob records fatal sync failures at the job level", () => 
         assert.equal(syncEntry?.status, "failed");
         assert.equal(syncEntry?.level, "error");
       } finally {
-        distillDb.close();
+        distillElectronDb.close();
       }
     } finally {
       importModuleMutable.runImport = originalRunImport;
@@ -395,9 +398,9 @@ test("runNextSourceSyncJob records fatal sync failures at the job level", () => 
 
 test("markStaleRunningSyncJobsFailed records sync_failed audit rows for interrupted jobs", () => {
   withTempEnv(() => {
-    const distillDb = openDistillDatabase();
+    const distillElectronDb = openDistillElectronDatabase();
     try {
-      distillDb.db.prepare(`
+      distillElectronDb.db.prepare(`
         INSERT INTO jobs (
           id, job_type, object_type, object_id, status, attempts, run_after, last_error, payload_json, created_at, updated_at
         ) VALUES (
@@ -409,12 +412,12 @@ test("markStaleRunningSyncJobsFailed records sync_failed audit rows for interrup
         summary: "Sync running: startup"
       }));
     } finally {
-      distillDb.close();
+      distillElectronDb.close();
     }
 
     markStaleRunningSyncJobsFailed();
     const persistedStatus = getBackgroundSyncStatus();
-    const verifyDb = openDistillDatabase();
+    const verifyDb = openDistillElectronDatabase();
 
     try {
       const job = verifyDb.db.prepare(`

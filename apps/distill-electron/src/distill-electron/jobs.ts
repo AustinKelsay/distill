@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { insertActivityEvent, openDistillDatabase } from "./db";
+import { insertActivityEvent, openDistillElectronDatabase } from "./db";
 import { runImport } from "./import";
 import { BackgroundSyncStatus, ImportFailureEntry, ImportReport, ImportSourceSummary } from "../shared/types";
 
@@ -179,9 +179,9 @@ function summarizeImport(report: ImportReport): BackgroundSyncStatus {
 }
 
 export function markStaleRunningSyncJobsFailed(): void {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const runningJobs = distillDb.db
+    const runningJobs = distillElectronDb.db
       .prepare(`
         SELECT id, payload_json
         FROM jobs
@@ -194,8 +194,8 @@ export function markStaleRunningSyncJobsFailed(): void {
       return;
     }
 
-    withTransaction(distillDb.db, () => {
-      const update = distillDb.db.prepare(`
+    withTransaction(distillElectronDb.db, () => {
+      const update = distillElectronDb.db.prepare(`
         UPDATE jobs
         SET status = 'failed',
             last_error = ?,
@@ -219,7 +219,7 @@ export function markStaleRunningSyncJobsFailed(): void {
           }),
           row.id
         );
-        insertSyncJobAuditEvent(distillDb.db, {
+        insertSyncJobAuditEvent(distillElectronDb.db, {
           eventType: "sync_failed",
           jobId: row.id,
           payload: {
@@ -232,15 +232,15 @@ export function markStaleRunningSyncJobsFailed(): void {
       }
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 export function enqueueSourceSyncJob(reason: string): number {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const row = withTransaction(distillDb.db, () => {
-      const inserted = distillDb.db.prepare(`
+    const row = withTransaction(distillElectronDb.db, () => {
+      const inserted = distillElectronDb.db.prepare(`
         INSERT INTO jobs (
           job_type,
           object_type,
@@ -253,7 +253,7 @@ export function enqueueSourceSyncJob(reason: string): number {
         RETURNING id
       `).get(JSON.stringify({ reason, summary: `Queued sync: ${reason}` })) as { id: number };
 
-      insertSyncJobAuditEvent(distillDb.db, {
+      insertSyncJobAuditEvent(distillElectronDb.db, {
         eventType: "sync_queued",
         jobId: inserted.id,
         payload: {
@@ -267,14 +267,14 @@ export function enqueueSourceSyncJob(reason: string): number {
 
     return row.id;
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 export function getBackgroundSyncStatus(): BackgroundSyncStatus {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const row = distillDb.db.prepare(`
+    const row = distillElectronDb.db.prepare(`
       SELECT id, status, last_error, payload_json
       FROM jobs
       WHERE job_type = 'sync_sources'
@@ -284,18 +284,18 @@ export function getBackgroundSyncStatus(): BackgroundSyncStatus {
 
     return toStatus(row);
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 export function runNextSourceSyncJob(): BackgroundSyncStatus {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   let jobId: number | undefined;
   let startedAt = new Date().toISOString();
   let reason: string | undefined;
 
   try {
-    const row = distillDb.db.prepare(`
+    const row = distillElectronDb.db.prepare(`
       SELECT id, payload_json
       FROM jobs
       WHERE job_type = 'sync_sources'
@@ -314,8 +314,8 @@ export function runNextSourceSyncJob(): BackgroundSyncStatus {
     reason = payload.reason;
     startedAt = new Date().toISOString();
 
-    withTransaction(distillDb.db, () => {
-      distillDb.db.prepare(`
+    withTransaction(distillElectronDb.db, () => {
+      distillElectronDb.db.prepare(`
         UPDATE jobs
         SET status = 'running',
             attempts = attempts + 1,
@@ -330,7 +330,7 @@ export function runNextSourceSyncJob(): BackgroundSyncStatus {
         }),
         row.id
       );
-      insertSyncJobAuditEvent(distillDb.db, {
+      insertSyncJobAuditEvent(distillElectronDb.db, {
         eventType: "sync_started",
         jobId: row.id,
         payload: {
@@ -340,7 +340,7 @@ export function runNextSourceSyncJob(): BackgroundSyncStatus {
       });
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 
   try {
@@ -350,7 +350,7 @@ export function runNextSourceSyncJob(): BackgroundSyncStatus {
     });
     const status = summarizeImport(report);
 
-    const completeDb = openDistillDatabase();
+    const completeDb = openDistillElectronDatabase();
     try {
       withTransaction(completeDb.db, () => {
         completeDb.db.prepare(`
@@ -402,7 +402,7 @@ export function runNextSourceSyncJob(): BackgroundSyncStatus {
   } catch (error) {
     const errorText = error instanceof Error ? error.message : String(error);
     const failedAt = new Date().toISOString();
-    const failedDb = openDistillDatabase();
+    const failedDb = openDistillElectronDatabase();
 
     try {
       withTransaction(failedDb.db, () => {

@@ -61,6 +61,20 @@
     }
   },
   {
+    "id": "droid-session-mixed",
+    "sourceKind": "droid",
+    "captureMode": "file",
+    "fixtureDir": "droid-session-mixed",
+    "captureKind": "session",
+    "sourcePath": ".factory/sessions/-Users-demo-project/11111111-2222-3333-4444-555555555555.jsonl",
+    "expectedExternalSessionId": "11111111-2222-3333-4444-555555555555",
+    "createsTranscriptMessages": true,
+    "createsArtifacts": true,
+    "failureMode": null,
+    "scenarioIds": ["CC-004"],
+    "metadata": {}
+  },
+  {
     "id": "parse-failure-after-snapshot",
     "sourceKind": "codex",
     "captureMode": "file",

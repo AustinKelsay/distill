@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Distill</title>
+    <title>Distill Electron</title>
     <style>
       :root {
         --bg: #1a1a1e;
@@ -706,6 +706,7 @@
       .badge-source-claude { background: var(--source-claude-bg, rgba(204, 120, 50, 0.14)); color: var(--source-claude, #d4944a); }
       .badge-source-opencode { background: var(--source-opencode-bg, rgba(140, 100, 210, 0.14)); color: var(--source-opencode, #a88cd4); }
       .badge-source-codex { background: var(--source-codex-bg, rgba(61, 191, 154, 0.14)); color: var(--source-codex, #3dbf9a); }
+      .badge-source-droid { background: var(--source-droid-bg, rgba(74, 143, 212, 0.14)); color: var(--source-droid, #4a8fd4); }
       .badge-model { background: rgba(58, 58, 62, 0.5); color: var(--muted); }
       .badge-workflow-review { background: rgba(212, 148, 74, 0.14); color: var(--warn); }
       .badge-workflow-train { background: rgba(61, 191, 154, 0.14); color: var(--accent); }
@@ -2172,7 +2173,7 @@
   </head>
   <body>
     <header class="topbar">
-      <span class="topbar-brand">Distill</span>
+      <span class="topbar-brand">Distill Electron</span>
       <div class="topbar-view-switch">
         <button class="view-tab active" type="button" data-view-target="sessions">Sessions</button>
         <button class="view-tab" type="button" data-view-target="db">DB</button>
@@ -2197,7 +2198,7 @@
     <div class="onboarding" data-onboarding>
       <h3>No sessions found</h3>
       <p>
-        Distill reads conversations from <strong>Codex CLI</strong> and <strong>Claude Code</strong>.
+        Distill Electron reads conversations from <strong>Codex CLI</strong> and <strong>Claude Code</strong>.
         The desktop app syncs local history on launch and in the background.
       </p>
     </div>
@@ -2211,7 +2212,7 @@
         <div data-sessions></div>
         <div class="sources-toggle" data-sources-toggle>
           <span class="arrow">▸</span> Sources
-          <button class="help-tip" type="button" data-help-tip="The Sources panel shows whether Distill can see your Codex and Claude local histories and which folders it is reading from." data-help-title="Sources">?</button>
+          <button class="help-tip" type="button" data-help-tip="The Sources panel shows whether Distill Electron can see your Codex and Claude local histories and which folders it is reading from." data-help-title="Sources">?</button>
         </div>
         <div class="sources-panel" data-sources></div>
       </aside>

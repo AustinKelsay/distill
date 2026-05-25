@@ -32,7 +32,7 @@ import {
 
 declare global {
   interface Window {
-    distillApi: {
+    distillElectronApi: {
       getDoctorReport: () => DoctorReport;
       getDashboardData: () => DashboardData;
       getSessionDetail: (sessionId: number) => SessionDetail | undefined;
@@ -170,12 +170,17 @@ function sourceLabel(sourceKind: SessionListItem["sourceKind"] | SearchResult["s
     return "opencode";
   }
 
+  if (sourceKind === "droid") {
+    return "droid";
+  }
+
   return "codex";
 }
 
 function sourceBadgeClass(sourceKind: SessionListItem["sourceKind"] | SearchResult["sourceKind"] | SessionDetail["sourceKind"]): string {
   if (sourceKind === "claude_code") return "badge-source-claude";
   if (sourceKind === "opencode") return "badge-source-opencode";
+  if (sourceKind === "droid") return "badge-source-droid";
   return "badge-source-codex";
 }
 
@@ -194,6 +199,8 @@ function applySourceColors(colors: SourceColors): void {
   root.style.setProperty("--source-claude-bg", hexToRgba(colors.claude_code ?? "#d4944a", 0.14));
   root.style.setProperty("--source-opencode", colors.opencode ?? "#a88cd4");
   root.style.setProperty("--source-opencode-bg", hexToRgba(colors.opencode ?? "#a88cd4", 0.14));
+  root.style.setProperty("--source-droid", colors.droid ?? "#4a8fd4");
+  root.style.setProperty("--source-droid-bg", hexToRgba(colors.droid ?? "#4a8fd4", 0.14));
 }
 
 function renderSyncStatus(status: BackgroundSyncStatus): void {
@@ -416,7 +423,7 @@ function renderLogsView(data: LogsPageData): void {
       <div class="detail-empty">
         <div class="empty-state">
           <div class="empty-title">No logs yet</div>
-          <div class="empty-copy">Sync and export activity will show up here once Distill has operational history to surface.</div>
+          <div class="empty-copy">Sync and export activity will show up here once Distill Electron has operational history to surface.</div>
         </div>
       </div>
     `
@@ -470,7 +477,7 @@ function renderLogsListOnly(data: LogsPageData): void {
 
   const entries = filteredLogEntries(data);
   const emptyHtml = data.entries.length === 0
-    ? `<div class="detail-empty"><div class="empty-state"><div class="empty-title">No logs yet</div><div class="empty-copy">Sync and export activity will show up here once Distill has operational history to surface.</div></div></div>`
+    ? `<div class="detail-empty"><div class="empty-state"><div class="empty-title">No logs yet</div><div class="empty-copy">Sync and export activity will show up here once Distill Electron has operational history to surface.</div></div></div>`
     : `<div class="detail-empty"><div class="empty-state"><div class="empty-title">No matching logs</div><div class="empty-copy">Adjust the log search or filters to widen the current result set.</div></div></div>`;
 
   listEl.innerHTML = `<div class="fade-in">${entries.length ? entries.map(renderLogEntry).join("") : emptyHtml}</div>`;
@@ -742,7 +749,7 @@ function renderDbSidebar(): void {
       <label class="db-toggle">
         <input type="checkbox" data-db-show-internal ${dbShowInternalTables ? "checked" : ""} />
         <span>Show internal tables</span>
-        ${renderHelpTip("Internal tables are used by Distill for indexing, FTS, and metadata. They are safe to inspect but not typically needed for day-to-day browsing.", "Internal Tables")}
+        ${renderHelpTip("Internal tables are used by Distill Electron for indexing, FTS, and metadata. They are safe to inspect but not typically needed for day-to-day browsing.", "Internal Tables")}
       </label>
       <div class="db-sidebar-copy">Read-only browser over ${escapeHtml(dbExplorerSnapshot.databasePath)}</div>
     </div>
@@ -991,7 +998,7 @@ function renderDbQueryTab(): string {
     <section class="db-panel">
       <div class="db-query-shell">
         <div class="db-query-header">
-          <div class="db-section-title">Custom SQL ${renderHelpTip("Write and run a single read-only SQL statement against the Distill database. Results are limited to 100 rows. Use Ctrl/Cmd+Enter as a shortcut.", "Custom SQL")}</div>
+          <div class="db-section-title">Custom SQL ${renderHelpTip("Write and run a single read-only SQL statement against the Distill Electron database. Results are limited to 100 rows. Use Ctrl/Cmd+Enter as a shortcut.", "Custom SQL")}</div>
           <div class="db-query-copy">Single read-only statement.</div>
         </div>
         <textarea
@@ -1027,7 +1034,7 @@ function renderDbWorkspace(): void {
   if (!dbExplorerSnapshot?.databaseExists) {
     root.innerHTML = renderDbEmptyState(
       "No database yet",
-      "Distill has not created a local SQLite database yet.",
+      "Distill Electron has not created a local SQLite database yet.",
       dbExplorerSnapshot
         ? `<div class="db-empty-code">${escapeHtml(dbExplorerSnapshot.databasePath)}</div>`
         : ""
@@ -1052,7 +1059,7 @@ function renderDbWorkspace(): void {
   root.innerHTML = `
     <div class="db-view fade-in">
       <div class="detail-toolbar">
-        <span class="detail-title">DB Explorer ${renderHelpTip("A read-only browser over the Distill SQLite database. Inspect tables, filter rows, view schema, and run custom SQL queries. No data is modified.", "DB Explorer")}</span>
+        <span class="detail-title">DB Explorer ${renderHelpTip("A read-only browser over the Distill Electron SQLite database. Inspect tables, filter rows, view schema, and run custom SQL queries. No data is modified.", "DB Explorer")}</span>
         <div class="detail-meta-secondary">
           <span class="badge ${table?.kind === "virtual" ? "badge-db-virtual" : "badge-db-table"}">${escapeHtml(table?.kind ?? "table")}</span>
           <span>${escapeHtml(dbSelectedTableName)}</span>
@@ -1088,7 +1095,7 @@ async function loadDbExplorerSnapshot(): Promise<void> {
   }
 
   try {
-    const snapshot = await window.distillApi.getDbExplorerSnapshot();
+    const snapshot = await window.distillElectronApi.getDbExplorerSnapshot();
     if (token !== dbSnapshotRequestToken) {
       return;
     }
@@ -1140,7 +1147,7 @@ async function loadDbBrowseResult(): Promise<void> {
   }
 
   try {
-    const result = await window.distillApi.browseDbTable({
+    const result = await window.distillElectronApi.browseDbTable({
       tableName: dbSelectedTableName,
       filters: dbBrowseFilters,
       sort: dbBrowseSort,
@@ -1194,7 +1201,7 @@ async function executeDbQuery(): Promise<void> {
   }
 
   try {
-    const result = await window.distillApi.runDbQuery({
+    const result = await window.distillElectronApi.runDbQuery({
       sql: dbQueryText
     });
 
@@ -1574,7 +1581,7 @@ function filterSessionItems<T extends SessionListItem | SearchResult>(items: T[]
 
 function visibleSessionItems(report: DashboardData, query: string): Array<SessionListItem | SearchResult> {
   return query
-    ? filterSessionItems(window.distillApi.searchSessions(query))
+    ? filterSessionItems(window.distillElectronApi.searchSessions(query))
     : filterSessionItems(report.sessions);
 }
 
@@ -1672,7 +1679,8 @@ function renderSettingsPanel(settings: AppSettingsSnapshot): string {
   const colorRows = [
     renderSourceColorRow("codex", "Codex", colors.codex ?? "#3dbf9a"),
     renderSourceColorRow("claude_code", "Claude", colors.claude_code ?? "#d4944a"),
-    renderSourceColorRow("opencode", "OpenCode", colors.opencode ?? "#a88cd4")
+    renderSourceColorRow("opencode", "OpenCode", colors.opencode ?? "#a88cd4"),
+    renderSourceColorRow("droid", "Droid", colors.droid ?? "#4a8fd4")
   ].join("");
 
   return `
@@ -1688,9 +1696,9 @@ function renderSettingsPanel(settings: AppSettingsSnapshot): string {
 
         <div class="settings-section">
           <div class="settings-section-title">Storage</div>
-          <div class="settings-code">${escapeHtml(settings.distillHome)}</div>
+          <div class="settings-code">${escapeHtml(settings.distillElectronHome)}</div>
           <div class="settings-row" ${tooltipAttrs("SQLite database path used for imported sessions, messages, artifacts, and curation state.")}><span>Database</span><span class="settings-note">${escapeHtml(settings.databasePath)}</span></div>
-          <div class="settings-row" ${tooltipAttrs("Whether DISTILL_HOME is explicitly set in the environment instead of using the default ~/.distill path.")}><span>DISTILL_HOME override</span><span class="settings-note">${settings.envOverrides.distillHome ? "on" : "off"}</span></div>
+          <div class="settings-row" ${tooltipAttrs("Whether DISTILL_ELECTRON_HOME is explicitly set in the environment instead of using the default ~/.distill-electron path.")}><span>DISTILL_ELECTRON_HOME override</span><span class="settings-note">${settings.envOverrides.distillElectronHome ? "on" : "off"}</span></div>
         </div>
 
         <div class="settings-section">
@@ -1698,6 +1706,8 @@ function renderSettingsPanel(settings: AppSettingsSnapshot): string {
           ${sources}
           <div class="settings-row" ${tooltipAttrs("Local root used to discover Codex archived sessions and history files.")}><span>Codex root</span><span class="settings-note">${escapeHtml(settings.codexHome)}</span></div>
           <div class="settings-row" ${tooltipAttrs("Local root used to discover Claude Code project session files and history.")}><span>Claude root</span><span class="settings-note">${escapeHtml(settings.claudeHome)}</span></div>
+          <div class="settings-row" ${tooltipAttrs("Local root used to discover Factory Droid session captures.")}><span>Droid root</span><span class="settings-note">${escapeHtml(settings.droidHome)}</span></div>
+          <div class="settings-row" ${tooltipAttrs("Whether DROID_HOME is explicitly set in the environment instead of using the default ~/.factory path.")}><span>DROID_HOME override</span><span class="settings-note">${settings.envOverrides.droidHome ? "on" : "off"}</span></div>
           <div class="settings-row" ${tooltipAttrs("SQLite database path used to discover OpenCode sessions.")}><span>OpenCode DB</span><span class="settings-note">${escapeHtml(settings.opencodeDatabasePath)}</span></div>
           <div class="settings-row" ${tooltipAttrs("Whether OPENCODE_DB_PATH is explicitly set in the environment instead of using the default OpenCode database path.")}><span>OPENCODE_DB_PATH override</span><span class="settings-note">${settings.envOverrides.opencodeDbPath ? "on" : "off"}</span></div>
           <div class="settings-row" ${tooltipAttrs("OpenCode config directory used for runtime configuration.")}><span>OpenCode config</span><span class="settings-note">${escapeHtml(settings.opencodeConfigDir)}</span></div>
@@ -1711,7 +1721,7 @@ function renderSettingsPanel(settings: AppSettingsSnapshot): string {
 
         <div class="settings-section">
           <div class="settings-section-title">Sync</div>
-          <div class="settings-row" ${tooltipAttrs("How often Distill re-checks local source files while the app is open.")}><span>Background interval</span><span class="settings-note">every ${settings.backgroundSyncIntervalMinutes} min</span></div>
+          <div class="settings-row" ${tooltipAttrs("How often Distill Electron re-checks local source files while the app is open.")}><span>Background interval</span><span class="settings-note">every ${settings.backgroundSyncIntervalMinutes} min</span></div>
           <div class="settings-row" ${tooltipAttrs("You can force a refresh at any time with the sync button in the top bar.")}><span>Manual sync</span><span class="settings-note">top bar button</span></div>
         </div>
 
@@ -1747,7 +1757,7 @@ function renderSessionDetail(detail: SessionDetail | undefined): void {
 
   activeSessionId = detail.id;
 
-  const defaultLabels = window.distillApi.getDefaultLabelNames();
+  const defaultLabels = window.distillElectronApi.getDefaultLabelNames();
   const activeLabels = new Set(detail.labels.map((label) => label.name));
   const labelChips = defaultLabels.map((name) =>
     `<button class="chip ${activeLabels.has(name) ? "active" : ""}" data-toggle-label="${escapeHtml(name)}" ${titleAttr(`${activeLabels.has(name) ? "Remove" : "Apply"} label "${name}"`)}>${escapeHtml(name)}</button>`
@@ -1856,7 +1866,7 @@ function renderSessionDetail(detail: SessionDetail | undefined): void {
 
 function refreshActiveSession(): void {
   if (activeSessionId === null) return;
-  renderSessionDetail(window.distillApi.getSessionDetail(activeSessionId));
+  renderSessionDetail(window.distillElectronApi.getSessionDetail(activeSessionId));
 }
 
 /* Event binding */
@@ -1866,7 +1876,7 @@ function bindDetailCuration(sessionId: number): void {
     btn.addEventListener("click", () => {
       const label = btn.dataset.toggleLabel;
       if (!label) return;
-      window.distillApi.toggleSessionLabel(sessionId, label);
+      window.distillElectronApi.toggleSessionLabel(sessionId, label);
       refreshDashboard();
     });
   }
@@ -1875,7 +1885,7 @@ function bindDetailCuration(sessionId: number): void {
     btn.addEventListener("click", () => {
       const tagId = Number(btn.dataset.removeTagId);
       if (!Number.isFinite(tagId)) return;
-      window.distillApi.removeSessionTag(sessionId, tagId);
+      window.distillElectronApi.removeSessionTag(sessionId, tagId);
       refreshDashboard();
     });
   }
@@ -1888,7 +1898,7 @@ function bindDetailCuration(sessionId: number): void {
       if (!(input instanceof HTMLInputElement)) return;
       const name = input.value.trim();
       if (!name) return;
-      window.distillApi.addSessionTag(sessionId, name);
+      window.distillElectronApi.addSessionTag(sessionId, name);
       input.value = "";
       refreshDashboard();
     });
@@ -1901,7 +1911,7 @@ function bindSessionClicks(): void {
     item.addEventListener("click", () => {
       const id = Number(item.dataset.sessionId);
       if (!Number.isFinite(id)) return;
-      renderSessionDetail(window.distillApi.getSessionDetail(id));
+      renderSessionDetail(window.distillElectronApi.getSessionDetail(id));
       for (const other of items) other.classList.toggle("selected", other === item);
     });
   }
@@ -1964,7 +1974,7 @@ function bindSearch(report: DashboardData): void {
 
     const first = items[0];
     const firstId = first ? ("id" in first ? first.id : first.sessionId) : undefined;
-    renderSessionDetail(firstId !== undefined ? window.distillApi.getSessionDetail(firstId) : undefined);
+    renderSessionDetail(firstId !== undefined ? window.distillElectronApi.getSessionDetail(firstId) : undefined);
 
     if (firstId !== undefined) {
       document.querySelector<HTMLElement>(`[data-session-id="${firstId}"]`)?.classList.add("selected");
@@ -1989,7 +1999,7 @@ function bindExportDropdown(): void {
     btn.onclick = () => {
       const dataset = btn.dataset.exportDataset as DatasetExportTarget | undefined;
       if (dataset !== "train" && dataset !== "holdout") return;
-      const report = window.distillApi.exportApprovedSessions(dataset);
+      const report = window.distillElectronApi.exportApprovedSessions(dataset);
       refreshLogsData(false);
       showExportToast(`Exported ${report.recordCount} ${report.dataset} \u2192 ${report.outputPath}`);
       menu.classList.remove("visible");
@@ -2015,7 +2025,7 @@ function bindSyncButton(): void {
       syncBtn.setAttribute("disabled", "true");
       syncBtn.innerHTML = '<span class="spinner spinner--small"></span> Syncing\u2026';
       try {
-        const status = await window.distillApi.requestBackgroundSync();
+        const status = await window.distillElectronApi.requestBackgroundSync();
         renderSyncStatus(status);
       } finally {
         syncBtn.removeAttribute("disabled");
@@ -2193,7 +2203,7 @@ function bindSourceColorPickers(): void {
     input.oninput = () => {
       const sourceKind = input.dataset.sourceColor;
       if (!sourceKind) return;
-      const colors = window.distillApi.setSourceColor(sourceKind, input.value);
+      const colors = window.distillElectronApi.setSourceColor(sourceKind, input.value);
       applySourceColors(colors);
 
       // Update the inline preview badge next to this picker
@@ -2239,14 +2249,14 @@ function bindSettingsPanel(): void {
 }
 
 function refreshDashboard(): void {
-  dashboardData = window.distillApi.getDashboardData();
+  dashboardData = window.distillElectronApi.getDashboardData();
   if (activeView === "sessions") {
     renderCurrentView();
   }
 }
 
 function refreshLogsData(shouldRender = activeView === "logs"): void {
-  logsPageData = window.distillApi.getLogsPageData();
+  logsPageData = window.distillElectronApi.getLogsPageData();
   if (shouldRender) {
     renderCurrentView();
   }
@@ -2300,12 +2310,12 @@ function bindBackgroundSync(): void {
     syncStatusUnsubscribe();
   }
 
-  syncStatusUnsubscribe = window.distillApi.onBackgroundSyncStatus((status) => {
+  syncStatusUnsubscribe = window.distillElectronApi.onBackgroundSyncStatus((status) => {
     renderSyncStatus(status);
     refreshLogsData(false);
 
     if (status.state === "completed" || status.state === "warning") {
-      dashboardData = window.distillApi.getDashboardData();
+      dashboardData = window.distillElectronApi.getDashboardData();
       if (activeView === "db") {
         refreshDbAfterSync();
       }
@@ -2372,12 +2382,12 @@ function renderSessionsView(report: DashboardData): void {
   const preferredId =
     activeSessionId !== null
       && visibleSessionIds.has(activeSessionId)
-      && window.distillApi.getSessionDetail(activeSessionId)
+      && window.distillElectronApi.getSessionDetail(activeSessionId)
       ? activeSessionId
       : items[0] ? ("id" in items[0] ? items[0].id : items[0].sessionId) : undefined;
 
   if (preferredId !== undefined) {
-    renderSessionDetail(window.distillApi.getSessionDetail(preferredId));
+    renderSessionDetail(window.distillElectronApi.getSessionDetail(preferredId));
     document.querySelector<HTMLElement>(`[data-session-id="${preferredId}"]`)?.classList.add("selected");
   } else {
     renderSessionDetail(undefined);
@@ -2395,7 +2405,7 @@ function renderCurrentView(): void {
   const sourcesToggle = document.querySelector<HTMLElement>("[data-sources-toggle]");
   const sourcesPanel = document.querySelector<HTMLElement>("[data-sources]");
   const settingsRoot = document.querySelector<HTMLElement>("[data-settings-root]");
-  const appSettings = window.distillApi.getAppSettings();
+  const appSettings = window.distillElectronApi.getAppSettings();
 
   if (document.body) {
     document.body.dataset.appView = activeView;
@@ -2459,11 +2469,11 @@ function renderCurrentView(): void {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  dashboardData = window.distillApi.getDashboardData();
-  logsPageData = window.distillApi.getLogsPageData();
+  dashboardData = window.distillElectronApi.getDashboardData();
+  logsPageData = window.distillElectronApi.getLogsPageData();
   renderCurrentView();
   bindBackgroundSync();
-  window.distillApi.getBackgroundSyncStatus().then(renderSyncStatus).catch(() => {
+  window.distillElectronApi.getBackgroundSyncStatus().then(renderSyncStatus).catch(() => {
     renderSyncStatus({
       state: "failed",
       discoveredCaptures: 0,

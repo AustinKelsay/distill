@@ -4,29 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { addSessionTag, ensureDefaultLabels, toggleSessionLabel } from "../distill/curation";
-import { openDistillDatabase } from "../distill/db";
-import { ensureDirectory } from "../distill/fs";
-import { exportApprovedSessions } from "../distill/export";
-import { runImport } from "../distill/import";
+import { addSessionTag, ensureDefaultLabels, toggleSessionLabel } from "../distill-electron/curation";
+import { openDistillElectronDatabase } from "../distill-electron/db";
+import { ensureDirectory } from "../distill-electron/fs";
+import { exportApprovedSessions } from "../distill-electron/export";
+import { runImport } from "../distill-electron/import";
 
-function withTempDistill<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-export-"));
-  const previous = process.env.DISTILL_HOME;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+function withTempDistillElectron<T>(fn: (root: string) => T): T {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-export-"));
+  const previous = process.env.DISTILL_ELECTRON_HOME;
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
 
   try {
     return fn(tempRoot);
   } finally {
-    process.env.DISTILL_HOME = previous;
+    process.env.DISTILL_ELECTRON_HOME = previous;
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 type SavedEnv = Record<
-  | "DISTILL_HOME"
+  | "DISTILL_ELECTRON_HOME"
   | "CODEX_HOME"
   | "CLAUDE_HOME"
+  | "DROID_HOME"
   | "OPENCODE_DB_PATH"
   | "OPENCODE_CONFIG_DIR"
   | "OPENCODE_STATE_DIR"
@@ -49,11 +50,12 @@ function restoreEnv(saved: SavedEnv): void {
 }
 
 function withTempImportEnv<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-export-import-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-export-import-"));
   const previous: SavedEnv = {
-    DISTILL_HOME: process.env.DISTILL_HOME,
+    DISTILL_ELECTRON_HOME: process.env.DISTILL_ELECTRON_HOME,
     CODEX_HOME: process.env.CODEX_HOME,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    DROID_HOME: process.env.DROID_HOME,
     OPENCODE_DB_PATH: process.env.OPENCODE_DB_PATH,
     OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     OPENCODE_STATE_DIR: process.env.OPENCODE_STATE_DIR,
@@ -65,9 +67,10 @@ function withTempImportEnv<T>(fn: (root: string) => T): T {
   };
 
   process.env.HOME = tempRoot;
-  process.env.DISTILL_HOME = path.join(tempRoot, ".distill");
+  process.env.DISTILL_ELECTRON_HOME = path.join(tempRoot, ".distill-electron");
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");
   process.env.CLAUDE_HOME = path.join(tempRoot, ".claude");
+  process.env.DROID_HOME = path.join(tempRoot, ".factory");
   process.env.OPENCODE_DB_PATH = path.join(tempRoot, ".local", "share", "opencode", "opencode.db");
   process.env.OPENCODE_CONFIG_DIR = path.join(tempRoot, ".config", "opencode");
   process.env.OPENCODE_STATE_DIR = path.join(tempRoot, ".local", "state", "opencode");
@@ -167,9 +170,9 @@ process.exit(1);
 }
 
 test("exportApprovedSessions writes approved dataset sessions to JSONL", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -196,7 +199,7 @@ test("exportApprovedSessions writes approved dataset sessions to JSONL", () => {
       (201, 40, 2, 'assistant', 'Here is a tighter launch draft.', 'bb', '2026-03-25T15:01:00Z', 'text', '{"partType":"text","reviewed":true}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     addSessionTag(40, "marketing");
@@ -205,7 +208,7 @@ test("exportApprovedSessions writes approved dataset sessions to JSONL", () => {
     const report = exportApprovedSessions("train");
     const lines = fs.readFileSync(report.outputPath, "utf8").trim().split("\n");
     const payload = JSON.parse(lines[0] ?? "{}");
-    const verifyDb = openDistillDatabase();
+    const verifyDb = openDistillElectronDatabase();
     const activityEvents = verifyDb.db
       .prepare("SELECT event_type FROM activity_events ORDER BY id ASC")
       .all() as Array<{ event_type: string }>;
@@ -293,11 +296,11 @@ test("exportApprovedSessions preserves imported OpenCode meta messages and proje
 
     runImport();
 
-    const distillDb = openDistillDatabase();
-    const session = distillDb.db
+    const distillElectronDb = openDistillElectronDatabase();
+    const session = distillElectronDb.db
       .prepare("SELECT id FROM sessions WHERE external_session_id = 'ses_meta' LIMIT 1")
       .get() as { id: number } | undefined;
-    distillDb.close();
+    distillElectronDb.close();
 
     assert.ok(session);
 
@@ -332,9 +335,9 @@ test("exportApprovedSessions preserves imported OpenCode meta messages and proje
 });
 
 test("exportApprovedSessions trims and normalizes the requested dataset", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -348,7 +351,7 @@ test("exportApprovedSessions trims and normalizes the requested dataset", () => 
       ) VALUES (41, 1, 'session-export-2', 'Normalize me', '/tmp/demo', '2026-03-25T16:00:00Z', 1, 1, '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(41, "train");
@@ -361,9 +364,9 @@ test("exportApprovedSessions trims and normalizes the requested dataset", () => 
 });
 
 test("exportApprovedSessions excludes review-only and conflicting dataset-label sessions and preserves favorite metadata", () => {
-  withTempDistill(() => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron(() => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -391,7 +394,7 @@ test("exportApprovedSessions excludes review-only and conflicting dataset-label 
       (53, 1, 'user', 'Ambiguous train payload', 'ambiguous', '2026-03-25T18:03:00Z', 'text', '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(50, "train");
@@ -400,7 +403,7 @@ test("exportApprovedSessions excludes review-only and conflicting dataset-label 
     toggleSessionLabel(52, "train");
     toggleSessionLabel(52, "favorite");
 
-    const labelDb = openDistillDatabase();
+    const labelDb = openDistillElectronDatabase();
     try {
       const labelIds = labelDb.db.prepare(`
         SELECT id
@@ -440,9 +443,9 @@ test("exportApprovedSessions excludes review-only and conflicting dataset-label 
 });
 
 test("exportApprovedSessions cleans up temp files when the export transaction fails", () => {
-  withTempDistill((root) => {
-    const distillDb = openDistillDatabase();
-    const db = distillDb.db;
+  withTempDistillElectron((root) => {
+    const distillElectronDb = openDistillElectronDatabase();
+    const db = distillElectronDb.db;
 
     db.prepare(`
       INSERT INTO sources (id, kind, display_name, install_status, detected_at, metadata_json)
@@ -456,7 +459,7 @@ test("exportApprovedSessions cleans up temp files when the export transaction fa
       ) VALUES (42, 1, 'session-export-3', 'Rollback me', '/tmp/demo', '2026-03-25T17:00:00Z', 1, 1, '{}')
     `).run();
 
-    distillDb.close();
+    distillElectronDb.close();
 
     ensureDefaultLabels();
     toggleSessionLabel(42, "train");
@@ -479,12 +482,12 @@ test("exportApprovedSessions cleans up temp files when the export transaction fa
       DatabaseSync.prototype.exec = originalExec;
     }
 
-    const exportsDir = path.join(root, ".distill", "exports");
+    const exportsDir = path.join(root, ".distill-electron", "exports");
     const exportFiles = fs.readdirSync(exportsDir);
 
     assert.deepEqual(exportFiles, []);
 
-    const verifyDb = openDistillDatabase();
+    const verifyDb = openDistillElectronDatabase();
     const exportCount = verifyDb.db.prepare("SELECT COUNT(*) AS count FROM exports").get() as { count: number };
     verifyDb.close();
 

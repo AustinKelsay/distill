@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ensureDirectory, getTextSha1 } from "./fs";
-import { getDistillDatabasePath, getDistillHome } from "./paths";
+import { getDistillElectronDatabasePath, getDistillElectronHome } from "./paths";
 import { readCaptureContentText } from "./raw_capture";
 import {
   CaptureContentRef,
@@ -38,7 +38,7 @@ type ProjectionMessageLinkIndex = {
   messageIdsByExternalMessageId: Map<string, number>;
 };
 
-export type DistillDatabase = {
+export type DistillElectronDatabase = {
   db: DatabaseSync;
   databasePath: string;
   close: () => void;
@@ -189,14 +189,14 @@ function backfillArtifactMessageLinks(db: DatabaseSync): void {
   `).run();
 }
 
-export function openDistillDatabase(): DistillDatabase {
-  const distillHome = getDistillHome();
-  ensureDirectory(distillHome);
-  ensureDirectory(path.join(distillHome, "blobs"));
-  ensureDirectory(path.join(distillHome, "imports"));
-  ensureDirectory(path.join(distillHome, "exports"));
+export function openDistillElectronDatabase(): DistillElectronDatabase {
+  const distillElectronHome = getDistillElectronHome();
+  ensureDirectory(distillElectronHome);
+  ensureDirectory(path.join(distillElectronHome, "blobs"));
+  ensureDirectory(path.join(distillElectronHome, "imports"));
+  ensureDirectory(path.join(distillElectronHome, "exports"));
 
-  const databasePath = getDistillDatabasePath();
+  const databasePath = getDistillElectronDatabasePath();
   const db = new DatabaseSync(databasePath);
   db.exec(loadSchema());
   migrateLegacySchema(db);

@@ -1,13 +1,13 @@
 import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
-import { browseDbTable, getDbExplorerSnapshot, runDbQuery } from "../distill/db_inspector";
+import { browseDbTable, getDbExplorerSnapshot, runDbQuery } from "../distill-electron/db_inspector";
 import {
   enqueueSourceSyncJob,
   getBackgroundSyncStatus,
   markStaleRunningSyncJobsFailed,
   runNextSourceSyncJob
-} from "../distill/jobs";
-import { BACKGROUND_SYNC_INTERVAL_MINUTES } from "../distill/settings";
+} from "../distill-electron/jobs";
+import { BACKGROUND_SYNC_INTERVAL_MINUTES } from "../distill-electron/settings";
 
 const BACKGROUND_SYNC_INTERVAL_MS = BACKGROUND_SYNC_INTERVAL_MINUTES * 60 * 1000;
 
@@ -36,7 +36,7 @@ function createMainWindow(): void {
 
 function broadcastBackgroundSyncStatus(): void {
   const status = getBackgroundSyncStatus();
-  mainWindow?.webContents.send("distill:background-sync", status);
+  mainWindow?.webContents.send("distill-electron:background-sync", status);
 }
 
 function runBackgroundSync(reason: string): void {
@@ -51,7 +51,7 @@ function runBackgroundSync(reason: string): void {
     broadcastBackgroundSyncStatus();
     const status = runNextSourceSyncJob();
     console.log(status.summary);
-    mainWindow?.webContents.send("distill:background-sync", status);
+    mainWindow?.webContents.send("distill-electron:background-sync", status);
   } finally {
     isSyncing = false;
   }
@@ -63,14 +63,14 @@ function startBackgroundSyncLoop(): void {
   }, BACKGROUND_SYNC_INTERVAL_MS);
 }
 
-ipcMain.handle("distill:get-background-sync-status", () => getBackgroundSyncStatus());
-ipcMain.handle("distill:request-background-sync", () => {
+ipcMain.handle("distill-electron:get-background-sync-status", () => getBackgroundSyncStatus());
+ipcMain.handle("distill-electron:request-background-sync", () => {
   runBackgroundSync("manual");
   return getBackgroundSyncStatus();
 });
-ipcMain.handle("distill:get-db-explorer-snapshot", () => getDbExplorerSnapshot());
-ipcMain.handle("distill:browse-db-table", (_event, request) => browseDbTable(request));
-ipcMain.handle("distill:run-db-query", (_event, request) => runDbQuery(request));
+ipcMain.handle("distill-electron:get-db-explorer-snapshot", () => getDbExplorerSnapshot());
+ipcMain.handle("distill-electron:browse-db-table", (_event, request) => browseDbTable(request));
+ipcMain.handle("distill-electron:run-db-query", (_event, request) => runDbQuery(request));
 
 app.whenReady().then(() => {
   markStaleRunningSyncJobsFailed();

@@ -10,6 +10,10 @@ import { detectOpenCodeSource } from "./opencode/detect";
 import { discoverOpenCodeCaptures } from "./opencode/discover";
 import { parseOpenCodeCapture } from "./opencode/parse";
 import { snapshotOpenCodeCapture } from "./opencode/snapshot";
+import { detectDroidSource } from "./droid/detect";
+import { discoverDroidCaptures } from "./droid/discover";
+import { parseDroidCapture } from "./droid/parse";
+import { snapshotDroidCapture } from "./droid/snapshot";
 import { SourceConnector } from "./types";
 
 export const sourceConnectors: SourceConnector[] = [
@@ -33,5 +37,12 @@ export const sourceConnectors: SourceConnector[] = [
     discoverCaptures: discoverOpenCodeCaptures,
     snapshotCapture: snapshotOpenCodeCapture,
     parseCapture: parseOpenCodeCapture
+  },
+  {
+    kind: "droid",
+    detect: detectDroidSource,
+    discoverCaptures: discoverDroidCaptures,
+    snapshotCapture: snapshotDroidCapture,
+    parseCapture: parseDroidCapture
   }
 ];

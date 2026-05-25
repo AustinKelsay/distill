@@ -1,4 +1,4 @@
-import { openDistillDatabase } from "./db";
+import { openDistillElectronDatabase } from "./db";
 import { getBackgroundSyncStatus } from "./jobs";
 import {
   DatasetExportTarget,
@@ -198,10 +198,10 @@ function sortTime(entry: LogEntry): number {
 }
 
 export function getLogsPageData(limit = 200): LogsPageData {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
 
   try {
-    const syncJobs = distillDb.db
+    const syncJobs = distillElectronDb.db
       .prepare(`
         SELECT id, status, last_error, payload_json, created_at, updated_at
         FROM jobs
@@ -211,7 +211,7 @@ export function getLogsPageData(limit = 200): LogsPageData {
       `)
       .all(limit) as SyncJobRow[];
 
-    const exports = distillDb.db
+    const exports = distillElectronDb.db
       .prepare(`
         SELECT id, export_type, label_filter, output_path, record_count, metadata_json, created_at
         FROM exports
@@ -237,6 +237,6 @@ export function getLogsPageData(limit = 200): LogsPageData {
       lastSyncStatus: syncJobs.length ? getBackgroundSyncStatus() : undefined
     };
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }

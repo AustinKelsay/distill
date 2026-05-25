@@ -6,10 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { detectCodexSource } from "../connectors/codex/detect";
 import { discoverCodexCaptures } from "../connectors/codex/discover";
-import { ensureDirectory } from "../distill/fs";
+import { ensureDirectory } from "../distill-electron/fs";
 
 function withTempCodexHome<T>(fn: (root: string) => T): T {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-codex-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-codex-"));
   const previousCodexHome = process.env.CODEX_HOME;
 
   process.env.CODEX_HOME = path.join(tempRoot, ".codex");

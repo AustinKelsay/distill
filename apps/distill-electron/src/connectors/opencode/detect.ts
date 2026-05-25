@@ -1,5 +1,5 @@
-import { countFiles, findExecutable, pathExists } from "../../distill/fs";
-import { getOpenCodeConfigDir, getOpenCodeStateDir } from "../../distill/paths";
+import { countFiles, findExecutable, pathExists } from "../../distill-electron/fs";
+import { getOpenCodeConfigDir, getOpenCodeStateDir } from "../../distill-electron/paths";
 import { DiscoveredSource, SourcePathCheck } from "../../shared/types";
 import {
   getOpenCodeDatabasePath,

@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { insertActivityEvent, openDistillDatabase, runInTransaction } from "./db";
+import { insertActivityEvent, openDistillElectronDatabase, runInTransaction } from "./db";
 import { DatasetExportTarget, SessionWorkflowState } from "../shared/types";
 
 const DEFAULT_LABELS = ["train", "holdout", "exclude", "sensitive", "favorite"] as const;
@@ -34,11 +34,11 @@ function ensureDefaultLabelsInDb(db: DatabaseSync): void {
 }
 
 export function ensureDefaultLabels(): void {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    ensureDefaultLabelsInDb(distillDb.db);
+    ensureDefaultLabelsInDb(distillElectronDb.db);
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
@@ -141,14 +141,14 @@ export function addSessionTag(sessionId: number, tagName: string): void {
     return;
   }
 
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    runInTransaction(distillDb.db, () => {
-      if (!sessionExists(distillDb.db, sessionId)) {
+    runInTransaction(distillElectronDb.db, () => {
+      if (!sessionExists(distillElectronDb.db, sessionId)) {
         return;
       }
 
-      const tagRow = distillDb.db
+      const tagRow = distillElectronDb.db
         .prepare(`
           INSERT INTO tags (name, kind)
           VALUES (?, 'manual')
@@ -157,7 +157,7 @@ export function addSessionTag(sessionId: number, tagName: string): void {
         `)
         .get(normalized) as { id: number; name: string };
 
-      const assignment = distillDb.db
+      const assignment = distillElectronDb.db
         .prepare(`
           INSERT INTO tag_assignments (object_type, object_id, tag_id, origin)
           VALUES ('session', ?, ?, 'manual')
@@ -170,7 +170,7 @@ export function addSessionTag(sessionId: number, tagName: string): void {
         return;
       }
 
-      insertActivityEvent(distillDb.db, {
+      insertActivityEvent(distillElectronDb.db, {
         eventType: "tag_added",
         objectType: "session",
         objectId: sessionId,
@@ -183,19 +183,19 @@ export function addSessionTag(sessionId: number, tagName: string): void {
       });
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 export function removeSessionTag(sessionId: number, tagId: number): void {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    runInTransaction(distillDb.db, () => {
-      if (!sessionExists(distillDb.db, sessionId)) {
+    runInTransaction(distillElectronDb.db, () => {
+      if (!sessionExists(distillElectronDb.db, sessionId)) {
         return;
       }
 
-      const assignment = distillDb.db
+      const assignment = distillElectronDb.db
         .prepare(`
           SELECT ta.id, t.name
           FROM tag_assignments ta
@@ -212,12 +212,12 @@ export function removeSessionTag(sessionId: number, tagId: number): void {
         return;
       }
 
-      const result = distillDb.db.prepare("DELETE FROM tag_assignments WHERE id = ?").run(assignment.id);
+      const result = distillElectronDb.db.prepare("DELETE FROM tag_assignments WHERE id = ?").run(assignment.id);
       if (result.changes === 0) {
         return;
       }
 
-      insertActivityEvent(distillDb.db, {
+      insertActivityEvent(distillElectronDb.db, {
         eventType: "tag_removed",
         objectType: "session",
         objectId: sessionId,
@@ -230,7 +230,7 @@ export function removeSessionTag(sessionId: number, tagId: number): void {
       });
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
@@ -240,16 +240,16 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
     return;
   }
 
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    runInTransaction(distillDb.db, () => {
-      if (!sessionExists(distillDb.db, sessionId)) {
+    runInTransaction(distillElectronDb.db, () => {
+      if (!sessionExists(distillElectronDb.db, sessionId)) {
         return;
       }
 
-      ensureDefaultLabelsInDb(distillDb.db);
+      ensureDefaultLabelsInDb(distillElectronDb.db);
 
-      const label = distillDb.db
+      const label = distillElectronDb.db
         .prepare("SELECT id, name FROM labels WHERE name = ? LIMIT 1")
         .get(normalized) as { id: number; name: string } | undefined;
 
@@ -257,7 +257,7 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
         return;
       }
 
-      const existing = distillDb.db
+      const existing = distillElectronDb.db
         .prepare(`
           SELECT id
           FROM label_assignments
@@ -270,19 +270,19 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
         .get(sessionId, label.id) as { id: number } | undefined;
 
       if (existing) {
-        const deleted = distillDb.db.prepare("DELETE FROM label_assignments WHERE id = ?").run(existing.id);
+        const deleted = distillElectronDb.db.prepare("DELETE FROM label_assignments WHERE id = ?").run(existing.id);
         if (deleted.changes === 0) {
           return;
         }
 
-        insertLabelToggledAudit(distillDb.db, sessionId, label.id, label.name, false);
+        insertLabelToggledAudit(distillElectronDb.db, sessionId, label.id, label.name, false);
         return;
       }
 
       const conflictingLabels = getConflictingDatasetLabels(label.name);
       if (conflictingLabels.length > 0) {
         const placeholders = conflictingLabels.map(() => "?").join(", ");
-        const conflictingAssignments = distillDb.db.prepare(`
+        const conflictingAssignments = distillElectronDb.db.prepare(`
           SELECT la.id, l.id AS label_id, l.name AS label_name
           FROM label_assignments la
           JOIN labels l ON l.id = la.label_id
@@ -293,7 +293,7 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
           ORDER BY l.name ASC
         `).all(sessionId, ...conflictingLabels) as ManualLabelAssignmentRow[];
 
-        const deleteAssignment = distillDb.db.prepare("DELETE FROM label_assignments WHERE id = ?");
+        const deleteAssignment = distillElectronDb.db.prepare("DELETE FROM label_assignments WHERE id = ?");
 
         for (const assignment of conflictingAssignments) {
           const deleted = deleteAssignment.run(assignment.id);
@@ -302,7 +302,7 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
           }
 
           insertLabelToggledAudit(
-            distillDb.db,
+            distillElectronDb.db,
             sessionId,
             assignment.label_id,
             assignment.label_name,
@@ -314,7 +314,7 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
       // `inserted` stays undefined when the `label_assignments` INSERT hits `ON CONFLICT`,
       // which intentionally leaves a derived-only assignment untouched and emits no audit.
       // See "toggleSessionLabel ignores derived assignments when no manual label exists".
-      const inserted = distillDb.db
+      const inserted = distillElectronDb.db
         .prepare(`
           INSERT INTO label_assignments (object_type, object_id, label_id, origin)
           VALUES ('session', ?, ?, 'manual')
@@ -327,9 +327,9 @@ export function toggleSessionLabel(sessionId: number, labelName: string): void {
         return;
       }
 
-      insertLabelToggledAudit(distillDb.db, sessionId, label.id, label.name, true);
+      insertLabelToggledAudit(distillElectronDb.db, sessionId, label.id, label.name, true);
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }

@@ -5,12 +5,12 @@ import {
   encodeCapturePayload,
   findCapture,
   insertActivityEvent,
-  openDistillDatabase,
+  openDistillElectronDatabase,
   replaceSessionProjection,
   updateCaptureFailure,
   upsertSource
 } from "./db";
-import { getDistillHome } from "./paths";
+import { getDistillElectronHome } from "./paths";
 import { persistCaptureContent } from "./raw_capture";
 import {
   DiscoveredCapture,
@@ -280,7 +280,7 @@ function importSourceCaptures(
 }
 
 export function runImport(options: RunImportOptions = {}): ImportReport {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
     const sourceSummaries: ImportReport["sourceSummaries"] = [];
     const failedEntries: ImportReport["failedEntries"] = [];
@@ -293,7 +293,7 @@ export function runImport(options: RunImportOptions = {}): ImportReport {
         source = connector.detect();
       } catch (error) {
         const errorText = error instanceof Error ? error.message : String(error);
-        insertSyncFailureAuditEvent(distillDb.db, {
+        insertSyncFailureAuditEvent(distillElectronDb.db, {
           syncJobId: options.syncJobId,
           syncReason: options.syncReason,
           sourceKind: connector.kind,
@@ -317,7 +317,7 @@ export function runImport(options: RunImportOptions = {}): ImportReport {
         continue;
       }
 
-      const sourceId = upsertSource(distillDb.db, source);
+      const sourceId = upsertSource(distillElectronDb.db, source);
 
       let discoveredCaptures: DiscoveredCapture[];
 
@@ -327,7 +327,7 @@ export function runImport(options: RunImportOptions = {}): ImportReport {
         );
       } catch (error) {
         const errorText = error instanceof Error ? error.message : String(error);
-        insertSyncFailureAuditEvent(distillDb.db, {
+        insertSyncFailureAuditEvent(distillElectronDb.db, {
           syncJobId: options.syncJobId,
           syncReason: options.syncReason,
           sourceKind: source.kind,
@@ -351,7 +351,7 @@ export function runImport(options: RunImportOptions = {}): ImportReport {
         continue;
       }
 
-      const result = importSourceCaptures(distillDb.db, connector, source, sourceId, discoveredCaptures);
+      const result = importSourceCaptures(distillElectronDb.db, connector, source, sourceId, discoveredCaptures);
 
       sourceSummaries.push({
         kind: source.kind,
@@ -367,13 +367,13 @@ export function runImport(options: RunImportOptions = {}): ImportReport {
 
     return {
       importedAt: new Date().toISOString(),
-      databasePath: distillDb.databasePath,
-      distillHome: getDistillHome(),
+      databasePath: distillElectronDb.databasePath,
+      distillElectronHome: getDistillElectronHome(),
       sourceSummaries,
       failedEntries,
       captures
     };
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }

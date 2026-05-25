@@ -1,6 +1,6 @@
 import path from "node:path";
-import { getClaudeHome } from "../../distill/paths";
-import { parseJsonlText, readJsonl } from "../../distill/jsonl";
+import { getClaudeHome } from "../../distill-electron/paths";
+import { parseJsonlText, readJsonl } from "../../distill-electron/jsonl";
 import {
   DiscoveredCapture,
   NormalizedArtifact,

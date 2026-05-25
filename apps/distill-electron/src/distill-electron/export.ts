@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { canExportSessionToDataset, ensureDefaultLabels } from "./curation";
-import { openDistillDatabase } from "./db";
+import { openDistillElectronDatabase } from "./db";
 import { ensureDirectory } from "./fs";
-import { getDistillHome } from "./paths";
+import { getDistillElectronHome } from "./paths";
 import {
   DatasetExportTarget,
   ExportMessageRecord,
@@ -95,17 +95,17 @@ export function exportApprovedSessions(dataset: string): ExportReport {
   ensureDefaultLabels();
 
   const exportedAt = new Date().toISOString();
-  const distillHome = getDistillHome();
-  const exportsDir = path.join(distillHome, "exports");
+  const distillElectronHome = getDistillElectronHome();
+  const exportsDir = path.join(distillElectronHome, "exports");
   ensureDirectory(exportsDir);
 
   const timestampStem = exportedAt.replace(/[:.]/g, "-");
   const outputPath = path.join(exportsDir, `${makeSafeStem(normalizedDataset)}-sessions-${timestampStem}.jsonl`);
   const tempOutputPath = `${outputPath}.tmp`;
 
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const sessionRows = distillDb.db
+    const sessionRows = distillElectronDb.db
       .prepare(`
         SELECT
           s.id,
@@ -132,7 +132,7 @@ export function exportApprovedSessions(dataset: string): ExportReport {
     const lines: string[] = [];
 
     for (const session of sessionRows) {
-      const labels = distillDb.db
+      const labels = distillElectronDb.db
         .prepare(`
           SELECT l.name
           FROM label_assignments la
@@ -148,7 +148,7 @@ export function exportApprovedSessions(dataset: string): ExportReport {
         continue;
       }
 
-      const messages = distillDb.db
+      const messages = distillElectronDb.db
         .prepare(`
           SELECT ordinal, role, text, created_at, message_kind, metadata_json
           FROM messages
@@ -157,7 +157,7 @@ export function exportApprovedSessions(dataset: string): ExportReport {
         `)
         .all(session.id) as ExportMessageRow[];
 
-      const tags = distillDb.db
+      const tags = distillElectronDb.db
         .prepare(`
           SELECT t.name
           FROM tag_assignments ta
@@ -206,10 +206,10 @@ export function exportApprovedSessions(dataset: string): ExportReport {
     let transactionOpen = false;
 
     try {
-      distillDb.db.exec("BEGIN");
+      distillElectronDb.db.exec("BEGIN");
       transactionOpen = true;
 
-      const exportInsert = distillDb.db
+      const exportInsert = distillElectronDb.db
         .prepare(`
           INSERT INTO exports (export_type, label_filter, output_path, record_count, metadata_json)
           VALUES ('jsonl', ?, ?, ?, ?)
@@ -224,7 +224,7 @@ export function exportApprovedSessions(dataset: string): ExportReport {
           })
         );
 
-      distillDb.db
+      distillElectronDb.db
         .prepare(`
           INSERT INTO activity_events (
             event_type,
@@ -245,13 +245,13 @@ export function exportApprovedSessions(dataset: string): ExportReport {
           })
         );
 
-      distillDb.db.exec("COMMIT");
+      distillElectronDb.db.exec("COMMIT");
       transactionOpen = false;
       fs.renameSync(tempOutputPath, outputPath);
     } catch (error) {
       if (transactionOpen) {
         try {
-          distillDb.db.exec("ROLLBACK");
+          distillElectronDb.db.exec("ROLLBACK");
         } catch {
           // Preserve the original export failure below.
         }
@@ -273,6 +273,6 @@ export function exportApprovedSessions(dataset: string): ExportReport {
       recordCount: lines.length
     };
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }

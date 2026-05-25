@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { addSessionTag, getDefaultLabelNames, removeSessionTag, toggleSessionLabel } from "../distill/curation";
-import { buildDoctorReport } from "../distill/doctor";
-import { exportApprovedSessions } from "../distill/export";
-import { getLogsPageData } from "../distill/logs";
-import { setSourceColor } from "../distill/preferences";
-import { getDashboardData, getSessionDetail, searchSessions } from "../distill/query";
-import { getAppSettingsSnapshot } from "../distill/settings";
+import { addSessionTag, getDefaultLabelNames, removeSessionTag, toggleSessionLabel } from "../distill-electron/curation";
+import { buildDoctorReport } from "../distill-electron/doctor";
+import { exportApprovedSessions } from "../distill-electron/export";
+import { getLogsPageData } from "../distill-electron/logs";
+import { setSourceColor } from "../distill-electron/preferences";
+import { getDashboardData, getSessionDetail, searchSessions } from "../distill-electron/query";
+import { getAppSettingsSnapshot } from "../distill-electron/settings";
 import {
   AppSettingsSnapshot,
   BackgroundSyncStatus,
@@ -18,7 +18,7 @@ import {
   SourceColors
 } from "../shared/types";
 
-contextBridge.exposeInMainWorld("distillApi", {
+contextBridge.exposeInMainWorld("distillElectronApi", {
   getDoctorReport: () => buildDoctorReport(),
   getDashboardData: () => getDashboardData(),
   getSessionDetail: (sessionId: number) => getSessionDetail(sessionId),
@@ -32,18 +32,18 @@ contextBridge.exposeInMainWorld("distillApi", {
   setSourceColor: (sourceKind: string, color: string) => setSourceColor(sourceKind, color) as SourceColors,
   getAppSettings: () => getAppSettingsSnapshot() as AppSettingsSnapshot,
   getDbExplorerSnapshot: () =>
-    ipcRenderer.invoke("distill:get-db-explorer-snapshot") as Promise<DbExplorerSnapshot>,
+    ipcRenderer.invoke("distill-electron:get-db-explorer-snapshot") as Promise<DbExplorerSnapshot>,
   browseDbTable: (request: DbBrowseRequest) =>
-    ipcRenderer.invoke("distill:browse-db-table", request) as Promise<DbBrowseResult>,
+    ipcRenderer.invoke("distill-electron:browse-db-table", request) as Promise<DbBrowseResult>,
   runDbQuery: (request: DbQueryRequest) =>
-    ipcRenderer.invoke("distill:run-db-query", request) as Promise<DbQueryResult>,
+    ipcRenderer.invoke("distill-electron:run-db-query", request) as Promise<DbQueryResult>,
   getBackgroundSyncStatus: () =>
-    ipcRenderer.invoke("distill:get-background-sync-status") as Promise<BackgroundSyncStatus>,
+    ipcRenderer.invoke("distill-electron:get-background-sync-status") as Promise<BackgroundSyncStatus>,
   requestBackgroundSync: () =>
-    ipcRenderer.invoke("distill:request-background-sync") as Promise<BackgroundSyncStatus>,
+    ipcRenderer.invoke("distill-electron:request-background-sync") as Promise<BackgroundSyncStatus>,
   onBackgroundSyncStatus: (listener: (status: BackgroundSyncStatus) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, status: BackgroundSyncStatus) => listener(status);
-    ipcRenderer.on("distill:background-sync", wrapped);
-    return () => ipcRenderer.removeListener("distill:background-sync", wrapped);
+    ipcRenderer.on("distill-electron:background-sync", wrapped);
+    return () => ipcRenderer.removeListener("distill-electron:background-sync", wrapped);
   }
 });

@@ -3,7 +3,7 @@ import path from "node:path";
 import { CaptureSnapshot } from "../connectors/types";
 import { CaptureContentRef, DiscoveredCapture } from "../shared/types";
 import { ensureDirectory } from "./fs";
-import { getDistillHome } from "./paths";
+import { getDistillElectronHome } from "./paths";
 
 const INLINE_CAPTURE_MAX_BYTES = 64 * 1024;
 
@@ -33,14 +33,14 @@ export function getInlineCaptureMaxBytes(): number {
 
 export function resolveCaptureBlobPath(blobPath: string): string {
   if (path.isAbsolute(blobPath)) {
-    throw new Error(`Capture blobPath must be relative to Distill blobs: ${blobPath}`);
+    throw new Error(`Capture blobPath must be relative to Distill Electron blobs: ${blobPath}`);
   }
 
-  const blobsRoot = path.resolve(getDistillHome(), "blobs");
+  const blobsRoot = path.resolve(getDistillElectronHome(), "blobs");
   const resolvedPath = path.resolve(blobsRoot, path.normalize(blobPath));
   const relativePath = path.relative(blobsRoot, resolvedPath);
   if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error(`Capture blobPath escapes the Distill blob root: ${blobPath}`);
+    throw new Error(`Capture blobPath escapes the Distill Electron blob root: ${blobPath}`);
   }
 
   return resolvedPath;

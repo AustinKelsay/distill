@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { deriveSessionWorkflowState } from "./curation";
-import { openDistillDatabase } from "./db";
+import { openDistillElectronDatabase } from "./db";
 import { buildDoctorReport } from "./doctor";
 import {
   DashboardData,
@@ -280,9 +280,9 @@ function loadSessionLabels(db: DatabaseSync, sessionIds: number[]): Map<number, 
 }
 
 export function listRecentSessions(limit?: number): SessionListItem[] {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const statement = distillDb.db.prepare(`
+    const statement = distillElectronDb.db.prepare(`
         SELECT
           s.id,
           so.kind AS source_kind,
@@ -322,7 +322,7 @@ export function listRecentSessions(limit?: number): SessionListItem[] {
         : statement.all()
     ) as SessionListRow[];
     const labelsBySessionId = loadSessionLabels(
-      distillDb.db,
+      distillElectronDb.db,
       rows.map((row) => row.id)
     );
 
@@ -340,14 +340,14 @@ export function listRecentSessions(limit?: number): SessionListItem[] {
       preview: deriveSessionPreview(row)
     }));
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
 export function getSessionDetail(sessionId: number): SessionDetail | undefined {
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
-    const row = distillDb.db
+    const row = distillElectronDb.db
       .prepare(`
         SELECT
           s.id,
@@ -397,7 +397,7 @@ export function getSessionDetail(sessionId: number): SessionDetail | undefined {
       return undefined;
     }
 
-    const messages = distillDb.db
+    const messages = distillElectronDb.db
       .prepare(`
         SELECT id, ordinal, role, text, created_at, message_kind
         FROM messages
@@ -406,7 +406,7 @@ export function getSessionDetail(sessionId: number): SessionDetail | undefined {
       `)
       .all(sessionId) as SessionMessageRow[];
 
-    const tags = distillDb.db
+    const tags = distillElectronDb.db
       .prepare(`
         SELECT t.id, t.name, t.kind, ta.origin
         FROM tag_assignments ta
@@ -417,7 +417,7 @@ export function getSessionDetail(sessionId: number): SessionDetail | undefined {
       `)
       .all(sessionId) as SessionTagRow[];
 
-    const labels = distillDb.db
+    const labels = distillElectronDb.db
       .prepare(`
         SELECT l.id, l.name, l.scope, la.origin
         FROM label_assignments la
@@ -429,7 +429,7 @@ export function getSessionDetail(sessionId: number): SessionDetail | undefined {
       `)
       .all(sessionId) as SessionLabelRow[];
 
-    const artifacts = distillDb.db
+    const artifacts = distillElectronDb.db
       .prepare(`
         SELECT
           a.id,
@@ -494,7 +494,7 @@ export function getSessionDetail(sessionId: number): SessionDetail | undefined {
       )
     };
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 
@@ -504,10 +504,10 @@ export function searchSessions(query: string, limit?: number): SearchResult[] {
     return [];
   }
 
-  const distillDb = openDistillDatabase();
+  const distillElectronDb = openDistillElectronDatabase();
   try {
     const totalCount = (
-      distillDb.db.prepare("SELECT COUNT(*) AS count FROM sessions").get() as { count: number }
+      distillElectronDb.db.prepare("SELECT COUNT(*) AS count FROM sessions").get() as { count: number }
     ).count;
     const requestedLimit = limit ?? totalCount;
     const maxResults = Math.max(0, Math.min(totalCount, requestedLimit));
@@ -517,7 +517,7 @@ export function searchSessions(query: string, limit?: number): SearchResult[] {
 
     const hitLimit = Math.max(maxResults * 8, 20);
 
-    const hitRows = distillDb.db
+    const hitRows = distillElectronDb.db
       .prepare(`
         SELECT
           CAST(session_id AS INTEGER) AS session_id,
@@ -547,7 +547,7 @@ export function searchSessions(query: string, limit?: number): SearchResult[] {
     }
 
     const placeholders = sessionIds.map(() => "?").join(", ");
-    const sessionRows = distillDb.db
+    const sessionRows = distillElectronDb.db
       .prepare(`
         SELECT
           s.id AS session_id,
@@ -571,7 +571,7 @@ export function searchSessions(query: string, limit?: number): SearchResult[] {
       .all(...sessionIds) as SearchRow[];
 
     const sessionRowById = new Map(sessionRows.map((row) => [row.session_id, row]));
-    const labelsBySessionId = loadSessionLabels(distillDb.db, sessionIds);
+    const labelsBySessionId = loadSessionLabels(distillElectronDb.db, sessionIds);
 
     return sessionIds.flatMap((sessionId) => {
       const row = sessionRowById.get(sessionId);
@@ -596,7 +596,7 @@ export function searchSessions(query: string, limit?: number): SearchResult[] {
       ];
     });
   } finally {
-    distillDb.close();
+    distillElectronDb.close();
   }
 }
 

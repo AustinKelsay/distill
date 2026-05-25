@@ -1,5 +1,5 @@
-import { countFiles, countFilesMatching, findExecutable, pathExists } from "../../distill/fs";
-import { getCodexHome } from "../../distill/paths";
+import { countFiles, countFilesMatching, findExecutable, pathExists } from "../../distill-electron/fs";
+import { getCodexHome } from "../../distill-electron/paths";
 import { DiscoveredSource, SourcePathCheck } from "../../shared/types";
 
 export function detectCodexSource(): DiscoveredSource {

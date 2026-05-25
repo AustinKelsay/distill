@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { SourceKind, DiscoveredCapture } from "../../shared/types";
-import { ensureDirectory } from "../../distill/fs";
+import { ensureDirectory } from "../../distill-electron/fs";
 
 type CaptureMode = "file" | "virtual";
 type FixtureFailureMode = "parse" | "snapshot" | null;
@@ -76,7 +76,7 @@ function expectStringArray(value: unknown, fieldName: string): string[] {
 }
 
 function normalizeSourceKind(value: unknown): SourceKind {
-  if (value === "codex" || value === "claude_code" || value === "opencode") {
+  if (value === "codex" || value === "claude_code" || value === "opencode" || value === "droid") {
     return value;
   }
 

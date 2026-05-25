@@ -9,12 +9,12 @@ export function getHomeDirectory(): string {
   return home;
 }
 
-export function getDistillHome(): string {
-  return process.env.DISTILL_HOME ?? path.join(getHomeDirectory(), ".distill");
+export function getDistillElectronHome(): string {
+  return process.env.DISTILL_ELECTRON_HOME ?? path.join(getHomeDirectory(), ".distill-electron");
 }
 
-export function getDistillDatabasePath(): string {
-  return path.join(getDistillHome(), "distill.db");
+export function getDistillElectronDatabasePath(): string {
+  return path.join(getDistillElectronHome(), "distill-electron.db");
 }
 
 export function getCodexHome(): string {
@@ -23,6 +23,10 @@ export function getCodexHome(): string {
 
 export function getClaudeHome(): string {
   return process.env.CLAUDE_HOME ?? path.join(getHomeDirectory(), ".claude");
+}
+
+export function getDroidHome(): string {
+  return process.env.DROID_HOME ?? path.join(getHomeDirectory(), ".factory");
 }
 
 export function getOpenCodeConfigDir(): string {

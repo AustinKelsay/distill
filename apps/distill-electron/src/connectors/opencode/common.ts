@@ -2,12 +2,12 @@ import fs from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { findExecutable } from "../../distill/fs";
+import { findExecutable } from "../../distill-electron/fs";
 import {
   getOpenCodeConfigDir,
   getOpenCodeDefaultDatabasePath,
   getOpenCodeStateDir
-} from "../../distill/paths";
+} from "../../distill-electron/paths";
 
 export type OpenCodeSessionRow = {
   id: string;
@@ -201,7 +201,7 @@ export function runOpenCodeCommandToFile(
     throw new OpenCodeDiscoveryError("not_installed", "OpenCode executable not found");
   }
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "distill-opencode-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "distill-electron-opencode-"));
   const stdoutPath = path.join(tempDir, "stdout.txt");
   let stdoutFd: number | undefined;
 

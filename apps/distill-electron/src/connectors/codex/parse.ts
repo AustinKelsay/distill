@@ -1,6 +1,6 @@
 import path from "node:path";
-import { getCodexHome } from "../../distill/paths";
-import { parseJsonlText, readJsonl } from "../../distill/jsonl";
+import { getCodexHome } from "../../distill-electron/paths";
+import { parseJsonlText, readJsonl } from "../../distill-electron/jsonl";
 import {
   DiscoveredCapture,
   NormalizedMessage,
