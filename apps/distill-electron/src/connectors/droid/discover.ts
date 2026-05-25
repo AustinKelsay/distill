@@ -15,7 +15,6 @@ export function discoverDroidCaptures(): DiscoveredCapture[] {
 
   return listFilesRecursive(sessionsRoot)
     .filter((filePath) => filePath.endsWith(".jsonl"))
-    .filter((filePath) => path.basename(filePath) !== ".settings.json")
     .flatMap((filePath) => {
       let stat;
       try {

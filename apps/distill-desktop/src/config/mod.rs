@@ -160,6 +160,22 @@ mod tests {
     }
 
     #[test]
+    fn desktop_home_override_resolves_when_data_local_dir_none() {
+        let runtime = resolve_runtime_config_from(
+            Some(PathBuf::from("./distill-desktop")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            runtime.app_paths.app_home,
+            PathBuf::from("./distill-desktop")
+        );
+    }
+
+    #[test]
     fn rejects_invalid_source_mode() {
         let error = resolve_runtime_config_from(
             None,
