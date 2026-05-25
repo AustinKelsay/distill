@@ -1,8 +1,23 @@
-import { Button, HorizontalBox } from "std-widgets.slint";
+import { HorizontalBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
-export struct NavItemData {
+export struct ViewTabData {
     label: string,
     selected: bool,
+}
+
+export struct ShellStatData {
+    label: string,
+    value: string,
+}
+
+export struct SourceRowData {
+    display_name: string,
+    status_text: string,
+    status_tone: string,
+    data_root: string,
+    checks_summary: string,
+    is_stub: bool,
 }
 
 export struct SessionLaneData {
@@ -10,14 +25,23 @@ export struct SessionLaneData {
     selected: bool,
 }
 
+export struct SessionBadgeData {
+    text: string,
+    tone: string,
+}
+
 export struct SessionListRowData {
     id: int,
     title: string,
     preview: string,
-    meta: string,
-    source_label: string,
-    workflow_label: string,
-    labels_summary: string,
+    source_badge_text: string,
+    source_badge_tone: string,
+    workflow_badge_text: string,
+    workflow_badge_tone: string,
+    model_badge_text: string,
+    message_count_text: string,
+    updated_at_text: string,
+    git_branch_text: string,
     selected: bool,
 }
 
@@ -26,22 +50,37 @@ export struct KeyValueRowData {
     value: string,
 }
 
-export struct TranscriptRowData {
-    heading: string,
-    detail: string,
+export struct DetailContextRowData {
+    label: string,
+    value: string,
+    presentation: string,
 }
 
-export struct ArtifactRowData {
-    heading: string,
-    detail: string,
+export struct TranscriptMessageData {
+    role: string,
+    message_kind: string,
+    ordinal_text: string,
+    timestamp_text: string,
+    body: string,
 }
 
-export struct LogRowData {
+export struct ArtifactCardData {
+    title: string,
+    meta: string,
+    preview: string,
+    payload_json: string,
+}
+
+export struct LogEntryData {
     id: string,
     title: string,
     subtitle: string,
+    summary: string,
     status: string,
-    selected: bool,
+    level: string,
+    metrics: string,
+    raw_json: string,
+    expanded: bool,
 }
 
 export struct TableRowData {
@@ -50,97 +89,151 @@ export struct TableRowData {
     selected: bool,
 }
 
-export struct DbResultRowData {
-    index: int,
+export struct DbSchemaColumnData {
+    name: string,
+    type_label: string,
+    flags_text: string,
+    hidden: bool,
+}
+
+export struct DbColumnHeaderData {
+    name: string,
+    type_label: string,
+}
+
+export struct DbGridRowData {
+    key: string,
+    col1: string,
+    col2: string,
+    col3: string,
+    col4: string,
     preview: string,
     selected: bool,
 }
 
-export component ToneChip inherits Rectangle {
+export component Button inherits Rectangle {
     in property <string> text;
-    in property <brush> background_color: #eceff5;
-    in property <brush> foreground_color: #2d3445;
-    border-radius: 999px;
-    background: background_color;
-    height: 28px;
-
-    Text {
-        x: 10px;
-        y: 6px;
-        text: root.text;
-        color: foreground_color;
-        font-size: 12px;
-    }
-}
-
-export component SectionHeader inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    in property <bool> show_resize: false;
-    callback decrease();
-    callback increase();
-
-    height: 52px;
-    background: transparent;
-
-    Text {
-        x: 0;
-        y: 0;
-        text: root.title;
-        font-size: 18px;
-        font-weight: 600;
-        color: #1f2430;
-    }
-
-    Text {
-        x: 0;
-        y: 26px;
-        text: root.subtitle;
-        font-size: 12px;
-        color: #70788b;
-    }
-
-    if root.show_resize : HorizontalBox {
-        x: parent.width - self.width;
-        y: 0;
-        spacing: 6px;
-
-        Button {
-            text: "-";
-            width: 34px;
-            clicked => { root.decrease(); }
-        }
-
-        Button {
-            text: "+";
-            width: 34px;
-            clicked => { root.increase(); }
-        }
-    }
-}
-
-export component NavTile inherits Rectangle {
-    in property <string> label;
-    in property <bool> selected;
+    in property <bool> primary: false;
+    in property <bool> ghost: false;
+    in property <bool> enabled: true;
     callback clicked();
 
-    height: 52px;
-    border-radius: 16px;
-    background: selected ? #ffffff : transparent;
-    border-width: selected ? 1px : 0px;
-    border-color: #d7ddea;
+    height: 36px;
+    border-radius: 8px;
+    border-width: ghost ? 1px : 1px;
+    border-color: primary ? Theme.accent : Theme.line;
+    background: ghost ? transparent : primary ? Theme.accent_bg : Theme.panel;
+    opacity: enabled ? 1 : 0.45;
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => { root.clicked(); }
     }
 
     Text {
+        width: parent.width;
+        y: 10px;
+        horizontal-alignment: center;
+        text: root.text;
+        color: primary ? Theme.accent : Theme.ink;
+        font-size: 13px;
+        font-family: "Menlo";
+        font-weight: 600;
+    }
+}
+
+export component BadgeChip inherits Rectangle {
+    in property <string> text;
+    in property <string> tone;
+    in property <bool> disabled: false;
+
+    height: 24px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color:
+        tone == "warning" ? #5a4430 :
+        tone == "ok" ? #285447 :
+        tone == "info" ? #334a68 :
+        tone == "favorite" ? #5d4a1a :
+        tone == "source_claude" ? #5f4930 :
+        tone == "source_opencode" ? #4f4367 :
+        tone == "source_codex" ? #285447 :
+        Theme.line;
+    background:
+        tone == "warning" ? #332418 :
+        tone == "ok" ? Theme.accent_bg :
+        tone == "info" ? Theme.info_bg :
+        tone == "favorite" ? Theme.favorite_bg :
+        tone == "source_claude" ? #3a2c1d :
+        tone == "source_opencode" ? #2f2940 :
+        tone == "source_codex" ? Theme.accent_bg :
+        Theme.panel_alt;
+    opacity: disabled ? 0.55 : 1;
+
+    Text {
+        x: 8px;
+        y: 5px;
+        text: root.text;
+        color:
+            tone == "warning" ? Theme.warn :
+            tone == "ok" ? Theme.accent :
+            tone == "info" ? Theme.info :
+            tone == "favorite" ? Theme.favorite :
+            tone == "source_claude" ? Theme.warn :
+            tone == "source_opencode" ? #a88cd4 :
+            tone == "source_codex" ? Theme.accent :
+            Theme.muted;
+        font-size: 11px;
+        font-family: "Menlo";
+        font-weight: 600;
+    }
+}
+
+export component ViewTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: selected ? #306a58 : transparent;
+    background: selected ? #21362f : transparent;
+
+    touch := TouchArea { clicked => { root.clicked(); } }
+
+    Text {
+        width: parent.width;
+        y: 8px;
+        horizontal-alignment: center;
         text: root.label;
-        x: 14px;
-        y: 16px;
-        font-size: 14px;
-        font-weight: root.selected ? 600 : 500;
-        color: #1f2430;
+        color: selected ? Theme.accent : Theme.muted;
+        font-size: 12px;
+        font-family: "Menlo";
+        font-weight: 600;
+    }
+}
+
+export component StatPill inherits Rectangle {
+    in property <ShellStatData> item;
+
+    height: 20px;
+    background: transparent;
+
+    Text {
+        text: item.value;
+        color: Theme.ink;
+        font-size: 12px;
+        font-family: "Menlo";
+        font-weight: 700;
+    }
+
+    Text {
+        x: self.preferred-width + 6px;
+        text: item.label;
+        color: Theme.muted;
+        font-size: 12px;
+        font-family: "Menlo";
     }
 }
 
@@ -149,168 +242,429 @@ export component LaneChip inherits Rectangle {
     in property <bool> selected;
     callback clicked();
 
-    height: 34px;
-    border-radius: 17px;
-    background: selected ? #1f2430 : #eceff5;
+    height: 30px;
+    border-radius: 999px;
+    border-width: 1px;
+    border-color: selected ? #2f6957 : Theme.line;
+    background: selected ? #21362f : Theme.panel;
 
-    touch := TouchArea {
-        clicked => { root.clicked(); }
-    }
+    touch := TouchArea { clicked => { root.clicked(); } }
 
     Text {
+        x: 12px;
+        y: 7px;
         text: root.label;
-        color: root.selected ? white : #364055;
+        color: selected ? Theme.accent : Theme.ink;
         font-size: 12px;
+        font-family: "Menlo";
         font-weight: 600;
-        x: 14px;
-        y: 9px;
     }
 }
 
-export component SessionCard inherits Rectangle {
+export component SessionRow inherits Rectangle {
     in property <SessionListRowData> item;
     callback clicked(int);
 
-    height: 104px;
-    border-radius: 18px;
-    background: item.selected ? #ffffff : #f8fafc;
-    border-width: 1px;
-    border-color: item.selected ? #d5dced : #e6ebf4;
+    height: 86px;
+    border-width: 0px;
+    background: item.selected ? #20332d : transparent;
 
-    touch := TouchArea {
-        clicked => { root.clicked(root.item.id); }
+    touch := TouchArea { clicked => { root.clicked(root.item.id); } }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 3px;
+        height: parent.height;
+        background: item.selected ? Theme.accent : transparent;
     }
 
-    Text {
+    BadgeChip {
         x: 16px;
-        y: 14px;
-        text: item.title;
-        color: #1f2430;
-        font-size: 15px;
-        font-weight: 600;
+        y: 12px;
+        text: item.source_badge_text;
+        tone: item.source_badge_tone;
+        visible: item.source_badge_text != "";
+    }
+
+    if item.workflow_badge_text != "" : BadgeChip {
+        x: 88px;
+        y: 12px;
+        text: item.workflow_badge_text;
+        tone: item.workflow_badge_tone;
+    }
+
+    if item.model_badge_text != "" : BadgeChip {
+        x: 166px;
+        y: 12px;
+        text: item.model_badge_text;
+        tone: "muted";
     }
 
     Text {
         x: 16px;
         y: 38px;
         width: parent.width - 32px;
-        text: item.preview;
-        color: #545d70;
-        font-size: 12px;
+        text: item.title;
+        color: Theme.ink;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: elide;
     }
 
     Text {
         x: 16px;
-        y: 74px;
-        text: item.meta;
-        color: #70788b;
-        font-size: 11px;
+        y: 56px;
+        width: parent.width - 32px;
+        text: item.preview;
+        color: Theme.muted;
+        font-size: 12px;
+        overflow: elide;
     }
 
-    ToneChip {
-        x: parent.width - self.width - 16px;
-        y: 12px;
-        text: item.workflow_label;
-        background_color: item.selected ? #1f2430 : #e8eef9;
-        foreground_color: item.selected ? white : #2f4a77;
+    Text {
+        x: 16px;
+        y: 72px;
+        width: parent.width - 32px;
+        text: item.message_count_text
+            + (item.updated_at_text != "" ? " · " + item.updated_at_text : "")
+            + (item.git_branch_text != "" ? " · ⌇ " + item.git_branch_text : "");
+        color: Theme.dim;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
     }
 }
 
-export component LogCard inherits Rectangle {
-    in property <LogRowData> item;
-    in property <int> item_index;
-    callback clicked(int);
+export component SourceRowCard inherits Rectangle {
+    in property <SourceRowData> item;
 
-    height: 86px;
-    border-radius: 18px;
-    background: item.selected ? #ffffff : #f8fafc;
-    border-width: 1px;
-    border-color: item.selected ? #d5dced : #e6ebf4;
+    height: 62px;
+    background: transparent;
 
-    touch := TouchArea {
-        clicked => { root.clicked(root.item_index); }
+    Rectangle {
+        x: 16px;
+        y: 14px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background:
+            item.status_tone == "ok" ? Theme.accent :
+            item.status_tone == "warning" ? Theme.warn :
+            Theme.error;
     }
 
     Text {
+        x: 30px;
+        y: 10px;
+        width: parent.width - 46px;
+        text: item.display_name;
+        color: Theme.ink;
+        font-size: 12px;
+        font-weight: 600;
+        overflow: elide;
+    }
+
+    Text {
+        x: 30px;
+        y: 26px;
+        width: parent.width - 46px;
+        text: item.data_root;
+        color: Theme.dim;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Text {
+        x: 30px;
+        y: 42px;
+        width: parent.width - 46px;
+        text: item.checks_summary;
+        color: Theme.muted;
+        font-size: 11px;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+export component LogEntryCard inherits Rectangle {
+    in property <LogEntryData> item;
+    callback toggled(string);
+
+    height: item.expanded ? 248px : 122px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color:
+        item.level == "error" ? #5b3428 :
+        item.status == "warning" ? #5d4630 :
+        Theme.line;
+    background: Theme.panel;
+
+    header_touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 122px;
+        clicked => { root.toggled(root.item.id); }
+    }
+
+    BadgeChip {
         x: 16px;
         y: 14px;
+        text: item.status;
+        tone: item.status == "failed" ? "warning" : item.status == "warning" ? "warning" : item.status == "completed" ? "ok" : "muted";
+    }
+
+    Text {
+        x: 96px;
+        y: 14px;
+        width: parent.width - 112px;
         text: item.title;
-        font-size: 15px;
-        font-weight: 600;
-        color: #1f2430;
+        color: Theme.ink;
+        font-size: 14px;
+        font-weight: 700;
+        overflow: elide;
     }
 
     Text {
         x: 16px;
         y: 40px;
         width: parent.width - 32px;
-        text: item.subtitle;
+        text: item.summary;
+        color: Theme.ink;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+
+    Text {
+        x: 16px;
+        y: 74px;
+        width: parent.width - 32px;
+        text: item.metrics;
+        color: Theme.muted;
         font-size: 12px;
-        color: #70788b;
-    }
-
-    ToneChip {
-        x: parent.width - self.width - 16px;
-        y: 12px;
-        text: item.status;
-        background_color: item.status == "failed" ? #ffe3e3 : item.status == "warning" ? #fff1cf : #edf7ed;
-        foreground_color: item.status == "failed" ? #9d2f2f : item.status == "warning" ? #8a5d00 : #236c2b;
-    }
-}
-
-export component TableCard inherits Rectangle {
-    in property <TableRowData> item;
-    in property <int> item_index;
-    callback clicked(int);
-
-    height: 56px;
-    border-radius: 14px;
-    background: item.selected ? #ffffff : #f8fafc;
-    border-width: 1px;
-    border-color: item.selected ? #d5dced : #e6ebf4;
-
-    touch := TouchArea {
-        clicked => { root.clicked(root.item_index); }
+        overflow: elide;
     }
 
     Text {
-        x: 14px;
-        y: 10px;
-        text: item.name;
-        font-size: 14px;
-        font-weight: 600;
-        color: #1f2430;
-    }
-
-    Text {
-        x: 14px;
-        y: 31px;
-        text: item.kind;
+        x: 16px;
+        y: 94px;
+        width: parent.width - 32px;
+        text: item.subtitle;
+        color: Theme.dim;
         font-size: 11px;
-        color: #70788b;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    if item.expanded : Rectangle {
+        x: 16px;
+        y: 126px;
+        width: parent.width - 32px;
+        height: parent.height - 142px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: Theme.bg;
+
+        Text {
+            x: 12px;
+            y: 12px;
+            width: parent.width - 24px;
+            height: parent.height - 24px;
+            text: item.raw_json;
+            color: Theme.ink;
+            font-size: 11px;
+            font-family: "Menlo";
+            wrap: word-wrap;
+            overflow: elide;
+        }
     }
 }
 
-export component ResultRowCard inherits Rectangle {
-    in property <DbResultRowData> item;
+export component TableButton inherits Rectangle {
+    in property <TableRowData> item;
     callback clicked(int);
+    in property <int> item_index;
 
     height: 54px;
-    border-radius: 14px;
-    background: item.selected ? #ffffff : #f8fafc;
-    border-width: 1px;
-    border-color: item.selected ? #d5dced : #e6ebf4;
+    background: item.selected ? #20332d : transparent;
 
-    touch := TouchArea {
-        clicked => { root.clicked(root.item.index); }
+    touch := TouchArea { clicked => { root.clicked(root.item_index); } }
+
+    Text {
+        x: 16px;
+        y: 10px;
+        text: item.name;
+        color: Theme.ink;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: elide;
     }
 
     Text {
-        x: 14px;
-        y: 17px;
-        width: parent.width - 28px;
-        text: item.preview;
+        x: 16px;
+        y: 30px;
+        text: item.kind;
+        color: Theme.muted;
+        font-size: 11px;
+        font-family: "Menlo";
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+export component SchemaChip inherits Rectangle {
+    in property <DbSchemaColumnData> item;
+
+    height: 44px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: item.hidden ? #4a4340 : Theme.line;
+    background: item.hidden ? Theme.bg : Theme.panel;
+
+    Text {
+        x: 10px;
+        y: 8px;
+        text: item.name;
+        color: Theme.ink;
         font-size: 12px;
-        color: #2d3445;
+        font-weight: 600;
+        overflow: elide;
+    }
+
+    Text {
+        x: 10px;
+        y: 24px;
+        width: parent.width - 20px;
+        text: item.type_label + (item.flags_text != "" ? " · " + item.flags_text : "");
+        color: Theme.muted;
+        font-size: 10px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+}
+
+export component GridHeaderCell inherits Rectangle {
+    in property <DbColumnHeaderData> item;
+
+    background: Theme.panel_alt;
+
+    Text {
+        x: 8px;
+        y: 6px;
+        text: item.name;
+        color: Theme.ink;
+        font-size: 11px;
+        font-family: "Menlo";
+        font-weight: 700;
+        overflow: elide;
+    }
+
+    Text {
+        x: 8px;
+        y: 22px;
+        text: item.type_label;
+        color: Theme.dim;
+        font-size: 10px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0;
+        width: 1px;
+        height: parent.height;
+        background: Theme.line;
+    }
+}
+
+export component GridRowCard inherits Rectangle {
+    in property <DbGridRowData> item;
+    callback clicked(string);
+
+    height: 52px;
+    background: item.selected ? #20332d : transparent;
+
+    touch := TouchArea {
+        clicked => { root.clicked(root.item.key); }
+    }
+
+    Text {
+        x: 8px;
+        y: 10px;
+        width: parent.width / 4 - 16px;
+        text: item.col1;
+        color: Theme.ink;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Text {
+        x: parent.width / 4 + 8px;
+        y: 10px;
+        width: parent.width / 4 - 16px;
+        text: item.col2;
+        color: Theme.ink;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Text {
+        x: parent.width / 2 + 8px;
+        y: 10px;
+        width: parent.width / 4 - 16px;
+        text: item.col3;
+        color: Theme.ink;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Text {
+        x: parent.width * 3 / 4 + 8px;
+        y: 10px;
+        width: parent.width / 4 - 16px;
+        text: item.col4;
+        color: Theme.ink;
+        font-size: 11px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Text {
+        x: 8px;
+        y: 30px;
+        width: parent.width - 16px;
+        text: item.preview;
+        color: Theme.muted;
+        font-size: 10px;
+        font-family: "Menlo";
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.line;
     }
 }

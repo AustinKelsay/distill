@@ -35,19 +35,34 @@ Then read the Electron baseline docs when implementing a specific capability:
 
 ## Current Reality
 
-The current Rust app is still a read-only shell:
+The current Rust app is now a mixed scaffold plus first engine slice:
 
-- it opens an existing Distill Electron home
-- it renders `Sessions`, `Logs`, and `DB`
-- it does not yet import, curate, sync, export, or audit
+- it defaults to a Rust-owned Distill home and schema
+- it keeps Electron compatibility mode explicitly read-only
+- it can detect, discover, snapshot, parse, and import Codex and Claude Code captures into the Rust-owned store
+- it renders `Sessions`, `DB`, and `Logs` over either backend through an Electron-like shell structure
+- it exposes sources, settings, export, and curation surfaces in the UI, but unsupported actions remain disabled
+- it still does not implement OpenCode, curation writes, export, or full search parity
 
-That is useful scaffolding, but not product parity.
+That is meaningful progress beyond a viewer, but it is still far from product parity.
 
 ## Source Of Truth By Concern
 
 - parity assessment: `docs/plans/parity-gap-map.md`
 - staged implementation plan: `docs/roadmap/rebuild-roadmap.md`
 - acceptance and test intent: `docs/testing/parity-acceptance-matrix.md`
+
+## Manual QA Checklist
+
+When the desktop shell changes, capture these views side-by-side against Electron:
+
+- `Sessions` with real imported data
+- `Sessions` empty/onboarding state
+- `Sessions` with the sources panel open
+- settings overlay open
+- `Logs` route with at least one expanded card
+- `DB` route on the `Browse` tab
+- `DB` route on the `Query` tab
 
 ## Working Rule
 

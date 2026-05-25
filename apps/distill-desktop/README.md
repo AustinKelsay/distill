@@ -7,7 +7,8 @@ The current starter is intentionally desktop-first and engine-first:
 - native shell built with `Slint` on the `winit` backend
 - defaults to a Rust-owned Distill home and schema
 - can open an existing Distill Electron home in explicit compatibility mode
-- renders `Sessions`, `Logs`, and `DB` workbench views
+- imports Codex and Claude Code captures into the Rust-owned store when you trigger `Reload` in Rust mode
+- renders `Sessions`, `DB`, and `Logs` in an Electron-like shell layout
 - keeps all writes out of the Electron data directory in compatibility mode
 
 Planning and parity docs for the rebuild live under `docs/`.
@@ -20,19 +21,27 @@ Planning and parity docs for the rebuild live under `docs/`.
 - switch to Electron compatibility mode with `DISTILL_SOURCE_MODE=electron_compat`
 - override the Electron home with `DISTILL_ELECTRON_HOME=/path/to/.distill-electron`
 - shell preferences are stored separately from the Electron app data
-- write flows such as import, export mutation, and label/tag edits are not wired yet
+- Codex and Claude Code are wired for Rust-owned import so far
+- OpenCode is still missing
+- the shell now mirrors the Electron topbar, sessions split view, logs cards, DB workspace, and settings overlay much more closely
+- unsupported flows like export, label mutation, and tag mutation are visible as disabled stubs
+- write flows such as curation edits and export mutation are not wired yet
 
 ## Layout
 
 - `AGENTS.md`: desktop-local instructions for future work
 - `docs/`: parity gap map, rebuild roadmap, and acceptance plan
 - `src/app.rs`: bootstrap and path resolution
+- `src/connectors/`: canonical source shapes plus the first Codex connector
 - `src/controller.rs`: synchronous UI orchestration, callbacks, and preferences
-- `src/data/`: read-only SQLite and filesystem queries over Electron-compatible data
+- `src/data/`: read models over either the Rust-owned store or Electron compatibility mode
+- `src/storage/`: schema ownership, migrations, raw capture persistence, and import writes
 - `src/view_models.rs`: UI-facing state contracts
-- `ui/shell.slint`: shell-level native workbench window
+- `ui/shell.slint`: Electron-like topbar shell and route host
 - `ui/sessions_pane.slint`, `ui/logs_pane.slint`, `ui/db_pane.slint`: route panes and stores
-- `ui/components.slint`: shared Slint structs and reusable components
+- `ui/settings_modal.slint`: read-only settings overlay
+- `ui/components.slint`: shared Slint structs and reusable Electron-style components
+- `ui/theme.slint`: shared dark shell palette
 - `scripts/`: packaging helpers for macOS and Linux
 
 ## Commands
@@ -42,6 +51,8 @@ Run the desktop shell:
 ```bash
 cargo run -p distill-desktop
 ```
+
+In Rust-owned mode, `Reload` performs a native sync against `CODEX_HOME` / `~/.codex` and `CLAUDE_HOME` / `~/.claude`, then refreshes the Electron-like shell views.
 
 Run in Electron compatibility mode against a specific Distill Electron home:
 

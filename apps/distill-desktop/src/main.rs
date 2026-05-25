@@ -1,10 +1,13 @@
 mod app;
 mod compat;
 mod config;
+mod connectors;
 mod controller;
 mod data;
 mod storage;
 mod view_models;
+#[cfg(test)]
+mod ui_contract_tests;
 
 slint::include_modules!();
 

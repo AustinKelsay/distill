@@ -14,34 +14,43 @@ This matrix answers:
 
 ## Current Rust Test Coverage
 
-Current executable Rust coverage is limited to scaffold behavior:
+Current executable Rust coverage now spans scaffold behavior plus the first shared file-backed ingest slice:
 
 - runtime config and mode resolution
 - Rust-owned store initialization and schema migration
 - source and label seed bootstrapping
 - read-only shell boot
+- Codex discovery dedupe and canonical parse output
+- Claude Code canonical parse output with structured artifact preservation
+- shared Rust ingest runner across multiple connectors
+- Rust-owned Codex and Claude Code import into captures, sessions, messages, artifacts, jobs, and activity
+- duplicate re-import skip behavior
+- parse-failure preservation of the prior projection
+- large-capture blob persistence
 - session read-model rendering against fixture data
 - log filtering reads
 - DB browse and read-only SQL guard
 - stale-selection controller regressions
+- shell/UI contract coverage for route order, sessions-only search, lane labels, and disabled export surfaces
 - read-only safety for compatibility-mode access
 
-This is still foundational coverage, not product parity coverage.
+This is still far from product parity coverage, but it is now beyond pure scaffolding.
 
 ## Phase Mapping
 
 | Suite | Electron Intent | Rust Current Status | Target Phase |
 | --- | --- | --- | --- |
-| `connector_contract` | Source connectors stay within the canonical boundary. | Missing. | Phase 2 |
-| `raw_capture_persistence` | Raw captures are Distill-owned and replayable. | Missing. | Phase 3 |
-| `projection_replacement` | Replace-on-success, rollback-on-failure projection semantics. | Missing. | Phase 3 |
+| `connector_contract` | Source connectors stay within the canonical boundary. | Partial: Codex and Claude Code. | Phase 2 |
+| `raw_capture_persistence` | Raw captures are Distill-owned and replayable. | Partial: file-backed connectors only. | Phase 3 |
+| `projection_replacement` | Replace-on-success, rollback-on-failure projection semantics. | Partial: Codex and Claude Code. | Phase 3 |
 | `search_indexing` | Search reflects the current projection with canonical token normalization. | Missing. | Phase 4 |
 | `session_read_model` | Session detail exposes projection metadata and provenance safely. | Partial read-only coverage only. | Phase 4 |
 | `manual_curation` | Tags and labels are the normative session-level curation layer. | Missing write-path coverage. | Phase 5 |
 | `export_contract` | Export uses the current projection and manual curation state. | Missing. | Phase 6 |
-| `sync_jobs_and_logs` | Jobs and logs remain operational, not canonical audit. | Read-only log display only. | Phase 6 |
-| `activity_audit` | Canonical audit events cover import, curation, export, and sync. | Missing writes entirely. | Phase 5 and Phase 6 |
+| `sync_jobs_and_logs` | Jobs and logs remain operational, not canonical audit. | Partial: Rust-owned Codex and Claude Code sync jobs only. | Phase 6 |
+| `activity_audit` | Canonical audit events cover import, curation, export, and sync. | Partial: import and sync audit only. | Phase 5 and Phase 6 |
 | `doc_truthfulness` | Desktop docs stay coherent and linked. | Minimal. | Phase 0 and ongoing |
+| `desktop_ui_contract` | The native shell stays aligned with Electron route hierarchy and visible disabled surfaces. | Partial: static shell/UI contract coverage. | Phase 7 |
 
 ## New Rust-Native Suites
 
@@ -80,6 +89,7 @@ Phase 1 foundations now have initial executable coverage for:
 
 ## Phase 2
 
+- keep the current Codex and Claude Code connectors green against fixture coverage
 - detect each supported source independently
 - discover captures per source
 - parse fixtures into canonical shared shapes
@@ -87,6 +97,7 @@ Phase 1 foundations now have initial executable coverage for:
 
 ## Phase 3
 
+- keep the current Codex and Claude Code raw persistence and projection replacement guarantees green
 - persist a recoverable raw capture
 - skip an exact duplicate capture
 - append a changed capture and replace the projection

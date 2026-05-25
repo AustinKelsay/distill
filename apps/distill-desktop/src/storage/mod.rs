@@ -1,4 +1,5 @@
 mod connection;
+mod import;
 mod migrations;
 mod paths;
 mod schema;
@@ -9,6 +10,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::config::AppPaths;
+
+pub use import::SyncReport;
 
 #[derive(Clone, Debug)]
 pub struct RustStore {

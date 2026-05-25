@@ -12,6 +12,11 @@ The rebuild strategy is:
 4. use Electron canonical docs as the functional contract
 5. prove each phase with executable acceptance tests before claiming parity
 
+Current note:
+
+- a substantial Electron-parity shell pass has already landed in `apps/distill-desktop`
+- that shell work is there to keep the rebuild visually aligned with the product, not to change the engine-first ordering below
+
 ## Target Architecture
 
 The target Rust app should separate concerns into a product engine and a thin native shell.
@@ -99,6 +104,13 @@ Acceptance:
 - connector outputs match canonical shared shapes
 - connector failures are isolated per source
 
+Current status:
+
+- partial
+- shared connector contracts exist in Rust
+- `codex` and `claude_code` detect/discover/snapshot/parse are implemented and fixture-backed
+- `opencode` remains open
+
 ## Phase 3: Snapshot, Raw Capture, And Ingest
 
 Goal:
@@ -120,6 +132,15 @@ Acceptance:
 - changed captures append history and replace the current projection
 - parse failures preserve prior projections
 - raw captures are replayable from Rust-owned storage
+
+Current status:
+
+- partial
+- Rust mode persists Codex and Claude Code raw captures inline or as blobs
+- exact duplicate Codex re-imports are skipped
+- parse failures preserve the prior successful projection
+- the current shell exposes imported results through the existing views and logs
+- the ingest runner is now shared across multiple file-backed connectors
 
 ## Phase 4: Query And Search Parity
 
@@ -199,6 +220,7 @@ Outputs:
 Rule:
 
 - UI polish should follow working engine behavior, not precede it
+- the current Electron-like shell pass is allowed to exist ahead of full parity, but its disabled surfaces must not be mistaken for completed product behavior
 
 Acceptance:
 
@@ -242,11 +264,11 @@ This gets the engine moving without waiting on UI redesign.
 
 ## What We Start With Next
 
-The next implementation branch should target one narrow vertical slice:
+The next implementation branch should extend the first working vertical slice rather than start over:
 
-- initialize a Rust-owned Distill home
-- detect and import one source kind end-to-end
-- persist raw captures and projection rows
-- expose the imported result in the existing desktop shell
+- add `opencode` to the shared Rust connector boundary
+- extend the current shared ingest runner to support virtual captures as well as file-backed captures
+- keep raw capture persistence and projection-replacement rules shared across connectors
+- preserve the current desktop shell while the engine broadens underneath it
 
-That is the first point where the Rust app stops being just an Electron data viewer.
+That is the shortest path from “one real source works” to “the Rust app owns the canonical ingest loop.”

@@ -16,16 +16,20 @@ Electron remains the product baseline as defined by:
 
 ## Current Rust Coverage
 
-The Rust app currently implements only a narrow read-only inspection layer:
+The Rust app currently implements a scaffold plus one real engine slice:
 
 - native desktop shell with `Slint` and `winit`
-- read-only access to an existing Electron SQLite database
+- Rust-owned schema initialization plus explicit Electron compatibility mode
 - session list and detail rendering
 - logs rendering from existing jobs and exports
 - DB browsing and guarded read-only SQL
 - shell preference persistence
+- Codex and Claude Code detect/discover/snapshot/parse in Rust
+- Rust-owned raw capture persistence with inline/blob storage
+- canonical capture insertion and projection replacement for Codex and Claude Code
+- sync job and activity rows for the Rust-owned multi-connector import path
 
-The Rust app does not currently own canonical Distill behavior.
+The Rust app now owns part of canonical Distill behavior, but only for a single source path and only for import/query foundations.
 
 ## Gap Summary By Product Layer
 
@@ -39,14 +43,13 @@ Electron baseline:
 
 Rust status:
 
-- missing
+- partial
 
 Required for parity:
 
-- typed discovery model for `codex`, `claude_code`, and `opencode`
-- local root detection
-- capture enumeration
-- source health/status reporting
+- keep the current `codex` and `claude_code` discovery paths stable
+- add `opencode`
+- broaden source health/status reporting in the UI
 
 ## 2. Connectors
 
@@ -57,14 +60,13 @@ Electron baseline:
 
 Rust status:
 
-- missing
+- partial
 
 Required for parity:
 
-- Rust connector trait matching the Electron contract semantically
-- connector implementations for `codex`, `claude_code`, and `opencode`
-- shared parsed output types
-- fixture-backed contract tests
+- keep the current Rust connector trait aligned with Electron semantics
+- add `opencode`
+- broaden fixture-backed contract coverage from Codex and Claude Code to all sources
 
 ## 3. Snapshot And Raw Capture Ownership
 
@@ -77,14 +79,13 @@ Electron baseline:
 
 Rust status:
 
-- missing
+- partial
 
 Required for parity:
 
-- canonical capture storage model in Rust
-- blob store management
-- replayable raw capture references
-- snapshot failure handling without partial mutation
+- keep the current inline/blob capture persistence stable across multiple sources
+- add explicit replay helpers and snapshot-failure coverage
+- extend raw persistence to OpenCode virtual captures
 
 ## 4. Ingest Pipeline And Projection Replacement
 
@@ -98,14 +99,14 @@ Electron baseline:
 
 Rust status:
 
-- missing
+- partial
 
 Required for parity:
 
-- ingest orchestrator
-- normalization transaction boundary
-- projection replacement for `sessions`, `messages`, and `artifacts`
-- parse failure retention with prior projection intact
+- keep the current shared ingest runner stable across Codex and Claude Code
+- add artifact-heavy paths and deterministic synthetic-id coverage
+- add OpenCode and virtual-capture support
+- keep replace-on-success and rollback-on-failure semantics enforced
 
 ## 5. Canonical Storage Model
 
@@ -125,8 +126,9 @@ Electron baseline:
 
 Rust status:
 
-- reads an existing Electron schema
-- owns none of the schema lifecycle or writes
+- owns the mirrored canonical schema and migrations in Rust mode
+- writes captures, capture_records, sessions, messages, artifacts, jobs, and activity rows for Codex and Claude Code imports
+- still relies on compatibility mode for Electron-era read-only access
 
 Required for parity:
 
@@ -206,8 +208,9 @@ Electron baseline:
 
 Rust status:
 
-- reads existing jobs and exports as logs
-- does not create activity or jobs
+- reads jobs and exports as logs
+- creates sync job rows and core import audit rows for Rust-owned Codex and Claude Code syncs
+- does not yet cover curation or export audit
 
 Required for parity:
 
@@ -223,7 +226,9 @@ Electron baseline:
 
 Rust status:
 
-- read-only workbench
+- Electron-like shell chrome and route layout
+- sources panel, settings overlay, export stub, and curation stub surfaces
+- a real multi-source engine action behind `Reload` in Rust mode
 
 Required for parity:
 
@@ -231,7 +236,7 @@ Required for parity:
 - curation actions
 - export actions
 - failure and empty-state UX for real operations
-- a redesigned desktop UI once engine parity starts to land
+- turn the current UI stubs into working product flows backed by Rust
 
 ## What Counts As Parity
 
@@ -243,10 +248,10 @@ Read-only inspection alone does not count as parity.
 
 ## Immediate Conclusion
 
-The next rebuild work should target the product engine, not the UI:
+The shell is now much closer to Electron structurally, but parity is still blocked by engine gaps:
 
 1. canonical Rust storage ownership
 2. connectors and ingest
 3. search and curation writes
 4. export and operations
-5. polished desktop UX on top of the working engine
+5. convert the current Electron-like UI stubs into real product actions

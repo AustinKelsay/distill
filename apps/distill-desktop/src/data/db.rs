@@ -2,7 +2,10 @@ use anyhow::{Result, bail};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, ToSql};
 
-use crate::view_models::{DbBrowseVm, DbExplorerVm, DbQueryVm, DbResultRowVm, DbTableVm};
+use crate::view_models::{
+    DbBrowseVm, DbColumnHeaderVm, DbExplorerVm, DbGridRowVm, DbQueryVm, DbSchemaColumnVm,
+    DbTableVm,
+};
 
 use super::{
     DbBrowseRequestVm, DesktopDataSource, FILTER_OPERATORS, PAGE_SIZE, cell_to_text,
@@ -18,7 +21,10 @@ pub(super) struct TableSummary {
 #[derive(Clone, Debug)]
 struct TableColumn {
     name: String,
+    type_label: String,
     hidden: bool,
+    primary_key: bool,
+    nullable: bool,
 }
 
 impl DesktopDataSource {
@@ -56,16 +62,9 @@ impl DesktopDataSource {
                 page: 1,
                 ..DbBrowseRequestVm::default()
             })?;
-            vm.filter_column = browse
-                .available_filter_columns
-                .first()
-                .cloned()
-                .unwrap_or_default();
-            vm.sort_column = browse
-                .available_sort_columns
-                .first()
-                .cloned()
-                .unwrap_or_default();
+            vm.filter_column = browse.filter_columns.first().cloned().unwrap_or_default();
+            vm.filter_operator = "contains".to_string();
+            vm.sort_column = browse.sort_columns.first().cloned().unwrap_or_default();
             vm.sort_direction = "desc".to_string();
             vm.browse = browse;
         }
@@ -241,7 +240,7 @@ impl DesktopDataSource {
                 .iter()
                 .zip(column_names.iter())
                 .take(3)
-                .map(|(value, column)| format!("{column}={}", truncate_inline(value, 42)))
+                .map(|(value, column)| format!("{column}={}", truncate_inline(value, 36)))
                 .collect::<Vec<_>>()
                 .join(" · ");
             let detail = column_names
@@ -250,18 +249,46 @@ impl DesktopDataSource {
                 .map(|(column, value)| format!("{column}: {value}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            result_rows.push(DbResultRowVm {
-                index: row_index,
+            result_rows.push(DbGridRowVm {
+                key: format!("row-{row_index}"),
                 preview,
                 detail,
+                cells: values,
                 selected: false,
             });
             row_index += 1;
         }
 
+        let schema_columns = columns
+            .iter()
+            .map(|column| DbSchemaColumnVm {
+                name: column.name.clone(),
+                type_label: column.type_label.clone(),
+                flags_text: [
+                    column.primary_key.then_some("pk"),
+                    (!column.nullable).then_some("required"),
+                    column.hidden.then_some("hidden"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · "),
+                hidden: column.hidden,
+            })
+            .collect::<Vec<_>>();
+        let result_columns = columns
+            .iter()
+            .filter(|column| !column.hidden)
+            .map(|column| DbColumnHeaderVm {
+                name: column.name.clone(),
+                type_label: column.type_label.clone(),
+            })
+            .collect::<Vec<_>>();
+
         Ok(DbBrowseVm {
-            columns: column_names,
-            rows: result_rows,
+            schema_columns,
+            result_columns,
+            result_rows,
             summary: format!(
                 "{} rows · page {} · sorted by {} {}",
                 total_rows,
@@ -270,8 +297,10 @@ impl DesktopDataSource {
                 sort_direction.to_lowercase()
             ),
             error: String::new(),
-            available_filter_columns: visible_columns.clone(),
-            available_sort_columns: visible_columns,
+            page_label: format!("Page {}", page),
+            filter_columns: visible_columns.clone(),
+            sort_columns: visible_columns,
+            row_detail: String::new(),
         })
     }
 
@@ -371,10 +400,16 @@ impl DesktopDataSource {
         let mut columns = Vec::new();
         while let Some(row) = rows.next()? {
             let name: String = row.get(1)?;
+            let type_label: Option<String> = row.get(2)?;
+            let notnull: i64 = row.get(3)?;
+            let pk: i64 = row.get(5)?;
             let hidden: i64 = row.get(6)?;
             columns.push(TableColumn {
                 name,
+                type_label: type_label.unwrap_or_else(|| "ANY".to_string()),
                 hidden: hidden != 0,
+                primary_key: pk != 0,
+                nullable: notnull == 0,
             });
         }
         Ok(columns)

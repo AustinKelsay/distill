@@ -1,30 +1,38 @@
 import { HorizontalBox, ListView } from "std-widgets.slint";
 import {
-    ArtifactRowData,
-    KeyValueRowData,
+    ArtifactCardData,
+    BadgeChip,
+    Button,
+    DetailContextRowData,
     LaneChip,
-    SectionHeader,
-    SessionCard,
+    SessionBadgeData,
     SessionLaneData,
     SessionListRowData,
-    ToneChip,
-    TranscriptRowData
+    SessionRow,
+    SourceRowCard,
+    TranscriptMessageData
 } from "components.slint";
+import { ShellStore } from "shell_store.slint";
+import { Theme } from "theme.slint";
 
 export global SessionsStore {
     in property <[SessionLaneData]> session_lanes;
     in property <[SessionListRowData]> session_rows;
-    in property <[KeyValueRowData]> session_metadata_rows;
-    in property <[TranscriptRowData]> transcript_rows;
-    in property <[ArtifactRowData]> artifact_rows;
+    in property <[SessionBadgeData]> session_secondary_badges;
+    in property <[string]> session_labels;
+    in property <[string]> session_tags;
+    in property <[DetailContextRowData]> session_context_rows;
+    in property <[TranscriptMessageData]> transcript_rows;
+    in property <[ArtifactCardData]> artifact_rows;
     in property <string> sessions_empty_title;
     in property <string> sessions_empty_message;
     in property <string> session_detail_title;
     in property <string> session_detail_summary;
-    in property <string> session_detail_labels;
-    in property <string> session_detail_tags;
+    in property <string> session_provenance_json;
     in property <string> session_detail_empty_title;
     in property <string> session_detail_empty_message;
+    in property <bool> export_enabled;
+    in property <bool> curation_enabled;
 
     callback session_lane_selected(int);
     callback session_selected(int);
@@ -32,259 +40,511 @@ export global SessionsStore {
 }
 
 export component SessionsPane inherits Rectangle {
-    in property <length> list_width: 380px;
+    in property <length> list_width: 340px;
 
     background: transparent;
 
     Rectangle {
         width: root.list_width;
         height: parent.height;
-        background: #ffffff;
-        border-radius: 24px;
-        border-width: 1px;
-        border-color: #dde4f0;
+        background: #1a1a1e;
 
-        SectionHeader {
-            x: 18px;
-            y: 16px;
-            width: parent.width - 36px;
-            title: "Sessions";
-            subtitle: "Search, review, and inspect the current projection.";
-            show_resize: true;
-            decrease => { SessionsStore.adjust_sessions_width(-40); }
-            increase => { SessionsStore.adjust_sessions_width(40); }
+        Rectangle {
+            x: parent.width - 1px;
+            y: 0;
+            width: 1px;
+            height: parent.height;
+            background: Theme.line;
+        }
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: 48px;
+            background: Theme.bg_top;
+
+            Text {
+                x: 16px;
+                y: 16px;
+                text: ShellStore.sidebar_count_label;
+                color: Theme.muted;
+                font-size: 12px;
+                font-family: "Menlo";
+                font-weight: 600;
+            }
+
+            Text {
+                x: parent.width - 130px;
+                y: 16px;
+                width: 114px;
+                horizontal-alignment: right;
+                text: ShellStore.scanned_label;
+                color: Theme.dim;
+                font-size: 11px;
+                font-family: "Menlo";
+                overflow: elide;
+            }
+
+            Rectangle {
+                x: 0;
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.line;
+            }
         }
 
         HorizontalBox {
-            x: 18px;
-            y: 82px;
-            width: parent.width - 36px;
-            height: 34px;
+            x: 14px;
+            y: 60px;
+            width: parent.width - 28px;
+            height: 30px;
             spacing: 8px;
 
-            for lane[index] in SessionsStore.session_lanes : LaneChip {
-                label: lane.label;
-                selected: lane.selected;
-                clicked => { SessionsStore.session_lane_selected(index); }
+            for lane[index] in SessionsStore.session_lanes : Rectangle {
+                width: 96px;
+                LaneChip {
+                    width: parent.width;
+                    label: lane.label;
+                    selected: lane.selected;
+                    clicked => { SessionsStore.session_lane_selected(index); }
+                }
             }
         }
 
         ListView {
-            x: 18px;
-            y: 128px;
-            width: parent.width - 36px;
-            height: parent.height - 146px;
+            x: 0;
+            y: 102px;
+            width: parent.width;
+            height: ShellStore.sources_open ? parent.height - 284px : parent.height - 164px;
 
-            for row in SessionsStore.session_rows : SessionCard {
+            for row in SessionsStore.session_rows : SessionRow {
+                width: parent.width;
                 item: row;
                 clicked(id) => { SessionsStore.session_selected(id); }
             }
         }
 
         if SessionsStore.session_rows.length == 0 : Rectangle {
-            x: 18px;
-            y: 140px;
-            width: parent.width - 36px;
-            height: 84px;
-            background: transparent;
+            x: 16px;
+            y: 112px;
+            width: parent.width - 32px;
+            height: 90px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
 
             Text {
-                width: parent.width;
-                text: SessionsStore.sessions_empty_title + "\n" + SessionsStore.sessions_empty_message;
-                color: #70788b;
+                x: 14px;
+                y: 14px;
+                width: parent.width - 28px;
+                text: SessionsStore.sessions_empty_title;
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 14px;
+                y: 38px;
+                width: parent.width - 28px;
+                text: SessionsStore.sessions_empty_message;
+                color: Theme.muted;
                 font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            x: 0;
+            y: parent.height - (ShellStore.sources_open ? 182px : 62px);
+            width: parent.width;
+            height: 36px;
+            background: Theme.bg_top;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => { ShellStore.toggle_sources_requested(); }
+            }
+
+            Text {
+                x: 16px;
+                y: 10px;
+                text: (ShellStore.sources_open ? "▾ " : "▸ ") + "Sources";
+                color: Theme.muted;
+                font-size: 12px;
+                font-family: "Menlo";
+                font-weight: 600;
+            }
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+
+        if ShellStore.sources_open : Rectangle {
+            x: 0;
+            y: parent.height - 146px;
+            width: parent.width;
+            height: 146px;
+            background: Theme.panel;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.line;
+            }
+
+            ListView {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+
+                for row in ShellStore.source_rows : SourceRowCard {
+                    width: parent.width;
+                    item: row;
+                }
             }
         }
     }
 
     Rectangle {
-        x: root.list_width + 16px;
-        width: parent.width - root.list_width - 16px;
+        x: root.list_width;
+        y: 0;
+        width: parent.width - root.list_width;
         height: parent.height;
-        background: #ffffff;
-        border-radius: 24px;
-        border-width: 1px;
-        border-color: #dde4f0;
+        background: transparent;
 
-        SectionHeader {
-            x: 18px;
-            y: 16px;
-            width: parent.width - 36px;
-            title: SessionsStore.session_detail_title == "" ? "Session Detail" : SessionsStore.session_detail_title;
-            subtitle: SessionsStore.session_detail_summary;
-        }
-
-        HorizontalBox {
-            x: 18px;
-            y: 82px;
-            width: parent.width - 36px;
-            height: 28px;
-            spacing: 8px;
-
-            ToneChip { text: "Labels: " + SessionsStore.session_detail_labels; }
-            ToneChip { text: "Tags: " + SessionsStore.session_detail_tags; }
-        }
-
-        Rectangle {
-            x: 18px;
-            y: 126px;
-            width: parent.width - 36px;
-            height: 150px;
-            background: #fafbfd;
-            border-radius: 18px;
-            border-width: 1px;
-            border-color: #e5eaf4;
-
-            Text {
-                x: 14px;
-                y: 14px;
-                text: "Metadata";
-                font-size: 13px;
-                font-weight: 600;
-                color: #1f2430;
-            }
-
-            ListView {
-                x: 14px;
-                y: 40px;
-                width: parent.width - 28px;
-                height: parent.height - 54px;
-
-                for row in SessionsStore.session_metadata_rows : Rectangle {
-                    height: 32px;
-                    width: parent.width;
-
-                    Text {
-                        y: 8px;
-                        width: parent.width;
-                        text: row.key + ": " + row.value;
-                        font-size: 12px;
-                        color: #394154;
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            x: 18px;
-            y: 290px;
-            width: parent.width - 36px;
-            height: 220px;
-            background: #fafbfd;
-            border-radius: 18px;
-            border-width: 1px;
-            border-color: #e5eaf4;
-
-            Text {
-                x: 14px;
-                y: 14px;
-                text: "Transcript";
-                font-size: 13px;
-                font-weight: 600;
-                color: #1f2430;
-            }
-
-            ListView {
-                x: 14px;
-                y: 40px;
-                width: parent.width - 28px;
-                height: parent.height - 54px;
-
-                for row in SessionsStore.transcript_rows : Rectangle {
-                    height: 88px;
-                    width: parent.width;
-                    border-width: 1px;
-                    border-color: #edf1f6;
-                    border-radius: 14px;
-                    background: #ffffff;
-
-                    Text {
-                        x: 12px;
-                        y: 10px;
-                        text: row.heading;
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: #1f2430;
-                    }
-
-                    Text {
-                        x: 12px;
-                        y: 34px;
-                        width: parent.width - 24px;
-                        text: row.detail;
-                        font-size: 12px;
-                        color: #485164;
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            x: 18px;
-            y: 524px;
-            width: parent.width - 36px;
-            height: parent.height - 542px;
-            background: #fafbfd;
-            border-radius: 18px;
-            border-width: 1px;
-            border-color: #e5eaf4;
-
-            Text {
-                x: 14px;
-                y: 14px;
-                text: "Artifacts";
-                font-size: 13px;
-                font-weight: 600;
-                color: #1f2430;
-            }
-
-            ListView {
-                x: 14px;
-                y: 40px;
-                width: parent.width - 28px;
-                height: parent.height - 54px;
-
-                for row in SessionsStore.artifact_rows : Rectangle {
-                    height: 74px;
-                    width: parent.width;
-                    border-width: 1px;
-                    border-color: #edf1f6;
-                    border-radius: 14px;
-                    background: #ffffff;
-
-                    Text {
-                        x: 12px;
-                        y: 10px;
-                        text: row.heading;
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: #1f2430;
-                    }
-
-                    Text {
-                        x: 12px;
-                        y: 32px;
-                        width: parent.width - 24px;
-                        text: row.detail;
-                        font-size: 11px;
-                        color: #596274;
-                    }
-                }
-            }
-        }
-
-        if SessionsStore.transcript_rows.length == 0 && SessionsStore.artifact_rows.length == 0 : Rectangle {
-            x: 18px;
-            y: 290px;
-            width: parent.width - 36px;
-            height: 80px;
+        toolbar := Rectangle {
+            x: 24px;
+            y: 20px;
+            width: parent.width - 48px;
+            height: 132px;
             background: transparent;
 
             Text {
-                width: parent.width;
-                text: SessionsStore.session_detail_empty_title + "\n" + SessionsStore.session_detail_empty_message;
-                color: #70788b;
+                x: 0;
+                y: 4px;
+                width: parent.width - 220px;
+                text: SessionsStore.session_detail_title == "" ? "Select a session" : SessionsStore.session_detail_title;
+                color: Theme.ink;
+                font-size: 24px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            Text {
+                x: 0;
+                y: 40px;
+                width: parent.width - 220px;
+                text: SessionsStore.session_detail_summary;
+                color: Theme.muted;
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                x: parent.width - 204px;
+                y: 4px;
+                width: 204px;
+                height: 92px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                Button {
+                    x: 12px;
+                    y: 12px;
+                    width: 80px;
+                    text: "⤓ Export";
+                    ghost: true;
+                    enabled: false;
+                }
+
+                Button {
+                    x: 12px;
+                    y: 50px;
+                    width: 88px;
+                    text: "train";
+                    ghost: true;
+                    enabled: false;
+                }
+
+                Button {
+                    x: 108px;
+                    y: 50px;
+                    width: 84px;
+                    text: "holdout";
+                    ghost: true;
+                    enabled: false;
+                }
+            }
+
+            for badge[index] in SessionsStore.session_secondary_badges : BadgeChip {
+                x: index < 5 ? 0px + index * 126px : 0px + (index - 5) * 126px;
+                y: index < 5 ? 94px : 122px;
+                text: badge.text;
+                tone: badge.tone;
+            }
+        }
+
+        curation_bar := Rectangle {
+            x: 24px;
+            y: 160px;
+            width: parent.width - 48px;
+            height: 82px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Labels";
+                color: Theme.ink;
                 font-size: 12px;
+                font-family: "Menlo";
+                font-weight: 700;
+            }
+
+            for label[index] in SessionsStore.session_labels : BadgeChip {
+                x: index < 5 ? 16px + index * 104px : 16px + (index - 5) * 104px;
+                y: index < 5 ? 34px : 60px;
+                text: label;
+                tone: "muted";
+                disabled: true;
+            }
+
+            Text {
+                x: 16px;
+                y: 58px;
+                text: "Tags";
+                color: Theme.ink;
+                font-size: 12px;
+                font-family: "Menlo";
+                font-weight: 700;
+            }
+
+            for tag[index] in SessionsStore.session_tags : BadgeChip {
+                x: index < 5 ? 64px + index * 104px : 64px + (index - 5) * 104px;
+                y: index < 5 ? 52px : 78px;
+                text: "#" + tag;
+                tone: "muted";
+                disabled: true;
+            }
+        }
+
+        context_panel := Rectangle {
+            x: 24px;
+            y: 254px;
+            width: parent.width - 48px;
+            height: 128px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Projection Metadata";
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            for row[index] in SessionsStore.session_context_rows : Text {
+                x: 16px;
+                y: 38px + index * 16px;
+                width: parent.width - 32px;
+                text: row.label + ": " + row.value;
+                color: Theme.muted;
+                font-size: 11px;
+                font-family: row.presentation == "copy" ? "Menlo" : "Inter";
+                overflow: elide;
+            }
+        }
+
+        provenance_panel := Rectangle {
+            x: 24px;
+            y: 394px;
+            width: parent.width - 48px;
+            height: 96px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Provenance";
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 16px;
+                y: 36px;
+                width: parent.width - 32px;
+                height: 48px;
+                text: SessionsStore.session_provenance_json == "" ? "No provenance JSON on the current projection." : SessionsStore.session_provenance_json;
+                color: Theme.muted;
+                font-size: 11px;
+                font-family: "Menlo";
+                wrap: word-wrap;
+                overflow: elide;
+            }
+        }
+
+        artifacts_panel := Rectangle {
+            x: 24px;
+            y: 502px;
+            width: parent.width * 0.34;
+            height: parent.height - 526px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Artifacts";
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            ListView {
+                x: 0;
+                y: 40px;
+                width: parent.width;
+                height: parent.height - 40px;
+
+                for row in SessionsStore.artifact_rows : Rectangle {
+                    height: 94px;
+                    width: parent.width;
+                    background: transparent;
+
+                    Text { x: 14px; y: 10px; width: parent.width - 28px; text: row.title; color: Theme.ink; font-size: 12px; font-weight: 700; overflow: elide; }
+                    Text { x: 14px; y: 30px; width: parent.width - 28px; text: row.meta; color: Theme.dim; font-size: 10px; font-family: "Menlo"; overflow: elide; }
+                    Text { x: 14px; y: 46px; width: parent.width - 28px; text: row.preview; color: Theme.muted; font-size: 11px; wrap: word-wrap; overflow: elide; }
+
+                    Rectangle {
+                        x: 0;
+                        y: parent.height - 1px;
+                        width: parent.width;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+            }
+        }
+
+        transcript_panel := Rectangle {
+            x: 24px + parent.width * 0.34 + 16px;
+            y: 502px;
+            width: parent.width - (40px + parent.width * 0.34 + 16px);
+            height: parent.height - 526px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Transcript";
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            ListView {
+                x: 0;
+                y: 40px;
+                width: parent.width;
+                height: parent.height - 40px;
+
+                for row in SessionsStore.transcript_rows : Rectangle {
+                    height: 96px;
+                    width: parent.width;
+                    background: transparent;
+
+                    Text {
+                        x: 14px;
+                        y: 10px;
+                        width: parent.width - 28px;
+                        text: row.role + " · " + row.message_kind + " · " + row.ordinal_text + " · " + row.timestamp_text;
+                        color: Theme.muted;
+                        font-size: 11px;
+                        font-family: "Menlo";
+                        overflow: elide;
+                    }
+
+                    Text {
+                        x: 14px;
+                        y: 30px;
+                        width: parent.width - 28px;
+                        text: row.body;
+                        color: Theme.ink;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+
+                    Rectangle {
+                        x: 0;
+                        y: parent.height - 1px;
+                        width: parent.width;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+            }
+        }
+
+        if SessionsStore.transcript_rows.length == 0 && SessionsStore.artifact_rows.length == 0 && SessionsStore.session_detail_empty_title != "" : Rectangle {
+            x: 24px;
+            y: 160px;
+            width: parent.width - 48px;
+            height: parent.height - 184px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 24px;
+                y: 24px;
+                text: SessionsStore.session_detail_empty_title;
+                color: Theme.ink;
+                font-size: 18px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 24px;
+                y: 56px;
+                width: parent.width - 48px;
+                text: SessionsStore.session_detail_empty_message;
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
             }
         }
     }

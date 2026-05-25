@@ -2,13 +2,14 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::view_models::{LogCardVm, LogDetailVm, LogFilter, LogsPageVm};
+use crate::view_models::{LogEntryVm, LogFilter, LogsPageVm};
 
 use super::{DesktopDataSource, matches_query, truncate_inline};
 
 #[derive(Clone, Debug)]
 struct LogRow {
     id: String,
+    kind: String,
     title: String,
     subtitle: String,
     summary: String,
@@ -53,31 +54,22 @@ impl DesktopDataSource {
         &self,
         filter: LogFilter,
         query: &str,
-        selected_log_id: Option<&str>,
+        expanded_log_id: Option<&str>,
     ) -> Result<LogsPageVm> {
         if !self.database_exists() {
             return Ok(LogsPageVm {
-                rows: Vec::new(),
-                detail: LogDetailVm {
-                    empty_message: match self.source_mode() {
-                        crate::config::SourceMode::RustOwned => {
-                            "Initialize or import into a Rust-owned Distill store to inspect sync and export history."
-                                .to_string()
-                        }
-                        crate::config::SourceMode::ElectronCompatReadOnly => {
-                            "Open a compatible Distill Electron database to inspect sync and export history."
-                                .to_string()
-                        }
-                    },
-                    ..LogDetailVm::default()
-                },
-                empty_title: "No log history".to_string(),
+                entries: Vec::new(),
+                summary_total_text: "0 entries".to_string(),
+                summary_error_text: "0 errors".to_string(),
+                summary_sync_text: "idle".to_string(),
+                empty_title: "No logs yet".to_string(),
                 empty_message: match self.source_mode() {
                     crate::config::SourceMode::RustOwned => {
-                        "The Rust-owned Distill store has not been initialized yet.".to_string()
+                        "Sync jobs and exports from the Rust-owned Distill store will appear here when present."
+                            .to_string()
                     }
                     crate::config::SourceMode::ElectronCompatReadOnly => {
-                        "This starter only reads from an existing Distill Electron home."
+                        "Open a compatible Distill Electron database to inspect sync and export history."
                             .to_string()
                     }
                 },
@@ -86,56 +78,53 @@ impl DesktopDataSource {
 
         let conn = self.open_read_only()?;
         let mut rows = self.load_log_rows(&conn)?;
+        rows.sort_by(|left, right| right.subtitle.cmp(&left.subtitle));
+        let total_count = rows.len();
+        let latest_sync_label = rows
+            .iter()
+            .find(|row| row.kind == "sync")
+            .map(|row| normalize_summary_sync_label(row))
+            .unwrap_or_else(|| "idle".to_string());
+        let error_count = rows.iter().filter(|row| row.level == "error").count();
+
         rows.retain(|row| {
             matches_log_filter(row, filter)
-                && matches_query(query, &[&row.title, &row.summary, &row.raw_json])
+                && matches_query(
+                    query,
+                    &[&row.title, &row.summary, &row.metrics, &row.raw_json],
+                )
         });
-        rows.sort_by(|left, right| right.subtitle.cmp(&left.subtitle));
 
-        let selected_id = selected_log_id
+        let expanded_id = expanded_log_id
             .filter(|candidate| rows.iter().any(|row| row.id == *candidate))
-            .map(ToOwned::to_owned)
-            .or_else(|| rows.first().map(|row| row.id.clone()));
+            .map(ToOwned::to_owned);
 
-        let detail = selected_id
-            .as_deref()
-            .and_then(|selected_id| rows.iter().find(|row| row.id == selected_id))
-            .map(|row| LogDetailVm {
-                title: row.title.clone(),
-                status: row.status.clone(),
-                summary: row.summary.clone(),
-                metrics: row.metrics.clone(),
-                raw_json: row.raw_json.clone(),
-                empty_message: String::new(),
-            })
-            .unwrap_or_else(|| LogDetailVm {
-                empty_message: "Select a log entry to inspect the raw sync or export payload."
-                    .to_string(),
-                ..LogDetailVm::default()
-            });
-
-        let list_rows = rows
+        let entries = rows
             .into_iter()
-            .map(|row| LogCardVm {
-                selected: selected_id.as_deref() == Some(row.id.as_str()),
+            .map(|row| LogEntryVm {
+                expanded: expanded_id.as_deref() == Some(row.id.as_str()),
                 id: row.id,
                 title: row.title,
                 subtitle: row.subtitle,
+                summary: row.summary,
                 status: row.status,
+                level: row.level,
+                metrics: row.metrics,
+                raw_json: row.raw_json,
             })
             .collect::<Vec<_>>();
 
-        let (empty_title, empty_message) = if list_rows.is_empty() {
+        let (empty_title, empty_message) = if entries.is_empty() {
             if query.trim().is_empty() && matches!(filter, LogFilter::All) {
                 (
                     "No logs yet".to_string(),
                     match self.source_mode() {
                         crate::config::SourceMode::RustOwned => {
-                            "Sync jobs and exports from the Rust-owned Distill store will appear here when present."
+                            "Sync and export activity will show up here once the Rust-owned Distill store has operational history."
                                 .to_string()
                         }
                         crate::config::SourceMode::ElectronCompatReadOnly => {
-                            "Sync jobs and exports from Distill Electron will appear here when present."
+                            "Sync and export activity will show up here once Distill Electron has operational history."
                                 .to_string()
                         }
                     },
@@ -143,7 +132,8 @@ impl DesktopDataSource {
             } else {
                 (
                     "No matching logs".to_string(),
-                    "Adjust the search text or filter lane.".to_string(),
+                    "Adjust the log search or filters to widen the current result set."
+                        .to_string(),
                 )
             }
         } else {
@@ -151,8 +141,10 @@ impl DesktopDataSource {
         };
 
         Ok(LogsPageVm {
-            rows: list_rows,
-            detail,
+            entries,
+            summary_total_text: format!("{total_count} entries"),
+            summary_error_text: format!("{error_count} errors"),
+            summary_sync_text: latest_sync_label,
             empty_title,
             empty_message,
         })
@@ -188,6 +180,7 @@ impl DesktopDataSource {
             );
             rows.push(LogRow {
                 id: format!("sync-{id}"),
+                kind: "sync".to_string(),
                 title: "Background sync".to_string(),
                 subtitle: updated_at.unwrap_or(created_at),
                 summary: payload.summary.clone().unwrap_or_else(|| {
@@ -237,6 +230,7 @@ impl DesktopDataSource {
                 .unwrap_or_else(|| "all".to_string());
             rows.push(LogRow {
                 id: format!("export-{id}"),
+                kind: "export".to_string(),
                 title: "Export".to_string(),
                 subtitle: created_at,
                 summary: format!("Exported {record_count} {dataset} records"),
@@ -279,11 +273,22 @@ fn normalize_sync_status(status: &str, payload: &JobPayload) -> String {
     }
 }
 
+fn normalize_summary_sync_label(row: &LogRow) -> String {
+    match row.status.as_str() {
+        "warning" => "sync warnings".to_string(),
+        "failed" => "sync failed".to_string(),
+        "running" => "syncing...".to_string(),
+        "queued" => "sync queued".to_string(),
+        "completed" => format!("synced {}", row.subtitle),
+        _ => row.status.clone(),
+    }
+}
+
 fn matches_log_filter(row: &LogRow, filter: LogFilter) -> bool {
     match filter {
         LogFilter::All => true,
-        LogFilter::Sync => row.id.starts_with("sync-"),
-        LogFilter::Export => row.id.starts_with("export-"),
+        LogFilter::Sync => row.kind == "sync",
+        LogFilter::Export => row.kind == "export",
         LogFilter::Errors => row.level == "error",
     }
 }

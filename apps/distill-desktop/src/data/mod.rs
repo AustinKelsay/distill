@@ -1,6 +1,8 @@
 mod db;
 mod logs;
 mod sessions;
+mod settings;
+mod shell;
 mod sql_guard;
 
 use std::path::{Path, PathBuf};
@@ -12,8 +14,8 @@ use serde_json::Value;
 
 use crate::compat::ElectronCompatStore;
 use crate::config::{DesktopRuntimeConfig, SourceMode};
-use crate::storage::RustStore;
-use crate::view_models::{AppSnapshotVm, KeyValueRowVm};
+use crate::storage::{RustStore, SyncReport};
+use crate::view_models::KeyValueRowVm;
 
 pub use sql_guard::guard_read_only_sql;
 
@@ -100,48 +102,13 @@ impl DesktopDataSource {
         }
     }
 
-    pub fn app_snapshot(&self) -> Result<AppSnapshotVm> {
-        let database_path = self.database_path();
-        let mut snapshot = AppSnapshotVm {
-            home_path: self.home_path().to_path_buf(),
-            database_path: database_path.clone(),
-            database_exists: self.database_exists(),
-            source_mode_label: self.source_mode().label().to_string(),
-            source_badge_text: self.source_mode().badge_text().to_string(),
-            app_status_text: match self.source_mode() {
-                SourceMode::RustOwned => "Rust-owned store ready".to_string(),
-                SourceMode::ElectronCompatReadOnly => "Read-only compatibility mode".to_string(),
-            },
-            ..AppSnapshotVm::default()
-        };
-
-        if !snapshot.database_exists {
-            snapshot.app_status_text = match self.source_mode() {
-                SourceMode::RustOwned => {
-                    format!("Rust store missing at {}", database_path.display())
-                }
-                SourceMode::ElectronCompatReadOnly => {
-                    format!(
-                        "Waiting for Distill Electron data at {}",
-                        database_path.display()
-                    )
-                }
-            };
-            return Ok(snapshot);
+    pub fn sync_now(&self, reason: &str) -> Result<SyncReport> {
+        match &self.backend {
+            DesktopBackend::RustOwned(store) => store.sync_now(reason),
+            DesktopBackend::ElectronCompat(_) => {
+                bail!("sync is unavailable in Electron compatibility mode")
+            }
         }
-
-        let conn = self.open_read_only()?;
-        snapshot.session_count = self.scalar_count(&conn, "SELECT COUNT(*) FROM sessions")?;
-        snapshot.log_count = self.scalar_count(
-            &conn,
-            "SELECT COUNT(*) FROM jobs WHERE job_type = 'sync_sources'",
-        )? + self.scalar_count(&conn, "SELECT COUNT(*) FROM exports")?;
-        snapshot.table_count = self.list_tables(&conn)?.len();
-        snapshot.app_status_text = format!(
-            "{} sessions, {} logs, {} tables",
-            snapshot.session_count, snapshot.log_count, snapshot.table_count
-        );
-        Ok(snapshot)
     }
 
     pub(super) fn open_read_only(&self) -> Result<Connection> {
@@ -434,7 +401,13 @@ mod tests {
             .load_sessions(SessionLane::TrainReady, "pipeline", None)
             .unwrap();
         assert_eq!(sessions.rows.len(), 1);
-        assert_eq!(sessions.rows[0].workflow_label, "Train Ready");
+        assert_eq!(
+            sessions.rows[0]
+                .workflow_badge
+                .as_ref()
+                .map(|badge| badge.text.as_str()),
+            Some("train")
+        );
     }
 
     #[test]
@@ -442,9 +415,9 @@ mod tests {
         let home = fixture_home();
         let detail = electron_source(home.path()).load_session_detail(1).unwrap();
         assert_eq!(detail.title, "Search Pipeline");
-        assert_eq!(detail.transcript_rows.len(), 3);
-        assert_eq!(detail.artifact_rows.len(), 1);
-        assert!(detail.tags_summary.contains("research"));
+        assert_eq!(detail.messages.len(), 3);
+        assert_eq!(detail.artifacts.len(), 1);
+        assert!(detail.tags.iter().any(|tag| tag == "research"));
     }
 
     #[test]
@@ -453,8 +426,8 @@ mod tests {
         let logs = electron_source(home.path())
             .load_logs(LogFilter::Sync, "", None)
             .unwrap();
-        assert_eq!(logs.rows.len(), 1);
-        assert!(logs.detail.summary.contains("Sync"));
+        assert_eq!(logs.entries.len(), 1);
+        assert!(logs.entries[0].summary.contains("Sync"));
     }
 
     #[test]
@@ -468,7 +441,7 @@ mod tests {
                 ..DbBrowseRequestVm::default()
             })
             .unwrap();
-        assert!(!browse.rows.is_empty());
+        assert!(!browse.result_rows.is_empty());
 
         let query = db
             .run_read_only_query("SELECT id, title FROM sessions")
@@ -517,7 +490,7 @@ mod tests {
                 ..DbBrowseRequestVm::default()
             })
             .unwrap();
-        assert!(!browse.rows.is_empty());
+        assert!(!browse.result_rows.is_empty());
     }
 
     #[test]

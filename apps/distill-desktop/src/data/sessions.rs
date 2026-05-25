@@ -4,14 +4,13 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::view_models::{
-    ArtifactRowVm, SessionDetailVm, SessionLane, SessionListRowVm, SessionWorkflowState,
-    SessionsPageVm, TranscriptRowVm,
+    ArtifactCardVm, DetailContextRowVm, SessionBadgeVm, SessionDetailVm, SessionLane,
+    SessionListRowVm, SessionWorkflowState, SessionsPageVm, TranscriptMessageVm,
 };
 
 use super::{
-    DesktopDataSource, derive_session_preview, derive_session_title, join_or_none, key_value,
-    matches_query, parse_json_object, prettify_source, push_if_some, truncate_inline,
-    uppercase_role,
+    DesktopDataSource, derive_session_preview, derive_session_title, matches_query,
+    parse_json_object, truncate_inline, uppercase_role,
 };
 
 #[derive(Clone, Debug)]
@@ -91,17 +90,15 @@ impl DesktopDataSource {
             return Ok(SessionsPageVm {
                 rows: Vec::new(),
                 empty_title: match self.source_mode() {
-                    crate::config::SourceMode::RustOwned => "Rust store unavailable".to_string(),
+                    crate::config::SourceMode::RustOwned => "No sessions yet".to_string(),
                     crate::config::SourceMode::ElectronCompatReadOnly => {
                         "No Distill data yet".to_string()
                     }
                 },
                 empty_message: match self.source_mode() {
                     crate::config::SourceMode::RustOwned => {
-                        format!(
-                            "Expected a Rust-owned Distill database at {}.",
-                            self.database_path().display()
-                        )
+                        "Sync Codex CLI or Claude Code into the Rust-owned store to populate this view."
+                            .to_string()
                     }
                     crate::config::SourceMode::ElectronCompatReadOnly => {
                         format!(
@@ -117,18 +114,22 @@ impl DesktopDataSource {
         let rows = self.list_sessions_from_db(&conn)?;
         let filtered = rows
             .into_iter()
-            .filter(|row| {
-                matches_session_lane(workflow_state_from_label(&row.workflow_label), lane)
-            })
+            .filter(|row| matches_session_lane(workflow_state_from_row(row), lane))
             .filter(|row| {
                 matches_query(
                     query,
-                    &[&row.title, &row.preview, &row.meta, &row.labels_summary],
+                    &[
+                        &row.title,
+                        &row.preview,
+                        &row.message_count_text,
+                        &row.updated_at_text,
+                        &row.git_branch_text,
+                    ],
                 )
             })
-            .map(|row| SessionListRowVm {
-                selected: Some(row.id) == selected_session_id,
-                ..row
+            .map(|mut row| {
+                row.selected = Some(row.id) == selected_session_id;
+                row
             })
             .collect::<Vec<_>>();
 
@@ -138,7 +139,7 @@ impl DesktopDataSource {
                     format!("No sessions in {}", lane.label()),
                     match self.source_mode() {
                         crate::config::SourceMode::RustOwned => {
-                            "Import or sync data into the Rust-owned Distill store to populate this view."
+                            "Sync local history into the Rust-owned Distill store to populate this workflow lane."
                                 .to_string()
                         }
                         crate::config::SourceMode::ElectronCompatReadOnly => {
@@ -149,8 +150,8 @@ impl DesktopDataSource {
                 )
             } else {
                 (
-                    "No matching sessions".to_string(),
-                    "Change the search text or switch lanes to widen the result set.".to_string(),
+                    "No sessions match the current search and workflow lane.".to_string(),
+                    "Adjust the search query or switch workflow lanes.".to_string(),
                 )
             }
         } else {
@@ -265,53 +266,55 @@ impl DesktopDataSource {
         let tags = self.load_tags(&conn, session_id)?;
         let labels = self.load_labels(&conn, session_id)?;
 
-        let mut metadata_lines = vec![
-            key_value("Source", prettify_source(&row.source_kind)),
-            key_value("External Session", row.external_session_id.as_str()),
-            key_value("Messages", &row.message_count.to_string()),
-            key_value("Raw Captures", &row.raw_capture_count.to_string()),
-            key_value("Artifacts", &row.artifact_count.to_string()),
+        let mut context_rows = vec![
+            DetailContextRowVm {
+                label: "External Session".to_string(),
+                value: row.external_session_id.clone(),
+                presentation: "copy".to_string(),
+            },
+            DetailContextRowVm {
+                label: "Raw Captures".to_string(),
+                value: row.raw_capture_count.to_string(),
+                presentation: "value".to_string(),
+            },
+            DetailContextRowVm {
+                label: "Messages".to_string(),
+                value: row.message_count.to_string(),
+                presentation: "value".to_string(),
+            },
+            DetailContextRowVm {
+                label: "Artifacts".to_string(),
+                value: row.artifact_count.to_string(),
+                presentation: "value".to_string(),
+            },
         ];
-        push_if_some(&mut metadata_lines, "Project", row.project_path.as_deref());
-        push_if_some(&mut metadata_lines, "Started", row.started_at.as_deref());
-        push_if_some(&mut metadata_lines, "Updated", row.updated_at.as_deref());
-        push_if_some(&mut metadata_lines, "Model", row.model.as_deref());
-        push_if_some(&mut metadata_lines, "Git Branch", row.git_branch.as_deref());
-        push_if_some(&mut metadata_lines, "Source URL", row.source_url.as_deref());
+        push_context_if_some(&mut context_rows, "Project", row.project_path.as_deref());
+        push_context_if_some(&mut context_rows, "Started", row.started_at.as_deref());
+        push_context_if_some(&mut context_rows, "Updated", row.updated_at.as_deref());
+        push_context_if_some(&mut context_rows, "Model", row.model.as_deref());
+        push_context_if_some(&mut context_rows, "Git Branch", row.git_branch.as_deref());
+        push_context_if_some(&mut context_rows, "Source URL", row.source_url.as_deref());
 
-        for (key, value) in metadata.into_iter().take(8) {
-            metadata_lines.push(key_value(
-                &format!("meta.{key}"),
-                &serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
-            ));
-        }
-
+        let secondary_badges = detail_badges(&row);
         let transcript_rows = messages
             .into_iter()
-            .map(|message| TranscriptRowVm {
-                heading: format!(
-                    "{} #{} · {}{}",
-                    uppercase_role(&message.role),
-                    message.ordinal,
-                    message
-                        .created_at
-                        .clone()
-                        .unwrap_or_else(|| "undated".to_string()),
-                    if message.message_kind == "meta" {
-                        " · meta"
-                    } else {
-                        ""
-                    }
-                ),
-                detail: message.text,
+            .map(|message| TranscriptMessageVm {
+                role: uppercase_role(&message.role),
+                message_kind: message.message_kind,
+                ordinal_text: format!("#{}", message.ordinal),
+                timestamp_text: message
+                    .created_at
+                    .unwrap_or_else(|| "undated".to_string()),
+                body: message.text,
             })
             .collect::<Vec<_>>();
-
-        let artifact_rows = artifacts
+        let artifact_cards = artifacts
             .into_iter()
-            .map(|artifact| ArtifactRowVm {
-                heading: artifact_summary(&artifact),
-                detail: artifact_detail(&artifact),
+            .map(|artifact| ArtifactCardVm {
+                title: artifact_summary(&artifact),
+                meta: artifact_meta(&artifact),
+                preview: artifact_preview(&artifact),
+                payload_json: artifact_payload_json(&artifact),
             })
             .collect::<Vec<_>>();
 
@@ -335,11 +338,19 @@ impl DesktopDataSource {
                 .unwrap_or_else(|| {
                     "No session summary is available for the current projection.".to_string()
                 }),
-            metadata_lines,
-            labels_summary: join_or_none(labels.iter().map(|row| row.name.as_str())),
-            tags_summary: join_or_none(tags.iter().map(|row| row.name.as_str())),
-            transcript_rows,
-            artifact_rows,
+            secondary_badges,
+            labels: labels.into_iter().map(|label| label.name).collect(),
+            tags: tags.into_iter().map(|tag| tag.name).collect(),
+            context_rows,
+            provenance_json: if metadata.is_empty() {
+                String::new()
+            } else {
+                serde_json::to_string_pretty(&metadata).unwrap_or_default()
+            },
+            messages: transcript_rows,
+            artifacts: artifact_cards,
+            export_enabled: false,
+            curation_enabled: false,
             empty_title: String::new(),
             empty_message,
         })
@@ -425,42 +436,28 @@ impl DesktopDataSource {
                 labels_summary: row.get(10)?,
             };
             let labels = split_labels_summary(item.labels_summary.as_deref());
+            let workflow_state = derive_workflow_state(&labels);
+            let title =
+                derive_session_title(item.title.as_deref(), item.first_user_text.as_deref());
             let preview = derive_session_preview(
                 item.first_assistant_text.as_deref(),
                 item.first_user_text.as_deref(),
             )
             .unwrap_or_else(|| "No assistant preview".to_string());
-            let mut meta_parts = Vec::new();
-            if let Some(updated_at) = item.updated_at.as_deref() {
-                meta_parts.push(updated_at.to_string());
-            }
-            if let Some(project_path) = item.project_path.as_deref() {
-                meta_parts.push(truncate_inline(project_path, 42));
-            }
-            if let Some(model) = item.model.as_deref() {
-                meta_parts.push(model.to_string());
-            }
-            if let Some(git_branch) = item.git_branch.as_deref() {
-                meta_parts.push(format!("git:{git_branch}"));
-            }
-            meta_parts.push(format!("{} msgs", item.message_count));
-            let workflow_state = derive_workflow_state(&labels);
-            let title =
-                derive_session_title(item.title.as_deref(), item.first_user_text.as_deref());
-            let labels_summary = join_or_none(labels.iter().map(|label| label.as_str()));
-            let token_count = preview.split_whitespace().count();
+
             sessions.push(SessionListRowVm {
                 id: item.id,
                 title,
                 preview,
-                meta: if token_count == 0 {
-                    meta_parts.join(" · ")
-                } else {
-                    format!("{} · {} tokens", meta_parts.join(" · "), token_count)
-                },
-                source_label: prettify_source(&item.source_kind).to_string(),
-                workflow_label: workflow_state.label().to_string(),
-                labels_summary,
+                source_badge: Some(source_badge_for_kind(&item.source_kind)),
+                workflow_badge: workflow_badge_for_state(workflow_state),
+                model_badge: item.model.as_ref().map(|model| SessionBadgeVm {
+                    text: model.clone(),
+                    tone: "muted".to_string(),
+                }),
+                message_count_text: format!("{} msgs", item.message_count),
+                updated_at_text: item.updated_at.unwrap_or_else(|| "undated".to_string()),
+                git_branch_text: item.git_branch.unwrap_or_default(),
                 selected: false,
             });
         }
@@ -564,6 +561,16 @@ impl DesktopDataSource {
     }
 }
 
+fn workflow_state_from_row(row: &SessionListRowVm) -> SessionWorkflowState {
+    match row.workflow_badge.as_ref().map(|badge| badge.text.as_str()) {
+        Some("review") => SessionWorkflowState::NeedsReview,
+        Some("train") => SessionWorkflowState::TrainReady,
+        Some("holdout") => SessionWorkflowState::HoldoutReady,
+        Some("favorite") => SessionWorkflowState::Favorite,
+        _ => SessionWorkflowState::Neutral,
+    }
+}
+
 fn split_labels_summary(raw: Option<&str>) -> Vec<String> {
     raw.unwrap_or_default()
         .split(',')
@@ -593,16 +600,6 @@ fn derive_workflow_state(labels: &[String]) -> SessionWorkflowState {
     }
 }
 
-fn workflow_state_from_label(label: &str) -> SessionWorkflowState {
-    match label {
-        "Needs Review" => SessionWorkflowState::NeedsReview,
-        "Train Ready" => SessionWorkflowState::TrainReady,
-        "Holdout Ready" => SessionWorkflowState::HoldoutReady,
-        "Favorite" => SessionWorkflowState::Favorite,
-        _ => SessionWorkflowState::Neutral,
-    }
-}
-
 fn matches_session_lane(workflow: SessionWorkflowState, lane: SessionLane) -> bool {
     match lane {
         SessionLane::All => true,
@@ -610,6 +607,80 @@ fn matches_session_lane(workflow: SessionWorkflowState, lane: SessionLane) -> bo
         SessionLane::TrainReady => matches!(workflow, SessionWorkflowState::TrainReady),
         SessionLane::HoldoutReady => matches!(workflow, SessionWorkflowState::HoldoutReady),
         SessionLane::Favorite => matches!(workflow, SessionWorkflowState::Favorite),
+    }
+}
+
+fn source_badge_for_kind(source_kind: &str) -> SessionBadgeVm {
+    SessionBadgeVm {
+        text: match source_kind {
+            "claude_code" => "claude".to_string(),
+            "opencode" => "opencode".to_string(),
+            _ => "codex".to_string(),
+        },
+        tone: match source_kind {
+            "claude_code" => "source_claude".to_string(),
+            "opencode" => "source_opencode".to_string(),
+            _ => "source_codex".to_string(),
+        },
+    }
+}
+
+fn workflow_badge_for_state(workflow: SessionWorkflowState) -> Option<SessionBadgeVm> {
+    let label = workflow.label();
+    if label.is_empty() {
+        None
+    } else {
+        Some(SessionBadgeVm {
+            text: label.to_string(),
+            tone: workflow.tone().to_string(),
+        })
+    }
+}
+
+fn detail_badges(row: &SessionDetailRow) -> Vec<SessionBadgeVm> {
+    let mut badges = vec![source_badge_for_kind(&row.source_kind)];
+    if let Some(model) = row.model.as_ref() {
+        badges.push(SessionBadgeVm {
+            text: model.clone(),
+            tone: "muted".to_string(),
+        });
+    }
+    badges.push(SessionBadgeVm {
+        text: format!("{} msgs", row.message_count),
+        tone: "muted".to_string(),
+    });
+    badges.push(SessionBadgeVm {
+        text: format!("{} artifacts", row.artifact_count),
+        tone: "muted".to_string(),
+    });
+    if let Some(branch) = row.git_branch.as_ref() {
+        badges.push(SessionBadgeVm {
+            text: format!("⌇ {branch}"),
+            tone: "muted".to_string(),
+        });
+    }
+    if let Some(project) = row.project_path.as_ref() {
+        badges.push(SessionBadgeVm {
+            text: truncate_inline(project, 32),
+            tone: "muted".to_string(),
+        });
+    }
+    if let Some(updated_at) = row.updated_at.as_ref() {
+        badges.push(SessionBadgeVm {
+            text: truncate_inline(updated_at, 24),
+            tone: "muted".to_string(),
+        });
+    }
+    badges
+}
+
+fn push_context_if_some(target: &mut Vec<DetailContextRowVm>, label: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        target.push(DetailContextRowVm {
+            label: label.to_string(),
+            value: value.to_string(),
+            presentation: "value".to_string(),
+        });
     }
 }
 
@@ -625,23 +696,25 @@ fn artifact_summary(row: &ArtifactRow) -> String {
     summary
 }
 
-fn artifact_detail(row: &ArtifactRow) -> String {
-    let payload = parse_json_object(Some(&row.metadata_json));
-    let payload_text =
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| row.metadata_json.clone());
+fn artifact_meta(row: &ArtifactRow) -> String {
     let mut parts = Vec::new();
     if let Some(created_at) = row.created_at.as_deref() {
-        parts.push(format!("created_at: {created_at}"));
+        parts.push(created_at.to_string());
     }
     if let Some(source_line_no) = row.source_line_no {
-        parts.push(format!("source_line: {source_line_no}"));
+        parts.push(format!("line {source_line_no}"));
     }
     if let Some(message_role) = row.message_role.as_deref() {
-        parts.push(format!("message_role: {message_role}"));
+        parts.push(message_role.to_string());
     }
-    if !parts.is_empty() {
-        parts.push(String::new());
-    }
-    parts.push(payload_text);
-    parts.join("\n")
+    parts.join(" · ")
+}
+
+fn artifact_payload_json(row: &ArtifactRow) -> String {
+    let payload = parse_json_object(Some(&row.metadata_json));
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| row.metadata_json.clone())
+}
+
+fn artifact_preview(row: &ArtifactRow) -> String {
+    truncate_inline(&artifact_payload_json(row).replace('\n', " "), 120)
 }

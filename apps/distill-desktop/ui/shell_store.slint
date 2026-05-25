@@ -1,0 +1,30 @@
+import { KeyValueRowData, ShellStatData, SourceRowData, ViewTabData } from "components.slint";
+
+export global ShellStore {
+    in property <[ViewTabData]> view_tabs;
+    in property <[ShellStatData]> shell_stats;
+    in property <[SourceRowData]> source_rows;
+    in property <bool> show_onboarding;
+    in property <string> onboarding_title;
+    in property <string> onboarding_message;
+    in property <string> sidebar_count_label;
+    in property <string> scanned_label;
+    in property <string> source_mode_text;
+    in property <string> source_badge_text;
+    in property <string> sync_status_text;
+    in property <string> sync_status_tone;
+    in property <string> sync_button_label;
+    in property <bool> sync_enabled;
+    in property <bool> sources_open;
+    in property <bool> settings_open;
+    in property <[KeyValueRowData]> settings_storage_rows;
+    in property <[KeyValueRowData]> settings_source_rows;
+    in property <[KeyValueRowData]> settings_sync_rows;
+    in property <[string]> settings_curation_labels;
+
+    callback view_selected(int);
+    callback sync_requested();
+    callback settings_open_requested();
+    callback settings_close_requested();
+    callback toggle_sources_requested();
+}

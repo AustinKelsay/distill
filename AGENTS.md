@@ -1,19 +1,11 @@
-# distill Agent Instructions
+# Distill Agent Instructions
 
-This repository is the umbrella monorepo for Distill desktop products.
+- `apps/distill-electron` is the shipped app; read `apps/distill-electron/AGENTS.md` and `apps/distill-electron/docs/README.md` before changing Electron behavior.
+- `apps/distill-desktop` is scaffold-first; follow its local docs for rebuild work.
+- Unless instructed otherwise, attempt to run the CodeRabbit CLI on unstaged changes before committing and pushing.
 
-## Repo Layout
-
-- `apps/distill-electron`: the current Electron application
-- `apps/distill-desktop`: the Rust rewrite scaffold
-
-## Canonical Docs
-
-For Electron app work, the authoritative docs and instructions live under:
-
-1. `apps/distill-electron/AGENTS.md`
-2. `apps/distill-electron/docs/README.md`
-
-Do not infer Electron behavior from implementation files before reading that app-local docs package.
-
-There is no canonical product spec package yet for `apps/distill-desktop`; treat it as scaffold-only unless new docs are added.
+## Engineering Principles
+**1. Think Before Coding**: State assumptions, surface uncertainty, and present tradeoffs.
+**2. Simplicity First**: Minimum code required. No speculative features or unnecessary abstractions.
+**3. Surgical Changes**: Touch only what is necessary. Match existing style.
+**4. Goal-Driven Execution**: Define success via verifiable tests/checks.

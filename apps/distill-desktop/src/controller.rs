@@ -7,13 +7,14 @@ use anyhow::{Context, Result};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::view_models::{
-    AppRoute, AppSnapshotVm, DbBrowseVm, DbExplorerVm, DbQueryVm, DbResultRowVm, DbTableVm,
-    LogCardVm, LogDetailVm, LogFilter, SessionDetailVm, SessionLane, SessionListRowVm,
+    AppRoute, AppSnapshotVm, DbBrowseVm, DbExplorerVm, DbGridRowVm, DbQueryVm, DbTab, DbTableVm,
+    LogEntryVm, LogFilter, SessionDetailVm, SessionLane, SessionListRowVm,
 };
 use crate::{
-    AppWindow, ArtifactRowData, DbResultRowData, DbStore, KeyValueRowData, LogRowData, LogsStore,
-    NavItemData, SessionLaneData, SessionListRowData, SessionsStore, TableRowData,
-    TranscriptRowData,
+    AppWindow, ArtifactCardData, DbColumnHeaderData, DbGridRowData, DbSchemaColumnData, DbStore,
+    DetailContextRowData, KeyValueRowData, LogEntryData, LogsStore, SessionBadgeData,
+    SessionLaneData, SessionListRowData, SessionsStore, ShellStatData, ShellStore, SourceRowData,
+    TableRowData, TranscriptMessageData, ViewTabData,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -33,7 +34,7 @@ impl Default for DesktopPreferences {
     fn default() -> Self {
         Self {
             route: AppRoute::Sessions,
-            sessions_width: 380.0,
+            sessions_width: 340.0,
             logs_width: 420.0,
             db_tables_width: 240.0,
             db_rows_width: 420.0,
@@ -66,8 +67,8 @@ impl Default for SessionsState {
             rows: Vec::new(),
             selected_id: None,
             detail: empty_session_detail(
-                "No session selected",
-                "Select a session from the left pane to inspect the current projection.",
+                "Select a session",
+                "Choose a conversation from the left to inspect the transcript, labels, tags, and artifacts.",
             ),
             empty_title: String::new(),
             empty_message: String::new(),
@@ -79,9 +80,11 @@ impl Default for SessionsState {
 struct LogsState {
     filter: LogFilter,
     query: String,
-    rows: Vec<LogCardVm>,
-    selected_id: Option<String>,
-    detail: LogDetailVm,
+    entries: Vec<LogEntryVm>,
+    expanded_id: Option<String>,
+    summary_total_text: String,
+    summary_error_text: String,
+    summary_sync_text: String,
     empty_title: String,
     empty_message: String,
 }
@@ -91,11 +94,11 @@ impl Default for LogsState {
         Self {
             filter: LogFilter::All,
             query: String::new(),
-            rows: Vec::new(),
-            selected_id: None,
-            detail: empty_log_detail(
-                "Select a log entry to inspect the raw sync or export payload.",
-            ),
+            entries: Vec::new(),
+            expanded_id: None,
+            summary_total_text: "0 entries".to_string(),
+            summary_error_text: "0 errors".to_string(),
+            summary_sync_text: "idle".to_string(),
             empty_title: String::new(),
             empty_message: String::new(),
         }
@@ -144,12 +147,12 @@ struct DbState {
     tables: Vec<DbTableVm>,
     selected_table_name: Option<String>,
     browse: DbBrowseVm,
-    selected_row_index: Option<usize>,
-    row_detail: String,
+    selected_row_key: Option<String>,
     filter: DbFilterState,
     sort: DbSortState,
     page: usize,
     query: DbQueryVm,
+    active_tab: DbTab,
 }
 
 impl Default for DbState {
@@ -158,8 +161,7 @@ impl Default for DbState {
             tables: Vec::new(),
             selected_table_name: Some("sessions".to_string()),
             browse: DbBrowseVm::default(),
-            selected_row_index: None,
-            row_detail: String::new(),
+            selected_row_key: None,
             filter: DbFilterState {
                 operator: "contains".to_string(),
                 ..DbFilterState::default()
@@ -167,6 +169,7 @@ impl Default for DbState {
             sort: DbSortState::default(),
             page: 1,
             query: default_db_query(),
+            active_tab: DbTab::Browse,
         }
     }
 }
@@ -175,12 +178,12 @@ impl Default for DbState {
 struct AppState {
     route: AppRoute,
     snapshot: AppSnapshotVm,
-    app_status_text: String,
-    source_badge_text: String,
     prefs: DesktopPreferences,
     sessions: SessionsState,
     logs: LogsState,
     db: DbState,
+    sources_open: bool,
+    settings_open: bool,
 }
 
 impl AppState {
@@ -192,18 +195,19 @@ impl AppState {
         Self {
             route: prefs.route,
             snapshot: AppSnapshotVm::default(),
-            app_status_text: "Starting native shell…".to_string(),
-            source_badge_text: "Desktop Native Shell".to_string(),
             sessions: SessionsState {
                 selected_id: prefs.selected_session_id,
+                query: String::new(),
                 ..SessionsState::default()
             },
             logs: LogsState {
-                selected_id: prefs.selected_log_id.clone(),
+                expanded_id: prefs.selected_log_id.clone(),
                 ..LogsState::default()
             },
             db,
             prefs,
+            sources_open: false,
+            settings_open: false,
         }
     }
 }
@@ -243,6 +247,21 @@ impl DesktopController {
         self.render();
     }
 
+    fn sync_or_reload(&mut self) {
+        if !self.state.snapshot.sync_status.enabled {
+            return;
+        }
+
+        match self.source.sync_now("manual_reload") {
+            Ok(_) => self.reload_all(),
+            Err(error) => {
+                self.load_snapshot();
+                self.state.snapshot.app_status_text = format!("sync: {error}");
+                self.render();
+            }
+        }
+    }
+
     fn switch_route(&mut self, route: AppRoute) {
         self.state.route = route;
         self.persist_preferences();
@@ -250,18 +269,8 @@ impl DesktopController {
     }
 
     fn update_global_search(&mut self, text: String) {
-        match self.state.route {
-            AppRoute::Sessions => {
-                self.state.sessions.query = text;
-                self.reload_sessions_state();
-            }
-            AppRoute::Logs => {
-                self.state.logs.query = text;
-                self.reload_logs_state();
-            }
-            AppRoute::Db => return,
-        }
-
+        self.state.sessions.query = text;
+        self.reload_sessions_state();
         self.persist_preferences();
         self.render();
     }
@@ -274,26 +283,32 @@ impl DesktopController {
     }
 
     fn select_session(&mut self, session_id: i64) {
-        if !self
-            .state
-            .sessions
-            .rows
-            .iter()
-            .any(|row| row.id == session_id)
-        {
+        if !self.state.sessions.rows.iter().any(|row| row.id == session_id) {
             return;
         }
 
         self.state.sessions.selected_id = Some(session_id);
-        mark_selected_session_rows(
-            &mut self.state.sessions.rows,
-            self.state.sessions.selected_id,
-        );
+        mark_selected_session_rows(&mut self.state.sessions.rows, self.state.sessions.selected_id);
         self.state.sessions.detail = self
             .source
             .load_session_detail(session_id)
             .unwrap_or_else(|error| error_session_detail(&error));
         self.persist_preferences();
+        self.render();
+    }
+
+    fn toggle_sources_panel(&mut self) {
+        self.state.sources_open = !self.state.sources_open;
+        self.render();
+    }
+
+    fn open_settings(&mut self) {
+        self.state.settings_open = true;
+        self.render();
+    }
+
+    fn close_settings(&mut self) {
+        self.state.settings_open = false;
         self.render();
     }
 
@@ -304,12 +319,19 @@ impl DesktopController {
         self.render();
     }
 
-    fn select_log(&mut self, log_id: String) {
-        if !self.state.logs.rows.iter().any(|row| row.id == log_id) {
-            return;
-        }
+    fn update_logs_search(&mut self, text: String) {
+        self.state.logs.query = text;
+        self.reload_logs_state();
+        self.persist_preferences();
+        self.render();
+    }
 
-        self.state.logs.selected_id = Some(log_id);
+    fn toggle_log_expanded(&mut self, log_id: String) {
+        self.state.logs.expanded_id = if self.state.logs.expanded_id.as_deref() == Some(log_id.as_str()) {
+            None
+        } else {
+            Some(log_id)
+        };
         self.reload_logs_state();
         self.persist_preferences();
         self.render();
@@ -386,23 +408,23 @@ impl DesktopController {
         self.render();
     }
 
-    fn select_db_row(&mut self, row_index: usize) {
+    fn select_db_row(&mut self, row_key: String) {
         if !self
             .state
             .db
             .browse
-            .rows
+            .result_rows
             .iter()
-            .any(|row| row.index == row_index)
+            .any(|row| row.key == row_key)
         {
             return;
         }
 
-        self.state.db.selected_row_index = Some(row_index);
+        self.state.db.selected_row_key = Some(row_key);
         reconcile_db_row_selection(
-            &mut self.state.db.browse.rows,
-            &mut self.state.db.selected_row_index,
-            &mut self.state.db.row_detail,
+            &mut self.state.db.browse.result_rows,
+            &mut self.state.db.selected_row_key,
+            &mut self.state.db.browse.row_detail,
         );
         self.persist_preferences();
         self.render();
@@ -428,6 +450,11 @@ impl DesktopController {
         self.render();
     }
 
+    fn switch_db_tab(&mut self, tab: DbTab) {
+        self.state.db.active_tab = tab;
+        self.render();
+    }
+
     fn adjust_split(&mut self, pane: PaneWidth, delta: i32) {
         let delta = delta as f32;
         match pane {
@@ -435,17 +462,13 @@ impl DesktopController {
                 self.state.prefs.sessions_width =
                     (self.state.prefs.sessions_width + delta).clamp(280.0, 520.0);
             }
-            PaneWidth::Logs => {
-                self.state.prefs.logs_width =
-                    (self.state.prefs.logs_width + delta).clamp(320.0, 620.0);
-            }
             PaneWidth::DbTables => {
                 self.state.prefs.db_tables_width =
                     (self.state.prefs.db_tables_width + delta).clamp(180.0, 360.0);
             }
             PaneWidth::DbRows => {
                 self.state.prefs.db_rows_width =
-                    (self.state.prefs.db_rows_width + delta).clamp(280.0, 640.0);
+                    (self.state.prefs.db_rows_width + delta).clamp(280.0, 680.0);
             }
         }
 
@@ -456,14 +479,21 @@ impl DesktopController {
     fn load_snapshot(&mut self) {
         match self.source.app_snapshot() {
             Ok(snapshot) => {
-                self.state.app_status_text = snapshot.app_status_text.clone();
-                self.state.source_badge_text = snapshot.source_badge_text.clone();
                 self.state.snapshot = snapshot;
             }
             Err(error) => {
-                self.state.snapshot = AppSnapshotVm::default();
-                self.state.app_status_text = format!("snapshot: {error}");
-                self.state.source_badge_text = "Desktop Native Shell".to_string();
+                self.state.snapshot = AppSnapshotVm {
+                    app_status_text: format!("snapshot: {error}"),
+                    source_badge_text: "Rust Desktop".to_string(),
+                    source_mode_label: self.source.source_mode().label().to_string(),
+                    sync_status: crate::view_models::SyncStatusVm {
+                        text: "unavailable".to_string(),
+                        tone: "warning".to_string(),
+                        enabled: false,
+                        button_label: "Sync".to_string(),
+                    },
+                    ..AppSnapshotVm::default()
+                };
             }
         }
     }
@@ -495,7 +525,7 @@ impl DesktopController {
                     };
             }
             Err(error) => {
-                self.state.app_status_text = format!("sessions: {error}");
+                self.state.snapshot.app_status_text = format!("sessions: {error}");
                 self.state.sessions.rows.clear();
                 self.state.sessions.selected_id = None;
                 self.state.sessions.empty_title = "Sessions unavailable".to_string();
@@ -510,29 +540,32 @@ impl DesktopController {
         match self.source.load_logs(
             self.state.logs.filter,
             &self.state.logs.query,
-            self.state.logs.selected_id.as_deref(),
+            self.state.logs.expanded_id.as_deref(),
         ) {
             Ok(page) => {
-                self.state.logs.rows = page.rows;
+                self.state.logs.summary_total_text = page.summary_total_text;
+                self.state.logs.summary_error_text = page.summary_error_text;
+                self.state.logs.summary_sync_text = page.summary_sync_text;
                 self.state.logs.empty_title = page.empty_title;
                 self.state.logs.empty_message = page.empty_message;
-                self.state.logs.selected_id = reconcile_log_selection(
-                    &mut self.state.logs.rows,
-                    self.state.logs.selected_id.take(),
-                );
-                self.state.logs.detail = if self.state.logs.selected_id.is_some() {
-                    page.detail
-                } else {
-                    empty_log_detail(&self.state.logs.empty_message)
-                };
+                self.state.logs.entries = page.entries;
+                self.state.logs.expanded_id = self
+                    .state
+                    .logs
+                    .entries
+                    .iter()
+                    .find(|entry| entry.expanded)
+                    .map(|entry| entry.id.clone());
             }
             Err(error) => {
-                self.state.app_status_text = format!("logs: {error}");
-                self.state.logs.rows.clear();
-                self.state.logs.selected_id = None;
+                self.state.snapshot.app_status_text = format!("logs: {error}");
+                self.state.logs.entries.clear();
+                self.state.logs.expanded_id = None;
+                self.state.logs.summary_total_text = "0 entries".to_string();
+                self.state.logs.summary_error_text = "0 errors".to_string();
+                self.state.logs.summary_sync_text = "unavailable".to_string();
                 self.state.logs.empty_title = "Logs unavailable".to_string();
                 self.state.logs.empty_message = error.to_string();
-                self.state.logs.detail = empty_log_detail(&error.to_string());
             }
         }
     }
@@ -544,15 +577,14 @@ impl DesktopController {
         {
             Ok(snapshot) => self.apply_db_snapshot(snapshot),
             Err(error) => {
-                self.state.app_status_text = format!("db: {error}");
+                self.state.snapshot.app_status_text = format!("db: {error}");
                 self.state.db.tables.clear();
                 self.state.db.selected_table_name = None;
                 self.state.db.browse = DbBrowseVm {
                     error: error.to_string(),
                     ..DbBrowseVm::default()
                 };
-                self.state.db.selected_row_index = None;
-                self.state.db.row_detail.clear();
+                self.state.db.selected_row_key = None;
             }
         }
     }
@@ -562,27 +594,24 @@ impl DesktopController {
         self.state.db.selected_table_name = snapshot.selected_table_name;
         if self.state.db.selected_table_name.is_none() {
             self.state.db.browse = DbBrowseVm::default();
-            self.state.db.selected_row_index = None;
-            self.state.db.row_detail.clear();
+            self.state.db.selected_row_key = None;
             return;
         }
 
         self.state.db.filter.column = choose_valid_value(
             self.state.db.filter.column.clone(),
-            &snapshot.browse.available_filter_columns,
+            &snapshot.browse.filter_columns,
         );
         if self.state.db.filter.operator.is_empty() {
             self.state.db.filter.operator = "contains".to_string();
         }
         self.state.db.sort.column = choose_valid_value(
             self.state.db.sort.column.clone(),
-            &snapshot.browse.available_sort_columns,
+            &snapshot.browse.sort_columns,
         );
         if self.state.db.sort.column.is_empty() {
-            self.state.db.sort.column = choose_valid_value(
-                snapshot.sort_column,
-                &snapshot.browse.available_sort_columns,
-            );
+            self.state.db.sort.column =
+                choose_valid_value(snapshot.sort_column, &snapshot.browse.sort_columns);
         }
         self.state.db.sort.direction = if snapshot.sort_direction.is_empty() {
             SortDirection::Desc
@@ -597,8 +626,7 @@ impl DesktopController {
     fn reload_db_browse(&mut self) {
         let Some(table_name) = self.state.db.selected_table_name.clone() else {
             self.state.db.browse = DbBrowseVm::default();
-            self.state.db.selected_row_index = None;
-            self.state.db.row_detail.clear();
+            self.state.db.selected_row_key = None;
             return;
         };
 
@@ -614,27 +642,26 @@ impl DesktopController {
             Ok(mut browse) => {
                 self.state.db.filter.column = choose_valid_value(
                     self.state.db.filter.column.clone(),
-                    &browse.available_filter_columns,
+                    &browse.filter_columns,
                 );
                 self.state.db.sort.column = choose_valid_value(
                     self.state.db.sort.column.clone(),
-                    &browse.available_sort_columns,
+                    &browse.sort_columns,
                 );
                 reconcile_db_row_selection(
-                    &mut browse.rows,
-                    &mut self.state.db.selected_row_index,
-                    &mut self.state.db.row_detail,
+                    &mut browse.result_rows,
+                    &mut self.state.db.selected_row_key,
+                    &mut browse.row_detail,
                 );
                 self.state.db.browse = browse;
             }
             Err(error) => {
-                self.state.app_status_text = format!("db: {error}");
+                self.state.snapshot.app_status_text = format!("db: {error}");
                 self.state.db.browse = DbBrowseVm {
                     error: error.to_string(),
                     ..DbBrowseVm::default()
                 };
-                self.state.db.selected_row_index = None;
-                self.state.db.row_detail.clear();
+                self.state.db.selected_row_key = None;
             }
         }
     }
@@ -647,46 +674,99 @@ impl DesktopController {
     }
 
     fn render_shell(&self) {
-        let data_path = if self.state.snapshot.database_exists {
-            self.state.snapshot.database_path.display().to_string()
-        } else {
-            self.state.snapshot.home_path.display().to_string()
-        };
-
         self.window.set_active_route(self.state.route.as_index());
         self.window
-            .set_app_status_text(self.state.app_status_text.clone().into());
-        self.window
-            .set_source_badge_text(self.state.source_badge_text.clone().into());
-        self.window
-            .set_source_mode_text(self.state.snapshot.source_mode_label.clone().into());
-        self.window.set_data_path_text(data_path.into());
-        self.window
-            .set_global_search(current_toolbar_search(&self.state).into());
+            .set_global_search(self.state.sessions.query.clone().into());
         self.window
             .set_sessions_list_width(self.state.prefs.sessions_width);
-        self.window.set_logs_list_width(self.state.prefs.logs_width);
         self.window
             .set_db_tables_width(self.state.prefs.db_tables_width);
         self.window
             .set_db_rows_width(self.state.prefs.db_rows_width);
 
-        let nav_items = vec![
-            NavItemData {
+        let shell_store = self.window.global::<ShellStore>();
+        let view_tabs = vec![
+            ViewTabData {
                 label: SharedString::from("Sessions"),
                 selected: matches!(self.state.route, AppRoute::Sessions),
             },
-            NavItemData {
-                label: SharedString::from("Logs"),
-                selected: matches!(self.state.route, AppRoute::Logs),
-            },
-            NavItemData {
+            ViewTabData {
                 label: SharedString::from("DB"),
                 selected: matches!(self.state.route, AppRoute::Db),
             },
+            ViewTabData {
+                label: SharedString::from("Logs"),
+                selected: matches!(self.state.route, AppRoute::Logs),
+            },
         ];
-        self.window
-            .set_nav_items(ModelRc::new(VecModel::from(nav_items)));
+        shell_store.set_view_tabs(ModelRc::new(VecModel::from(view_tabs)));
+
+        let shell_stats = self
+            .state
+            .snapshot
+            .shell_stats
+            .iter()
+            .map(|stat| ShellStatData {
+                label: stat.label.clone().into(),
+                value: stat.value.clone().into(),
+            })
+            .collect::<Vec<_>>();
+        shell_store.set_shell_stats(ModelRc::new(VecModel::from(shell_stats)));
+
+        let source_rows = self
+            .state
+            .snapshot
+            .source_rows
+            .iter()
+            .map(|row| SourceRowData {
+                display_name: row.display_name.clone().into(),
+                status_text: row.status_text.clone().into(),
+                status_tone: row.status_tone.clone().into(),
+                data_root: row.data_root.clone().into(),
+                checks_summary: summarize_source_checks(row).into(),
+                is_stub: row.is_stub,
+            })
+            .collect::<Vec<_>>();
+        shell_store.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
+
+        shell_store.set_show_onboarding(self.state.snapshot.show_onboarding);
+        shell_store.set_onboarding_title(self.state.snapshot.onboarding_title.clone().into());
+        shell_store.set_onboarding_message(self.state.snapshot.onboarding_message.clone().into());
+        shell_store.set_sidebar_count_label(self.state.snapshot.sidebar_count_label.clone().into());
+        shell_store.set_scanned_label(self.state.snapshot.scanned_at_label.clone().into());
+        shell_store.set_source_mode_text(self.state.snapshot.source_mode_label.clone().into());
+        shell_store.set_source_badge_text(self.state.snapshot.source_badge_text.clone().into());
+        shell_store.set_sync_status_text(self.state.snapshot.sync_status.text.clone().into());
+        shell_store.set_sync_status_tone(self.state.snapshot.sync_status.tone.clone().into());
+        shell_store.set_sync_button_label(self.state.snapshot.sync_status.button_label.clone().into());
+        shell_store.set_sync_enabled(self.state.snapshot.sync_status.enabled);
+        shell_store.set_sources_open(self.state.sources_open);
+        shell_store.set_settings_open(self.state.settings_open);
+
+        let storage_rows = settings_section_rows(&self.state.snapshot, "Storage")
+            .into_iter()
+            .map(to_key_value_data)
+            .collect::<Vec<_>>();
+        shell_store.set_settings_storage_rows(ModelRc::new(VecModel::from(storage_rows)));
+        let source_setting_rows = settings_section_rows(&self.state.snapshot, "Sources")
+            .into_iter()
+            .map(to_key_value_data)
+            .collect::<Vec<_>>();
+        shell_store.set_settings_source_rows(ModelRc::new(VecModel::from(source_setting_rows)));
+        let sync_rows = settings_section_rows(&self.state.snapshot, "Sync")
+            .into_iter()
+            .map(to_key_value_data)
+            .collect::<Vec<_>>();
+        shell_store.set_settings_sync_rows(ModelRc::new(VecModel::from(sync_rows)));
+        let curation_labels = self
+            .state
+            .snapshot
+            .settings
+            .labels
+            .iter()
+            .map(|label| SharedString::from(label.as_str()))
+            .collect::<Vec<_>>();
+        shell_store.set_settings_curation_labels(ModelRc::new(VecModel::from(curation_labels)));
     }
 
     fn render_sessions(&self) {
@@ -709,37 +789,103 @@ impl DesktopController {
                 id: row.id as i32,
                 title: row.title.clone().into(),
                 preview: row.preview.clone().into(),
-                meta: row.meta.clone().into(),
-                source_label: row.source_label.clone().into(),
-                workflow_label: row.workflow_label.clone().into(),
-                labels_summary: row.labels_summary.clone().into(),
+                source_badge_text: row
+                    .source_badge
+                    .as_ref()
+                    .map(|badge| badge.text.clone())
+                    .unwrap_or_default()
+                    .into(),
+                source_badge_tone: row
+                    .source_badge
+                    .as_ref()
+                    .map(|badge| badge.tone.clone())
+                    .unwrap_or_default()
+                    .into(),
+                workflow_badge_text: row
+                    .workflow_badge
+                    .as_ref()
+                    .map(|badge| badge.text.clone())
+                    .unwrap_or_default()
+                    .into(),
+                workflow_badge_tone: row
+                    .workflow_badge
+                    .as_ref()
+                    .map(|badge| badge.tone.clone())
+                    .unwrap_or_default()
+                    .into(),
+                model_badge_text: row
+                    .model_badge
+                    .as_ref()
+                    .map(|badge| badge.text.clone())
+                    .unwrap_or_default()
+                    .into(),
+                message_count_text: row.message_count_text.clone().into(),
+                updated_at_text: row.updated_at_text.clone().into(),
+                git_branch_text: row.git_branch_text.clone().into(),
                 selected: row.selected,
             })
             .collect::<Vec<_>>();
         sessions_store.set_session_rows(ModelRc::new(VecModel::from(rows)));
 
-        let metadata_rows = self
+        let secondary_badges = self
             .state
             .sessions
             .detail
-            .metadata_lines
+            .secondary_badges
             .iter()
-            .map(|row| KeyValueRowData {
-                key: row.key.clone().into(),
-                value: row.value.clone().into(),
+            .map(|badge| SessionBadgeData {
+                text: badge.text.clone().into(),
+                tone: badge.tone.clone().into(),
             })
             .collect::<Vec<_>>();
-        sessions_store.set_session_metadata_rows(ModelRc::new(VecModel::from(metadata_rows)));
+        sessions_store.set_session_secondary_badges(ModelRc::new(VecModel::from(secondary_badges)));
+
+        let labels = self
+            .state
+            .sessions
+            .detail
+            .labels
+            .iter()
+            .map(|value| SharedString::from(value.as_str()))
+            .collect::<Vec<_>>();
+        sessions_store.set_session_labels(ModelRc::new(VecModel::from(labels)));
+
+        let tags = self
+            .state
+            .sessions
+            .detail
+            .tags
+            .iter()
+            .map(|value| SharedString::from(value.as_str()))
+            .collect::<Vec<_>>();
+        sessions_store.set_session_tags(ModelRc::new(VecModel::from(tags)));
+
+        let context_rows = self
+            .state
+            .sessions
+            .detail
+            .context_rows
+            .iter()
+            .map(|row| DetailContextRowData {
+                label: row.label.clone().into(),
+                value: row.value.clone().into(),
+                presentation: row.presentation.clone().into(),
+            })
+            .collect::<Vec<_>>();
+        sessions_store.set_session_context_rows(ModelRc::new(VecModel::from(context_rows)));
 
         let transcript_rows = self
             .state
             .sessions
             .detail
-            .transcript_rows
+            .messages
             .iter()
-            .map(|row| TranscriptRowData {
-                heading: row.heading.clone().into(),
-                detail: row.detail.clone().into(),
+            .map(|row| TranscriptMessageData {
+                role: row.role.clone().into(),
+                message_kind: row.message_kind.clone().into(),
+                ordinal_text: row.ordinal_text.clone().into(),
+                timestamp_text: row.timestamp_text.clone().into(),
+                body: row.body.clone().into(),
             })
             .collect::<Vec<_>>();
         sessions_store.set_transcript_rows(ModelRc::new(VecModel::from(transcript_rows)));
@@ -748,30 +894,26 @@ impl DesktopController {
             .state
             .sessions
             .detail
-            .artifact_rows
+            .artifacts
             .iter()
-            .map(|row| ArtifactRowData {
-                heading: row.heading.clone().into(),
-                detail: row.detail.clone().into(),
+            .map(|row| ArtifactCardData {
+                title: row.title.clone().into(),
+                meta: row.meta.clone().into(),
+                preview: row.preview.clone().into(),
+                payload_json: row.payload_json.clone().into(),
             })
             .collect::<Vec<_>>();
         sessions_store.set_artifact_rows(ModelRc::new(VecModel::from(artifact_rows)));
 
         sessions_store.set_sessions_empty_title(self.state.sessions.empty_title.clone().into());
         sessions_store.set_sessions_empty_message(self.state.sessions.empty_message.clone().into());
-        let detail_title = match self.state.sessions.detail.id {
-            Some(id) if !self.state.sessions.detail.title.is_empty() => {
-                format!("{} · #{}", self.state.sessions.detail.title, id)
-            }
-            _ => self.state.sessions.detail.title.clone(),
-        };
-        sessions_store.set_session_detail_title(detail_title.into());
+        sessions_store.set_session_detail_title(self.state.sessions.detail.title.clone().into());
         sessions_store
             .set_session_detail_summary(self.state.sessions.detail.summary.clone().into());
         sessions_store
-            .set_session_detail_labels(self.state.sessions.detail.labels_summary.clone().into());
-        sessions_store
-            .set_session_detail_tags(self.state.sessions.detail.tags_summary.clone().into());
+            .set_session_provenance_json(self.state.sessions.detail.provenance_json.clone().into());
+        sessions_store.set_export_enabled(self.state.sessions.detail.export_enabled);
+        sessions_store.set_curation_enabled(self.state.sessions.detail.curation_enabled);
         sessions_store
             .set_session_detail_empty_title(self.state.sessions.detail.empty_title.clone().into());
         sessions_store.set_session_detail_empty_message(
@@ -781,30 +923,31 @@ impl DesktopController {
 
     fn render_logs(&self) {
         let logs_store = self.window.global::<LogsStore>();
-        let rows = self
+        let entries = self
             .state
             .logs
-            .rows
+            .entries
             .iter()
-            .map(|row| LogRowData {
+            .map(|row| LogEntryData {
                 id: row.id.clone().into(),
                 title: row.title.clone().into(),
                 subtitle: row.subtitle.clone().into(),
+                summary: row.summary.clone().into(),
                 status: row.status.clone().into(),
-                selected: row.selected,
+                level: row.level.clone().into(),
+                metrics: row.metrics.clone().into(),
+                raw_json: row.raw_json.clone().into(),
+                expanded: row.expanded,
             })
             .collect::<Vec<_>>();
-        logs_store.set_log_rows(ModelRc::new(VecModel::from(rows)));
+        logs_store.set_log_entries(ModelRc::new(VecModel::from(entries)));
         logs_store.set_logs_empty_title(self.state.logs.empty_title.clone().into());
         logs_store.set_logs_empty_message(self.state.logs.empty_message.clone().into());
-        logs_store.set_log_detail_title(self.state.logs.detail.title.clone().into());
-        logs_store.set_log_detail_status(self.state.logs.detail.status.clone().into());
-        logs_store.set_log_detail_summary(self.state.logs.detail.summary.clone().into());
-        logs_store.set_log_detail_metrics(self.state.logs.detail.metrics.clone().into());
-        logs_store.set_log_detail_raw_json(self.state.logs.detail.raw_json.clone().into());
-        logs_store
-            .set_log_detail_empty_message(self.state.logs.detail.empty_message.clone().into());
+        logs_store.set_summary_total_text(self.state.logs.summary_total_text.clone().into());
+        logs_store.set_summary_error_text(self.state.logs.summary_error_text.clone().into());
+        logs_store.set_summary_sync_text(self.state.logs.summary_sync_text.clone().into());
         logs_store.set_active_log_filter(self.state.logs.filter.as_index());
+        logs_store.set_logs_search_text(self.state.logs.query.clone().into());
     }
 
     fn render_db(&self) {
@@ -822,14 +965,46 @@ impl DesktopController {
             .collect::<Vec<_>>();
         db_store.set_db_tables(ModelRc::new(VecModel::from(tables)));
 
+        let schema_columns = self
+            .state
+            .db
+            .browse
+            .schema_columns
+            .iter()
+            .map(|column| DbSchemaColumnData {
+                name: column.name.clone().into(),
+                type_label: column.type_label.clone().into(),
+                flags_text: column.flags_text.clone().into(),
+                hidden: column.hidden,
+            })
+            .collect::<Vec<_>>();
+        db_store.set_db_schema_columns(ModelRc::new(VecModel::from(schema_columns)));
+
+        let headers = self
+            .state
+            .db
+            .browse
+            .result_columns
+            .iter()
+            .map(|column| DbColumnHeaderData {
+                name: column.name.clone().into(),
+                type_label: column.type_label.clone().into(),
+            })
+            .collect::<Vec<_>>();
+        db_store.set_db_column_headers(ModelRc::new(VecModel::from(headers)));
+
         let result_rows = self
             .state
             .db
             .browse
-            .rows
+            .result_rows
             .iter()
-            .map(|row| DbResultRowData {
-                index: row.index as i32,
+            .map(|row| DbGridRowData {
+                key: row.key.clone().into(),
+                col1: row.cells.first().cloned().unwrap_or_default().into(),
+                col2: row.cells.get(1).cloned().unwrap_or_default().into(),
+                col3: row.cells.get(2).cloned().unwrap_or_default().into(),
+                col4: row.cells.get(3).cloned().unwrap_or_default().into(),
                 preview: row.preview.clone().into(),
                 selected: row.selected,
             })
@@ -840,7 +1015,7 @@ impl DesktopController {
             .state
             .db
             .browse
-            .available_filter_columns
+            .filter_columns
             .iter()
             .map(|value| SharedString::from(value.as_str()))
             .collect::<Vec<_>>();
@@ -850,7 +1025,7 @@ impl DesktopController {
             .state
             .db
             .browse
-            .available_sort_columns
+            .sort_columns
             .iter()
             .map(|value| SharedString::from(value.as_str()))
             .collect::<Vec<_>>();
@@ -882,34 +1057,26 @@ impl DesktopController {
             .collect::<Vec<_>>();
         db_store.set_db_sort_direction_options(ModelRc::new(VecModel::from(sort_dirs)));
 
-        let summary = if self.state.db.browse.columns.is_empty() {
-            self.state.db.browse.summary.clone()
-        } else {
-            format!(
-                "{} · {} columns",
-                self.state.db.browse.summary,
-                self.state.db.browse.columns.len()
-            )
-        };
-        db_store.set_db_summary(summary.into());
+        db_store.set_db_summary(self.state.db.browse.summary.clone().into());
         db_store.set_db_error(self.state.db.browse.error.clone().into());
-        db_store.set_db_row_detail(self.state.db.row_detail.clone().into());
+        db_store.set_db_row_detail(self.state.db.browse.row_detail.clone().into());
         db_store.set_db_filter_column(self.state.db.filter.column.clone().into());
         db_store.set_db_filter_value(self.state.db.filter.value.clone().into());
         db_store.set_db_filter_operator(self.state.db.filter.operator.clone().into());
         db_store.set_db_sort_column(self.state.db.sort.column.clone().into());
         db_store.set_db_sort_direction(self.state.db.sort.direction.as_str().into());
-        db_store.set_db_page_label(format!("Page {}", self.state.db.page.max(1)).into());
+        db_store.set_db_page_label(self.state.db.browse.page_label.clone().into());
         db_store.set_db_query_sql(self.state.db.query.sql.clone().into());
         db_store.set_db_query_summary(self.state.db.query.summary.clone().into());
         db_store.set_db_query_preview(self.state.db.query.preview.clone().into());
         db_store.set_db_query_error(self.state.db.query.error.clone().into());
+        db_store.set_db_active_tab(self.state.db.active_tab.as_index());
     }
 
     fn persist_preferences(&mut self) {
         self.state.prefs.route = self.state.route;
         self.state.prefs.selected_session_id = self.state.sessions.selected_id;
-        self.state.prefs.selected_log_id = self.state.logs.selected_id.clone();
+        self.state.prefs.selected_log_id = self.state.logs.expanded_id.clone();
         self.state.prefs.selected_table_name = self.state.db.selected_table_name.clone();
         self.state.prefs.db_query_sql = self.state.db.query.sql.clone();
         let _ = save_preferences(&self.prefs_path, &self.state.prefs);
@@ -919,7 +1086,6 @@ impl DesktopController {
 #[derive(Clone, Copy, Debug)]
 enum PaneWidth {
     Sessions,
-    Logs,
     DbTables,
     DbRows,
 }
@@ -932,13 +1098,14 @@ enum PageDelta {
 
 fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
     let window = controller.borrow().window.clone_strong();
+    let shell_store = window.global::<ShellStore>();
     let sessions_store = window.global::<SessionsStore>();
     let logs_store = window.global::<LogsStore>();
     let db_store = window.global::<DbStore>();
 
     {
         let controller = Rc::downgrade(controller);
-        window.on_nav_selected(move |index| {
+        shell_store.on_view_selected(move |index| {
             if let Some(controller) = controller.upgrade() {
                 controller
                     .borrow_mut()
@@ -949,22 +1116,36 @@ fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
 
     {
         let controller = Rc::downgrade(controller);
-        window.on_reload_requested(move || {
+        shell_store.on_sync_requested(move || {
             if let Some(controller) = controller.upgrade() {
-                controller.borrow_mut().reload_all();
+                controller.borrow_mut().sync_or_reload();
             }
         });
     }
 
     {
         let controller = Rc::downgrade(controller);
-        window.on_settings_requested(move || {
+        shell_store.on_settings_open_requested(move || {
             if let Some(controller) = controller.upgrade() {
-                let mut controller = controller.borrow_mut();
-                controller.state.app_status_text =
-                    "Settings persistence is wired, but the settings panel is not yet implemented."
-                        .to_string();
-                controller.render();
+                controller.borrow_mut().open_settings();
+            }
+        });
+    }
+
+    {
+        let controller = Rc::downgrade(controller);
+        shell_store.on_settings_close_requested(move || {
+            if let Some(controller) = controller.upgrade() {
+                controller.borrow_mut().close_settings();
+            }
+        });
+    }
+
+    {
+        let controller = Rc::downgrade(controller);
+        shell_store.on_toggle_sources_requested(move || {
+            if let Some(controller) = controller.upgrade() {
+                controller.borrow_mut().toggle_sources_panel();
             }
         });
     }
@@ -1013,18 +1194,18 @@ fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
 
     {
         let controller = Rc::downgrade(controller);
-        logs_store.on_log_selected(move |index| {
+        logs_store.on_logs_search_edited(move |value| {
             if let Some(controller) = controller.upgrade() {
-                let selected = controller
-                    .borrow()
-                    .state
-                    .logs
-                    .rows
-                    .get(index as usize)
-                    .map(|row| row.id.clone());
-                if let Some(log_id) = selected {
-                    controller.borrow_mut().select_log(log_id);
-                }
+                controller.borrow_mut().update_logs_search(value.to_string());
+            }
+        });
+    }
+
+    {
+        let controller = Rc::downgrade(controller);
+        logs_store.on_log_toggled(move |id| {
+            if let Some(controller) = controller.upgrade() {
+                controller.borrow_mut().toggle_log_expanded(id.to_string());
             }
         });
     }
@@ -1049,9 +1230,9 @@ fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
 
     {
         let controller = Rc::downgrade(controller);
-        db_store.on_db_result_row_selected(move |index| {
+        db_store.on_db_result_row_selected(move |key| {
             if let Some(controller) = controller.upgrade() {
-                controller.borrow_mut().select_db_row(index as usize);
+                controller.borrow_mut().select_db_row(key.to_string());
             }
         });
     }
@@ -1167,20 +1348,20 @@ fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
 
     {
         let controller = Rc::downgrade(controller);
-        sessions_store.on_adjust_sessions_width(move |delta| {
+        db_store.on_db_tab_selected(move |index| {
             if let Some(controller) = controller.upgrade() {
-                controller
-                    .borrow_mut()
-                    .adjust_split(PaneWidth::Sessions, delta);
+                controller.borrow_mut().switch_db_tab(DbTab::from_index(index));
             }
         });
     }
 
     {
         let controller = Rc::downgrade(controller);
-        logs_store.on_adjust_logs_width(move |delta| {
+        sessions_store.on_adjust_sessions_width(move |delta| {
             if let Some(controller) = controller.upgrade() {
-                controller.borrow_mut().adjust_split(PaneWidth::Logs, delta);
+                controller
+                    .borrow_mut()
+                    .adjust_split(PaneWidth::Sessions, delta);
             }
         });
     }
@@ -1208,14 +1389,6 @@ fn bind_callbacks(controller: &Rc<RefCell<DesktopController>>) {
     }
 }
 
-fn current_toolbar_search(state: &AppState) -> String {
-    match state.route {
-        AppRoute::Sessions => state.sessions.query.clone(),
-        AppRoute::Logs => state.logs.query.clone(),
-        AppRoute::Db => String::new(),
-    }
-}
-
 fn reconcile_session_selection(rows: &mut [SessionListRowVm], current: Option<i64>) -> Option<i64> {
     let selected_id = current
         .filter(|candidate| rows.iter().any(|row| row.id == *candidate))
@@ -1230,32 +1403,24 @@ fn mark_selected_session_rows(rows: &mut [SessionListRowVm], selected_id: Option
     }
 }
 
-fn reconcile_log_selection(rows: &mut [LogCardVm], current: Option<String>) -> Option<String> {
-    let selected_id = current
-        .filter(|candidate| rows.iter().any(|row| row.id == *candidate))
-        .or_else(|| rows.first().map(|row| row.id.clone()));
-    for row in rows {
-        row.selected = selected_id.as_deref() == Some(row.id.as_str());
-    }
-    selected_id
-}
-
 fn reconcile_db_row_selection(
-    rows: &mut [DbResultRowVm],
-    selected_row_index: &mut Option<usize>,
+    rows: &mut [DbGridRowVm],
+    selected_row_key: &mut Option<String>,
     row_detail: &mut String,
 ) {
-    *selected_row_index = selected_row_index
-        .filter(|candidate| rows.iter().any(|row| row.index == *candidate))
-        .or_else(|| rows.first().map(|row| row.index));
+    *selected_row_key = selected_row_key
+        .as_ref()
+        .filter(|candidate| rows.iter().any(|row| row.key == **candidate))
+        .cloned()
+        .or_else(|| rows.first().map(|row| row.key.clone()));
 
     for row in rows.iter_mut() {
-        row.selected = Some(row.index) == *selected_row_index;
+        row.selected = selected_row_key.as_deref() == Some(row.key.as_str());
     }
 
     *row_detail = rows
         .iter()
-        .find(|row| Some(row.index) == *selected_row_index)
+        .find(|row| selected_row_key.as_deref() == Some(row.key.as_str()))
         .map(|row| row.detail.clone())
         .unwrap_or_default();
 }
@@ -1296,10 +1461,32 @@ fn error_session_detail(error: &anyhow::Error) -> SessionDetailVm {
     }
 }
 
-fn empty_log_detail(message: &str) -> LogDetailVm {
-    LogDetailVm {
-        empty_message: message.to_string(),
-        ..LogDetailVm::default()
+fn summarize_source_checks(row: &crate::view_models::SourceRowVm) -> String {
+    if row.checks.is_empty() {
+        return "No checks available".to_string();
+    }
+
+    row.checks
+        .iter()
+        .map(|check| format!("{}: {}", check.label, check.state_text))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn settings_section_rows(snapshot: &AppSnapshotVm, title: &str) -> Vec<crate::view_models::KeyValueRowVm> {
+    snapshot
+        .settings
+        .sections
+        .iter()
+        .find(|section| section.title == title)
+        .map(|section| section.rows.clone())
+        .unwrap_or_default()
+}
+
+fn to_key_value_data(row: crate::view_models::KeyValueRowVm) -> KeyValueRowData {
+    KeyValueRowData {
+        key: row.key.into(),
+        value: row.value.into(),
     }
 }
 
@@ -1327,8 +1514,8 @@ fn save_preferences(path: &std::path::Path, prefs: &DesktopPreferences) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::{reconcile_db_row_selection, reconcile_log_selection, reconcile_session_selection};
-    use crate::view_models::{DbResultRowVm, LogCardVm, SessionListRowVm};
+    use super::{reconcile_db_row_selection, reconcile_session_selection};
+    use crate::view_models::{DbGridRowVm, SessionListRowVm};
 
     #[test]
     fn session_selection_falls_back_to_first_visible_row() {
@@ -1351,23 +1538,14 @@ mod tests {
     }
 
     #[test]
-    fn log_selection_clears_when_no_rows_remain() {
-        let mut rows = Vec::<LogCardVm>::new();
-
-        let selected = reconcile_log_selection(&mut rows, Some("sync-9".to_string()));
-
-        assert_eq!(selected, None);
-    }
-
-    #[test]
     fn db_row_selection_clears_stale_detail_when_rows_disappear() {
-        let mut rows = Vec::<DbResultRowVm>::new();
-        let mut selected_row_index = Some(4);
+        let mut rows = Vec::<DbGridRowVm>::new();
+        let mut selected_row_key = Some("row-4".to_string());
         let mut row_detail = "stale".to_string();
 
-        reconcile_db_row_selection(&mut rows, &mut selected_row_index, &mut row_detail);
+        reconcile_db_row_selection(&mut rows, &mut selected_row_key, &mut row_detail);
 
-        assert_eq!(selected_row_index, None);
+        assert_eq!(selected_row_key, None);
         assert!(row_detail.is_empty());
     }
 }
