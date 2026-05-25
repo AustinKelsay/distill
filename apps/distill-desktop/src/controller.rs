@@ -85,6 +85,7 @@ struct LogsState {
     summary_total_text: String,
     summary_error_text: String,
     summary_sync_text: String,
+    summary_sync_tone: String,
     empty_title: String,
     empty_message: String,
 }
@@ -99,6 +100,7 @@ impl Default for LogsState {
             summary_total_text: "0 entries".to_string(),
             summary_error_text: "0 errors".to_string(),
             summary_sync_text: "idle".to_string(),
+            summary_sync_tone: "idle".to_string(),
             empty_title: String::new(),
             empty_message: String::new(),
         }
@@ -546,6 +548,7 @@ impl DesktopController {
                 self.state.logs.summary_total_text = page.summary_total_text;
                 self.state.logs.summary_error_text = page.summary_error_text;
                 self.state.logs.summary_sync_text = page.summary_sync_text;
+                self.state.logs.summary_sync_tone = page.summary_sync_tone;
                 self.state.logs.empty_title = page.empty_title;
                 self.state.logs.empty_message = page.empty_message;
                 self.state.logs.entries = page.entries;
@@ -564,6 +567,7 @@ impl DesktopController {
                 self.state.logs.summary_total_text = "0 entries".to_string();
                 self.state.logs.summary_error_text = "0 errors".to_string();
                 self.state.logs.summary_sync_text = "unavailable".to_string();
+                self.state.logs.summary_sync_tone = "warning".to_string();
                 self.state.logs.empty_title = "Logs unavailable".to_string();
                 self.state.logs.empty_message = error.to_string();
             }
@@ -946,6 +950,7 @@ impl DesktopController {
         logs_store.set_summary_total_text(self.state.logs.summary_total_text.clone().into());
         logs_store.set_summary_error_text(self.state.logs.summary_error_text.clone().into());
         logs_store.set_summary_sync_text(self.state.logs.summary_sync_text.clone().into());
+        logs_store.set_summary_sync_tone(self.state.logs.summary_sync_tone.clone().into());
         logs_store.set_active_log_filter(self.state.logs.filter.as_index());
         logs_store.set_logs_search_text(self.state.logs.query.clone().into());
     }

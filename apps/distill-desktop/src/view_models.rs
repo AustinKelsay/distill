@@ -298,6 +298,7 @@ pub struct LogsPageVm {
     pub summary_total_text: String,
     pub summary_error_text: String,
     pub summary_sync_text: String,
+    pub summary_sync_tone: String,
     pub empty_title: String,
     pub empty_message: String,
 }

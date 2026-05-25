@@ -14,7 +14,11 @@ function withTempDistillElectron<T>(fn: (root: string) => T): T {
   try {
     return fn(tempRoot);
   } finally {
-    process.env.DISTILL_ELECTRON_HOME = previous;
+    if (previous === undefined) {
+      delete process.env.DISTILL_ELECTRON_HOME;
+    } else {
+      process.env.DISTILL_ELECTRON_HOME = previous;
+    }
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }

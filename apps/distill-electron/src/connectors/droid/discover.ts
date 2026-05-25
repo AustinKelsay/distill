@@ -15,11 +15,16 @@ export function discoverDroidCaptures(): DiscoveredCapture[] {
 
   return listFilesRecursive(sessionsRoot)
     .filter((filePath) => filePath.endsWith(".jsonl"))
-    .filter((filePath) => !filePath.endsWith(".settings.json"))
-    .map((filePath) => {
-      const stat = fs.statSync(filePath);
+    .filter((filePath) => path.basename(filePath) !== ".settings.json")
+    .flatMap((filePath) => {
+      let stat;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        return [];
+      }
 
-      return {
+      return [{
         sourceKind: "droid",
         captureKind: "session",
         sourcePath: filePath,
@@ -29,6 +34,6 @@ export function discoverDroidCaptures(): DiscoveredCapture[] {
         metadata: {
           sessionDirectory: path.dirname(filePath)
         }
-      } satisfies DiscoveredCapture;
+      } satisfies DiscoveredCapture];
     });
 }

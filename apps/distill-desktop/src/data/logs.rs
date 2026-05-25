@@ -62,6 +62,7 @@ impl DesktopDataSource {
                 summary_total_text: "0 entries".to_string(),
                 summary_error_text: "0 errors".to_string(),
                 summary_sync_text: "idle".to_string(),
+                summary_sync_tone: "idle".to_string(),
                 empty_title: "No logs yet".to_string(),
                 empty_message: match self.source_mode() {
                     crate::config::SourceMode::RustOwned => {
@@ -80,10 +81,21 @@ impl DesktopDataSource {
         let mut rows = self.load_log_rows(&conn)?;
         rows.sort_by(|left, right| right.subtitle.cmp(&left.subtitle));
         let total_count = rows.len();
-        let latest_sync_label = rows
+        let latest_sync = rows
             .iter()
-            .find(|row| row.kind == "sync")
+            .find(|row| row.kind == "sync");
+        let latest_sync_label = latest_sync
             .map(|row| normalize_summary_sync_label(row))
+            .unwrap_or_else(|| "idle".to_string());
+        let latest_sync_tone = latest_sync
+            .map(|row| match row.status.as_str() {
+                "completed" => "ok".to_string(),
+                "warning" => "warning".to_string(),
+                "failed" => "warning".to_string(),
+                "running" => "ok".to_string(),
+                "queued" => "muted".to_string(),
+                _ => "muted".to_string(),
+            })
             .unwrap_or_else(|| "idle".to_string());
         let error_count = rows.iter().filter(|row| row.level == "error").count();
 
@@ -145,6 +157,7 @@ impl DesktopDataSource {
             summary_total_text: format!("{total_count} entries"),
             summary_error_text: format!("{error_count} errors"),
             summary_sync_text: latest_sync_label,
+            summary_sync_tone: latest_sync_tone,
             empty_title,
             empty_message,
         })

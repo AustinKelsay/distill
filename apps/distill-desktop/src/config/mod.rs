@@ -70,15 +70,16 @@ pub fn resolve_runtime_config_from(
     data_local_dir: Option<PathBuf>,
     home_dir: Option<PathBuf>,
 ) -> Result<DesktopRuntimeConfig> {
+    if desktop_home_override.is_none() && data_local_dir.is_none() {
+        bail!("no app data directory is available");
+    }
+
     let app_home = desktop_home_override.unwrap_or_else(|| {
         data_local_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("distill-desktop")
     });
-    if app_home == PathBuf::from(".").join("distill-desktop") && data_local_dir.is_none() {
-        bail!("no app data directory is available");
-    }
 
     let source_mode = match source_mode_env {
         Some(value) => SourceMode::parse_env(value.trim())?,

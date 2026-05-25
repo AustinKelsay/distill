@@ -9,6 +9,7 @@ export global LogsStore {
     in property <string> summary_total_text;
     in property <string> summary_error_text;
     in property <string> summary_sync_text;
+    in property <string> summary_sync_tone;
     in property <string> logs_search_text;
     in property <int> active_log_filter: 0;
 
@@ -55,7 +56,7 @@ export component LogsPane inherits Rectangle {
 
             BadgeChip { text: LogsStore.summary_total_text; tone: "muted"; }
             BadgeChip { text: LogsStore.summary_error_text; tone: "warning"; }
-            BadgeChip { text: LogsStore.summary_sync_text; tone: "ok"; }
+            BadgeChip { text: LogsStore.summary_sync_text; tone: LogsStore.summary_sync_tone == "" ? "ok" : LogsStore.summary_sync_tone; }
         }
 
         Rectangle {

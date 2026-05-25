@@ -184,6 +184,7 @@ pub(super) fn prettify_source(source_kind: &str) -> &'static str {
     match source_kind {
         "claude_code" => "Claude Code",
         "opencode" => "OpenCode",
+        "droid" => "Droid",
         _ => "Codex",
     }
 }
@@ -453,18 +454,20 @@ mod tests {
     #[test]
     fn read_only_queries_do_not_create_new_files() {
         let home = fixture_home();
-        let before = fs::read_dir(home.path())
+        let mut before = fs::read_dir(home.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
+        before.sort();
         let db = electron_source(home.path());
         db.app_snapshot().unwrap();
         db.load_sessions(SessionLane::All, "", None).unwrap();
         db.run_read_only_query("SELECT * FROM sessions").unwrap();
-        let after = fs::read_dir(home.path())
+        let mut after = fs::read_dir(home.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
+        after.sort();
         assert_eq!(before, after);
     }
 

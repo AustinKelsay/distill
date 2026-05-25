@@ -202,7 +202,7 @@ impl RustStore {
                 let error_text = error.to_string();
                 let payload = SyncJobPayload {
                     reason: reason.to_string(),
-                    summary: format!("Codex sync failed: {error_text}"),
+                    summary: format!("Sync failed: {error_text}"),
                     started_at: started_at.clone(),
                     finished_at: Some(finished_at.clone()),
                     discovered_captures: 0,

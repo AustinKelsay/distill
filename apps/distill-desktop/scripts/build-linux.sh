@@ -19,6 +19,9 @@ mkdir -p "$PACKAGE_DIR"
 cp "$TARGET_DIR/release/$BINARY_NAME" "$PACKAGE_DIR/$BINARY_NAME"
 chmod +x "$PACKAGE_DIR/$BINARY_NAME"
 
+# NOTE: The .desktop file assumes distill-desktop is in PATH.
+# Users should either copy the binary to ~/.local/bin or add the
+# extracted directory to their PATH.
 cat > "$PACKAGE_DIR/distill-desktop.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application

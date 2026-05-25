@@ -16,16 +16,12 @@ Planning and parity docs for the rebuild live under `docs/`.
 ## Current Scope
 
 - macOS and Linux are first-class targets
-- the shell defaults to a Rust-owned app home under your local app data directory
+- the shell defaults to a Rust-owned app home under your local app data directory (typically `~/.local/share/distill-desktop` on Linux or `~/Library/Application Support/distill-desktop` on macOS)
 - override the Rust app home with `DISTILL_DESKTOP_HOME=/path/to/home`
-- switch to Electron compatibility mode with `DISTILL_SOURCE_MODE=electron_compat`
-- override the Electron home with `DISTILL_ELECTRON_HOME=/path/to/.distill-electron`
+- switch to Electron compatibility mode with `DISTILL_SOURCE_MODE=electron_compat` (default: Rust-owned mode)
+- override the Electron home with `DISTILL_ELECTRON_HOME=/path/to/.distill-electron` (default: `~/.distill-electron`)
 - shell preferences are stored separately from the Electron app data
-- Codex and Claude Code are wired for Rust-owned import so far
-- OpenCode is still missing
-- the shell now mirrors the Electron topbar, sessions split view, logs cards, DB workspace, and settings overlay much more closely
-- unsupported flows like export, label mutation, and tag mutation are visible as disabled stubs
-- write flows such as curation edits and export mutation are not wired yet
+- connector discovery uses `CODEX_HOME` (default: `~/.codex`) and `CLAUDE_HOME` (default: `~/.claude`)
 
 ## Layout
 

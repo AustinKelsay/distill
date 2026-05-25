@@ -397,8 +397,21 @@ fn count_files_matching(root: &Path, mut predicate: impl FnMut(&Path) -> bool) -
 }
 
 fn visit_files(root: &Path) -> Vec<PathBuf> {
+    let mut visited = std::collections::HashSet::new();
+    visit_files_impl(root, &mut visited)
+}
+
+fn visit_files_impl(root: &Path, visited: &mut std::collections::HashSet<PathBuf>) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if !root.exists() {
+        return files;
+    }
+
+    let canonical = match fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(_) => return files,
+    };
+    if !visited.insert(canonical) {
         return files;
     }
 
@@ -409,7 +422,7 @@ fn visit_files(root: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            files.extend(visit_files(&path));
+            files.extend(visit_files_impl(&path, visited));
         } else if path.is_file() {
             files.push(path);
         }

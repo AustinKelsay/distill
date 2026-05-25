@@ -175,7 +175,7 @@ impl DesktopDataSource {
 
         let (status, payload_json, updated_at) = match latest {
             Ok(value) => value,
-            Err(_) => {
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
                 return Ok(SyncStatusVm {
                     text: "idle".to_string(),
                     tone: "idle".to_string(),
@@ -183,6 +183,7 @@ impl DesktopDataSource {
                     button_label: "Sync".to_string(),
                 });
             }
+            Err(error) => return Err(error.into()),
         };
 
         let payload = serde_json::from_str::<JobPayload>(&payload_json).unwrap_or_default();

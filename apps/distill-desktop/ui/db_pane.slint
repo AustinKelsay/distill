@@ -159,7 +159,7 @@ export component DbPane inherits Rectangle {
             x: 24px;
             y: 126px;
             width: parent.width - 48px;
-            height: 72px;
+            height: 104px;
             border-radius: 10px;
             border-width: 1px;
             border-color: Theme.line;
@@ -178,7 +178,7 @@ export component DbPane inherits Rectangle {
                 x: index < 4
                     ? 16px + index * ((parent.width - 48px) / 4)
                     : 16px + (index - 4) * ((parent.width - 48px) / 4);
-                y: index < 4 ? 26px : 74px;
+                y: index < 4 ? 26px : 58px;
                 width: (parent.width - 84px) / 4;
                 item: column;
             }

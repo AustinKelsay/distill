@@ -149,7 +149,7 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.active_route == 0 : Rectangle {
+            if root.active_route == 0 && parent.width >= 1340px : Rectangle {
                 x: 852px;
                 y: 10px;
                 width: 220px;

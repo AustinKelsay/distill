@@ -64,7 +64,23 @@ impl DesktopDataSource {
             })?;
             vm.filter_column = browse.filter_columns.first().cloned().unwrap_or_default();
             vm.filter_operator = "contains".to_string();
-            vm.sort_column = browse.sort_columns.first().cloned().unwrap_or_default();
+            vm.sort_column = browse
+                .sort_columns
+                .iter()
+                .find(|column| {
+                    [
+                        "updated_at",
+                        "updated_recorded_at",
+                        "created_at",
+                        "created_recorded_at",
+                        "id",
+                    ]
+                    .contains(&column.as_str())
+                })
+                .cloned()
+                .unwrap_or_else(|| {
+                    browse.sort_columns.first().cloned().unwrap_or_default()
+                });
             vm.sort_direction = "desc".to_string();
             vm.browse = browse;
         }

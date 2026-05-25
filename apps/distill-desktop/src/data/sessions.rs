@@ -615,11 +615,13 @@ fn source_badge_for_kind(source_kind: &str) -> SessionBadgeVm {
         text: match source_kind {
             "claude_code" => "claude".to_string(),
             "opencode" => "opencode".to_string(),
+            "droid" => "droid".to_string(),
             _ => "codex".to_string(),
         },
         tone: match source_kind {
             "claude_code" => "source_claude".to_string(),
             "opencode" => "source_opencode".to_string(),
+            "droid" => "source_droid".to_string(),
             _ => "source_codex".to_string(),
         },
     }
