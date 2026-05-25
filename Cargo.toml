@@ -1,0 +1,3 @@
+[workspace]
+members = ["apps/distill-desktop"]
+resolver = "3"

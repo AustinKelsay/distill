@@ -1,0 +1,7 @@
+{"type":"session_start","id":"11111111-2222-3333-4444-555555555555","title":"Refactor sync importer","sessionTitle":"Refactor sync importer","owner":"demo-user","version":2,"cwd":"/Users/demo/project"}
+{"type":"message","id":"m-1","timestamp":"2026-04-05T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>internal context should not become transcript text"},{"type":"text","text":"Please refactor the sync importer to isolate connector failures."}]}}
+{"type":"message","id":"m-2","timestamp":"2026-04-05T10:00:05.000Z","parentId":"m-1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Need to inspect import pipeline and source connector boundaries."},{"type":"text","text":"I will inspect the ingest pipeline and connector boundaries first."},{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/tmp/example.ts"}}]}}
+{"type":"message","id":"m-3","timestamp":"2026-04-05T10:00:06.000Z","parentId":"m-2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","is_error":false,"content":"TOOL_RESULT: import report output"}]}}
+{"type":"todo_state","items":[{"content":"Run validators","status":"in_progress"}]}
+{"type":"compaction_state","lastCompactedAt":"2026-04-05T10:00:07.000Z"}
+{"type":"message","id":"m-4","timestamp":"2026-04-05T10:00:08.000Z","parentId":"m-3","message":{"role":"user","visibility":"user_only","content":[{"type":"text","text":"Token limit reached. Use /limits to manage usage."}]}}

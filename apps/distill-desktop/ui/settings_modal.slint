@@ -1,0 +1,151 @@
+import { KeyValueRowData, BadgeChip, Button } from "components.slint";
+import { Theme } from "theme.slint";
+
+export component SettingsModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <[KeyValueRowData]> storage_rows;
+    in property <[KeyValueRowData]> source_rows;
+    in property <[KeyValueRowData]> sync_rows;
+    in property <[string]> curation_labels;
+    callback close_requested();
+
+    visible: open;
+    background: #00000088;
+
+    dismiss_touch := TouchArea {
+        clicked => { root.close_requested(); }
+    }
+
+    panel := Rectangle {
+        x: parent.width / 2 - self.width / 2;
+        y: 44px;
+        width: 760px;
+        height: parent.height - 88px;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: Theme.panel;
+
+        TouchArea {}
+
+        Text {
+            x: 24px;
+            y: 18px;
+            text: "Settings";
+            color: Theme.ink;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 24px;
+            y: 46px;
+            text: "Read-only shell settings and environment wiring for the Rust desktop rebuild.";
+            color: Theme.muted;
+            font-size: 13px;
+        }
+
+        Button {
+            x: parent.width - 100px;
+            y: 18px;
+            width: 76px;
+            text: "Close";
+            ghost: true;
+            clicked => { root.close_requested(); }
+        }
+
+        storage_panel := Rectangle {
+            x: 24px;
+            y: 84px;
+            width: parent.width - 48px;
+            height: 116px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.bg;
+
+            Text { x: 16px; y: 14px; text: "Storage"; color: Theme.ink; font-size: 14px; font-weight: 700; }
+
+            for row[index] in root.storage_rows : Text {
+                x: 16px;
+                y: 40px + index * 18px;
+                width: parent.width - 32px;
+                text: row.key + ": " + row.value;
+                color: Theme.muted;
+                font-size: 11px;
+                font-family: "Menlo";
+                overflow: elide;
+            }
+        }
+
+        sources_panel := Rectangle {
+            x: 24px;
+            y: 216px;
+            width: parent.width - 48px;
+            height: 168px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.bg;
+
+            Text { x: 16px; y: 14px; text: "Sources"; color: Theme.ink; font-size: 14px; font-weight: 700; }
+
+            for row[index] in root.source_rows : Text {
+                x: 16px;
+                y: 40px + index * 18px;
+                width: parent.width - 32px;
+                text: row.key + ": " + row.value;
+                color: Theme.muted;
+                font-size: 11px;
+                font-family: "Menlo";
+                overflow: elide;
+            }
+        }
+
+        sync_panel := Rectangle {
+            x: 24px;
+            y: 400px;
+            width: parent.width - 48px;
+            height: 96px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.bg;
+
+            Text { x: 16px; y: 14px; text: "Sync"; color: Theme.ink; font-size: 14px; font-weight: 700; }
+
+            for row[index] in root.sync_rows : Text {
+                x: 16px;
+                y: 40px + index * 18px;
+                width: parent.width - 32px;
+                text: row.key + ": " + row.value;
+                color: Theme.muted;
+                font-size: 11px;
+                font-family: "Menlo";
+                overflow: elide;
+            }
+        }
+
+        curation_panel := Rectangle {
+            x: 24px;
+            y: 512px;
+            width: parent.width - 48px;
+            height: 110px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.bg;
+
+            Text { x: 16px; y: 14px; text: "Curation"; color: Theme.ink; font-size: 14px; font-weight: 700; }
+            Text { x: 16px; y: 36px; text: "Current labels are visible here, but curation actions are not wired in Rust yet."; color: Theme.muted; font-size: 12px; }
+
+            for label[index] in root.curation_labels : BadgeChip {
+                x: index < 3 ? 16px + index * 120px : 16px + (index - 3) * 120px;
+                y: index < 3 ? 60px : 90px;
+                text: label;
+                tone: "muted";
+                disabled: true;
+            }
+        }
+    }
+}

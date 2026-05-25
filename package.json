@@ -1,20 +1,16 @@
 {
   "name": "distill",
-  "version": "0.1.0",
-  "description": "Local-first conversation collector for Codex CLI, Claude Code, and OpenCode",
-  "main": "dist/electron/main.js",
   "private": true,
+  "workspaces": [
+    "apps/distill-electron"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
-    "doctor": "npm run build && node dist/cli/doctor.js",
-    "import": "npm run build && node dist/cli/import.js",
-    "export": "npm run build && node dist/cli/export.js",
-    "test": "npm run build && node --test dist/test/*.test.js"
-  },
-  "devDependencies": {
-    "@types/node": "^25.5.0",
-    "electron": "^41.0.4",
-    "typescript": "^6.0.2"
+    "start": "npm run start --workspace distill-electron",
+    "build": "npm run build --workspace distill-electron",
+    "doctor": "npm run doctor --workspace distill-electron",
+    "import": "npm run import --workspace distill-electron",
+    "export": "npm run export --workspace distill-electron",
+    "test": "npm run test --workspace distill-electron",
+    "desktop:check": "cargo check -p distill-desktop"
   }
 }

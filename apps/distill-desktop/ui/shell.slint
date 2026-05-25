@@ -1,0 +1,283 @@
+import { LineEdit, VerticalBox } from "std-widgets.slint";
+import {
+    ArtifactCardData,
+    DbColumnHeaderData,
+    DbGridRowData,
+    DbSchemaColumnData,
+    KeyValueRowData,
+    SessionBadgeData,
+    SessionLaneData,
+    SessionListRowData,
+    ShellStatData,
+    SourceRowData,
+    TableRowData,
+    TranscriptMessageData,
+    ViewTabData,
+    ViewTab,
+    BadgeChip,
+    Button,
+    StatPill
+} from "components.slint";
+import { DbPane, DbStore } from "db_pane.slint";
+import { LogsPane, LogsStore } from "logs_pane.slint";
+import { SessionsPane, SessionsStore } from "sessions_pane.slint";
+import { ShellStore } from "shell_store.slint";
+import { SettingsModal } from "settings_modal.slint";
+import { Theme } from "theme.slint";
+
+export {
+    ArtifactCardData,
+    DbColumnHeaderData,
+    DbGridRowData,
+    DbSchemaColumnData,
+    KeyValueRowData,
+    SessionBadgeData,
+    SessionLaneData,
+    SessionListRowData,
+    ShellStatData,
+    SourceRowData,
+    TableRowData,
+    TranscriptMessageData,
+    ViewTabData
+} from "components.slint";
+export { DbStore } from "db_pane.slint";
+export { LogsStore } from "logs_pane.slint";
+export { SessionsStore } from "sessions_pane.slint";
+export { ShellStore } from "shell_store.slint";
+
+export component AppWindow inherits Window {
+    title: "Distill Desktop";
+    preferred-width: 1520px;
+    preferred-height: 960px;
+    min-width: 1180px;
+    min-height: 760px;
+    background: Theme.bg;
+
+    in-out property <int> active_route: 0;
+    in-out property <length> sessions_list_width: 340px;
+    in-out property <length> db_tables_width: 240px;
+    in-out property <length> db_rows_width: 420px;
+    in-out property <string> global_search;
+    property <length> content_top: ShellStore.show_onboarding && active_route == 0 ? 156px : 54px;
+
+    callback global_search_edited(string);
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.bg;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: 54px;
+            background: Theme.bg_top;
+
+            Text {
+                x: 24px;
+                y: 18px;
+                text: "Distill Desktop";
+                color: Theme.accent;
+                font-size: 15px;
+                font-weight: 700;
+                font-family: "Menlo";
+            }
+
+            Rectangle {
+                x: 154px;
+                y: 10px;
+                width: 78px;
+                height: 32px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                Text {
+                    width: parent.width;
+                    y: 10px;
+                    horizontal-alignment: center;
+                    text: ShellStore.source_badge_text;
+                    color: Theme.ink;
+                    font-size: 11px;
+                    font-family: "Menlo";
+                }
+            }
+
+            Rectangle {
+                x: 246px;
+                y: 10px;
+                width: 214px;
+                height: 32px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                for item[index] in ShellStore.view_tabs : ViewTab {
+                    x: 4px + index * ((parent.width - 8px) / 3);
+                    y: 4px;
+                    width: (parent.width - 8px) / 3 - 2px;
+                    label: item.label;
+                    selected: item.selected;
+                    clicked => { ShellStore.view_selected(index); }
+                }
+            }
+
+            if root.active_route == 0 : Rectangle {
+                x: 476px;
+                y: 10px;
+                width: 360px;
+                height: 32px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                LineEdit {
+                    x: 10px;
+                    y: 4px;
+                    width: parent.width - 20px;
+                    height: 24px;
+                    text: root.global_search;
+                    placeholder-text: "Search sessions…";
+                    edited(text) => {
+                        root.global_search = text;
+                        root.global_search_edited(text);
+                    }
+                }
+            }
+
+            if root.active_route == 0 && parent.width >= 1340px : Rectangle {
+                x: 852px;
+                y: 10px;
+                width: 220px;
+                height: 32px;
+                background: transparent;
+
+                for stat[index] in ShellStore.shell_stats : StatPill {
+                    x: index == 0 ? 0px : index == 1 ? 74px : 148px;
+                    y: 6px;
+                    item: stat;
+                }
+            }
+
+            Rectangle {
+                x: parent.width - 266px;
+                y: 8px;
+                width: 162px;
+                height: 36px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                BadgeChip {
+                    x: 8px;
+                    y: 6px;
+                    text: ShellStore.sync_status_text;
+                    tone: ShellStore.sync_status_tone;
+                }
+
+                Button {
+                    x: 88px;
+                    y: 0;
+                    width: 74px;
+                    height: 36px;
+                    text: "↳ " + ShellStore.sync_button_label;
+                    ghost: true;
+                    enabled: ShellStore.sync_enabled;
+                    clicked => { ShellStore.sync_requested(); }
+                }
+            }
+
+            Button {
+                x: parent.width - 92px;
+                y: 8px;
+                width: 68px;
+                text: "⚙ Settings";
+                ghost: true;
+                clicked => { ShellStore.settings_open_requested(); }
+            }
+
+            Rectangle {
+                x: 0;
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+
+        if ShellStore.show_onboarding && active_route == 0 : Rectangle {
+            x: 20px;
+            y: 70px;
+            width: parent.width - 40px;
+            height: 74px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #5d4630;
+            background: Theme.warn_bg;
+
+            Text {
+                x: 18px;
+                y: 14px;
+                text: ShellStore.onboarding_title;
+                color: Theme.warn;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 18px;
+                y: 36px;
+                width: parent.width - 36px;
+                text: ShellStore.onboarding_message;
+                color: Theme.warn;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            x: 0;
+            y: root.content_top;
+            width: parent.width;
+            height: parent.height - root.content_top;
+            background: transparent;
+
+            SessionsPane {
+                visible: root.active_route == 0;
+                width: parent.width;
+                height: parent.height;
+                list_width: root.sessions_list_width;
+            }
+
+            DbPane {
+                visible: root.active_route == 1;
+                width: parent.width;
+                height: parent.height;
+                tables_width: root.db_tables_width;
+                rows_width: root.db_rows_width;
+            }
+
+            LogsPane {
+                visible: root.active_route == 2;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+
+        SettingsModal {
+            width: parent.width;
+            height: parent.height;
+            open: ShellStore.settings_open;
+            storage_rows: ShellStore.settings_storage_rows;
+            source_rows: ShellStore.settings_source_rows;
+            sync_rows: ShellStore.settings_sync_rows;
+            curation_labels: ShellStore.settings_curation_labels;
+            close_requested => { ShellStore.settings_close_requested(); }
+        }
+    }
+}

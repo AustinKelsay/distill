@@ -1,0 +1,144 @@
+import { HorizontalBox, ListView, LineEdit } from "std-widgets.slint";
+import { BadgeChip, LaneChip, LogEntryCard, LogEntryData } from "components.slint";
+import { Theme } from "theme.slint";
+
+export global LogsStore {
+    in property <[LogEntryData]> log_entries;
+    in property <string> logs_empty_title;
+    in property <string> logs_empty_message;
+    in property <string> summary_total_text;
+    in property <string> summary_error_text;
+    in property <string> summary_sync_text;
+    in property <string> summary_sync_tone;
+    in property <string> logs_search_text;
+    in property <int> active_log_filter: 0;
+
+    callback logs_filter_selected(int);
+    callback logs_search_edited(string);
+    callback log_toggled(string);
+}
+
+export component LogsPane inherits Rectangle {
+    background: transparent;
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: parent.width - 48px;
+        height: parent.height - 48px;
+        background: transparent;
+
+        Text {
+            x: 0;
+            y: 0;
+            text: "Logs";
+            color: Theme.ink;
+            font-size: 26px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 0;
+            y: 32px;
+            width: 560px;
+            text: "Operational sync and export history that normally only shows up in the shell.";
+            color: Theme.muted;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+
+        HorizontalBox {
+            x: parent.width - 410px;
+            y: 6px;
+            width: 410px;
+            height: 30px;
+            spacing: 8px;
+
+            BadgeChip { text: LogsStore.summary_total_text; tone: "muted"; }
+            BadgeChip { text: LogsStore.summary_error_text; tone: "warning"; }
+            BadgeChip { text: LogsStore.summary_sync_text; tone: LogsStore.summary_sync_tone == "" ? "ok" : LogsStore.summary_sync_tone; }
+        }
+
+        Rectangle {
+            x: 0;
+            y: 78px;
+            width: 320px;
+            height: 36px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            LineEdit {
+                x: 10px;
+                y: 4px;
+                width: parent.width - 20px;
+                height: 24px;
+                text: LogsStore.logs_search_text;
+                placeholder-text: "Search logs…";
+                edited(text) => { LogsStore.logs_search_edited(text); }
+            }
+        }
+
+        HorizontalBox {
+            x: 340px;
+            y: 82px;
+            width: parent.width - 340px;
+            height: 30px;
+            spacing: 8px;
+
+            for label[index] in ["All", "Sync", "Exports", "Errors"] : Rectangle {
+                width: 92px;
+                LaneChip {
+                    width: parent.width;
+                    label: label;
+                    selected: LogsStore.active_log_filter == index;
+                    clicked => { LogsStore.logs_filter_selected(index); }
+                }
+            }
+        }
+
+        ListView {
+            x: 0;
+            y: 132px;
+            width: parent.width;
+            height: parent.height - 132px;
+
+            for row in LogsStore.log_entries : LogEntryCard {
+                width: parent.width;
+                item: row;
+                toggled(id) => { LogsStore.log_toggled(id); }
+            }
+        }
+
+        if LogsStore.log_entries.length == 0 : Rectangle {
+            x: 0;
+            y: 132px;
+            width: parent.width;
+            height: 108px;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 18px;
+                y: 18px;
+                text: LogsStore.logs_empty_title;
+                color: Theme.ink;
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 18px;
+                y: 46px;
+                width: parent.width - 36px;
+                text: LogsStore.logs_empty_message;
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

@@ -1,0 +1,468 @@
+import { ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import {
+    BadgeChip,
+    Button,
+    DbColumnHeaderData,
+    DbGridRowData,
+    DbSchemaColumnData,
+    GridHeaderCell,
+    GridRowCard,
+    LaneChip,
+    SchemaChip,
+    TableButton,
+    TableRowData
+} from "components.slint";
+import { Theme } from "theme.slint";
+
+export global DbStore {
+    in property <[TableRowData]> db_tables;
+    in property <[DbSchemaColumnData]> db_schema_columns;
+    in property <[DbColumnHeaderData]> db_column_headers;
+    in property <[DbGridRowData]> db_result_rows;
+    in property <[string]> db_filter_columns;
+    in property <[string]> db_sort_columns;
+    in property <[string]> db_filter_operator_options;
+    in property <[string]> db_sort_direction_options;
+    in property <string> db_summary;
+    in property <string> db_error;
+    in property <string> db_row_detail;
+    in-out property <string> db_filter_column;
+    in-out property <string> db_filter_value;
+    in-out property <string> db_filter_operator;
+    in-out property <string> db_sort_column;
+    in-out property <string> db_sort_direction;
+    in-out property <string> db_query_sql;
+    in property <string> db_query_summary;
+    in property <string> db_query_preview;
+    in property <string> db_query_error;
+    in property <string> db_page_label;
+    in property <int> db_active_tab;
+
+    callback db_table_selected(int);
+    callback db_result_row_selected(string);
+    callback db_filter_column_selected(string);
+    callback db_filter_operator_selected(string);
+    callback db_sort_column_selected(string);
+    callback db_sort_direction_selected(string);
+    callback db_filter_value_edited(string);
+    callback db_query_sql_edited(string);
+    callback db_apply_filter_requested();
+    callback db_clear_filter_requested();
+    callback db_prev_page_requested();
+    callback db_next_page_requested();
+    callback db_run_query_requested();
+    callback db_tab_selected(int);
+    callback adjust_db_tables_width(int);
+    callback adjust_db_rows_width(int);
+}
+
+export component DbPane inherits Rectangle {
+    in property <length> tables_width: 240px;
+    in property <length> rows_width: 420px;
+
+    background: transparent;
+
+    Rectangle {
+        width: root.tables_width;
+        height: parent.height;
+        background: #1a1a1e;
+
+        Rectangle {
+            x: parent.width - 1px;
+            y: 0;
+            width: 1px;
+            height: parent.height;
+            background: Theme.line;
+        }
+
+        Text {
+            x: 16px;
+            y: 18px;
+            text: "Tables";
+            color: Theme.muted;
+            font-size: 12px;
+            font-family: "Menlo";
+            font-weight: 700;
+        }
+
+        ListView {
+            x: 0;
+            y: 50px;
+            width: parent.width;
+            height: parent.height - 50px;
+
+            for row[index] in DbStore.db_tables : TableButton {
+                width: parent.width;
+                item: row;
+                item_index: index;
+                clicked(index) => { DbStore.db_table_selected(index); }
+            }
+        }
+    }
+
+    Rectangle {
+        x: root.tables_width;
+        y: 0;
+        width: parent.width - root.tables_width;
+        height: parent.height;
+        background: transparent;
+
+        Text {
+            x: 24px;
+            y: 20px;
+            text: "DB Explorer";
+            color: Theme.ink;
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 24px;
+            y: 50px;
+            width: parent.width - 48px;
+            text: DbStore.db_summary;
+            color: Theme.muted;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            x: 24px;
+            y: 82px;
+            width: 190px;
+            height: 32px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            LaneChip {
+                x: 4px;
+                y: 4px;
+                width: 86px;
+                label: "Browse";
+                selected: DbStore.db_active_tab == 0;
+                clicked => { DbStore.db_tab_selected(0); }
+            }
+
+            LaneChip {
+                x: 98px;
+                y: 4px;
+                width: 86px;
+                label: "Query";
+                selected: DbStore.db_active_tab == 1;
+                clicked => { DbStore.db_tab_selected(1); }
+            }
+        }
+
+        Rectangle {
+            x: 24px;
+            y: 126px;
+            width: parent.width - 48px;
+            height: 104px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 12px;
+                text: "Schema";
+                color: Theme.ink;
+                font-size: 13px;
+                font-weight: 700;
+            }
+
+            for column[index] in DbStore.db_schema_columns : SchemaChip {
+                x: index < 4
+                    ? 16px + index * ((parent.width - 48px) / 4)
+                    : 16px + (index - 4) * ((parent.width - 48px) / 4);
+                y: index < 4 ? 26px : 58px;
+                width: (parent.width - 84px) / 4;
+                item: column;
+            }
+        }
+
+        if DbStore.db_active_tab == 0 : Rectangle {
+            x: 24px;
+            y: 214px;
+            width: parent.width - 48px;
+            height: parent.height - 238px;
+            background: transparent;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 110px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                ComboBox {
+                    x: 16px;
+                    y: 18px;
+                    width: 150px;
+                    height: 32px;
+                    model: DbStore.db_filter_columns;
+                    current-value: DbStore.db_filter_column;
+                    selected(value) => {
+                        DbStore.db_filter_column = value;
+                        DbStore.db_filter_column_selected(value);
+                    }
+                }
+
+                ComboBox {
+                    x: 176px;
+                    y: 18px;
+                    width: 150px;
+                    height: 32px;
+                    model: DbStore.db_filter_operator_options;
+                    current-value: DbStore.db_filter_operator == "" ? "contains" : DbStore.db_filter_operator;
+                    selected(value) => {
+                        DbStore.db_filter_operator = value;
+                        DbStore.db_filter_operator_selected(value);
+                    }
+                }
+
+                LineEdit {
+                    x: 336px;
+                    y: 18px;
+                    width: parent.width - 352px;
+                    height: 32px;
+                    text: DbStore.db_filter_value;
+                    placeholder-text: "Value";
+                    edited(value) => {
+                        DbStore.db_filter_value = value;
+                        DbStore.db_filter_value_edited(value);
+                    }
+                }
+
+                ComboBox {
+                    x: 16px;
+                    y: 62px;
+                    width: 170px;
+                    height: 32px;
+                    model: DbStore.db_sort_columns;
+                    current-value: DbStore.db_sort_column;
+                    selected(value) => {
+                        DbStore.db_sort_column = value;
+                        DbStore.db_sort_column_selected(value);
+                    }
+                }
+
+                ComboBox {
+                    x: 196px;
+                    y: 62px;
+                    width: 110px;
+                    height: 32px;
+                    model: DbStore.db_sort_direction_options;
+                    current-value: DbStore.db_sort_direction == "" ? "desc" : DbStore.db_sort_direction;
+                    selected(value) => {
+                        DbStore.db_sort_direction = value;
+                        DbStore.db_sort_direction_selected(value);
+                    }
+                }
+
+                Button {
+                    x: parent.width - 182px;
+                    y: 62px;
+                    width: 76px;
+                    text: "Apply";
+                    primary: true;
+                    clicked => { DbStore.db_apply_filter_requested(); }
+                }
+
+                Button {
+                    x: parent.width - 94px;
+                    y: 62px;
+                    width: 76px;
+                    text: "Clear";
+                    ghost: true;
+                    clicked => { DbStore.db_clear_filter_requested(); }
+                }
+            }
+
+            Rectangle {
+                x: 0;
+                y: 126px;
+                width: parent.width * 0.62;
+                height: parent.height - 126px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: 34px;
+                    background: Theme.panel_alt;
+
+                    for header[index] in DbStore.db_column_headers : GridHeaderCell {
+                        x: index * parent.width / 4;
+                        y: 0;
+                        width: parent.width / 4;
+                        height: parent.height;
+                        item: header;
+                    }
+                }
+
+                if DbStore.db_error != "" : Text {
+                    x: 16px;
+                    y: 46px;
+                    width: parent.width - 32px;
+                    text: DbStore.db_error;
+                    color: Theme.error;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                ListView {
+                    x: 0;
+                    y: 34px;
+                    width: parent.width;
+                    height: parent.height - 78px;
+
+                    for row in DbStore.db_result_rows : GridRowCard {
+                        width: parent.width;
+                        item: row;
+                        clicked(key) => { DbStore.db_result_row_selected(key); }
+                    }
+                }
+
+                Button {
+                    x: 16px;
+                    y: parent.height - 38px;
+                    width: 72px;
+                    text: "Prev";
+                    ghost: true;
+                    clicked => { DbStore.db_prev_page_requested(); }
+                }
+
+                BadgeChip {
+                    x: 98px;
+                    y: parent.height - 34px;
+                    text: DbStore.db_page_label;
+                    tone: "muted";
+                }
+
+                Button {
+                    x: 206px;
+                    y: parent.height - 38px;
+                    width: 72px;
+                    text: "Next";
+                    ghost: true;
+                    clicked => { DbStore.db_next_page_requested(); }
+                }
+            }
+
+            Rectangle {
+                x: parent.width * 0.62 + 16px;
+                y: 126px;
+                width: parent.width - (parent.width * 0.62 + 16px);
+                height: parent.height - 126px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: Theme.panel;
+
+                Text {
+                    x: 16px;
+                    y: 12px;
+                    text: "Row Inspector";
+                    color: Theme.ink;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+
+                TextEdit {
+                    x: 14px;
+                    y: 40px;
+                    width: parent.width - 28px;
+                    height: parent.height - 54px;
+                    text: DbStore.db_row_detail == "" ? "Select a browsed row to inspect its full contents." : DbStore.db_row_detail;
+                    read-only: true;
+                }
+            }
+        }
+
+        if DbStore.db_active_tab == 1 : Rectangle {
+            x: 24px;
+            y: 214px;
+            width: parent.width - 48px;
+            height: parent.height - 238px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+
+            Text {
+                x: 16px;
+                y: 14px;
+                text: "Custom SQL";
+                color: Theme.ink;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 16px;
+                y: 34px;
+                text: "Single read-only statement.";
+                color: Theme.muted;
+                font-size: 12px;
+            }
+
+            TextEdit {
+                x: 16px;
+                y: 58px;
+                width: parent.width - 32px;
+                height: 128px;
+                text: DbStore.db_query_sql;
+                edited => {
+                    DbStore.db_query_sql = self.text;
+                    DbStore.db_query_sql_edited(self.text);
+                }
+            }
+
+            Button {
+                x: 16px;
+                y: 198px;
+                width: 112px;
+                text: "Run Query";
+                primary: true;
+                clicked => { DbStore.db_run_query_requested(); }
+            }
+
+            BadgeChip {
+                x: 140px;
+                y: 204px;
+                text: DbStore.db_query_summary == "" ? "No query executed" : DbStore.db_query_summary;
+                tone: "muted";
+            }
+
+            if DbStore.db_query_error != "" : Text {
+                x: 16px;
+                y: 238px;
+                width: parent.width - 32px;
+                text: DbStore.db_query_error;
+                color: Theme.error;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            TextEdit {
+                x: 16px;
+                y: DbStore.db_query_error != "" ? 270px : 238px;
+                width: parent.width - 32px;
+                height: parent.height - (DbStore.db_query_error != "" ? 286px : 254px);
+                text: DbStore.db_query_preview;
+                read-only: true;
+            }
+        }
+    }
+}
