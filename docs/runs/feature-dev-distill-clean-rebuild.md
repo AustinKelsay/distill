@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: Spec and ticket graph approved and published; #18 Library Fixture tracer implemented and verified (uncommitted)
+- Current status: #18 complete and closed; #19 and #20 are the dependency frontier
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -45,9 +45,9 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 | Issue | Type | Status | Review thread | Fixes needed | Verified |
 | --- | --- | --- | --- | --- | --- |
-| #18 Library Fixture tracer | AFK | Review fixes verified | Grok xhigh standards + spec | Focused re-review pending | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
-| #19 Thin Tauri/React/CLI callers | AFK | Blocked by #18 | — | — | No |
-| #20 Attempt retry/replay/replacement | AFK | Blocked by #18 | — | — | No |
+| #18 Library Fixture tracer | AFK | Complete | Grok xhigh standards + spec | All applied; both axes pass | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
+| #19 Thin Tauri/React/CLI callers | AFK | Ready — frontier | — | — | No |
+| #20 Attempt retry/replay/replacement | AFK | Ready — frontier | — | — | No |
 | #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
 | #22 Async source settings/Sync Runs | AFK | Blocked by #18, #19 | — | — | No |
 | #23 Search/lanes/detail/virtualization | AFK | Blocked by #18, #19 | — | — | No |
@@ -76,7 +76,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 | Issue | Fixed point | Worker session | Commit | Review result | Checks |
 | --- | --- | --- | --- | --- | --- |
-| #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74` + review fixes | Both axes requested changes; all applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
+| #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74`, `b87f5cb` | Both axes pass after all findings applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
 
 ## Open Questions
 

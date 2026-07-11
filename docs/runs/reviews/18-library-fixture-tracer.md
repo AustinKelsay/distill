@@ -53,3 +53,10 @@ SPEC_FINDINGS:
 ```
 
 Resolution: every finding was applied. The focused re-review compares the full corrected range from `b471a77` to the review-fix commit.
+
+Focused re-review result for `b471a77...b87f5cb`:
+
+```text
+STANDARDS_STATUS: pass
+SPEC_STATUS: pass
+```

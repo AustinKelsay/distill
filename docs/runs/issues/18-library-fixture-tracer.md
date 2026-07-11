@@ -5,8 +5,8 @@
 - Issue: [#18](https://github.com/AustinKelsay/distill/issues/18)
 - Fixed point before session: `b471a77`
 - Worker session: Grok 4.5 xhigh edit session
-- Commit: `a13bf74` plus review-fix follow-up
-- Status: Review findings fixed and verified; focused re-review pending
+- Commit: `a13bf74`, review fixes `b87f5cb`
+- Status: Complete — issue closed
 
 ## Inputs
 
@@ -32,11 +32,12 @@
 
 ## Review
 
-- Review fixed point: `b471a77...a13bf74`
+- Review fixed point: initial `b471a77...a13bf74`; corrected `b471a77...b87f5cb`
 - Standards findings: Changes requested — incomplete governed gap fields; two undocumented public methods; Fixture-coupled parser identity in generic ingest; magic pre-accept Capture id; duplicate size-limit enforcement
 - Spec findings: Changes requested — Capture Fact provenance not asserted at the public seam; formatting helper mutated instead of checking
 - Worthy fixes applied: All findings. Pre-commit CodeRabbit fixes validated helper modes and synthetic identity. Formal review fixes completed gap metadata, synchronized API docs, moved parser identity into `DiscoveredSource`, added a typed staged-integrity error, removed duplicate limit enforcement, verified adapter snapshot metadata before dedupe, asserted Capture Fact provenance, and made formatting check-only.
 - Findings ignored with reasons: None
+- Focused re-review: `STANDARDS_STATUS: pass`; `SPEC_STATUS: pass`
 
 ## Risks
 
