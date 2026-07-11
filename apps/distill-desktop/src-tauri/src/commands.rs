@@ -1,11 +1,11 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::FixtureJourneyResult;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{run_fixture_journey, validate_fixture_journey_request};
-use crate::{HostState, FIXTURE_JOURNEY_PROGRESS_EVENT};
+use crate::FIXTURE_JOURNEY_PROGRESS_EVENT;
 
 /**
  * Tauri command: validate inputs, run the Fixture journey off the UI thread,
@@ -13,14 +13,12 @@ use crate::{HostState, FIXTURE_JOURNEY_PROGRESS_EVENT};
  *
  * Parameters:
  * - `app`: Tauri app handle used to emit progress events.
- * - `_state`: host marker state.
  * - `home`: Distill home path.
  * - `fixture_root`: Fixture root path.
  */
 #[tauri::command]
 pub async fn run_fixture_journey_command(
     app: AppHandle,
-    _state: State<'_, HostState>,
     home: String,
     fixture_root: String,
 ) -> Result<FixtureJourneyResult, HostError> {

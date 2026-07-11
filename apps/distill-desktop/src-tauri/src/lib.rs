@@ -17,17 +17,12 @@ use distill_library::FixtureJourneyPhase;
 /// Event name for typed Fixture journey progress.
 pub const FIXTURE_JOURNEY_PROGRESS_EVENT: &str = "fixture-journey-progress";
 
-/// Marker state confirming the host started without granting renderer Node authority.
-#[derive(Default)]
-pub struct HostState;
-
 /**
  * Build and run the Distill Tauri application.
  */
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(HostState)
         .invoke_handler(tauri::generate_handler![
             commands::run_fixture_journey_command
         ])

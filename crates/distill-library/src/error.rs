@@ -77,3 +77,22 @@ pub enum LibraryError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 }
+
+impl LibraryError {
+    /// Stable machine-readable error code shared by thin callers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::PathOutsideConfiguredRoot { .. } => "path_outside_configured_root",
+            Self::CaptureTooLarge { .. } => "capture_too_large",
+            Self::MigrationChecksumMismatch { .. } => "migration_checksum_mismatch",
+            Self::SourceAdapter(_) => "source_adapter",
+            Self::Io(_) => "io",
+            Self::Sqlite(_) => "sqlite",
+            Self::Json(_) => "json",
+            Self::ContentIntegrity { .. } => "content_integrity",
+            Self::StagedContentIntegrity { .. } => "staged_content_integrity",
+            Self::NotFound(_) => "not_found",
+            Self::InvalidArgument(_) => "invalid_argument",
+        }
+    }
+}

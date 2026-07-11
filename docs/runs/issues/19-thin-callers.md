@@ -35,11 +35,11 @@
 
 ## Review
 
-- Review fixed point: Pending
-- Standards findings: Pending
-- Spec findings: Pending
-- Worthy fixes applied: Integration pass corrected the production Tauri invoke argument casing, narrowed the capability file to event permissions only, made async listener cleanup race-safe, and added production-bridge contracts for both behaviors.
-- Findings ignored with reasons: Pending
+- Review fixed point: `5655cde...e9cd49a`
+- Standards findings: Pass; judgement calls noted duplicate error mapping, caller validation, empty HostState, and deferred cancellation
+- Spec findings: Changes requested for an alleged missing app-command ACL entry
+- Worthy fixes applied: Integration pass corrected production invoke casing, narrowed capabilities, made async listener cleanup race-safe, and added bridge contracts. Review follow-up centralized `LibraryError::code()` and removed empty `HostState`.
+- Findings ignored with reasons: Caller validation remains local because CLI usage and IPC validation have different error contracts. Cancellation belongs to #22. The ACL finding is contradicted by official Tauri 2 docs: `invoke_handler` app commands are allowed by default unless `AppManifest::commands` opts into command permissions; this app does not opt in.
 
 ## Risks
 

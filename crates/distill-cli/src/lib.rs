@@ -111,7 +111,7 @@ impl CliFailure {
             code: EXIT_RUNTIME,
             format,
             body: CliErrorBody {
-                error: error_class(&err).to_string(),
+                error: err.code().to_string(),
                 message: err.to_string(),
             },
         }
@@ -214,24 +214,5 @@ fn render_success(
             ));
             lines.join("\n")
         }
-    }
-}
-
-/**
- * Map Library errors to a stable CLI error class string.
- */
-fn error_class(err: &LibraryError) -> &'static str {
-    match err {
-        LibraryError::PathOutsideConfiguredRoot { .. } => "path_outside_configured_root",
-        LibraryError::CaptureTooLarge { .. } => "capture_too_large",
-        LibraryError::MigrationChecksumMismatch { .. } => "migration_checksum_mismatch",
-        LibraryError::SourceAdapter(_) => "source_adapter",
-        LibraryError::Io(_) => "io",
-        LibraryError::Sqlite(_) => "sqlite",
-        LibraryError::Json(_) => "json",
-        LibraryError::ContentIntegrity { .. } => "content_integrity",
-        LibraryError::StagedContentIntegrity { .. } => "staged_content_integrity",
-        LibraryError::NotFound(_) => "not_found",
-        LibraryError::InvalidArgument(_) => "invalid_argument",
     }
 }

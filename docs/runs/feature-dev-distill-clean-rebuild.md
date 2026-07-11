@@ -46,7 +46,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | Issue | Type | Status | Review thread | Fixes needed | Verified |
 | --- | --- | --- | --- | --- | --- |
 | #18 Library Fixture tracer | AFK | Complete | Grok xhigh standards + spec | All applied; both axes pass | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
-| #19 Thin Tauri/React/CLI callers | AFK | Implementation complete; commit pending | Grok xhigh worker | Pending review | Rust workspace + desktop frontend gates; legacy Node 22 inspector baseline unchanged |
+| #19 Thin Tauri/React/CLI callers | AFK | Review follow-up verified | Grok xhigh standards + spec | Focused spec re-review pending | Rust/renderer/Tauri release gates; legacy 103 pass on Node 26 |
 | #20 Attempt retry/replay/replacement | AFK | Ready — frontier | — | — | No |
 | #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
 | #22 Async source settings/Sync Runs | AFK | Blocked by #18, #19 | — | — | No |
@@ -77,7 +77,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | Issue | Fixed point | Worker session | Commit | Review result | Checks |
 | --- | --- | --- | --- | --- | --- |
 | #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74`, `b87f5cb` | Both axes pass after all findings applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
-| #19 | `5655cde` | Grok 4.5 xhigh edit session | Pending | Pending | Pending final review packet |
+| #19 | `5655cde` | Grok 4.5 xhigh edit session | `e9cd49a` + review follow-up | Standards pass; one contradicted Spec finding | Rust workspace 14 + renderer 5; Tauri release build; legacy 103 pass on Node 26 |
 
 ## Open Questions
 

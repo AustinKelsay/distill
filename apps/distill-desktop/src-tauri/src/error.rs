@@ -36,27 +36,8 @@ impl HostError {
      */
     pub fn from_library(err: LibraryError) -> Self {
         Self {
-            code: library_error_code(&err).to_string(),
+            code: err.code().to_string(),
             message: err.to_string(),
         }
-    }
-}
-
-/**
- * Map Library errors to stable host error codes.
- */
-fn library_error_code(err: &LibraryError) -> &'static str {
-    match err {
-        LibraryError::PathOutsideConfiguredRoot { .. } => "path_outside_configured_root",
-        LibraryError::CaptureTooLarge { .. } => "capture_too_large",
-        LibraryError::MigrationChecksumMismatch { .. } => "migration_checksum_mismatch",
-        LibraryError::SourceAdapter(_) => "source_adapter",
-        LibraryError::Io(_) => "io",
-        LibraryError::Sqlite(_) => "sqlite",
-        LibraryError::Json(_) => "json",
-        LibraryError::ContentIntegrity { .. } => "content_integrity",
-        LibraryError::StagedContentIntegrity { .. } => "staged_content_integrity",
-        LibraryError::NotFound(_) => "not_found",
-        LibraryError::InvalidArgument(_) => "invalid_argument",
     }
 }
