@@ -6,7 +6,7 @@
 - Slice type: AFK tracer bullet
 - Acceptance criteria: inert exact duplicates; immutable changed Captures; typed safe failed Attempts preserving last-good projection/FTS; strictly newer same-Capture retry with immutable Attempt/Facts history; full shorter/empty replacement; separately named caller counters
 - Baseline: `4564d28`
-- Current diff: `git diff 4564d28...50d8633`
+- Current diff: `git diff 4564d28...f4b3514`
 
 ## Implementation Summary
 
@@ -59,6 +59,14 @@ Resolution:
 - Replaced low-level error-string filtering with stable generic parse/projection diagnostics that cannot retain raw Capture, path, or SQLite details; strengthened the public-seam assertions.
 - Kept the small ingest/retry orchestration duplication because extracting it would introduce an abstraction before provider adapters establish the reusable shape.
 
-Focused re-review: Pending.
+Focused re-review:
+
+```text
+STANDARDS_STATUS: pass
+STANDARDS_FINDINGS: None
+
+SPEC_STATUS: pass
+SPEC_FINDINGS: None
+```
 
 Local CodeRabbit review of the follow-up patch completed with 0 findings across 7 files.

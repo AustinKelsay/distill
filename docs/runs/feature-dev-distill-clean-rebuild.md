@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#20 implemented locally; #20 awaiting review/commit; frontier next is #21
+- Current status: #18–#20 complete; dependency frontier is #21–#23
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: Pending
+- Ticket sessions: #18–#20 complete
 - Agent briefs: Pending
-- Review packets: Pending
-- Local CodeRabbit report: Pending
+- Review packets: #18–#20 complete
+- Local CodeRabbit report: #20 follow-up pass with 0 findings; final full-branch review still pending
 - PR URL: Pending
 
 ## Commands
@@ -47,10 +47,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | --- | --- | --- | --- | --- | --- |
 | #18 Library Fixture tracer | AFK | Complete | Grok xhigh standards + spec | All applied; both axes pass | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
 | #19 Thin Tauri/React/CLI callers | AFK | Complete | Grok xhigh standards + spec | Both axes pass; ACL finding withdrawn | Rust/renderer/Tauri release gates; legacy 103 pass on Node 26 |
-| #20 Attempt retry/replay/replacement | AFK | Implementation complete locally | Grok xhigh worker | Pending review | Pending final gates |
-| #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
-| #22 Async source settings/Sync Runs | AFK | Blocked by #18, #19 | — | — | No |
-| #23 Search/lanes/detail/virtualization | AFK | Blocked by #18, #19 | — | — | No |
+| #20 Attempt retry/replay/replacement | AFK | Complete | Grok xhigh standards + spec | Docs inventory and diagnostic safety fixed; both axes pass | Rust/renderer/Tauri release gates; legacy 103 pass; CodeRabbit 0 findings |
+| #21 Health/repair/fault recovery | AFK | Ready — frontier | — | — | No |
+| #22 Async source settings/Sync Runs | AFK | Ready — frontier | — | — | No |
+| #23 Search/lanes/detail/virtualization | AFK | Ready — frontier | — | — | No |
 | #24 Transactional Curation | AFK | Blocked by #23 | — | — | No |
 | #25 Recoverable export | AFK | Blocked by #18, #24 | — | — | No |
 | #26 Codex Source | AFK | Blocked by #18, #22 | — | — | No |
@@ -78,7 +78,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | --- | --- | --- | --- | --- | --- |
 | #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74`, `b87f5cb` | Both axes pass after all findings applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
 | #19 | `5655cde` | Grok 4.5 xhigh edit session | `e9cd49a`, `e39c451` | Both axes pass; ACL finding withdrawn | Rust workspace 14 + renderer 5; Tauri release build; legacy 103 pass on Node 26 |
-| #20 | `4564d28` | Grok 4.5 xhigh edit session | Pending | Pending | fmt/clippy/workspace tests + desktop typecheck/test/frontend/Tauri no-bundle + legacy 103 on Node 26 |
+| #20 | `4564d28` | Grok 4.5 xhigh edit session | `50d8633`, `f4b3514` | Both axes pass after architecture/diagnostic fixes; CodeRabbit 0 findings | fmt/clippy/workspace tests + desktop typecheck/test/frontend/Tauri no-bundle + legacy 103 on Node 26 |
 
 ## Open Questions
 
