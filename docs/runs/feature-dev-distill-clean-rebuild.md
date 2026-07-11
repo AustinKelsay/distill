@@ -45,7 +45,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 | Issue | Type | Status | Review thread | Fixes needed | Verified |
 | --- | --- | --- | --- | --- | --- |
-| #18 Library Fixture tracer | AFK | Implemented (uncommitted) | Grok xhigh worker | Pending review | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
+| #18 Library Fixture tracer | AFK | Review fixes verified | Grok xhigh standards + spec | Focused re-review pending | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
 | #19 Thin Tauri/React/CLI callers | AFK | Blocked by #18 | — | — | No |
 | #20 Attempt retry/replay/replacement | AFK | Blocked by #18 | — | — | No |
 | #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
@@ -76,7 +76,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 | Issue | Fixed point | Worker session | Commit | Review result | Checks |
 | --- | --- | --- | --- | --- | --- |
-| #18 | `b471a77` | Grok 4.5 xhigh edit session | Pending | Pending | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
+| #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74` + review fixes | Both axes requested changes; all applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
 
 ## Open Questions
 

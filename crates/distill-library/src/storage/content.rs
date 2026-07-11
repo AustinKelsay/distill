@@ -107,8 +107,7 @@ pub fn store_capture_bytes(
     let staged_hash = hex::encode(Sha256::digest(fs::read(&stage_path)?));
     if staged_hash != sha256 {
         let _ = fs::remove_file(&stage_path);
-        return Err(LibraryError::ContentIntegrity {
-            capture_id: -1,
+        return Err(LibraryError::StagedContentIntegrity {
             detail: "staged blob checksum mismatch before rename".into(),
         });
     }
@@ -127,14 +126,18 @@ pub fn store_capture_bytes(
 /**
  * Read Capture bytes from an inline or blob ContentRef.
  */
-pub fn read_capture_bytes(home: &Path, content: &ContentRef) -> LibraryResult<Vec<u8>> {
+pub fn read_capture_bytes(
+    home: &Path,
+    content: &ContentRef,
+    capture_id: i64,
+) -> LibraryResult<Vec<u8>> {
     match content {
         ContentRef::Inline { text, sha256, .. } => {
             let bytes = text.as_bytes().to_vec();
             let actual = hex::encode(Sha256::digest(&bytes));
             if actual != *sha256 {
                 return Err(LibraryError::ContentIntegrity {
-                    capture_id: -1,
+                    capture_id,
                     detail: "inline content checksum mismatch".into(),
                 });
             }
@@ -150,7 +153,7 @@ pub fn read_capture_bytes(home: &Path, content: &ContentRef) -> LibraryResult<Ve
             let bytes = fs::read(&absolute)?;
             if bytes.len() as u64 != *byte_size {
                 return Err(LibraryError::ContentIntegrity {
-                    capture_id: -1,
+                    capture_id,
                     detail: format!(
                         "blob size mismatch at {}: {} != {}",
                         relative_path,
@@ -162,7 +165,7 @@ pub fn read_capture_bytes(home: &Path, content: &ContentRef) -> LibraryResult<Ve
             let actual = hex::encode(Sha256::digest(&bytes));
             if actual != *sha256 {
                 return Err(LibraryError::ContentIntegrity {
-                    capture_id: -1,
+                    capture_id,
                     detail: format!("blob checksum mismatch at {relative_path}"),
                 });
             }
@@ -185,15 +188,13 @@ fn blob_relative_path(sha256: &str) -> String {
 fn verify_existing_blob(path: &Path, sha256: &str, byte_size: u64) -> LibraryResult<()> {
     let bytes = fs::read(path)?;
     if bytes.len() as u64 != byte_size {
-        return Err(LibraryError::ContentIntegrity {
-            capture_id: -1,
+        return Err(LibraryError::StagedContentIntegrity {
             detail: "existing blob size mismatch".into(),
         });
     }
     let actual = hex::encode(Sha256::digest(&bytes));
     if actual != sha256 {
-        return Err(LibraryError::ContentIntegrity {
-            capture_id: -1,
+        return Err(LibraryError::StagedContentIntegrity {
             detail: "existing blob checksum mismatch".into(),
         });
     }

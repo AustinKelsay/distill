@@ -36,6 +36,17 @@ pub struct DiscoveredSource {
     pub display_name: String,
     /// Configured or detected data root.
     pub data_root: PathBuf,
+    /// Parser identity and version used for Normalization Attempts.
+    pub parser: ParserIdentity,
+}
+
+/// Versioned parser identity owned by a SourceAdapter implementation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ParserIdentity {
+    /// Stable parser identifier.
+    pub id: String,
+    /// Parser contract version.
+    pub version: String,
 }
 
 /// Capture Candidate discovered before snapshot.

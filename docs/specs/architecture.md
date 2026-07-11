@@ -119,10 +119,12 @@ The clean rebuild centers product behavior in one deep Rust `Library` crate (`cr
 Public Library methods for the Fixture tracer:
 
 - `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files)
+- `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
 - `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only
 - `session_slice` / bounded `search` — read a bounded slice of the current Session Projection and FTS index; cursor paging lands in issue #23
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
 - `health()` — report schema/migration, content, and FTS integrity
+- `recent_activity(limit)` — return a bounded first Activity slice for the tracer; cursor paging and operations views land in issue #30
 
 The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
 

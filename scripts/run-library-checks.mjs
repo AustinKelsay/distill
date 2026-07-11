@@ -32,7 +32,7 @@ if (!supportedModes.has(mode)) {
 }
 
 if (mode === "fmt" || mode === "library" || mode === "all") {
-  run("cargo", ["fmt", "--all"]);
+  run("cargo", ["fmt", "--all", "--", "--check"]);
 }
 if (mode === "clippy" || mode === "library" || mode === "all") {
   run("cargo", [

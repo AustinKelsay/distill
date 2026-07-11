@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     CaptureCandidate, CaptureSnapshot, DiscoveredSource, ParsedArtifact, ParsedCapture, ParsedFact,
-    ParsedMessage, SourceAdapter, SourceKind, SourceStageError,
+    ParsedMessage, ParserIdentity, SourceAdapter, SourceKind, SourceStageError,
 };
 
 /// Manifest file name that marks a Fixture root.
@@ -72,6 +72,10 @@ impl SourceAdapter for FixtureAdapter {
             kind: SourceKind::Fixture,
             display_name: "Fixture".to_string(),
             data_root: root,
+            parser: ParserIdentity {
+                id: "fixture".to_string(),
+                version: "1.0.0".to_string(),
+            },
         })
     }
 

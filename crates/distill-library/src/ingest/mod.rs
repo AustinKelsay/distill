@@ -5,16 +5,12 @@ use std::path::{Component, Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
-use crate::adapter::{CaptureCandidate, ParsedCapture, SourceAdapter, SourceKind};
+use crate::adapter::{CaptureCandidate, CaptureSnapshot, ParsedCapture, SourceAdapter, SourceKind};
 use crate::error::{LibraryError, LibraryResult};
 use crate::storage::{store_capture_bytes, ContentRef, DistillPaths};
 use crate::types::IngestReport;
-
-/// Fixture parser identity recorded on Normalization Attempts.
-pub const FIXTURE_PARSER_ID: &str = "fixture";
-/// Fixture parser version for the tracer.
-pub const FIXTURE_PARSER_VERSION: &str = "1.0.0";
 
 /**
  * Run a SourceAdapter through the production ingest seam into the Library store.
@@ -33,13 +29,7 @@ pub fn ingest_adapter(
     for candidate in candidates {
         enforce_configured_root(&source.data_root, &candidate)?;
         let snapshot = adapter.snapshot(&candidate)?;
-        if snapshot.byte_size > max_capture_bytes {
-            return Err(LibraryError::CaptureTooLarge {
-                byte_size: snapshot.byte_size,
-                limit: max_capture_bytes,
-            });
-        }
-
+        verify_snapshot_metadata(&snapshot)?;
         if let Some(existing_id) = find_duplicate(
             conn,
             candidate.source_kind.as_str(),
@@ -86,7 +76,15 @@ pub fn ingest_adapter(
 
         match adapter.parse(&candidate, &snapshot) {
             Ok(parsed) => {
-                let attempt_id = insert_attempt(conn, capture_id, "pending", None, None)?;
+                let attempt_id = insert_attempt(
+                    conn,
+                    capture_id,
+                    &source.parser.id,
+                    &source.parser.version,
+                    "pending",
+                    None,
+                    None,
+                )?;
                 match publish_projection(conn, capture_id, attempt_id, &candidate, &parsed) {
                     Ok(()) => {
                         report.successful_attempts += 1;
@@ -101,6 +99,8 @@ pub fn ingest_adapter(
                 let attempt_id = insert_attempt(
                     conn,
                     capture_id,
+                    &source.parser.id,
+                    &source.parser.version,
                     "failed",
                     Some("parse_failed"),
                     Some(&err.to_string()),
@@ -112,6 +112,22 @@ pub fn ingest_adapter(
     }
 
     Ok(report)
+}
+
+/**
+ * Verify adapter-reported snapshot metadata before dedupe or persistence.
+ */
+fn verify_snapshot_metadata(snapshot: &CaptureSnapshot) -> LibraryResult<()> {
+    let actual_size = snapshot.bytes.len() as u64;
+    let actual_sha256 = hex::encode(Sha256::digest(&snapshot.bytes));
+    if snapshot.byte_size != actual_size || snapshot.sha256 != actual_sha256 {
+        return Err(LibraryError::SourceAdapter(
+            crate::adapter::SourceStageError::Snapshot(
+                "adapter snapshot checksum or byte size did not match its bytes".to_string(),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /**
@@ -287,6 +303,8 @@ fn insert_capture(
 fn insert_attempt(
     conn: &Connection,
     capture_id: i64,
+    parser_id: &str,
+    parser_version: &str,
     outcome: &str,
     error_class: Option<&str>,
     error_message: Option<&str>,
@@ -304,8 +322,8 @@ fn insert_attempt(
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '{}')",
         params![
             capture_id,
-            FIXTURE_PARSER_ID,
-            FIXTURE_PARSER_VERSION,
+            parser_id,
+            parser_version,
             now,
             finished,
             outcome,

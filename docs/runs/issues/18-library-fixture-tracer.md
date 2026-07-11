@@ -5,8 +5,8 @@
 - Issue: [#18](https://github.com/AustinKelsay/distill/issues/18)
 - Fixed point before session: `b471a77`
 - Worker session: Grok 4.5 xhigh edit session
-- Commit: Pending (do not commit in this worker pass)
-- Status: Implementation complete; independent verification and review pending
+- Commit: `a13bf74` plus review-fix follow-up
+- Status: Review findings fixed and verified; focused re-review pending
 
 ## Inputs
 
@@ -32,11 +32,11 @@
 
 ## Review
 
-- Review fixed point: Pending
-- Standards findings: Pending
-- Spec findings: Pending
-- Worthy fixes applied: Pre-commit local CodeRabbit findings applied: validated helper modes with Library-only default, and removed the Fixture manifest-ID fallback so omitted identities use deterministic synthetic provenance; the latter was reproduced red before the adapter fix and green afterward.
-- Findings ignored with reasons: Pending
+- Review fixed point: `b471a77...a13bf74`
+- Standards findings: Changes requested — incomplete governed gap fields; two undocumented public methods; Fixture-coupled parser identity in generic ingest; magic pre-accept Capture id; duplicate size-limit enforcement
+- Spec findings: Changes requested — Capture Fact provenance not asserted at the public seam; formatting helper mutated instead of checking
+- Worthy fixes applied: All findings. Pre-commit CodeRabbit fixes validated helper modes and synthetic identity. Formal review fixes completed gap metadata, synchronized API docs, moved parser identity into `DiscoveredSource`, added a typed staged-integrity error, removed duplicate limit enforcement, verified adapter snapshot metadata before dedupe, asserted Capture Fact provenance, and made formatting check-only.
+- Findings ignored with reasons: None
 
 ## Risks
 

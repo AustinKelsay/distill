@@ -191,6 +191,8 @@ trait SourceAdapter {
 }
 ```
 
+`DiscoveredSource` also carries the adapter-owned parser identity and version recorded on each Normalization Attempt. This keeps the four-operation seam source-agnostic without hard-coding Fixture parser metadata in ingestion.
+
 Adapters remain forbidden from SQLite, projection mutation, search, Curation, export, and Activity persistence.
 
 ### Fixture Appendix

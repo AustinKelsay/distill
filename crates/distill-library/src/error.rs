@@ -62,6 +62,13 @@ pub enum LibraryError {
         detail: String,
     },
 
+    /// Content failed verification before any Capture was accepted.
+    #[error("staged content integrity failure: {detail}")]
+    StagedContentIntegrity {
+        /// Human-readable integrity detail.
+        detail: String,
+    },
+
     /// Requested entity was not found.
     #[error("not found: {0}")]
     NotFound(String),

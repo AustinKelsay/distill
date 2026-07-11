@@ -92,6 +92,13 @@ fn library_fixture_tracer_journey() {
     assert_eq!(detail.messages[0].text, "Hello from fixture");
     assert_eq!(detail.messages[1].role, "assistant");
     assert!(detail.artifacts.len() >= 2);
+    assert!(
+        detail
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.capture_fact_id.is_some()),
+        "every Fixture Artifact must expose its immutable Capture Fact provenance"
+    );
 
     let hits = library.search("Hello", 20).expect("search");
     assert!(

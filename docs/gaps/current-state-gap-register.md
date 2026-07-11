@@ -13,21 +13,30 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Status: open
 - Rule: the rebuild Library is the target product interface; Electron remains until cutover.
 - Current drift: Electron under `src/**` still serves the shipping baseline while `crates/distill-library` proves the Fixture tracer.
-- Tracking: issue #18 and follow-on rebuild tickets.
+- Impacted files/modules: legacy `src/**`; native `crates/distill-library`; future desktop/CLI crates.
+- Severity: high — the rebuild cannot replace the shipped runtime until the native caller and migration paths are complete.
+- Target branch/ticket: `feature/distill-clean-rebuild`, final cutover gate #37.
+- Acceptance criteria: native desktop and CLI pass the contract matrix and packaged routine source-to-export smoke; Electron remains read-only migration evidence rather than a routine dependency.
 
 ### GAP-R002: Provider SourceAdapters Not Yet In Library
 
 - Status: open
 - Rule: Codex, Claude Code, OpenCode, Droid, and Fixture share one SourceAdapter seam.
 - Current drift: only Fixture is implemented in the Rust Library tracer.
-- Tracking: provider tickets after #18.
+- Impacted files/modules: `crates/distill-library/src/adapter`; provider fixture corpus and Source contract tests.
+- Severity: high — real histories cannot enter the native Library yet.
+- Target branch/tickets: `feature/distill-clean-rebuild`, #26 through #29.
+- Acceptance criteria: every launch Source passes its appendix and shared conformance corpus through the same internal adapter and Library preservation path.
 
 ### GAP-R003: Sync Runs, Curation, Export Deferred
 
 - Status: open
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
 - Current drift: Library Fixture tracer covers ingest/projection/query/replay/health only.
-- Tracking: later rebuild tickets.
+- Impacted files/modules: future Library operations, Curation, export, CLI, host, and renderer modules.
+- Severity: high — the native tracer cannot yet complete the product loop.
+- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, and downstream caller tickets.
+- Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts.
 
 ## Historical Electron Gaps
 

@@ -164,12 +164,7 @@ pub fn search(conn: &Connection, query: &str, limit: u32) -> LibraryResult<Vec<S
  */
 pub fn replay_capture(conn: &Connection, home: &Path, capture_id: i64) -> LibraryResult<Vec<u8>> {
     let content = load_content_ref(conn, capture_id)?;
-    let bytes = read_capture_bytes(home, &content).map_err(|err| match err {
-        LibraryError::ContentIntegrity { detail, .. } => {
-            LibraryError::ContentIntegrity { capture_id, detail }
-        }
-        other => other,
-    })?;
+    let bytes = read_capture_bytes(home, &content, capture_id)?;
     Ok(bytes)
 }
 
