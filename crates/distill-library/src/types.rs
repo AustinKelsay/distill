@@ -12,6 +12,59 @@ pub const DEFAULT_MAX_CAPTURE_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum number of rows returned by any first-tracer query slice.
 pub const MAX_PAGE_SIZE: u32 = 200;
 
+/// Stable Session Identity for thin callers (CLI, host, renderer).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionIdentity {
+    /// Source kind string such as `fixture`.
+    pub source_kind: String,
+    /// Source-provided or deterministic synthetic Session identifier.
+    pub external_session_id: String,
+}
+
+/// Caller-facing Source observation after Fixture detection.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceSummary {
+    /// Source kind string such as `fixture`.
+    pub kind: String,
+    /// Human-readable Source label.
+    pub display_name: String,
+    /// Absolute data root path as a UTF-8 string.
+    pub data_root: String,
+    /// Parser identity used for Normalization Attempts.
+    pub parser_id: String,
+    /// Parser contract version.
+    pub parser_version: String,
+}
+
+/// Progress phases for the first-run Fixture journey.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixtureJourneyPhase {
+    /// Detecting the Fixture Source.
+    DetectingSource,
+    /// Ingesting Capture Candidates through the production seam.
+    SyncingCaptures,
+    /// Loading the first projected Session Identity.
+    LoadingSession,
+    /// Running Library health.
+    CheckingHealth,
+}
+
+/// Combined first-run Fixture journey result for thin callers.
+///
+/// `sync` is the Fixture ingest report for this journey, not a generic Sync Run.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FixtureJourneyResult {
+    /// Detected Fixture Source summary.
+    pub source: SourceSummary,
+    /// Fixture ingest counters and Session Identities touched by this run.
+    pub sync: IngestReport,
+    /// First Session Projection loaded after ingest, when present.
+    pub session: Option<SessionDetail>,
+    /// Library health after the journey.
+    pub health: HealthReport,
+}
+
 /// Summary returned after Fixture ingest through the production seam.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IngestReport {
@@ -25,6 +78,8 @@ pub struct IngestReport {
     pub failed_attempts: u64,
     /// Accepted Capture row ids in discovery order.
     pub capture_ids: Vec<i64>,
+    /// Distinct Session Identities successfully projected during this ingest.
+    pub session_identities: Vec<SessionIdentity>,
 }
 
 /// Compact Session list row.

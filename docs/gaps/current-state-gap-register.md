@@ -12,9 +12,9 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open
 - Rule: the rebuild Library is the target product interface; Electron remains until cutover.
-- Current drift: Electron under `src/**` still serves the shipping baseline while `crates/distill-library` proves the Fixture tracer.
-- Impacted files/modules: legacy `src/**`; native `crates/distill-library`; future desktop/CLI crates.
-- Severity: high — the rebuild cannot replace the shipped runtime until the native caller and migration paths are complete.
+- Current drift: Electron under `src/**` still serves the shipping baseline while the native Library, thin CLI, and first-run Tauri/React Fixture callers exist beside it. Packaging and the full product loop remain incomplete.
+- Impacted files/modules: legacy `src/**`; native `crates/distill-library`; `crates/distill-cli`; `apps/distill-desktop`.
+- Severity: high — the rebuild cannot replace the shipped runtime until provider Sources, Sync Runs, Curation, export, migration, and packaging paths are complete.
 - Target branch/ticket: `feature/distill-clean-rebuild`, final cutover gate #37.
 - Acceptance criteria: native desktop and CLI pass the contract matrix and packaged routine source-to-export smoke; Electron remains read-only migration evidence rather than a routine dependency.
 
@@ -32,7 +32,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: Library Fixture tracer covers ingest/projection/query/replay/health only.
+- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/projection/query/replay/health only. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
 - Impacted files/modules: future Library operations, Curation, export, CLI, host, and renderer modules.
 - Severity: high — the native tracer cannot yet complete the product loop.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, and downstream caller tickets.

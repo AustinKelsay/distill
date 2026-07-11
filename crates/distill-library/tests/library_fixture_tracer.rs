@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use distill_library::{Library, LibraryError, INLINE_CONTENT_THRESHOLD_BYTES};
+use distill_library::{FixtureJourneyPhase, Library, LibraryError, INLINE_CONTENT_THRESHOLD_BYTES};
 use tempfile::TempDir;
 
 /**
@@ -77,6 +77,12 @@ fn library_fixture_tracer_journey() {
     assert_eq!(report.successful_attempts, 1);
     assert_eq!(report.failed_attempts, 0);
     assert_eq!(report.capture_ids.len(), 1);
+    assert_eq!(report.session_identities.len(), 1);
+    assert_eq!(report.session_identities[0].source_kind, "fixture");
+    assert_eq!(
+        report.session_identities[0].external_session_id,
+        "fixture-session-hello"
+    );
 
     let detail = library
         .session_slice("fixture", "fixture-session-hello", 20, 20)
@@ -150,6 +156,44 @@ fn library_fixture_tracer_journey() {
         health_reopen.ok,
         "reopen health issues: {:?}",
         health_reopen.issues
+    );
+}
+
+#[test]
+fn fixture_journey_returns_source_sync_session_and_health() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("distill-home");
+    let fixture = temp.path().join("fixture-root");
+    fs::create_dir_all(&fixture).expect("fixture root");
+    write_basic_fixture(&fixture);
+
+    let mut library = Library::open(&home).expect("open library");
+    let mut phases = Vec::new();
+    let result = library
+        .run_fixture_journey(&fixture, |phase| phases.push(phase))
+        .expect("fixture journey");
+
+    assert_eq!(
+        phases,
+        [
+            FixtureJourneyPhase::DetectingSource,
+            FixtureJourneyPhase::SyncingCaptures,
+            FixtureJourneyPhase::LoadingSession,
+            FixtureJourneyPhase::CheckingHealth,
+        ]
+    );
+    assert_eq!(result.source.kind, "fixture");
+    assert_eq!(result.source.display_name, "Fixture");
+    assert_eq!(result.source.parser_id, "fixture");
+    assert_eq!(result.sync.accepted_captures, 1);
+    assert_eq!(result.sync.session_identities.len(), 1);
+    let session = result.session.expect("session present");
+    assert_eq!(session.summary.external_session_id, "fixture-session-hello");
+    assert_eq!(session.messages[0].text, "Hello from fixture");
+    assert!(
+        result.health.ok,
+        "health issues: {:?}",
+        result.health.issues
     );
 }
 

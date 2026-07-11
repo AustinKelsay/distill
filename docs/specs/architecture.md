@@ -116,15 +116,22 @@ An operational unit of work used for source sync or future operational workflows
 
 The clean rebuild centers product behavior in one deep Rust `Library` crate (`crates/distill-library`). Desktop (Tauri), CLI, and contract tests are equal callers of that public seam. SQLite, FTS5, content-addressed files, migrations, and recovery protocols remain Library internals (see ADRs `0001`–`0003`).
 
-Public Library methods for the Fixture tracer:
+Public Library methods for the Fixture tracer and thin callers:
 
 - `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files)
 - `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
-- `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only
+- `detect_fixture(fixture_root)` — return a caller-facing `SourceSummary` through the production Fixture SourceAdapter detect path
+- `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only; the ingest report includes distinct `SessionIdentity` values projected during the run
+- `run_fixture_journey(fixture_root, on_progress)` — first-run helper that detects, ingests, loads the first projected Session, and returns health as a `FixtureJourneyResult` with typed progress phases
 - `session_slice` / bounded `search` — read a bounded slice of the current Session Projection and FTS index; cursor paging lands in issue #23
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
 - `health()` — report schema/migration, content, and FTS integrity
 - `recent_activity(limit)` — return a bounded first Activity slice for the tracer; cursor paging and operations views land in issue #30
+
+Thin callers:
+
+- `crates/distill-cli` — `distill --home <path> --fixture <path> [--format human|json]` invokes the same Fixture journey; exit `0` success, `1` Library/runtime failure, `2` usage/validation
+- `apps/distill-desktop` — Tauri 2 host runs the journey off the UI thread, validates inputs, emits typed progress, and returns source/sync/session/health results to a sandboxed React renderer with a minimal capability file
 
 The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
 

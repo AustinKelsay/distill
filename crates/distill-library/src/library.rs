@@ -4,14 +4,14 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::adapter::FixtureAdapter;
+use crate::adapter::{FixtureAdapter, SourceAdapter};
 use crate::error::LibraryResult;
 use crate::ingest;
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
-    ActivityEventSummary, HealthReport, IngestReport, SearchHit, SessionDetail,
-    DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    ActivityEventSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, IngestReport,
+    SearchHit, SessionDetail, SourceSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -56,6 +56,24 @@ impl Library {
     }
 
     /**
+     * Detect a Fixture root through the production SourceAdapter seam.
+     *
+     * Parameters:
+     * - `fixture_root`: directory containing `distill.fixture.json`.
+     */
+    pub fn detect_fixture(&self, fixture_root: impl AsRef<Path>) -> LibraryResult<SourceSummary> {
+        let adapter = FixtureAdapter::new(fixture_root.as_ref().to_path_buf());
+        let discovered = adapter.detect()?;
+        Ok(SourceSummary {
+            kind: discovered.kind.as_str().to_string(),
+            display_name: discovered.display_name,
+            data_root: discovered.data_root.display().to_string(),
+            parser_id: discovered.parser.id,
+            parser_version: discovered.parser.version,
+        })
+    }
+
+    /**
      * Ingest a Fixture root through the production SourceAdapter seam.
      *
      * Parameters:
@@ -72,6 +90,51 @@ impl Library {
             &adapter,
             self.max_capture_bytes,
         )
+    }
+
+    /**
+     * Run the first-run Fixture journey for thin CLI and desktop callers.
+     *
+     * Detects the Fixture Source, ingests through the production seam, loads the
+     * first projected Session Identity when present, and returns Library health.
+     * Progress callbacks observe phase transitions only; they do not receive
+     * storage handles or SQL.
+     *
+     * Parameters:
+     * - `fixture_root`: directory containing `distill.fixture.json`.
+     * - `on_progress`: optional phase observer for host/CLI progress surfaces.
+     */
+    pub fn run_fixture_journey<F>(
+        &mut self,
+        fixture_root: impl AsRef<Path>,
+        mut on_progress: F,
+    ) -> LibraryResult<FixtureJourneyResult>
+    where
+        F: FnMut(FixtureJourneyPhase),
+    {
+        let fixture_root = fixture_root.as_ref();
+        on_progress(FixtureJourneyPhase::DetectingSource);
+        let source = self.detect_fixture(fixture_root)?;
+
+        on_progress(FixtureJourneyPhase::SyncingCaptures);
+        let sync = self.ingest_fixture(fixture_root)?;
+
+        on_progress(FixtureJourneyPhase::LoadingSession);
+        let session = if let Some(identity) = sync.session_identities.first() {
+            self.session_slice(&identity.source_kind, &identity.external_session_id, 20, 20)?
+        } else {
+            None
+        };
+
+        on_progress(FixtureJourneyPhase::CheckingHealth);
+        let health = self.health()?;
+
+        Ok(FixtureJourneyResult {
+            source,
+            sync,
+            session,
+            health,
+        })
     }
 
     /**

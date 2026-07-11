@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal first-run Fixture caller capabilities. No filesystem, shell, process, or SQLite permissions are granted to the renderer.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::adapter::{CaptureCandidate, CaptureSnapshot, ParsedCapture, SourceAdapter, SourceKind};
 use crate::error::{LibraryError, LibraryResult};
 use crate::storage::{store_capture_bytes, ContentRef, DistillPaths};
-use crate::types::IngestReport;
+use crate::types::{IngestReport, SessionIdentity};
 
 /**
  * Run a SourceAdapter through the production ingest seam into the Library store.
@@ -88,6 +88,11 @@ pub fn ingest_adapter(
                 match publish_projection(conn, capture_id, attempt_id, &candidate, &parsed) {
                     Ok(()) => {
                         report.successful_attempts += 1;
+                        push_session_identity(
+                            &mut report,
+                            candidate.source_kind.as_str(),
+                            &parsed.external_session_id,
+                        );
                     }
                     Err(err) => {
                         fail_attempt(conn, attempt_id, "projection_failed", &err.to_string())?;
@@ -112,6 +117,19 @@ pub fn ingest_adapter(
     }
 
     Ok(report)
+}
+
+/**
+ * Record a distinct Session Identity on the ingest report.
+ */
+fn push_session_identity(report: &mut IngestReport, source_kind: &str, external_session_id: &str) {
+    let identity = SessionIdentity {
+        source_kind: source_kind.to_string(),
+        external_session_id: external_session_id.to_string(),
+    };
+    if !report.session_identities.contains(&identity) {
+        report.session_identities.push(identity);
+    }
 }
 
 /**

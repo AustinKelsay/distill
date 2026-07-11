@@ -6,3 +6,5 @@ target
 *.sqlite-shm
 *.sqlite-wal
 npm-debug.log*
+apps/distill-desktop/src-tauri/gen
+apps/distill-desktop/dist

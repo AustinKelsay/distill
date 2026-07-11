@@ -95,3 +95,13 @@ npm run export -- holdout
 This root README is intentionally simple.
 
 The authoritative architecture and product docs live under [docs/README.md](docs/README.md).
+
+## Rebuild Callers (informative)
+
+Native rebuild crates live beside the Electron baseline:
+
+- Library: `crates/distill-library`
+- CLI: `crates/distill-cli` (`distill --home … --fixture …`)
+- Desktop: `apps/distill-desktop` (Tauri 2 + React first-run Fixture UI)
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for rebuild commands. Packaging remains deferred.

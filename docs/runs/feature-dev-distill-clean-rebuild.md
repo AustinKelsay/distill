@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18 complete and closed; #19 and #20 are the dependency frontier
+- Current status: #19 implementation complete pending review/commit; #20 remains ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -34,19 +34,19 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 ## Commands
 
-- Install: `npm install` (legacy Electron baseline)
-- Typecheck: `npm run build` (legacy Electron baseline)
-- Test: `npm test` (legacy); `cargo test -p distill-library` (rebuild Library)
-- Build: `npm run build` (legacy); `cargo build -p distill-library` (rebuild Library)
-- Visual verification: legacy `npm start`; rebuild desktop harness deferred to later tickets
-- Library gates: `cargo fmt`, `cargo clippy -p distill-library --all-targets -- -D warnings`, `cargo test -p distill-library`
+- Install: `npm install` (legacy Electron baseline + desktop workspace)
+- Typecheck: `npm run build` (legacy); `npm run desktop:typecheck` (rebuild renderer)
+- Test: `npm test` (legacy); `cargo test --workspace` (rebuild); `npm run desktop:test` (renderer)
+- Build: `npm run build` (legacy); `cargo build --workspace`; `npm run desktop:frontend:build`
+- Visual verification: legacy `npm start`; rebuild `npm run desktop:dev` (host boundary; packaging deferred)
+- Rebuild gates: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`
 
 ## Ticket Ledger
 
 | Issue | Type | Status | Review thread | Fixes needed | Verified |
 | --- | --- | --- | --- | --- | --- |
 | #18 Library Fixture tracer | AFK | Complete | Grok xhigh standards + spec | All applied; both axes pass | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
-| #19 Thin Tauri/React/CLI callers | AFK | Ready — frontier | — | — | No |
+| #19 Thin Tauri/React/CLI callers | AFK | Implementation complete; commit pending | Grok xhigh worker | Pending review | Rust workspace + desktop frontend gates; legacy Node 22 inspector baseline unchanged |
 | #20 Attempt retry/replay/replacement | AFK | Ready — frontier | — | — | No |
 | #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
 | #22 Async source settings/Sync Runs | AFK | Blocked by #18, #19 | — | — | No |
@@ -77,6 +77,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | Issue | Fixed point | Worker session | Commit | Review result | Checks |
 | --- | --- | --- | --- | --- | --- |
 | #18 | `b471a77` | Grok 4.5 xhigh edit session | `a13bf74`, `b87f5cb` | Both axes pass after all findings applied | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
+| #19 | `5655cde` | Grok 4.5 xhigh edit session | Pending | Pending | Pending final review packet |
 
 ## Open Questions
 

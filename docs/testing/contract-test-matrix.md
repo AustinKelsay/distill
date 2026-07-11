@@ -19,6 +19,9 @@ Where a `Primary Branch` or `Target Branch` is listed below, it records the firs
 | `sync_jobs_and_logs` | Validate operational sync reporting without treating logs as the canonical audit trail. | `docs/test-matrix` |
 | `doc_truthfulness` | Validate the canonical docs package stays present and wired together. | `docs/spec-foundation` |
 | `library_fixture_tracer` | Validate the Rust Library Fixture ingest/projection/query/replay/health seam. | `feature/distill-clean-rebuild` |
+| `thin_cli_fixture_caller` | Validate the thin Rust CLI Fixture journey against a real binary. | `feature/distill-clean-rebuild` |
+| `thin_tauri_host_fixture_caller` | Validate Tauri host input validation, progress, and typed error/result translation. | `feature/distill-clean-rebuild` |
+| `thin_react_fixture_caller` | Validate the React first-run UI against one typed bridge fake. | `feature/distill-clean-rebuild` |
 
 ## Fixture Requirements
 
@@ -86,8 +89,17 @@ Every fixture must document:
 | `LFT-002` | `library_fixture_tracer` | Fixture SourceAdapter detect/discover/snapshot/parse through production ingest yields Capture, Attempt, Facts, Projection, FTS, and Activity. | Capture row and `capture_recorded` Activity commit together over recoverable content; successful Attempt has Facts; Session Projection and FTS match. | `session_slice` and bounded `search` return the projected transcript. | Test fails if Fixture bypasses the SourceAdapter seam or projection publishes without an Attempt. | `feature/distill-clean-rebuild` |
 | `LFT-003` | `library_fixture_tracer` | Blob-backed replay after source deletion and Library reopen remains checksum-verified. | A Capture above the inline threshold resolves from Distill-owned content-addressed storage after fixture files are removed. | `replay_capture` and `health` succeed after reopen. | Test fails if replay depends on the original Fixture files or only exercises inline storage. | `feature/distill-clean-rebuild` |
 | `LFT-004` | `library_fixture_tracer` | Symlink and missing-parent configured-root escapes plus capture-size limits fail with typed errors. | No Capture row is accepted for rejected candidates. | Callers observe `PathOutsideConfiguredRoot` before snapshot or `CaptureTooLarge` before acceptance. | Test fails if escapes or oversized bytes are accepted or misclassified. | `feature/distill-clean-rebuild` |
+| `LFT-005` | `library_fixture_tracer` | `run_fixture_journey` returns source, sync, session, and health with typed progress phases. | Journey result carries detected Fixture Source, ingest counters/Session Identities, projected Session, and healthy report. | Thin callers can render the first-run outcome without SQL. | Test fails if progress phases are skipped or storage handles leak into the result. | `feature/distill-clean-rebuild` |
+| `TCC-001` | `thin_cli_fixture_caller` | CLI Fixture journey prints stable human and JSON results with exit `0`. | Chosen temp home contains accepted Capture and Session Projection. | Human/JSON stdout includes source, sync, session, and health. | Test fails if the CLI duplicates Library policy or invents unstable output. | `feature/distill-clean-rebuild` |
+| `TCC-002` | `thin_cli_fixture_caller` | CLI usage and Library failures return documented exit codes `2` and `1`. | No Capture is accepted for invalid Fixture roots. | JSON stderr carries a stable error class. | Test fails if exit codes or error classes drift. | `feature/distill-clean-rebuild` |
+| `THC-001` | `thin_tauri_host_fixture_caller` | Host runner validates inputs, emits progress, and returns typed journey results. | Temp home matches Library Fixture outcomes. | Progress phases and source/sync/session/health are observed at the host seam. | Test fails if work runs without validation or errors lose their codes. | `feature/distill-clean-rebuild` |
+| `TRC-001` | `thin_react_fixture_caller` | React first-run UI renders idle/running/success/error plus source/sync/session/health via one typed bridge fake. | N/A — renderer has no storage authority. | Panels and status reflect bridge results/errors only. | Test fails if the UI reaches ambient filesystem/process/SQLite APIs. | `feature/distill-clean-rebuild` |
+| `TRC-002` | `thin_react_fixture_caller` | Production renderer bridge invokes the exact Tauri command shape and cleans up asynchronous event listeners. | N/A — bridge exposes typed values only. | Snake-case Rust parameters receive the required camel-case invoke key; unmount cannot leak a late listener. | Test fails if production IPC differs from the fake or cleanup races registration. | `feature/distill-clean-rebuild` |
 
 Executable Library Fixture suite: `crates/distill-library/tests/library_fixture_tracer.rs`.
+Executable CLI suite: `crates/distill-cli/tests/cli_fixture_journey.rs`.
+Executable Tauri host suite: `apps/distill-desktop/src-tauri/tests/host_fixture_journey.rs`.
+Executable React suites: `apps/distill-desktop/src/App.test.tsx`, `apps/distill-desktop/src/bridge.test.ts`.
 
 ## Expected DB State Guidance
 

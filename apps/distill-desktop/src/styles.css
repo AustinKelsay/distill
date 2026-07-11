@@ -1,0 +1,136 @@
+:root {
+  color-scheme: light;
+  --ink: #14201a;
+  --paper: #f3f6f2;
+  --panel: #ffffff;
+  --accent: #1f6b45;
+  --line: #c7d4cc;
+  --danger: #8a1f1f;
+  --muted: #4d5c54;
+  font-family:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  background:
+    radial-gradient(circle at top left, #d9ebe0 0%, transparent 42%),
+    linear-gradient(160deg, #eef4ef 0%, var(--paper) 55%, #e4ece7 100%);
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+.hero {
+  margin-bottom: 2rem;
+}
+
+.brand {
+  margin: 0;
+  font-size: 2.4rem;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.hero h1 {
+  margin: 0.4rem 0 0.6rem;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.lede {
+  margin: 0;
+  max-width: 38rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.form {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.95rem;
+}
+
+input {
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  font: inherit;
+  background: var(--panel);
+}
+
+button {
+  justify-self: start;
+  border: 0;
+  border-radius: 0.35rem;
+  padding: 0.75rem 1.1rem;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+.status {
+  margin-bottom: 1rem;
+}
+
+.results {
+  display: grid;
+  gap: 1rem;
+}
+
+.panel {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem;
+}
+
+.panel.error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+}
+
+ol {
+  margin: 0;
+  padding-left: 1.1rem;
+}

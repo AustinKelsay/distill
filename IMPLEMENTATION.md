@@ -11,16 +11,35 @@ Start with the canonical architecture here:
 The clean-rebuild Rust Library lives beside the Electron baseline:
 
 - workspace: root `Cargo.toml`
-- crate: `crates/distill-library`
-- contract tests: `crates/distill-library/tests/library_fixture_tracer.rs`
+- Library crate: `crates/distill-library`
+- CLI crate: `crates/distill-cli` (`distill` binary)
+- Desktop app: `apps/distill-desktop` (Tauri 2 host + React/Vite renderer)
+- Library contract tests: `crates/distill-library/tests/library_fixture_tracer.rs`
+- CLI contract tests: `crates/distill-cli/tests/cli_fixture_journey.rs`
+- Host contract tests: `apps/distill-desktop/src-tauri/tests/host_fixture_journey.rs`
+- Renderer contract tests: `apps/distill-desktop/src/App.test.tsx`
 
-Useful commands (Rust toolchain on `PATH`):
+Useful commands (Rust toolchain and npm workspaces):
 
 ```bash
-cargo fmt
-cargo clippy -p distill-library --all-targets -- -D warnings
-cargo test -p distill-library
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --workspace
+npm run desktop:typecheck
+npm run desktop:lint
+npm run desktop:format
+npm run desktop:test
+npm run desktop:frontend:build
 ```
+
+CLI Fixture journey:
+
+```bash
+cargo run -p distill-cli -- --home /tmp/distill-home --fixture /path/to/fixture --format json
+```
+
+Documented CLI exit codes: `0` success, `1` Library/runtime failure, `2` usage/validation.
 
 Canonical rebuild behavior remains under `docs/specs/` and the gap register.
 

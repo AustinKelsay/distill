@@ -1,9 +1,13 @@
 # Distill Cargo workspace for the Rust Library rebuild.
-# Legacy Electron under src/** remains untouched; Tauri/CLI crates arrive in later tickets.
+# Legacy Electron under src/** remains untouched; CLI and Tauri callers live beside the Library.
 
 [workspace]
 resolver = "2"
-members = ["crates/distill-library"]
+members = [
+    "crates/distill-library",
+    "crates/distill-cli",
+    "apps/distill-desktop/src-tauri",
+]
 
 [workspace.package]
 edition = "2021"

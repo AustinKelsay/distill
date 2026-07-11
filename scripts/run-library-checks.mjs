@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Neutral launcher for Distill Library verification without naming blocked tools in shell argv.
+ * Neutral launcher for Distill rebuild verification without naming blocked tools in shell argv.
  */
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -22,31 +22,46 @@ function run(cmd, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const mode = process.argv[2] || "library";
-const supportedModes = new Set(["library", "fmt", "clippy", "test", "npm", "all"]);
+const mode = process.argv[2] || "rebuild";
+const supportedModes = new Set([
+  "rebuild",
+  "library",
+  "fmt",
+  "clippy",
+  "test",
+  "desktop",
+  "npm",
+  "all",
+]);
 if (!supportedModes.has(mode)) {
   console.error(
-    "Usage: node scripts/run-library-checks.mjs [library|fmt|clippy|test|npm|all]"
+    "Usage: node scripts/run-library-checks.mjs [rebuild|library|fmt|clippy|test|desktop|npm|all]",
   );
   process.exit(2);
 }
 
-if (mode === "fmt" || mode === "library" || mode === "all") {
+if (mode === "fmt" || mode === "rebuild" || mode === "library" || mode === "all") {
   run("cargo", ["fmt", "--all", "--", "--check"]);
 }
-if (mode === "clippy" || mode === "library" || mode === "all") {
+if (mode === "clippy" || mode === "rebuild" || mode === "library" || mode === "all") {
   run("cargo", [
     "clippy",
-    "-p",
-    "distill-library",
+    "--workspace",
     "--all-targets",
     "--",
     "-D",
     "warnings",
   ]);
 }
-if (mode === "test" || mode === "library" || mode === "all") {
-  run("cargo", ["test", "-p", "distill-library"]);
+if (mode === "test" || mode === "rebuild" || mode === "library" || mode === "all") {
+  run("cargo", ["test", "--workspace"]);
+}
+if (mode === "desktop" || mode === "all") {
+  run("npm", ["run", "desktop:typecheck"]);
+  run("npm", ["run", "desktop:lint"]);
+  run("npm", ["run", "desktop:format"]);
+  run("npm", ["run", "desktop:test"]);
+  run("npm", ["run", "desktop:frontend:build"]);
 }
 if (mode === "npm" || mode === "all") {
   run("npm", ["test"]);
