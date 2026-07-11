@@ -111,3 +111,21 @@ An append-only audit event describing something meaningful that happened in Dist
 ### `Job`
 
 An operational unit of work used for source sync or future operational workflows. Jobs are not the canonical session or audit model.
+
+## Rebuild Library Shape
+
+The clean rebuild centers product behavior in one deep Rust `Library` crate (`crates/distill-library`). Desktop (Tauri), CLI, and contract tests are equal callers of that public seam. SQLite, FTS5, content-addressed files, migrations, and recovery protocols remain Library internals (see ADRs `0001`–`0003`).
+
+Public Library methods for the Fixture tracer:
+
+- `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files)
+- `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only
+- `session_slice` / bounded `search` — read a bounded slice of the current Session Projection and FTS index; cursor paging lands in issue #23
+- `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
+- `health()` — report schema/migration, content, and FTS integrity
+
+The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
+
+## SourceAdapter Seam
+
+Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. The Fixture adapter detects only an explicitly supplied root and is the first production adapter proven through the Library seam.

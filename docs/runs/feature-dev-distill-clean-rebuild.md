@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: Spec and ticket graph approved and published; implementing frontier issue #18
+- Current status: Spec and ticket graph approved and published; #18 Library Fixture tracer implemented and verified (uncommitted)
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -34,17 +34,18 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 ## Commands
 
-- Install: `npm install` (legacy Electron baseline); rebuild command pending stack decision
-- Typecheck: `npm run build` (legacy Electron baseline); rebuild command pending stack decision
-- Test: `npm test` (legacy Electron baseline); rebuild command pending stack decision
-- Build: `npm run build` (legacy Electron baseline); rebuild command pending stack decision
-- Visual verification: legacy `npm start`; rebuild harness pending stack decision
+- Install: `npm install` (legacy Electron baseline)
+- Typecheck: `npm run build` (legacy Electron baseline)
+- Test: `npm test` (legacy); `cargo test -p distill-library` (rebuild Library)
+- Build: `npm run build` (legacy); `cargo build -p distill-library` (rebuild Library)
+- Visual verification: legacy `npm start`; rebuild desktop harness deferred to later tickets
+- Library gates: `cargo fmt`, `cargo clippy -p distill-library --all-targets -- -D warnings`, `cargo test -p distill-library`
 
 ## Ticket Ledger
 
 | Issue | Type | Status | Review thread | Fixes needed | Verified |
 | --- | --- | --- | --- | --- | --- |
-| #18 Library Fixture tracer | AFK | Ready — frontier | — | — | No |
+| #18 Library Fixture tracer | AFK | Implemented (uncommitted) | Grok xhigh worker | Pending review | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
 | #19 Thin Tauri/React/CLI callers | AFK | Blocked by #18 | — | — | No |
 | #20 Attempt retry/replay/replacement | AFK | Blocked by #18 | — | — | No |
 | #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
@@ -75,7 +76,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 | Issue | Fixed point | Worker session | Commit | Review result | Checks |
 | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | — |
+| #18 | `b471a77` | Grok 4.5 xhigh edit session | Pending | Pending | fmt/clippy/Library 5 pass; legacy build + 93 pass, 10 Node 22 baseline failures |
 
 ## Open Questions
 

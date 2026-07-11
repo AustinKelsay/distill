@@ -2,7 +2,34 @@
 
 This document is normative for acknowledged drift between the canonical specs and the current implementation.
 
-All gaps currently listed here are historical. No open spec-alignment gaps are currently tracked in this register.
+## Electron Baseline
+
+All Electron baseline gaps currently listed here are historical. No open spec-alignment gaps are currently tracked in this register for the Electron baseline.
+
+## Rebuild Gaps
+
+### GAP-R001: Dual Runtime During Rebuild
+
+- Status: open
+- Rule: the rebuild Library is the target product interface; Electron remains until cutover.
+- Current drift: Electron under `src/**` still serves the shipping baseline while `crates/distill-library` proves the Fixture tracer.
+- Tracking: issue #18 and follow-on rebuild tickets.
+
+### GAP-R002: Provider SourceAdapters Not Yet In Library
+
+- Status: open
+- Rule: Codex, Claude Code, OpenCode, Droid, and Fixture share one SourceAdapter seam.
+- Current drift: only Fixture is implemented in the Rust Library tracer.
+- Tracking: provider tickets after #18.
+
+### GAP-R003: Sync Runs, Curation, Export Deferred
+
+- Status: open
+- Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
+- Current drift: Library Fixture tracer covers ingest/projection/query/replay/health only.
+- Tracking: later rebuild tickets.
+
+## Historical Electron Gaps
 
 ## GAP-001: Raw Capture Recoverability
 

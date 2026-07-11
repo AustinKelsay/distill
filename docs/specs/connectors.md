@@ -173,3 +173,32 @@ A new connector may be added only when:
 2. its parsing rules are added to this file
 3. its contract tests are added to `docs/testing/contract-test-matrix.md`
 4. any shared-shape changes are reflected in the canonical specs
+
+## Rebuild SourceAdapter Seam
+
+The Rust Library implements connectors behind an internal `SourceAdapter` trait with the same four responsibilities:
+
+```rust
+trait SourceAdapter {
+    fn detect(&self) -> Result<DiscoveredSource, SourceStageError>;
+    fn discover(&self, source: &DiscoveredSource) -> Result<Vec<CaptureCandidate>, SourceStageError>;
+    fn snapshot(&self, candidate: &CaptureCandidate) -> Result<CaptureSnapshot, SourceStageError>;
+    fn parse(
+        &self,
+        candidate: &CaptureCandidate,
+        snapshot: &CaptureSnapshot,
+    ) -> Result<ParsedCapture, SourceStageError>;
+}
+```
+
+Adapters remain forbidden from SQLite, projection mutation, search, Curation, export, and Activity persistence.
+
+### Fixture Appendix
+
+- Detect only the root explicitly supplied by a test or packaged smoke harness (`distill.fixture.json` must be present).
+- Discover file-backed and virtual Capture Candidates with deterministic logical identity (`fixture://...` paths).
+- Snapshot through the same production preservation path; no test-only persistence shortcut.
+- Parse synthetic Fixture JSONL covering dialogue messages plus structured tool/reasoning records as Capture Facts and Artifacts.
+- Use explicit Fixture Session IDs when supplied; otherwise apply the production deterministic synthetic-identity rule.
+
+Provider adapters (Codex, Claude Code, OpenCode, Droid) are specified for the rebuild but are out of scope until their dedicated tickets.

@@ -227,3 +227,17 @@ The ingest pipeline does not:
 - decide export policy
 - expose source-specific parsing rules outside connector appendices
 - use remote provider APIs as source truth
+
+## Rebuild Ingest Notes
+
+The Rust Library ingest path preserves the Electron-era invariants above and adds explicit Attempt bookkeeping:
+
+1. SourceAdapter `detect` / `discover` / `snapshot` / `parse` run through the production seam (Fixture first).
+2. File-backed candidates are rejected with typed `PathOutsideConfiguredRoot` when their canonical path escapes the configured Source root.
+3. Capture size is bounded; exceeding the configured limit fails with typed `CaptureTooLarge` before acceptance.
+4. Capture acceptance requires Distill-owned recoverable content (inline or CAS blob) and checksum verification; the Capture row and its `capture_recorded` Activity Event commit together.
+5. A Normalization Attempt is recorded for parser execution. Capture Facts and Session Projection publication happen only for successful Attempts, in one transaction with FTS and `projection_replaced` Activity.
+6. Failed Attempts never mutate the current Session Projection.
+7. Replay and health read Distill-owned content only; deleting the original source must not break replay.
+
+Legacy Electron still uses the `CaptureStatus` state machine documented above. The rebuild gap register tracks the dual-model period until Electron cutover.

@@ -323,3 +323,26 @@ Mutable operational or preference entities:
 ## Current Implementation Mapping
 
 The current SQLite schema is an implementation artifact in `schema.sql`. It is informative, not authoritative. Any gap between `schema.sql` and this document must be tracked in `docs/gaps/current-state-gap-register.md`.
+
+## Rebuild Model: Captures, Attempts, Facts, Projection
+
+The Rust Library rebuild separates four durable concepts that the legacy Electron `CaptureStatus` state machine collapsed:
+
+1. **Capture** — immutable identity plus Distill-owned, checksum-verified content. Accepted only after verified ownership. Exact dedupe key remains `(source_kind, source_path, sha256)`.
+2. **Normalization Attempt** — one parser identity/version execution against a Capture. Attempts record outcome, error classification, metrics, and the successful projection generation when applicable. The same Capture may have many Attempts across parser versions.
+3. **Capture Fact** — immutable provider-shaped record belonging to a successful Attempt. Facts are never rewritten; a newer parser creates a new Attempt and new Facts.
+4. **Session Projection** — the latest successful normalized view for `(source_kind, external_session_id)`, including projected messages and artifacts. Replacement is atomic and generation-scoped. A failed Attempt leaves the prior current generation unchanged.
+
+Rebuild schema entities (fresh Distill home; no legacy schema inclusion):
+
+- `schema_migrations(version, checksum, applied_at)`
+- `sources`
+- `captures` (immutable content refs: inline or blob)
+- `normalization_attempts`
+- `capture_facts`
+- `sessions` with separately named `accepted_capture_count`, `normalization_attempt_count`, and `successful_projection_generation`
+- `projection_messages`, `projection_artifacts`
+- FTS5 over the current projection (`projection_fts`)
+- `activity_events`
+
+Inline versus blob storage is an internal Library choice. The documented threshold is **64 KiB** (`INLINE_CONTENT_THRESHOLD_BYTES`). Larger Captures are staged, checksummed, atomically renamed into the content-addressed store, then accepted in SQLite.

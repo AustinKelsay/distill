@@ -1,0 +1,21 @@
+# Deep Distill Library crate: public product seam over SQLite, CAS, and SourceAdapters.
+
+[package]
+name = "distill-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Distill local conversation library (capture, normalize, query, health)"
+
+[dependencies]
+chrono = { workspace = true }
+hex = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }

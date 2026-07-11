@@ -18,6 +18,7 @@ Where a `Primary Branch` or `Target Branch` is listed below, it records the firs
 | `export_contract` | Validate export payloads against the current projection and manual curation state. | `docs/test-matrix` |
 | `sync_jobs_and_logs` | Validate operational sync reporting without treating logs as the canonical audit trail. | `docs/test-matrix` |
 | `doc_truthfulness` | Validate the canonical docs package stays present and wired together. | `docs/spec-foundation` |
+| `library_fixture_tracer` | Validate the Rust Library Fixture ingest/projection/query/replay/health seam. | `feature/distill-clean-rebuild` |
 
 ## Fixture Requirements
 
@@ -81,6 +82,12 @@ Every fixture must document:
 | `SL-003` | `sync_jobs_and_logs` | Warning-only syncs remain visible as non-fatal warnings. | Job/log surfaces preserve `status = "warning"` plus sync metrics and warning details without flipping canonical audit. | Operators can distinguish partial success from fatal sync failure. | Test fails if warning-only syncs are treated as errors or disappear from ops surfaces. | `docs/test-matrix` |
 | `DT-001` | `doc_truthfulness` | Canonical docs package exists and is linked from root docs. | Required markdown files exist. | Contributors can navigate from root docs to canonical docs. | Test fails if a required canonical doc is removed or unlinked. | `docs/spec-foundation` |
 | `DT-002` | `doc_truthfulness` | Root docs remain non-authoritative summaries. | Root docs contain the required links and disclaimers. | Readers are directed to `docs/` for canonical truth. | Test fails if root docs re-assume canonical authority. | `docs/spec-foundation` |
+| `LFT-001` | `library_fixture_tracer` | Fresh Distill home bootstraps with checksummed migrations and restrictive Unix modes. | `schema_migrations` rows exist with matching checksums; home dirs are `0o700` and db/files are `0o600`. | Library opens and reports healthy schema status. | Test fails if legacy Electron schema is applied or modes are permissive. | `feature/distill-clean-rebuild` |
+| `LFT-002` | `library_fixture_tracer` | Fixture SourceAdapter detect/discover/snapshot/parse through production ingest yields Capture, Attempt, Facts, Projection, FTS, and Activity. | Capture row and `capture_recorded` Activity commit together over recoverable content; successful Attempt has Facts; Session Projection and FTS match. | `session_slice` and bounded `search` return the projected transcript. | Test fails if Fixture bypasses the SourceAdapter seam or projection publishes without an Attempt. | `feature/distill-clean-rebuild` |
+| `LFT-003` | `library_fixture_tracer` | Blob-backed replay after source deletion and Library reopen remains checksum-verified. | A Capture above the inline threshold resolves from Distill-owned content-addressed storage after fixture files are removed. | `replay_capture` and `health` succeed after reopen. | Test fails if replay depends on the original Fixture files or only exercises inline storage. | `feature/distill-clean-rebuild` |
+| `LFT-004` | `library_fixture_tracer` | Symlink and missing-parent configured-root escapes plus capture-size limits fail with typed errors. | No Capture row is accepted for rejected candidates. | Callers observe `PathOutsideConfiguredRoot` before snapshot or `CaptureTooLarge` before acceptance. | Test fails if escapes or oversized bytes are accepted or misclassified. | `feature/distill-clean-rebuild` |
+
+Executable Library Fixture suite: `crates/distill-library/tests/library_fixture_tracer.rs`.
 
 ## Expected DB State Guidance
 

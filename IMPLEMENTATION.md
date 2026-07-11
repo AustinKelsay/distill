@@ -6,6 +6,24 @@ Start with the canonical architecture here:
 
 - [docs/specs/architecture.md](docs/specs/architecture.md)
 
+## Rebuild Library (informative)
+
+The clean-rebuild Rust Library lives beside the Electron baseline:
+
+- workspace: root `Cargo.toml`
+- crate: `crates/distill-library`
+- contract tests: `crates/distill-library/tests/library_fixture_tracer.rs`
+
+Useful commands (Rust toolchain on `PATH`):
+
+```bash
+cargo fmt
+cargo clippy -p distill-library --all-targets -- -D warnings
+cargo test -p distill-library
+```
+
+Canonical rebuild behavior remains under `docs/specs/` and the gap register.
+
 ## Current Runtime
 
 - desktop shell: Electron
