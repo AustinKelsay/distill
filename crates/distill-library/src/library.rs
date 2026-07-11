@@ -3,15 +3,17 @@
 use std::path::Path;
 
 use rusqlite::Connection;
+use semver::Version;
 
-use crate::adapter::{FixtureAdapter, SourceAdapter};
+use crate::adapter::{FixtureAdapter, ParserIdentity, SourceAdapter, FIXTURE_PARSER_ID};
 use crate::error::LibraryResult;
 use crate::ingest;
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
-    ActivityEventSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, IngestReport,
-    SearchHit, SessionDetail, SourceSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
+    IngestReport, RenormalizeReport, SearchHit, SessionDetail, SourceSummary,
+    DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -19,6 +21,8 @@ pub struct Library {
     paths: DistillPaths,
     conn: Connection,
     max_capture_bytes: u64,
+    /// Registered Fixture parser identity used for ingest and renormalize Attempts.
+    fixture_parser: ParserIdentity,
 }
 
 impl Library {
@@ -47,6 +51,10 @@ impl Library {
             paths,
             conn,
             max_capture_bytes,
+            fixture_parser: ParserIdentity {
+                id: FIXTURE_PARSER_ID.to_string(),
+                version: crate::adapter::FIXTURE_PARSER_VERSION.to_string(),
+            },
         })
     }
 
@@ -56,13 +64,55 @@ impl Library {
     }
 
     /**
+     * Update the registered Fixture parser version used for ingest and renormalize.
+     *
+     * The parser id remains the Library-owned `fixture` identity. Callers cannot
+     * supply arbitrary parser ids.
+     *
+     * Parameters:
+     * - `version`: Semantic version newer than the currently registered parser.
+     */
+    pub fn set_registered_fixture_parser_version(
+        &mut self,
+        version: impl Into<String>,
+    ) -> LibraryResult<()> {
+        let version = version.into();
+        let requested = Version::parse(&version).map_err(|_| {
+            crate::error::LibraryError::InvalidArgument(
+                "fixture parser version must be a semantic version".into(),
+            )
+        })?;
+        let current = Version::parse(&self.fixture_parser.version).map_err(|_| {
+            crate::error::LibraryError::InvalidArgument(
+                "registered fixture parser version is invalid".into(),
+            )
+        })?;
+        if requested <= current {
+            return Err(crate::error::LibraryError::InvalidArgument(
+                "fixture parser version must advance beyond the registered version".into(),
+            ));
+        }
+        self.fixture_parser.version = version;
+        Ok(())
+    }
+
+    /**
      * Detect a Fixture root through the production SourceAdapter seam.
      *
      * Parameters:
      * - `fixture_root`: directory containing `distill.fixture.json`.
      */
     pub fn detect_fixture(&self, fixture_root: impl AsRef<Path>) -> LibraryResult<SourceSummary> {
-        let adapter = FixtureAdapter::new(fixture_root.as_ref().to_path_buf());
+        let adapter = if self.fixture_parser.version == crate::adapter::FIXTURE_PARSER_VERSION
+            && self.fixture_parser.id == FIXTURE_PARSER_ID
+        {
+            FixtureAdapter::new(fixture_root.as_ref().to_path_buf())
+        } else {
+            FixtureAdapter::with_parser(
+                fixture_root.as_ref().to_path_buf(),
+                self.fixture_parser.clone(),
+            )
+        };
         let discovered = adapter.detect()?;
         Ok(SourceSummary {
             kind: discovered.kind.as_str().to_string(),
@@ -83,13 +133,50 @@ impl Library {
         &mut self,
         fixture_root: impl AsRef<Path>,
     ) -> LibraryResult<IngestReport> {
-        let adapter = FixtureAdapter::new(fixture_root.as_ref().to_path_buf());
+        let adapter = if self.fixture_parser.version == crate::adapter::FIXTURE_PARSER_VERSION
+            && self.fixture_parser.id == FIXTURE_PARSER_ID
+        {
+            FixtureAdapter::new(fixture_root.as_ref().to_path_buf())
+        } else {
+            FixtureAdapter::with_parser(
+                fixture_root.as_ref().to_path_buf(),
+                self.fixture_parser.clone(),
+            )
+        };
         ingest::ingest_adapter(
             &mut self.conn,
             &self.paths,
             &adapter,
             self.max_capture_bytes,
         )
+    }
+
+    /**
+     * Re-normalize an accepted Capture from Distill-owned bytes.
+     *
+     * Uses the Library-registered Fixture parser. Does not create a new Capture and
+     * does not accept caller-supplied parser ids.
+     *
+     * Parameters:
+     * - `capture_id`: Accepted Capture row id.
+     */
+    pub fn renormalize_capture(&mut self, capture_id: i64) -> LibraryResult<RenormalizeReport> {
+        ingest::renormalize_capture(
+            &mut self.conn,
+            &self.paths,
+            capture_id,
+            &self.fixture_parser,
+        )
+    }
+
+    /**
+     * List immutable Attempt summaries for one Capture, oldest first.
+     *
+     * Parameters:
+     * - `capture_id`: Accepted Capture row id.
+     */
+    pub fn capture_attempts(&self, capture_id: i64) -> LibraryResult<Vec<AttemptSummary>> {
+        query::list_capture_attempts(&self.conn, capture_id)
     }
 
     /**

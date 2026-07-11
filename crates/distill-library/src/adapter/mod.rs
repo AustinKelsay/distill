@@ -2,7 +2,7 @@
 
 mod fixture;
 
-pub use fixture::FixtureAdapter;
+pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
 
 use std::path::PathBuf;
 

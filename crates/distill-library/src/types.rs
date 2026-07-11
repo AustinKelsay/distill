@@ -115,7 +115,7 @@ pub struct SessionDetail {
 }
 
 /// One projected Transcript Message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProjectedMessage {
     /// Message row id.
     pub id: i64,
@@ -185,4 +185,42 @@ pub struct HealthReport {
     pub fts_status: String,
     /// Non-blocking or blocking issue messages.
     pub issues: Vec<String>,
+}
+
+/// Caller-safe Normalization Attempt summary with immutable Fact counts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AttemptSummary {
+    /// Attempt row id.
+    pub id: i64,
+    /// Accepted Capture this Attempt belongs to.
+    pub capture_id: i64,
+    /// Registered parser identity.
+    pub parser_id: String,
+    /// Registered parser version used for this Attempt.
+    pub parser_version: String,
+    /// `pending`, `succeeded`, or `failed`.
+    pub outcome: String,
+    /// Typed failure class when failed (`parse_failed` or `projection_failed`).
+    pub error_class: Option<String>,
+    /// Safe diagnostic message when failed.
+    pub error_message: Option<String>,
+    /// Successful projection generation when this Attempt published one.
+    pub projection_generation: Option<i64>,
+    /// Immutable Capture Fact count owned by this Attempt.
+    pub fact_count: i64,
+}
+
+/// Result of re-normalizing an accepted Capture with the registered parser.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RenormalizeReport {
+    /// Capture that was re-normalized without creating a new Capture.
+    pub capture_id: i64,
+    /// Newly recorded Attempt id.
+    pub attempt_id: i64,
+    /// Final Attempt outcome (`succeeded` or `failed`).
+    pub outcome: String,
+    /// Registered parser identity used for the Attempt.
+    pub parser_id: String,
+    /// Registered parser version used for the Attempt.
+    pub parser_version: String,
 }

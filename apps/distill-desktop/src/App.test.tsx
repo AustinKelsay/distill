@@ -125,6 +125,15 @@ describe("first-run Fixture UI", () => {
       "fixture:fixture-session-ui",
     );
     expect(screen.getByTestId("session-panel")).toHaveTextContent(
+      "Accepted Capture count",
+    );
+    expect(screen.getByTestId("session-panel")).toHaveTextContent(
+      "Normalization Attempt count",
+    );
+    expect(screen.getByTestId("session-panel")).toHaveTextContent(
+      "Successful projection generation",
+    );
+    expect(screen.getByTestId("session-panel")).toHaveTextContent(
       "Hello from UI fixture",
     );
     expect(screen.getByTestId("health-panel")).toHaveTextContent("true");

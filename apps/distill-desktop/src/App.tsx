@@ -149,6 +149,12 @@ export function App({ bridge }: AppProps) {
                 </dd>
                 <dt>Title</dt>
                 <dd>{result.session.summary.title ?? "(untitled)"}</dd>
+                <dt>Accepted Capture count</dt>
+                <dd>{result.session.summary.accepted_capture_count}</dd>
+                <dt>Normalization Attempt count</dt>
+                <dd>{result.session.summary.normalization_attempt_count}</dd>
+                <dt>Successful projection generation</dt>
+                <dd>{result.session.summary.successful_projection_generation}</dd>
                 <dt>Messages</dt>
                 <dd>
                   <ol>

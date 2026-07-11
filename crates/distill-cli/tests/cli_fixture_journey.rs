@@ -76,6 +76,9 @@ fn cli_fixture_journey_human_exit_zero() {
     assert!(stdout.contains("source.kind: fixture"));
     assert!(stdout.contains("sync.accepted_captures: 1"));
     assert!(stdout.contains("session.identity: fixture:fixture-session-cli"));
+    assert!(stdout.contains("session.accepted_capture_count: 1"));
+    assert!(stdout.contains("session.normalization_attempt_count: 1"));
+    assert!(stdout.contains("session.successful_projection_generation: 1"));
     assert!(stdout.contains("health.ok: true"));
 }
 
@@ -110,6 +113,15 @@ fn cli_fixture_journey_json_exit_zero() {
     assert_eq!(
         value["session"]["summary"]["external_session_id"],
         "fixture-session-cli"
+    );
+    assert_eq!(value["session"]["summary"]["accepted_capture_count"], 1);
+    assert_eq!(
+        value["session"]["summary"]["normalization_attempt_count"],
+        1
+    );
+    assert_eq!(
+        value["session"]["summary"]["successful_projection_generation"],
+        1
     );
     assert_eq!(value["health"]["ok"], true);
     assert!(value["phases"].as_array().expect("phases").len() >= 4);

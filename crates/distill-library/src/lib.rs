@@ -17,7 +17,7 @@ mod types;
 pub use error::{LibraryError, LibraryResult};
 pub use library::Library;
 pub use types::{
-    ActivityEventSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, IngestReport,
-    ProjectedArtifact, ProjectedMessage, SearchHit, SessionDetail, SessionIdentity, SessionSummary,
-    SourceSummary, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
+    ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
+    IngestReport, ProjectedArtifact, ProjectedMessage, RenormalizeReport, SearchHit, SessionDetail,
+    SessionIdentity, SessionSummary, SourceSummary, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
 };

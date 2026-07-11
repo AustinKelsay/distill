@@ -32,11 +32,21 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/projection/query/replay/health only. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
+- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/attempt-retry/projection/query/replay/health. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
 - Impacted files/modules: future Library operations, Curation, export, CLI, host, and renderer modules.
 - Severity: high — the native tracer cannot yet complete the product loop.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, and downstream caller tickets.
 - Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts.
+
+### GAP-R004: Fault Injection And Crash-Point Repair Deferred
+
+- Status: open
+- Rule: interrupted Capture acceptance, projection publication, and related transitions reopen into a defined repair state.
+- Current drift: #20 covers ordinary typed parse/projection failure with transaction rollback and last-good preservation. Fault-injection crash points and reopen repair remain unimplemented.
+- Impacted files/modules: `crates/distill-library` ingest/content seams; future health/repair APIs.
+- Severity: medium — ordinary failures are safe, but mid-write process death is not yet proven.
+- Target branch/ticket: `feature/distill-clean-rebuild`, #21.
+- Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state.
 
 ## Historical Electron Gaps
 

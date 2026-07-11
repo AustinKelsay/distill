@@ -203,6 +203,18 @@ fn render_success(
                     "session.title: {}",
                     session.summary.title.as_deref().unwrap_or("")
                 ));
+                lines.push(format!(
+                    "session.accepted_capture_count: {}",
+                    session.summary.accepted_capture_count
+                ));
+                lines.push(format!(
+                    "session.normalization_attempt_count: {}",
+                    session.summary.normalization_attempt_count
+                ));
+                lines.push(format!(
+                    "session.successful_projection_generation: {}",
+                    session.summary.successful_projection_generation
+                ));
                 lines.push(format!("session.messages: {}", session.messages.len()));
             } else {
                 lines.push("session: none".to_string());

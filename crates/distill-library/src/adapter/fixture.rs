@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use semver::Version;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -15,15 +16,42 @@ use super::{
 /// Manifest file name that marks a Fixture root.
 pub const FIXTURE_MANIFEST_NAME: &str = "distill.fixture.json";
 
+/// Default Fixture parser identity for Normalization Attempts.
+pub const FIXTURE_PARSER_ID: &str = "fixture";
+
+/// Default Fixture parser contract version.
+pub const FIXTURE_PARSER_VERSION: &str = "1.0.0";
+
 /// Fixture SourceAdapter bound to one explicitly supplied root.
 pub struct FixtureAdapter {
     root: PathBuf,
+    parser: ParserIdentity,
 }
 
 impl FixtureAdapter {
     /// Create an adapter that only detects the supplied root.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::with_parser(
+            root,
+            ParserIdentity {
+                id: FIXTURE_PARSER_ID.to_string(),
+                version: FIXTURE_PARSER_VERSION.to_string(),
+            },
+        )
+    }
+
+    /**
+     * Create an adapter with an explicit registered Fixture parser identity.
+     *
+     * Parameters:
+     * - `root`: Fixture root containing `distill.fixture.json`.
+     * - `parser`: Registered Fixture parser identity/version for Attempts.
+     */
+    pub fn with_parser(root: impl Into<PathBuf>, parser: ParserIdentity) -> Self {
+        Self {
+            root: root.into(),
+            parser,
+        }
     }
 }
 
@@ -72,10 +100,7 @@ impl SourceAdapter for FixtureAdapter {
             kind: SourceKind::Fixture,
             display_name: "Fixture".to_string(),
             data_root: root,
-            parser: ParserIdentity {
-                id: "fixture".to_string(),
-                version: "1.0.0".to_string(),
-            },
+            parser: self.parser.clone(),
         })
     }
 
@@ -183,8 +208,24 @@ impl SourceAdapter for FixtureAdapter {
         candidate: &CaptureCandidate,
         snapshot: &CaptureSnapshot,
     ) -> Result<ParsedCapture, SourceStageError> {
-        parse_fixture_jsonl(candidate, &snapshot.bytes)
+        parse_fixture_jsonl(candidate, &snapshot.bytes, &self.parser.version)
     }
+}
+
+/**
+ * Parse Fixture JSONL bytes using a registered Fixture parser version.
+ *
+ * Parameters:
+ * - `candidate`: Capture Candidate providing identity hints.
+ * - `bytes`: Exact Distill-owned or snapshot bytes.
+ * - `parser_version`: Registered Fixture parser version executing this Attempt.
+ */
+pub fn parse_fixture_bytes(
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+    parser_version: &str,
+) -> Result<ParsedCapture, SourceStageError> {
+    parse_fixture_jsonl(candidate, bytes, parser_version)
 }
 
 /**
@@ -193,10 +234,12 @@ impl SourceAdapter for FixtureAdapter {
  * Parameters:
  * - `candidate`: Capture Candidate providing identity hints.
  * - `bytes`: Exact snapshot bytes.
+ * - `parser_version`: Registered Fixture parser version executing this Attempt.
  */
 fn parse_fixture_jsonl(
     candidate: &CaptureCandidate,
     bytes: &[u8],
+    parser_version: &str,
 ) -> Result<ParsedCapture, SourceStageError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|err| SourceStageError::Parse(format!("fixture bytes are not utf-8: {err}")))?;
@@ -223,6 +266,52 @@ fn parse_fixture_jsonl(
             .to_string();
 
         match record_type.as_str() {
+            "require_parser_min" => {
+                let required = value
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        SourceStageError::Parse(format!(
+                            "line {}: require_parser_min missing version",
+                            line_no + 1
+                        ))
+                    })?;
+                if !version_at_least(parser_version, required) {
+                    return Err(SourceStageError::Parse(format!(
+                        "parser {parser_version} is below required minimum {required}"
+                    )));
+                }
+                facts.push(ParsedFact {
+                    record_type: "require_parser_min".into(),
+                    role: None,
+                    is_meta: true,
+                    content_text: Some(required.to_string()),
+                    content_json: value,
+                });
+            }
+            "force_projection_fail" => {
+                // Parses successfully, then fails projection CHECK intentionally.
+                let body = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("projection fail")
+                    .to_string();
+                let fact_ordinal = facts.len();
+                facts.push(ParsedFact {
+                    record_type: "force_projection_fail".into(),
+                    role: None,
+                    is_meta: true,
+                    content_text: Some(body.clone()),
+                    content_json: value.clone(),
+                });
+                messages.push(ParsedMessage {
+                    role: "system".into(),
+                    message_kind: "invalid".into(),
+                    text: body,
+                    external_message_id: None,
+                });
+                let _ = fact_ordinal;
+            }
             "message" => {
                 let role = value
                     .get("role")
@@ -336,6 +425,15 @@ fn parse_fixture_jsonl(
 fn synthetic_session_id(candidate: &CaptureCandidate) -> String {
     let digest = Sha256::digest(candidate.source_path.as_bytes());
     format!("synthetic-{}", &hex::encode(digest)[..16])
+}
+
+/**
+ * Compare dotted numeric versions; returns true when `current >= required`.
+ */
+fn version_at_least(current: &str, required: &str) -> bool {
+    Version::parse(current)
+        .and_then(|current| Version::parse(required).map(|required| current >= required))
+        .unwrap_or(false)
 }
 
 /**

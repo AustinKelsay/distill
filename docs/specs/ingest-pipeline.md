@@ -237,7 +237,10 @@ The Rust Library ingest path preserves the Electron-era invariants above and add
 3. Capture size is bounded; exceeding the configured limit fails with typed `CaptureTooLarge` before acceptance.
 4. Capture acceptance requires Distill-owned recoverable content (inline or CAS blob) and checksum verification; the Capture row and its `capture_recorded` Activity Event commit together.
 5. A Normalization Attempt is recorded for parser execution. Capture Facts and Session Projection publication happen only for successful Attempts, in one transaction with FTS and `projection_replaced` Activity.
-6. Failed Attempts never mutate the current Session Projection.
-7. Replay and health read Distill-owned content only; deleting the original source must not break replay.
+6. Failed Attempts never mutate the current Session Projection or FTS generation. They retain typed safe diagnostics (`parse_failed` or `projection_failed`) and, when a Session already exists, refresh only the separately named Capture and Attempt counters.
+7. Exact duplicate snapshots are inert: no new Capture, Attempt, projection mutation, FTS change, or Activity Event.
+8. Changed bytes for the same source path create a new immutable Capture and a new Attempt. A successful Attempt fully replaces the prior projection, including when the new message or artifact set is shorter or empty.
+9. The same accepted Capture can be re-normalized from Distill-owned replay bytes by a newer version of the registered Fixture parser without creating a new Capture. Prior Attempts and Capture Facts remain immutable and observable through caller-safe Attempt summaries.
+10. Replay and health read Distill-owned content only; deleting the original source must not break replay.
 
 Legacy Electron still uses the `CaptureStatus` state machine documented above. The rebuild gap register tracks the dual-model period until Electron cutover.

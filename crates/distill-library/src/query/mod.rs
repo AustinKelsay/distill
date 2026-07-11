@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 use crate::error::{LibraryError, LibraryResult};
 use crate::storage::{read_capture_bytes, verify_migration_checksums, ContentRef};
 use crate::types::{
-    ActivityEventSummary, HealthReport, ProjectedArtifact, ProjectedMessage, SearchHit,
-    SessionDetail, SessionSummary,
+    ActivityEventSummary, AttemptSummary, HealthReport, ProjectedArtifact, ProjectedMessage,
+    SearchHit, SessionDetail, SessionSummary,
 };
 
 /**
@@ -113,6 +113,52 @@ pub fn get_session(
         artifacts,
         metadata_json,
     }))
+}
+
+/**
+ * List immutable Attempt summaries for one Capture, oldest first.
+ */
+pub fn list_capture_attempts(
+    conn: &Connection,
+    capture_id: i64,
+) -> LibraryResult<Vec<AttemptSummary>> {
+    let exists: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM captures WHERE id = ?1",
+            [capture_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if exists.is_none() {
+        return Err(LibraryError::NotFound(format!("capture {capture_id}")));
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT na.id, na.capture_id, na.parser_id, na.parser_version, na.outcome,
+                na.error_class, na.error_message, na.projection_generation,
+                (SELECT COUNT(*) FROM capture_facts cf WHERE cf.attempt_id = na.id)
+         FROM normalization_attempts na
+         WHERE na.capture_id = ?1
+         ORDER BY na.id ASC",
+    )?;
+    let rows = stmt.query_map([capture_id], |row| {
+        Ok(AttemptSummary {
+            id: row.get(0)?,
+            capture_id: row.get(1)?,
+            parser_id: row.get(2)?,
+            parser_version: row.get(3)?,
+            outcome: row.get(4)?,
+            error_class: row.get(5)?,
+            error_message: row.get(6)?,
+            projection_generation: row.get(7)?,
+            fact_count: row.get(8)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 /**

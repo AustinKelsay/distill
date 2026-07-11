@@ -731,6 +731,7 @@ dependencies = [
  "chrono",
  "hex",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
