@@ -54,3 +54,12 @@ Resolution:
 - Kept CLI/host validation local because usage errors and IPC validation are distinct caller contracts.
 - Deferred cancellation to #22 as designed.
 - Rejected the Spec finding: [official Tauri 2 capability documentation](https://v2.tauri.app/security/capabilities/) states that commands registered with `Builder::invoke_handler` are allowed for all app windows by default. This app does not opt into `AppManifest::commands`; `core:event:default` is the only renderer permission required for progress listening.
+
+Focused re-review for `5655cde...e39c451`:
+
+```text
+STANDARDS_STATUS: pass
+SPEC_STATUS: pass
+```
+
+The Spec reviewer withdrew the ACL finding after confirming `invoke_handler`, plain `tauri_build::build()`, and the absence of `AppManifest::commands`.

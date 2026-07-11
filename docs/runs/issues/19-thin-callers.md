@@ -5,8 +5,8 @@
 - Issue: [#19](https://github.com/AustinKelsay/distill/issues/19)
 - Fixed point before session: `5655cde`
 - Worker session: Grok 4.5 xhigh edit session
-- Commit: Pending (do not commit in this worker session)
-- Status: Implementation complete; awaiting review commit
+- Commit: `e9cd49a`, review follow-up `e39c451`
+- Status: Complete — issue closed
 
 ## Inputs
 
@@ -40,6 +40,7 @@
 - Spec findings: Changes requested for an alleged missing app-command ACL entry
 - Worthy fixes applied: Integration pass corrected production invoke casing, narrowed capabilities, made async listener cleanup race-safe, and added bridge contracts. Review follow-up centralized `LibraryError::code()` and removed empty `HostState`.
 - Findings ignored with reasons: Caller validation remains local because CLI usage and IPC validation have different error contracts. Cancellation belongs to #22. The ACL finding is contradicted by official Tauri 2 docs: `invoke_handler` app commands are allowed by default unless `AppManifest::commands` opts into command permissions; this app does not opt in.
+- Focused re-review: `STANDARDS_STATUS: pass`; `SPEC_STATUS: pass` and the ACL finding withdrawn
 
 ## Risks
 
