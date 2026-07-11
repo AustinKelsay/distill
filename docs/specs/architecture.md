@@ -122,6 +122,9 @@ Public Library methods for the Fixture tracer and thin callers:
 - `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
 - `detect_fixture(fixture_root)` — return a caller-facing `SourceSummary` through the production Fixture SourceAdapter detect path
 - `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only; the ingest report includes distinct `SessionIdentity` values projected during the run
+- `set_registered_fixture_parser_version(version)` — advance the Library-owned Fixture parser to a strictly newer semantic version; callers cannot replace its parser identity
+- `renormalize_capture(capture_id)` — re-run the registered Fixture parser against checksum-verified Distill-owned bytes without creating a new Capture
+- `capture_attempts(capture_id)` — return immutable caller-safe Attempt summaries, including parser version, outcome, projection generation, diagnostics, and Fact count
 - `run_fixture_journey(fixture_root, on_progress)` — first-run helper that detects, ingests, loads the first projected Session, and returns health as a `FixtureJourneyResult` with typed progress phases
 - `session_slice` / bounded `search` — read a bounded slice of the current Session Projection and FTS index; cursor paging lands in issue #23
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification

@@ -66,18 +66,12 @@ pub(super) fn fail_attempt(
     Ok(())
 }
 
-/**
- * Produce a caller-safe diagnostic without SQL or filesystem path leakage.
- */
-pub(super) fn safe_failure_message(err: &impl std::fmt::Display) -> String {
-    let raw = err.to_string();
-    let trimmed = raw.chars().take(240).collect::<String>();
-    if trimmed.contains("CHECK") || trimmed.contains("constraint") {
-        "projection constraints rejected the Attempt output".to_string()
-    } else {
-        trimmed
-    }
-}
+/// Stable diagnostic for parser failures; raw Capture content is never persisted here.
+pub(super) const PARSE_FAILURE_MESSAGE: &str = "parser rejected Capture content";
+
+/// Stable diagnostic for projection failures; SQLite details are never persisted here.
+pub(super) const PROJECTION_FAILURE_MESSAGE: &str =
+    "projection constraints rejected the Attempt output";
 
 /**
  * Refresh Session Capture/Attempt counters after a failed Attempt without touching projection.

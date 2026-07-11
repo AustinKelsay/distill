@@ -16,7 +16,8 @@ use crate::types::{IngestReport, SessionIdentity};
 
 use attempt::{
     fail_attempt, insert_attempt, publish_projection,
-    refresh_session_counters_after_failed_attempt, safe_failure_message,
+    refresh_session_counters_after_failed_attempt, PARSE_FAILURE_MESSAGE,
+    PROJECTION_FAILURE_MESSAGE,
 };
 use capture::{
     emit_activity, enforce_configured_root, find_duplicate, insert_capture, upsert_source,
@@ -107,12 +108,12 @@ pub fn ingest_adapter(
                             &parsed.external_session_id,
                         );
                     }
-                    Err(err) => {
+                    Err(_err) => {
                         fail_attempt(
                             conn,
                             attempt_id,
                             "projection_failed",
-                            &safe_failure_message(&err),
+                            PROJECTION_FAILURE_MESSAGE,
                         )?;
                         refresh_session_counters_after_failed_attempt(
                             conn,
@@ -126,7 +127,7 @@ pub fn ingest_adapter(
                     }
                 }
             }
-            Err(err) => {
+            Err(_err) => {
                 let _attempt_id = insert_attempt(
                     conn,
                     capture_id,
@@ -134,7 +135,7 @@ pub fn ingest_adapter(
                     &source.parser.version,
                     "failed",
                     Some("parse_failed"),
-                    Some(&safe_failure_message(&err)),
+                    Some(PARSE_FAILURE_MESSAGE),
                 )?;
                 refresh_session_counters_after_failed_attempt(
                     conn,

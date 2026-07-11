@@ -13,7 +13,8 @@ use crate::types::RenormalizeReport;
 
 use super::attempt::{
     fail_attempt, insert_attempt, publish_projection,
-    refresh_session_counters_after_failed_attempt, safe_failure_message,
+    refresh_session_counters_after_failed_attempt, PARSE_FAILURE_MESSAGE,
+    PROJECTION_FAILURE_MESSAGE,
 };
 
 /// Capture metadata needed to rebuild a Candidate for Distill-owned replay.
@@ -95,12 +96,12 @@ pub fn renormalize_capture(
                     parser_id: parser.id.clone(),
                     parser_version: parser.version.clone(),
                 }),
-                Err(err) => {
+                Err(_err) => {
                     fail_attempt(
                         conn,
                         attempt_id,
                         "projection_failed",
-                        &safe_failure_message(&err),
+                        PROJECTION_FAILURE_MESSAGE,
                     )?;
                     refresh_session_counters_after_failed_attempt(
                         conn,
@@ -117,7 +118,7 @@ pub fn renormalize_capture(
                 }
             }
         }
-        Err(err) => {
+        Err(_err) => {
             let attempt_id = insert_attempt(
                 conn,
                 capture_id,
@@ -125,7 +126,7 @@ pub fn renormalize_capture(
                 &parser.version,
                 "failed",
                 Some("parse_failed"),
-                Some(&safe_failure_message(&err)),
+                Some(PARSE_FAILURE_MESSAGE),
             )?;
             refresh_session_counters_after_failed_attempt(
                 conn,

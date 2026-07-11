@@ -30,15 +30,16 @@
   - `npm run desktop:build` (`tauri build --no-bundle`) — pass
   - `npm test` on Node `v26.0.0` — 103 pass; `src/**` preserved
   - `coderabbit review --agent --light --type uncommitted` — attempted; service rate-limited with a two-minute retry window
+  - `coderabbit review --agent --light --type uncommitted` (review-fix retry) — pass, 0 findings across 7 files
 - Full suite command: `cargo test --workspace` + `npm run desktop:test` + `npm test`
 
 ## Review
 
 - Review fixed point: Pending
-- Standards findings: Pending
-- Spec findings: Pending
-- Worthy fixes applied: Pending
-- Findings ignored with reasons: Pending
+- Standards findings: Architecture inventory drift (hard); brittle diagnostic filtering and duplicated control flow (judgement)
+- Spec findings: Pass; no findings
+- Worthy fixes applied: Documented all #20 public methods; replaced filtered low-level error strings with stable generic diagnostics and stronger assertions
+- Findings ignored with reasons: Kept small ingest/retry control-flow duplication until provider adapters reveal a stable reusable abstraction
 
 ## Risks
 

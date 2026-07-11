@@ -260,10 +260,14 @@ fn parse_failure_records_safe_attempt_and_preserves_last_good() {
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].outcome, "failed");
     assert_eq!(attempts[0].error_class.as_deref(), Some("parse_failed"));
-    assert!(attempts[0]
+    assert_eq!(
+        attempts[0].error_message.as_deref(),
+        Some("parser rejected Capture content")
+    );
+    assert!(!attempts[0]
         .error_message
         .as_deref()
-        .is_some_and(|message| !message.is_empty()));
+        .is_some_and(|message| message.contains("not-json")));
     assert_eq!(attempts[0].fact_count, 0);
 
     let hits = library.search("first user", 20).expect("search");
