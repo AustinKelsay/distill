@@ -2,6 +2,20 @@
 
 This file mirrors `AGENTS.md` for Claude-family agents and other tools that preferentially read `CLAUDE.md`.
 
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repo uses the canonical Matt Pocock triage-role labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Distill uses a single product-domain context with root `CONTEXT.md` and system decisions under `docs/adr/`. See `docs/agents/domain.md`.
+
 ## Read This Documentation In Order Before Making Behavior Decisions
 
 1. `docs/README.md`

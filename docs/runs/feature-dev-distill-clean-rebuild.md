@@ -1,0 +1,111 @@
+# Distill Clean Rebuild — Feature Dev Run Ledger
+
+## Run
+
+- Run ID: `2026-07-11-distill-clean-rebuild`
+- Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
+- Target repo: `/Users/plebdev/Desktop/Projects/distill-clean-rebuild` (`AustinKelsay/distill`)
+- Base branch: `staging` at `1a74ca1`
+- Feature branch: `feature/distill-clean-rebuild`
+- Human owner: Austin Kelsay
+- Started: 2026-07-11
+- Current status: Spec and ticket graph approved and published; implementing frontier issue #18
+- Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
+- Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
+
+## Goal
+
+Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end to end. Preserve the proven product invariants and lessons from both the Electron implementation and the Rust/Slint experiment, while allowing the loop to choose the technology stack, tools, interfaces, trade-offs, and implementation sequence. Run as many feature-development slices as needed until the clean rebuild is complete and verified.
+
+## Durable Artifacts
+
+- Research dossier: `/Users/plebdev/Desktop/Projects/distill/apps/distill-desktop/docs/research/from-scratch-rebuild-dossier.md`
+- Electron study: `/Users/plebdev/Desktop/Projects/distill/apps/distill-desktop/docs/research/electron-product-study.md`
+- CONTEXT updates: Root `CONTEXT.md` created with the local-conversation-refinery language
+- ADRs: `docs/adr/0001-rust-library-with-tauri-shell.md`, `0002-captures-attempts-and-projections-are-distinct.md`, `0003-sqlite-and-content-addressed-files-are-library-internals.md`
+- Prototype source branch, if any: None
+- Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
+- Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
+- Ticket sessions: Pending
+- Agent briefs: Pending
+- Review packets: Pending
+- Local CodeRabbit report: Pending
+- PR URL: Pending
+
+## Commands
+
+- Install: `npm install` (legacy Electron baseline); rebuild command pending stack decision
+- Typecheck: `npm run build` (legacy Electron baseline); rebuild command pending stack decision
+- Test: `npm test` (legacy Electron baseline); rebuild command pending stack decision
+- Build: `npm run build` (legacy Electron baseline); rebuild command pending stack decision
+- Visual verification: legacy `npm start`; rebuild harness pending stack decision
+
+## Ticket Ledger
+
+| Issue | Type | Status | Review thread | Fixes needed | Verified |
+| --- | --- | --- | --- | --- | --- |
+| #18 Library Fixture tracer | AFK | Ready — frontier | — | — | No |
+| #19 Thin Tauri/React/CLI callers | AFK | Blocked by #18 | — | — | No |
+| #20 Attempt retry/replay/replacement | AFK | Blocked by #18 | — | — | No |
+| #21 Health/repair/fault recovery | AFK | Blocked by #18, #20 | — | — | No |
+| #22 Async source settings/Sync Runs | AFK | Blocked by #18, #19 | — | — | No |
+| #23 Search/lanes/detail/virtualization | AFK | Blocked by #18, #19 | — | — | No |
+| #24 Transactional Curation | AFK | Blocked by #23 | — | — | No |
+| #25 Recoverable export | AFK | Blocked by #18, #24 | — | — | No |
+| #26 Codex Source | AFK | Blocked by #18, #22 | — | — | No |
+| #27 Claude Code Source | AFK | Blocked by #18, #22 | — | — | No |
+| #28 OpenCode Source | AFK | Blocked by #18, #22 | — | — | No |
+| #29 Droid Source | AFK | Blocked by #18, #22 | — | — | No |
+| #30 Activity/operations diagnostics | AFK | Blocked by #22, #25 | — | — | No |
+| #31 Electron migration | AFK | Blocked by #20, #21, #23, #24, #25 | — | — | No |
+| #32 Hostile-input/capability audit | AFK | Blocked by #19, #26–#29 | — | — | No |
+| #33 Accessibility/visual states | AFK | Blocked by #19, #22–#25, #30 | — | — | No |
+| #34 Scale/performance | AFK | Blocked by #22–#25 | — | — | No |
+| #35 macOS packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
+| #36 Linux packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
+| #37 Matrix/cutover | AFK | Blocked by #21, #26–#36 | — | — | No |
+
+## Parked HITL Slices
+
+| Issue | Why parked | Blocks | Required human action | Final PR decision |
+| --- | --- | --- | --- | --- |
+| — | — | — | — | — |
+
+## Issue Session Ledger
+
+| Issue | Fixed point | Worker session | Commit | Review result | Checks |
+| --- | --- | --- | --- | --- | --- |
+| — | — | — | — | — | — |
+
+## Open Questions
+
+- None. Testing seams and the revised twenty-ticket graph were accepted under the human's standing full-control delegation after focused Grok xhigh review.
+
+## Proposed Testing Seams
+
+1. Primary seam: drive the public Rust `Library` interface against a real temporary Distill home, SQLite database, content-addressed file store, and SourceAdapter. The Fixture adapter must use the exact production adapter interface and may not bypass discovery, snapshot, or parsing.
+2. Split the primary seam into mandatory contract families: `ingest_projection`, `attempt_retry`, `search_query`, `curation_policy`, `export_publication`, `ops_sync`, `health_migration`, `fault_injection`, and `privacy_hardening`. This keeps one external seam without creating one undifferentiated mega-suite.
+3. Fault injection is a first-class Library test capability. Scenarios interrupt between blob staging/rename/database acceptance, projection/FTS/job transitions, and export temp-write/bookkeeping/final rename; then reopen the Library and assert the documented repair state, orphan collection, and missing/corrupt referenced-content health failure.
+4. Cancellation and overlap consistency are proven at the Library seam: cancel sync/export at safe checkpoints, attempt concurrent syncs, and assert Captures, Normalization Attempts, Session Projections, Activity Events, Sync Runs, and Export Artifacts remain mutually consistent.
+5. Privacy/hardening is split across Library and host contracts: restrictive home/file modes, path canonicalization and symlink/traversal defense, capture and JSON depth/size limits, subprocess timeout/output bounds, redacted diagnostics, hostile provider payloads, renderer capability deny-list, and the explicit v1 absence of application-level encryption.
+6. SourceAdapter conformance runs for Codex, Claude Code, OpenCode, Droid, and Fixture, asserting canonical output and stage-typed errors only. Codex file-backed and OpenCode virtual captures also run through the full Library seam to prove replay after source deletion and source-failure isolation.
+7. The CLI has a thin command seam covering arguments, exit codes, progress, cancellation, paths, JSON output, and the same Library outcomes; it may not implement product policy.
+8. The Tauri host contract validates payloads, generated/shared types, capability restrictions, and exact translation into Library calls. The React renderer uses one typed bridge fake to prove keyboard behavior, focus order, roles/names, virtualization correctness, progress/cancel wiring, export preview, and explicit idle/loading/refreshing/empty/warning/error/cancelled states.
+9. Broader accessibility claims use axe/static checks, contrast and reduced-motion checks, scalable-text snapshots, deterministic major-state screenshots, and a packaged keyboard/focus smoke. Screen-reader/assistive-technology claims remain human-validation gates unless a supported automation exists.
+10. Packaged macOS and Linux smoke stays short: install/launch, first-run fixture sync, one search/detail/curation/export path, restart, and artifact existence. It does not stand in for fault, privacy, migration, or export-atomicity contracts. Windows packaging is out of scope for v1.
+11. The legacy contract matrix must be replaced or remapped before parity claims. Every scenario gets a stable ID, owning spec clause, family/seam, fixture, executable test symbol, expected Library result, durable/audit effect, supported platforms, and status. New required scenarios cover Normalization Attempts, Droid, export publication, crash points, concurrent sync, cancellation, Electron-home import, checksummed migrations, privacy, accessibility, and scale budgets.
+
+Grok xhigh test-architecture review initially rejected the looser proposal. The eleven obligations above incorporate every high-severity finding and the relevant medium findings.
+
+## Escalations
+
+- The original `/Users/plebdev/Desktop/Projects/distill` worktree is heavily dirty with user-owned Rust rebuild and research changes. It is preserved untouched. This run uses the separate clean worktree `/Users/plebdev/Desktop/Projects/distill-clean-rebuild` based on `staging`.
+- Feature Dev stops at a non-draft PR into `staging`; production deployment is outside this loop.
+- Setup defaults were inferred from the human's explicit full-control delegation: GitHub remote/Issues, default labels, and one Distill product-domain context.
+- Product center inferred from the completed research and human goal: Distill is a local conversation refinery, not a generic data platform.
+- Design It Twice used four Grok xhigh briefs: minimal interface, extensible adapters, common desktop caller, and adversarial reliability/privacy.
+- Chosen stack: Rust Library + rusqlite/SQLite/FTS/CAS, Tauri 2 host, React/TypeScript/Vite renderer, thin Rust CLI, npm and Cargo workspaces, GitHub Actions, contract tests through Library plus renderer/UI tests.
+- Rejected as primary stack: TypeScript Library in Electron UtilityProcess (runtime/privilege weight) and Rust/Slint (accessibility/testing/controller lessons from the experiment).
+- Testing-seam confirmation: the refined proposal was shown to the human with a recommended "yes" and no objection was supplied across continuation; the human's original instruction grants full control over tools, stack, and trade-offs. The orchestrator therefore accepted the refined seams rather than leave the autonomous run parked indefinitely.
+- Spec review: Grok xhigh initially rejected ten underspecified contracts; all ten were incorporated and the focused re-review passed before publishing issue #17.
+- Ticket review: Grok xhigh initially rejected the nineteen-ticket draft for oversized early slices and false edges. The revised twenty-ticket graph split the Library tracer from callers, retry from health/fault recovery, moved baseline privacy into owning tickets, removed the CLI catch-up ticket, and corrected provider, scale, and packaging edges. The focused re-review passed before publishing #18–#37.
