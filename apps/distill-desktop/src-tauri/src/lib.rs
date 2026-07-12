@@ -9,7 +9,8 @@ mod host;
 pub use error::HostError;
 pub use host::{
     run_fixture_journey as execute_fixture_journey, run_health as execute_health,
-    run_list_sources as execute_list_sources, run_repair as execute_repair,
+    run_list_sessions as execute_list_sessions, run_list_sources as execute_list_sources,
+    run_repair as execute_repair, run_session_detail as execute_session_detail,
     run_set_source_preference as execute_set_source_preference,
     run_sync_cancel as execute_sync_cancel, run_sync_start as execute_sync_start,
     run_sync_status as execute_sync_status, validate_fixture_journey_request,
@@ -39,7 +40,9 @@ pub fn run() {
             commands::set_source_preference_command,
             commands::sync_start_command,
             commands::sync_status_command,
-            commands::sync_cancel_command
+            commands::sync_cancel_command,
+            commands::sessions_list_command,
+            commands::session_detail_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running Distill desktop");

@@ -342,6 +342,7 @@ Rebuild schema entities (fresh Distill home; no legacy schema inclusion):
 - `capture_facts`
 - `sessions` with separately named `accepted_capture_count`, `normalization_attempt_count`, and `successful_projection_generation`
 - `projection_messages`, `projection_artifacts`
+- `tags`, `tag_assignments`, `labels`, and `label_assignments` with session-scoped object identity and assignment origin
 - FTS5 over the current projection (`projection_fts`)
 - `activity_events`
 
@@ -365,5 +366,6 @@ Public Library read/write extensions for Attempt history and retry:
 
 - `capture_attempts(capture_id)` returns immutable Attempt summaries with parser identity/version, outcome, typed error class/message, optional projection generation, and Fact count
 - `renormalize_capture(capture_id)` re-runs the Library-registered Fixture parser against Distill-owned Capture bytes without accepting a new Capture or accepting caller-supplied arbitrary parser ids
+- `list_sessions(request)` returns deterministic current-projection search/list pages with Unicode-safe FTS normalization, workflow-lane intersection, and keyset cursors; `session_detail(request)` returns bounded message/artifact slices with continuation cursors and manual curation read models
 - `set_registered_fixture_parser_version(version)` accepts only a strictly newer semantic version and advances only the registered Fixture parser used by ingest and renormalize
 - `health()` / `repair(options)` own integrity classification and documented recovery; see architecture and ingest-pipeline rebuild notes

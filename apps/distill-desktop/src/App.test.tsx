@@ -13,6 +13,9 @@ import type {
   HealthReport,
   HostError,
   RepairReport,
+  SessionDetail,
+  SessionListItem,
+  SessionListPage,
   SyncRunResult,
   SyncRunSummary,
 } from "./types";
@@ -92,6 +95,11 @@ function createFakeBridge(options?: {
   syncResult?: SyncRunResult;
   cancelResult?: SyncRunSummary;
   onCancel?: (syncRunId: number) => void;
+  sessionPage?: SessionListPage;
+  sessionPages?: Record<string, SessionListPage>;
+  sessionDetail?: SessionDetail | null;
+  sessionDetails?: Record<string, SessionDetail | null>;
+  pendingSessions?: Promise<SessionListPage>;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -211,6 +219,22 @@ function createFakeBridge(options?: {
         }
       );
     },
+    async listSessions(_home, request) {
+      if (options?.error) throw options.error;
+      if (options?.pendingSessions) return options.pendingSessions;
+      if (options?.sessionPages && request.cursor) {
+        return options.sessionPages[request.cursor] ?? { items: [], next_cursor: null };
+      }
+      return options?.sessionPage ?? { items: [], next_cursor: null };
+    },
+    async sessionDetail(_home, request) {
+      if (options?.error) throw options.error;
+      if (options?.sessionDetails) {
+        const cursor = request.message_cursor ?? request.artifact_cursor;
+        if (cursor) return options.sessionDetails[cursor] ?? null;
+      }
+      return options?.sessionDetail ?? null;
+    },
     onProgress(listener) {
       listeners.add(listener);
       return () => {
@@ -262,6 +286,219 @@ describe("first-run Fixture UI", () => {
       "Hello from UI fixture",
     );
     expect(screen.getByTestId("health-panel")).toHaveTextContent("true");
+  });
+
+  it("loads paged sessions, detail slices, and preserves selection on refresh", async () => {
+    const user = userEvent.setup();
+    const sessionPage: SessionListPage = {
+      items: [
+        {
+          id: 8,
+          source_kind: "fixture",
+          external_session_id: "session-explorer",
+          title: "Explorer session",
+          project_path: "/workspace/demo",
+          updated_at: "2026-01-01T00:00:00Z",
+          preview: "Preview",
+          message_count: 2,
+          accepted_capture_count: 1,
+          normalization_attempt_count: 1,
+          successful_projection_generation: 1,
+          labels: [],
+          tags: [],
+          workflow_state: "neutral",
+        },
+      ],
+      next_cursor: null,
+    };
+    const bridge = createFakeBridge({
+      sessionPage,
+      sessionDetail: {
+        ...sampleResult().session!,
+        project_path: "/workspace/demo",
+        projection_summary: "Summary",
+        raw_capture_count: 1,
+        labels: [],
+        tags: [],
+        workflow_state: "neutral",
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("ready");
+    });
+    const sessionButton = screen.getByRole("button", { name: /Explorer session/ });
+    await user.click(sessionButton);
+    await waitFor(() => {
+      expect(screen.getByTestId("session-detail-panel")).toHaveTextContent("Summary");
+    });
+    expect(sessionButton).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Explorer session/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+  });
+
+  it("appends session and transcript pages without losing selection or context", async () => {
+    const user = userEvent.setup();
+    const first: SessionListItem = {
+      id: 11,
+      source_kind: "fixture",
+      external_session_id: "first",
+      title: "First session",
+      project_path: null,
+      updated_at: null,
+      preview: "first",
+      message_count: 2,
+      accepted_capture_count: 1,
+      normalization_attempt_count: 1,
+      successful_projection_generation: 1,
+      labels: [],
+      tags: [],
+      workflow_state: "neutral",
+    };
+    const second: SessionListItem = {
+      ...first,
+      id: 12,
+      external_session_id: "second",
+      title: "Second session",
+    };
+    const initialDetail: SessionDetail = {
+      ...sampleResult().session!,
+      summary: {
+        ...sampleResult().session!.summary,
+        external_session_id: "first",
+        title: "First session",
+      },
+      messages: [
+        { id: 21, ordinal: 0, role: "user", message_kind: "text", text: "first message" },
+      ],
+      next_message_cursor: "message-1",
+    };
+    const continuationDetail: SessionDetail = {
+      ...initialDetail,
+      messages: [
+        {
+          id: 22,
+          ordinal: 1,
+          role: "assistant",
+          message_kind: "text",
+          text: "second message",
+        },
+      ],
+      next_message_cursor: null,
+    };
+    const bridge = createFakeBridge({
+      sessionPage: { items: [first], next_cursor: "page-1" },
+      sessionPages: { "page-1": { items: [second], next_cursor: null } },
+      sessionDetail: initialDetail,
+      sessionDetails: { "message-1": continuationDetail },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /First session/ })).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("session-detail-panel")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /First session/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-detail-panel")).toHaveTextContent(
+        "first message",
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Load more sessions" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Second session/ })).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: /First session/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByTestId("session-detail-panel")).toHaveTextContent("first message");
+
+    await user.click(screen.getByRole("button", { name: "Load more transcript" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-detail-panel")).toHaveTextContent(
+        "second message",
+      ),
+    );
+    expect(screen.getByTestId("session-detail-panel")).toHaveTextContent("first message");
+  });
+
+  it("shows explicit empty, error, cancelled, and warning session states", async () => {
+    const user = userEvent.setup();
+    const empty = createFakeBridge();
+    const { unmount } = render(<App bridge={empty} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("empty");
+    });
+    unmount();
+
+    const failing = createFakeBridge({
+      error: { code: "query", message: "query failed" },
+    });
+    const failingRender = render(<App bridge={failing} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("error");
+    });
+    expect(screen.getByTestId("session-explorer-error")).toHaveTextContent(
+      "query failed",
+    );
+    failingRender.unmount();
+
+    let resolveSessions!: (page: SessionListPage) => void;
+    const pendingSessions = new Promise<SessionListPage>((resolve) => {
+      resolveSessions = resolve;
+    });
+    const pending = createFakeBridge({ pendingSessions });
+    const pendingRender = render(<App bridge={pending} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("loading");
+    await user.click(screen.getByRole("button", { name: "Cancel session load" }));
+    expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("cancelled");
+    resolveSessions({ items: [], next_cursor: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("cancelled");
+    pendingRender.unmount();
+
+    const warning = createFakeBridge({
+      syncResult: {
+        run: {
+          id: 2,
+          status: "warning",
+          cancel_requested: false,
+          accepted_captures: 1,
+          skipped_duplicates: 0,
+          successful_attempts: 1,
+          failed_attempts: 1,
+          error_class: null,
+          error_message: null,
+          warning_details: ["partial"],
+          sources: [],
+        },
+        session_identities: [],
+      },
+    });
+    render(<App bridge={warning} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Start Sync Run" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("warning");
+    });
   });
 
   it("renders typed error state from the bridge", async () => {
@@ -317,6 +554,8 @@ describe("first-run Fixture UI", () => {
       cancelSync: async () => {
         throw new Error("not used");
       },
+      listSessions: async () => ({ items: [], next_cursor: null }),
+      sessionDetail: async () => null,
       onProgress: () => () => undefined,
       onSyncProgress: () => () => undefined,
     };

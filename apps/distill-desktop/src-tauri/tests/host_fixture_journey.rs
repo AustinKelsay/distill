@@ -247,3 +247,50 @@ fn host_sync_cancel_requests_next_candidate_checkpoint() {
     assert_eq!(result.run.status, "cancelled");
     assert_eq!(cancel_response.expect("cancel response").status, "running");
 }
+
+#[test]
+fn host_sessions_list_and_detail_are_typed_and_bounded() {
+    use distill_desktop_lib::{
+        execute_fixture_journey, execute_list_sessions, execute_session_detail,
+    };
+    use distill_library::{SessionDetailRequest, SessionListRequest, WorkflowLane};
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let journey =
+        validate_fixture_journey_request(home.to_str().unwrap(), fixture.to_str().unwrap())
+            .expect("request");
+    execute_fixture_journey(&journey, |_| {}).expect("journey");
+    let home_request = validate_home_request(home.to_str().unwrap()).expect("home");
+
+    let page = execute_list_sessions(
+        &home_request,
+        SessionListRequest {
+            query: Some("Hello".into()),
+            lane: WorkflowLane::All,
+            limit: 1,
+            cursor: None,
+        },
+    )
+    .expect("session page");
+    assert_eq!(page.items.len(), 1);
+    let detail = execute_session_detail(
+        &home_request,
+        SessionDetailRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            message_limit: 1,
+            artifact_limit: 1,
+            message_cursor: None,
+            artifact_cursor: None,
+        },
+    )
+    .expect("detail")
+    .expect("session detail");
+    assert_eq!(detail.messages.len(), 1);
+    assert_eq!(detail.summary.external_session_id, "fixture-session-host");
+    assert!(detail.next_message_cursor.is_some());
+}

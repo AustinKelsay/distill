@@ -14,7 +14,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
     FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, LibraryError, RepairOptions,
-    RepairReport, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    RepairReport, SessionDetailRequest, SessionListRequest, SourcePreference, SyncProgress,
+    SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
 
@@ -96,6 +97,65 @@ pub enum Command {
         /// Nested sync start/status/cancel action.
         #[command(subcommand)]
         action: SyncCommand,
+    },
+    /// Current-projection session list/search/detail commands.
+    Sessions {
+        /// Nested session list/detail action.
+        #[command(subcommand)]
+        action: SessionCommand,
+    },
+}
+
+/// Session query subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SessionCommand {
+    /// List or search current sessions with a workflow lane and cursor.
+    List {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Optional Unicode-safe current-projection search query.
+        #[arg(long)]
+        query: Option<String>,
+        /// Workflow lane (`all`, `needs-review`, `train-ready`, `holdout-ready`, `favorites`).
+        #[arg(long, default_value = "all")]
+        lane: String,
+        /// Opaque continuation cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Page size.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Load bounded current-projection session detail.
+    Detail {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Source kind such as `fixture`.
+        #[arg(long)]
+        source_kind: String,
+        /// Stable external Session Identity.
+        #[arg(long)]
+        external_session_id: String,
+        /// Message page size.
+        #[arg(long, default_value_t = 50)]
+        message_limit: u32,
+        /// Artifact page size.
+        #[arg(long, default_value_t = 50)]
+        artifact_limit: u32,
+        /// Opaque message continuation cursor.
+        #[arg(long)]
+        message_cursor: Option<String>,
+        /// Opaque artifact continuation cursor.
+        #[arg(long)]
+        artifact_cursor: Option<String>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
     },
 }
 
@@ -258,6 +318,7 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
         }) => execute_repair(home, confirm, format),
         Some(Command::Sources { action }) => execute_sources(action),
         Some(Command::Sync { action }) => execute_sync(action),
+        Some(Command::Sessions { action }) => execute_sessions(action),
         None => execute_journey(cli.home, cli.fixture, cli.format),
     }
 }
@@ -421,6 +482,71 @@ fn execute_sync(action: SyncCommand) -> Result<String, CliFailure> {
                 .sync_status(Some(id))
                 .map_err(|err| CliFailure::runtime(format, err))?;
             Ok(render_sync_status(format, &summary))
+        }
+    }
+}
+
+fn parse_workflow_lane(format: OutputFormat, value: &str) -> Result<WorkflowLane, CliFailure> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "all" => Ok(WorkflowLane::All),
+        "needs-review" | "needs_review" => Ok(WorkflowLane::NeedsReview),
+        "train-ready" | "train_ready" => Ok(WorkflowLane::TrainReady),
+        "holdout-ready" | "holdout_ready" => Ok(WorkflowLane::HoldoutReady),
+        "favorites" | "favorite" => Ok(WorkflowLane::Favorites),
+        _ => Err(CliFailure::usage(
+            format,
+            "lane must be all, needs-review, train-ready, holdout-ready, or favorites",
+        )),
+    }
+}
+
+fn execute_sessions(action: SessionCommand) -> Result<String, CliFailure> {
+    match action {
+        SessionCommand::List {
+            home,
+            query,
+            lane,
+            cursor,
+            limit,
+            format,
+        } => {
+            let lane = parse_workflow_lane(format, &lane)?;
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let page = library
+                .list_sessions(SessionListRequest {
+                    query,
+                    lane,
+                    limit,
+                    cursor,
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_session_page(format, &page))
+        }
+        SessionCommand::Detail {
+            home,
+            source_kind,
+            external_session_id,
+            message_limit,
+            artifact_limit,
+            message_cursor,
+            artifact_cursor,
+            format,
+        } => {
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let detail = library
+                .session_detail(SessionDetailRequest {
+                    source_kind,
+                    external_session_id,
+                    message_limit,
+                    artifact_limit,
+                    message_cursor,
+                    artifact_cursor,
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?
+                .ok_or_else(|| {
+                    CliFailure::runtime(format, LibraryError::NotFound("session".into()))
+                })?;
+            Ok(render_session_detail(format, &detail))
         }
     }
 }
@@ -654,6 +780,75 @@ fn render_sync_status(format: OutputFormat, summary: &SyncRunSummary) -> String 
             ];
             for detail in &summary.warning_details {
                 lines.push(format!("sync.warning: {detail}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+fn render_session_page(format: OutputFormat, page: &distill_library::SessionListPage) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "items": page.items,
+            "next_cursor": page.next_cursor,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![format!("sessions.count: {}", page.items.len())];
+            for item in &page.items {
+                lines.push(format!(
+                    "session: {}:{} title={} workflow={:?} messages={}",
+                    item.source_kind,
+                    item.external_session_id,
+                    item.title,
+                    item.workflow_state,
+                    item.message_count
+                ));
+            }
+            if let Some(cursor) = &page.next_cursor {
+                lines.push(format!("sessions.next_cursor: {cursor}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+fn render_session_detail(format: OutputFormat, detail: &distill_library::SessionDetail) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "session": detail,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!(
+                    "session.identity: {}:{}",
+                    detail.summary.source_kind, detail.summary.external_session_id
+                ),
+                format!(
+                    "session.title: {}",
+                    detail.summary.title.as_deref().unwrap_or("")
+                ),
+                format!(
+                    "session.project_path: {}",
+                    detail.project_path.as_deref().unwrap_or("")
+                ),
+                format!(
+                    "session.source_url: {}",
+                    detail.source_url.as_deref().unwrap_or("")
+                ),
+                format!("session.raw_capture_count: {}", detail.raw_capture_count),
+                format!("session.messages: {}", detail.messages.len()),
+                format!("session.artifacts: {}", detail.artifacts.len()),
+                format!("session.workflow_state: {:?}", detail.workflow_state),
+            ];
+            if let Some(cursor) = &detail.next_message_cursor {
+                lines.push(format!("session.next_message_cursor: {cursor}"));
+            }
+            if let Some(cursor) = &detail.next_artifact_cursor {
+                lines.push(format!("session.next_artifact_cursor: {cursor}"));
             }
             lines.join("\n")
         }

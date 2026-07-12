@@ -392,3 +392,104 @@ fn cli_sources_and_sync_commands_human_and_json() {
         serde_json::from_slice(&status.stdout).expect("status json");
     assert_eq!(status_value["run"]["id"], run_id);
 }
+
+#[test]
+fn cli_sessions_list_search_and_detail_are_bounded() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let journey = Command::new(distill_bin())
+        .args([
+            "--home",
+            home.to_str().unwrap(),
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("journey");
+    assert_eq!(journey.status.code(), Some(0));
+
+    let list = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "list",
+            "--home",
+            home.to_str().unwrap(),
+            "--query",
+            "Hello",
+            "--lane",
+            "all",
+            "--limit",
+            "1",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("session list");
+    assert_eq!(list.status.code(), Some(0));
+    let list_value: serde_json::Value = serde_json::from_slice(&list.stdout).expect("list json");
+    assert_eq!(list_value["items"].as_array().expect("items").len(), 1);
+    assert_eq!(
+        list_value["items"][0]["external_session_id"],
+        "fixture-session-cli"
+    );
+    assert!(list_value.get("next_cursor").is_some());
+
+    let zero_token = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "list",
+            "--home",
+            home.to_str().unwrap(),
+            "--query",
+            "!!! ///",
+            "--lane",
+            "all",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("zero-token session list");
+    assert_eq!(zero_token.status.code(), Some(0));
+    let zero_value: serde_json::Value =
+        serde_json::from_slice(&zero_token.stdout).expect("zero-token json");
+    assert!(zero_value["items"].as_array().expect("items").is_empty());
+
+    let detail = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "detail",
+            "--home",
+            home.to_str().unwrap(),
+            "--source-kind",
+            "fixture",
+            "--external-session-id",
+            "fixture-session-cli",
+            "--message-limit",
+            "1",
+            "--artifact-limit",
+            "1",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("session detail");
+    assert_eq!(detail.status.code(), Some(0));
+    let detail_value: serde_json::Value =
+        serde_json::from_slice(&detail.stdout).expect("detail json");
+    assert_eq!(
+        detail_value["session"]["summary"]["external_session_id"],
+        "fixture-session-cli"
+    );
+    assert_eq!(
+        detail_value["session"]["messages"]
+            .as_array()
+            .expect("messages")
+            .len(),
+        1
+    );
+    assert!(detail_value["session"]["next_message_cursor"].is_string());
+}

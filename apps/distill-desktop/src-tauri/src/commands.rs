@@ -1,17 +1,18 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::{
-    FixtureJourneyResult, HealthReport, RepairReport, SourcePreference, SyncProgress,
-    SyncRunResult, SyncRunSummary,
+    FixtureJourneyResult, HealthReport, RepairReport, SessionDetail, SessionDetailRequest,
+    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
+    SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_fixture_journey, run_health, run_list_sources, run_repair, run_set_source_preference,
-    run_sync_cancel, run_sync_start, run_sync_status, validate_fixture_journey_request,
-    validate_home_request, validate_source_preference_request, validate_sync_id_request,
-    validate_sync_start_request,
+    run_fixture_journey, run_health, run_list_sessions, run_list_sources, run_repair,
+    run_session_detail, run_set_source_preference, run_sync_cancel, run_sync_start,
+    run_sync_status, validate_fixture_journey_request, validate_home_request,
+    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
 };
 use crate::{FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
 
@@ -149,6 +150,40 @@ pub async fn sync_cancel_command(
 ) -> Result<SyncRunSummary, HostError> {
     let request = validate_sync_id_request(&home, sync_run_id)?;
     tauri::async_runtime::spawn_blocking(move || run_sync_cancel(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: list/search current Session Projections off the UI thread.
+ */
+#[tauri::command]
+pub async fn sessions_list_command(
+    home: String,
+    request: SessionListRequest,
+) -> Result<SessionListPage, HostError> {
+    let home_request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_list_sessions(&home_request, request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: load bounded Session detail off the UI thread.
+ */
+#[tauri::command]
+pub async fn session_detail_command(
+    home: String,
+    request: SessionDetailRequest,
+) -> Result<Option<SessionDetail>, HostError> {
+    let home_request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_session_detail(&home_request, request))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),

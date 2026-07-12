@@ -82,6 +82,37 @@ describe("Tauri bridge", () => {
       home: "/tmp/home",
       syncRunId: 7,
     });
+
+    await bridge.listSessions("/tmp/home", {
+      query: "café",
+      lane: "all",
+      limit: 20,
+      cursor: null,
+    });
+    expect(tauri.invoke).toHaveBeenCalledWith("sessions_list_command", {
+      home: "/tmp/home",
+      request: { query: "café", lane: "all", limit: 20, cursor: null },
+    });
+
+    await bridge.sessionDetail("/tmp/home", {
+      source_kind: "fixture",
+      external_session_id: "session-1",
+      message_limit: 20,
+      artifact_limit: 20,
+      message_cursor: null,
+      artifact_cursor: null,
+    });
+    expect(tauri.invoke).toHaveBeenCalledWith("session_detail_command", {
+      home: "/tmp/home",
+      request: {
+        source_kind: "fixture",
+        external_session_id: "session-1",
+        message_limit: 20,
+        artifact_limit: 20,
+        message_cursor: null,
+        artifact_cursor: null,
+      },
+    });
   });
 
   it("unsubscribes when cleanup happens before async listener registration finishes", async () => {

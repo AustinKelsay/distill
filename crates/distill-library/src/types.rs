@@ -106,12 +106,264 @@ pub struct SessionSummary {
 pub struct SessionDetail {
     /// Compact Session identity and counters.
     pub summary: SessionSummary,
-    /// Ordered projected Transcript Messages.
+    /// Ordered projected Transcript Messages for the requested page.
     pub messages: Vec<ProjectedMessage>,
-    /// Projected Artifacts for the current generation.
+    /// Projected Artifacts for the requested page of the current generation.
     pub artifacts: Vec<ProjectedArtifact>,
-    /// Current Session metadata JSON object as text.
+    /// Current Session metadata JSON object as text (`{}` when malformed).
     pub metadata_json: String,
+    /// Project path from the current projection when present.
+    #[serde(default)]
+    pub project_path: Option<String>,
+    /// Source URL from the current projection when present.
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// Narrative summary text from the current projection when present.
+    #[serde(default)]
+    pub projection_summary: Option<String>,
+    /// Session start timestamp from the current projection when present.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// Session update timestamp from the current projection when present.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// Accepted raw Capture count for this Session Identity.
+    #[serde(default)]
+    pub raw_capture_count: i64,
+    /// Manual tags for this session (`origin = "manual"` only).
+    #[serde(default)]
+    pub tags: Vec<SessionTag>,
+    /// Manual labels for this session (`origin = "manual"` only).
+    #[serde(default)]
+    pub labels: Vec<SessionLabel>,
+    /// Derived workflow state from manual labels only.
+    #[serde(default)]
+    pub workflow_state: WorkflowState,
+    /// Opaque continuation cursor for the next message page.
+    #[serde(default)]
+    pub next_message_cursor: Option<String>,
+    /// Opaque continuation cursor for the next artifact page.
+    #[serde(default)]
+    pub next_artifact_cursor: Option<String>,
+}
+
+/// Canonical session workflow state used by list lanes and detail read models.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowState {
+    /// Session has `exclude`, `sensitive`, or conflicting `train`+`holdout`.
+    NeedsReview,
+    /// Session has `train` without review-blocking labels.
+    TrainReady,
+    /// Session has `holdout` without review-blocking labels.
+    HoldoutReady,
+    /// Session has `favorite` and is not in a higher-priority state.
+    Favorite,
+    /// Session has no review or export-driving labels.
+    #[default]
+    Neutral,
+}
+
+/**
+ * Derive workflow state from manual label names using canonical priority.
+ *
+ * Priority: `needs_review` > `train_ready` > `holdout_ready` > `favorite` > `neutral`.
+ *
+ * Parameters:
+ * - `label_names`: manual label names only; callers must exclude non-manual origins.
+ */
+pub fn derive_workflow_state<I, S>(label_names: I) -> WorkflowState
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut has_train = false;
+    let mut has_holdout = false;
+    let mut has_exclude = false;
+    let mut has_sensitive = false;
+    let mut has_favorite = false;
+
+    for name in label_names {
+        match name.as_ref().trim().to_ascii_lowercase().as_str() {
+            "train" => has_train = true,
+            "holdout" => has_holdout = true,
+            "exclude" => has_exclude = true,
+            "sensitive" => has_sensitive = true,
+            "favorite" => has_favorite = true,
+            _ => {}
+        }
+    }
+
+    if has_exclude || has_sensitive || (has_train && has_holdout) {
+        return WorkflowState::NeedsReview;
+    }
+    if has_train {
+        return WorkflowState::TrainReady;
+    }
+    if has_holdout {
+        return WorkflowState::HoldoutReady;
+    }
+    if has_favorite {
+        return WorkflowState::Favorite;
+    }
+    WorkflowState::Neutral
+}
+
+/// Sessions UI filter lane. Favorites matches the `favorite` label, not only `WorkflowState::Favorite`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowLane {
+    /// Every session.
+    #[default]
+    All,
+    /// Sessions whose derived workflow state is `needs_review`.
+    NeedsReview,
+    /// Sessions whose derived workflow state is `train_ready`.
+    TrainReady,
+    /// Sessions whose derived workflow state is `holdout_ready`.
+    HoldoutReady,
+    /// Sessions that carry the manual `favorite` label.
+    Favorites,
+}
+
+/**
+ * Return whether a session with the given manual labels belongs in `lane`.
+ *
+ * Parameters:
+ * - `lane`: active Sessions filter lane.
+ * - `label_names`: manual label names only.
+ */
+pub fn matches_workflow_lane<I, S>(lane: WorkflowLane, label_names: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let names: Vec<String> = label_names
+        .into_iter()
+        .map(|name| name.as_ref().trim().to_ascii_lowercase())
+        .collect();
+    match lane {
+        WorkflowLane::All => true,
+        WorkflowLane::Favorites => names.iter().any(|name| name == "favorite"),
+        WorkflowLane::NeedsReview => {
+            derive_workflow_state(names.iter().map(String::as_str)) == WorkflowState::NeedsReview
+        }
+        WorkflowLane::TrainReady => {
+            derive_workflow_state(names.iter().map(String::as_str)) == WorkflowState::TrainReady
+        }
+        WorkflowLane::HoldoutReady => {
+            derive_workflow_state(names.iter().map(String::as_str)) == WorkflowState::HoldoutReady
+        }
+    }
+}
+
+/// Manual tag assignment surfaced by session list/detail read models.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionTag {
+    /// Tag catalog id.
+    pub id: i64,
+    /// Tag name.
+    pub name: String,
+    /// Tag kind such as `general`.
+    pub kind: String,
+    /// Assignment origin; query read models only include `manual`.
+    pub origin: String,
+}
+
+/// Manual label assignment surfaced by session list/detail read models.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionLabel {
+    /// Label catalog id.
+    pub id: i64,
+    /// Label name.
+    pub name: String,
+    /// Label scope such as `session`.
+    pub scope: String,
+    /// Assignment origin; query read models only include `manual`.
+    pub origin: String,
+}
+
+/// Request for a deterministic session list or search page.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionListRequest {
+    /// Optional free-text query. `None` or blank lists sessions; punctuation-only returns empty.
+    pub query: Option<String>,
+    /// Active workflow lane filter.
+    pub lane: WorkflowLane,
+    /// Maximum items to return (1..=MAX_PAGE_SIZE).
+    pub limit: u32,
+    /// Opaque keyset cursor from a prior page.
+    pub cursor: Option<String>,
+}
+
+impl Default for SessionListRequest {
+    fn default() -> Self {
+        Self {
+            query: None,
+            lane: WorkflowLane::All,
+            limit: 50,
+            cursor: None,
+        }
+    }
+}
+
+/// One session row in a list/search page.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionListItem {
+    /// Database session id.
+    pub id: i64,
+    /// Source kind string.
+    pub source_kind: String,
+    /// Stable Session Identity external id.
+    pub external_session_id: String,
+    /// Display title (never empty).
+    pub title: String,
+    /// Project path when present.
+    pub project_path: Option<String>,
+    /// Session update timestamp when present.
+    pub updated_at: Option<String>,
+    /// Preview excerpt when available.
+    pub preview: Option<String>,
+    /// Current projection message count.
+    pub message_count: i64,
+    /// Accepted Capture count.
+    pub accepted_capture_count: i64,
+    /// Normalization Attempt count.
+    pub normalization_attempt_count: i64,
+    /// Latest successful projection generation.
+    pub successful_projection_generation: i64,
+    /// Manual labels (`origin = "manual"`), ordered by name.
+    pub labels: Vec<SessionLabel>,
+    /// Manual tags (`origin = "manual"`), ordered by name.
+    pub tags: Vec<SessionTag>,
+    /// Derived workflow state from manual labels.
+    pub workflow_state: WorkflowState,
+}
+
+/// Deterministic session list/search page.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionListPage {
+    /// Page items in stable order.
+    pub items: Vec<SessionListItem>,
+    /// Opaque continuation cursor when more rows exist.
+    pub next_cursor: Option<String>,
+}
+
+/// Request for a bounded session detail page with optional message/artifact cursors.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionDetailRequest {
+    /// Source kind string such as `fixture`.
+    pub source_kind: String,
+    /// Stable Session Identity.
+    pub external_session_id: String,
+    /// Maximum messages to return (1..=MAX_PAGE_SIZE).
+    pub message_limit: u32,
+    /// Maximum artifacts to return (1..=MAX_PAGE_SIZE).
+    pub artifact_limit: u32,
+    /// Opaque message continuation cursor.
+    pub message_cursor: Option<String>,
+    /// Opaque artifact continuation cursor.
+    pub artifact_cursor: Option<String>,
 }
 
 /// One projected Transcript Message.

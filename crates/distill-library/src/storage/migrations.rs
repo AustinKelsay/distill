@@ -12,6 +12,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         2,
         include_str!("../../migrations/0002_source_prefs_sync_runs.sql"),
     ),
+    (
+        3,
+        include_str!("../../migrations/0003_curation_read_models.sql"),
+    ),
 ];
 
 /**

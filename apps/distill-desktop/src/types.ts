@@ -39,6 +39,30 @@ export type SessionSummary = {
   successful_projection_generation: number;
 };
 
+/** Canonical workflow state derived from manual labels. */
+export type WorkflowState =
+  "needs_review" | "train_ready" | "holdout_ready" | "favorite" | "neutral";
+
+/** Session filter lane. */
+export type WorkflowLane =
+  "all" | "needs_review" | "train_ready" | "holdout_ready" | "favorites";
+
+/** Manual tag read-model entry. */
+export type SessionTag = {
+  id: number;
+  name: string;
+  kind: string;
+  origin: string;
+};
+
+/** Manual label read-model entry. */
+export type SessionLabel = {
+  id: number;
+  name: string;
+  scope: string;
+  origin: string;
+};
+
 /** Projected transcript message. */
 export type ProjectedMessage = {
   id: number;
@@ -60,6 +84,59 @@ export type SessionDetail = {
     text_preview: string | null;
   }>;
   metadata_json: string;
+  project_path?: string | null;
+  source_url?: string | null;
+  projection_summary?: string | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+  raw_capture_count?: number;
+  tags?: SessionTag[];
+  labels?: SessionLabel[];
+  workflow_state?: WorkflowState;
+  next_message_cursor?: string | null;
+  next_artifact_cursor?: string | null;
+};
+
+/** Request for a typed current-projection session list/search page. */
+export type SessionListRequest = {
+  query?: string | null;
+  lane: WorkflowLane;
+  limit: number;
+  cursor?: string | null;
+};
+
+/** One current-projection session list/search row. */
+export type SessionListItem = {
+  id: number;
+  source_kind: string;
+  external_session_id: string;
+  title: string;
+  project_path: string | null;
+  updated_at: string | null;
+  preview: string | null;
+  message_count: number;
+  accepted_capture_count: number;
+  normalization_attempt_count: number;
+  successful_projection_generation: number;
+  labels: SessionLabel[];
+  tags: SessionTag[];
+  workflow_state: WorkflowState;
+};
+
+/** Page of current-projection session rows. */
+export type SessionListPage = {
+  items: SessionListItem[];
+  next_cursor: string | null;
+};
+
+/** Request for a bounded current-projection session detail page. */
+export type SessionDetailRequest = {
+  source_kind: string;
+  external_session_id: string;
+  message_limit: number;
+  artifact_limit: number;
+  message_cursor?: string | null;
+  artifact_cursor?: string | null;
 };
 
 /** Typed Library health issue with redacted summary. */
@@ -232,6 +309,13 @@ export type DistillBridge = {
    * Request Sync Run cancellation.
    */
   cancelSync(home: string, syncRunId: number): Promise<SyncRunSummary>;
+  /** List/search current-projection sessions. */
+  listSessions(home: string, request: SessionListRequest): Promise<SessionListPage>;
+  /** Load bounded current-projection session detail. */
+  sessionDetail(
+    home: string,
+    request: SessionDetailRequest,
+  ): Promise<SessionDetail | null>;
   /**
    * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback

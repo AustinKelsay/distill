@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use distill_library::{
     FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions, RepairReport,
-    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourcePreference,
+    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -54,6 +55,30 @@ pub struct SourcePreferenceRequest {
     pub enabled: bool,
     /// Optional configured root.
     pub configured_root: Option<PathBuf>,
+}
+
+/**
+ * List/search current Session Projections through the public Library seam.
+ */
+pub fn run_list_sessions(
+    request: &HomeRequest,
+    page: SessionListRequest,
+) -> Result<SessionListPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_sessions(page).map_err(HostError::from_library)
+}
+
+/**
+ * Load one bounded current-projection Session detail page.
+ */
+pub fn run_session_detail(
+    request: &HomeRequest,
+    detail: SessionDetailRequest,
+) -> Result<Option<SessionDetail>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .session_detail(detail)
+        .map_err(HostError::from_library)
 }
 
 /**

@@ -15,9 +15,9 @@ use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, Dis
 use crate::types::{
     ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
     IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport, SearchHit,
-    SessionDetail, SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary,
-    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES,
-    MAX_PAGE_SIZE,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
+    SourceDetectResult, SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult,
+    SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -370,6 +370,32 @@ impl Library {
             message_limit,
             artifact_limit,
         )
+    }
+
+    /**
+     * Load a bounded Session Projection detail page with optional continuation cursors.
+     *
+     * Parameters:
+     * - `request`: identity plus message/artifact page bounds and opaque cursors.
+     */
+    pub fn session_detail(
+        &self,
+        request: SessionDetailRequest,
+    ) -> LibraryResult<Option<SessionDetail>> {
+        validate_page_size(request.message_limit)?;
+        validate_page_size(request.artifact_limit)?;
+        query::session_detail(&self.conn, &request)
+    }
+
+    /**
+     * List or search current Session Projections with lane filter and keyset cursor paging.
+     *
+     * Parameters:
+     * - `request`: optional query text, workflow lane, limit, and opaque cursor.
+     */
+    pub fn list_sessions(&self, request: SessionListRequest) -> LibraryResult<SessionListPage> {
+        validate_page_size(request.limit)?;
+        query::list_sessions(&self.conn, &request)
     }
 
     /**

@@ -182,22 +182,30 @@ pub(super) fn publish_projection(
 
     let (session_id, generation) = if let Some((id, generation)) = existing {
         let next_generation = generation + 1;
+        let session_updated_at = parsed.updated_at.clone().unwrap_or_else(|| now.clone());
+        let session_started_at = parsed.started_at.as_deref();
         tx.execute(
             "UPDATE sessions SET
                 title = ?1,
                 summary = ?2,
-                metadata_json = ?3,
-                updated_at = ?4,
-                accepted_capture_count = ?5,
-                normalization_attempt_count = ?6,
-                successful_projection_generation = ?7,
-                current_attempt_id = ?8
-             WHERE id = ?9",
+                project_path = ?3,
+                source_url = ?4,
+                started_at = COALESCE(?5, started_at),
+                metadata_json = ?6,
+                updated_at = ?7,
+                accepted_capture_count = ?8,
+                normalization_attempt_count = ?9,
+                successful_projection_generation = ?10,
+                current_attempt_id = ?11
+             WHERE id = ?12",
             params![
                 parsed.title,
                 parsed.summary,
+                parsed.project_path,
+                parsed.source_url,
+                session_started_at,
                 parsed.metadata.to_string(),
-                now,
+                session_updated_at,
                 accepted_capture_count,
                 normalization_attempt_count,
                 next_generation,
@@ -228,18 +236,26 @@ pub(super) fn publish_projection(
         )?;
         (id, next_generation)
     } else {
+        let session_updated_at = parsed.updated_at.clone().unwrap_or_else(|| now.clone());
+        let session_started_at = parsed
+            .started_at
+            .clone()
+            .unwrap_or_else(|| session_updated_at.clone());
         tx.execute(
             "INSERT INTO sessions (
-                source_kind, external_session_id, title, summary, started_at, updated_at,
-                metadata_json, accepted_capture_count, normalization_attempt_count,
-                successful_projection_generation, current_attempt_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, 1, ?9)",
+                source_kind, external_session_id, title, summary, project_path, source_url,
+                started_at, updated_at, metadata_json, accepted_capture_count,
+                normalization_attempt_count, successful_projection_generation, current_attempt_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12)",
             params![
                 source_kind,
                 parsed.external_session_id,
                 parsed.title,
                 parsed.summary,
-                now,
+                parsed.project_path,
+                parsed.source_url,
+                session_started_at,
+                session_updated_at,
                 parsed.metadata.to_string(),
                 accepted_capture_count,
                 normalization_attempt_count,
@@ -274,11 +290,7 @@ pub(super) fn publish_projection(
     crate::faults::check(crate::faults::FaultPoint::DuringPublishAfterFactsBeforeFts)?;
 
     for (message_id, message) in message_ids.iter().zip(parsed.messages.iter()) {
-        let project_path: String = tx.query_row(
-            "SELECT COALESCE(project_path, '') FROM sessions WHERE id = ?1",
-            [session_id],
-            |row| row.get(0),
-        )?;
+        let project_path = parsed.project_path.clone().unwrap_or_default();
         tx.execute(
             "INSERT INTO projection_fts (session_id, message_id, title, project_path, role, text)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

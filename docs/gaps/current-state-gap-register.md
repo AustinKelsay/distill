@@ -145,3 +145,13 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - labeled export now includes `source_url`, `summary`, parsed session metadata, and per-message `message_kind` plus parsed message metadata
 - export payload ordering now lists labels before tags to match the canonical curation precedence guidance
 - Implemented in: `docs/specs/search-curation-export.md`, `docs/testing/contract-test-matrix.md`, `src/shared/types.ts`, `src/distill/query.ts`, `src/distill/export.ts`, `src/renderer/app.ts`, `src/test/query.test.ts`, `src/test/export.test.ts`, `src/test/docs.test.ts`
+
+## GAP-010: Rebuild Query Surfaces Were Limited To First Slices
+
+- Status: resolved for the current rebuild slice.
+- Historical rule: large libraries need deterministic current-projection search/list cursors, workflow-lane intersection, and bounded session detail pages without exposing storage authority to callers.
+- Resolution notes:
+- Rust Library now exposes typed list/search pages with Unicode-safe quoted-AND FTS normalization, keyset cursors, manual-origin labels/tags, and shared workflow derivation.
+- Rust Library detail pages expose named projection metadata, explicit raw-capture counts, curation read models, and message/artifact continuation cursors.
+- CLI, Tauri host, bridge, and React explorer use typed page/detail surfaces and preserve selected sessions across refresh.
+- Implemented in: `crates/distill-library/src/query/mod.rs`, `crates/distill-library/tests/library_query_paging.rs`, `apps/distill-desktop/src/App.tsx`, `crates/distill-cli/src/lib.rs`

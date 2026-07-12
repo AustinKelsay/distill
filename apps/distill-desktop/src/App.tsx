@@ -2,7 +2,7 @@
  * First-run Distill UI: home/Fixture inputs, Source settings, Sync Runs, and health.
  */
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import type {
   DistillBridge,
   FixtureJourneyPhase,
@@ -10,6 +10,10 @@ import type {
   HealthReport,
   HostError,
   RepairReport,
+  SessionDetail,
+  SessionListItem,
+  SessionListPage,
+  WorkflowLane,
   SourcePreference,
   SyncProgress,
   SyncRunResult,
@@ -21,6 +25,9 @@ export type UiStatus = "idle" | "running" | "success" | "warning" | "cancelled" 
 type AppProps = {
   bridge: DistillBridge;
 };
+
+type SessionExplorerStatus =
+  "idle" | "loading" | "ready" | "empty" | "warning" | "error" | "cancelled";
 
 /**
  * Render the Distill first-run Fixture caller plus Source/Sync surfaces.
@@ -40,6 +47,14 @@ export function App({ bridge }: AppProps) {
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
   const [confirmRepair, setConfirmRepair] = useState(false);
   const [error, setError] = useState<HostError | null>(null);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionLane, setSessionLane] = useState<WorkflowLane>("all");
+  const [sessionPage, setSessionPage] = useState<SessionListPage | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionExplorerStatus>("idle");
+  const [sessionError, setSessionError] = useState<HostError | null>(null);
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
+  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
+  const sessionRequestRef = useRef(0);
 
   useEffect(() => {
     const stopJourney = bridge.onProgress((nextPhase) => {
@@ -92,10 +107,17 @@ export function App({ bridge }: AppProps) {
       const next = await bridge.startSync(home, ["fixture"]);
       setSyncResult(next);
       setActiveSyncRunId(null);
-      if (next.run.status === "warning") setStatus("warning");
-      else if (next.run.status === "cancelled") setStatus("cancelled");
-      else if (next.run.status === "failed") setStatus("error");
-      else setStatus("success");
+      if (next.run.status === "warning") {
+        setStatus("warning");
+        setSessionStatus("warning");
+      } else if (next.run.status === "cancelled") {
+        setStatus("cancelled");
+        setSessionStatus("cancelled");
+      } else if (next.run.status === "failed") setStatus("error");
+      else {
+        setStatus("success");
+        resetSessionExplorer();
+      }
       const listed = await bridge.listSources(home);
       setSources(listed);
     } catch (caught) {
@@ -116,11 +138,17 @@ export function App({ bridge }: AppProps) {
         run: summary,
         session_identities: syncResult?.session_identities ?? [],
       });
-      if (summary.status === "warning") setStatus("warning");
-      else if (summary.status === "cancelled") setStatus("cancelled");
-      else if (summary.status === "failed") setStatus("error");
-      else if (summary.status === "completed") setStatus("success");
-      else setStatus("running");
+      if (summary.status === "warning") {
+        setStatus("warning");
+        setSessionStatus("warning");
+      } else if (summary.status === "cancelled") {
+        setStatus("cancelled");
+        setSessionStatus("cancelled");
+      } else if (summary.status === "failed") setStatus("error");
+      else if (summary.status === "completed") {
+        setStatus("success");
+        resetSessionExplorer();
+      } else setStatus("running");
       if (["completed", "warning", "failed", "cancelled"].includes(summary.status)) {
         setActiveSyncRunId(null);
       }
@@ -142,6 +170,125 @@ export function App({ bridge }: AppProps) {
     } catch (caught) {
       setError(normalizeError(caught));
     }
+  }
+
+  /** Load one bounded current-projection session page through the bridge. */
+  async function onLoadSessions(cursor: string | null = null) {
+    const requestId = ++sessionRequestRef.current;
+    const append = cursor !== null;
+    setSessionStatus("loading");
+    setSessionError(null);
+    try {
+      const nextPage = await bridge.listSessions(home, {
+        query: sessionQuery.trim() || null,
+        lane: sessionLane,
+        limit: 50,
+        cursor,
+      });
+      if (requestId !== sessionRequestRef.current) return;
+      const priorItems = sessionPage?.items ?? [];
+      const items = append
+        ? [
+            ...priorItems,
+            ...nextPage.items.filter(
+              (item) =>
+                !priorItems.some((prior) => sessionKey(prior) === sessionKey(item)),
+            ),
+          ]
+        : nextPage.items;
+      setSessionPage({ items, next_cursor: nextPage.next_cursor });
+      setSessionStatus(items.length > 0 ? "ready" : "empty");
+      if (
+        selectedSessionKey &&
+        !items.some((item) => sessionKey(item) === selectedSessionKey)
+      ) {
+        setSelectedSessionKey(null);
+        setSessionDetail(null);
+      }
+    } catch (caught) {
+      if (requestId !== sessionRequestRef.current) return;
+      setSessionError(normalizeError(caught));
+      setSessionStatus("error");
+    }
+  }
+
+  /** Load a bounded detail page for a selected Session. */
+  async function onSelectSession(
+    item: SessionListItem,
+    messageCursor?: string | null,
+    artifactCursor?: string | null,
+  ) {
+    const requestId = ++sessionRequestRef.current;
+    const continuation = Boolean(messageCursor || artifactCursor);
+    const previousDetail = sessionDetail;
+    setSelectedSessionKey(sessionKey(item));
+    setSessionStatus("loading");
+    setSessionError(null);
+    if (!continuation) setSessionDetail(null);
+    try {
+      const detail = await bridge.sessionDetail(home, {
+        source_kind: item.source_kind,
+        external_session_id: item.external_session_id,
+        message_limit: 50,
+        artifact_limit: 50,
+        message_cursor: messageCursor ?? null,
+        artifact_cursor: artifactCursor ?? null,
+      });
+      if (requestId !== sessionRequestRef.current) return;
+      if (
+        continuation &&
+        previousDetail &&
+        detail &&
+        sessionKeyFromSummary(previousDetail.summary) === sessionKey(item)
+      ) {
+        const existingMessageIds = new Set(
+          previousDetail.messages.map((message) => message.id),
+        );
+        const existingArtifactIds = new Set(
+          previousDetail.artifacts.map((artifact) => artifact.id),
+        );
+        setSessionDetail({
+          ...detail,
+          messages: [
+            ...previousDetail.messages,
+            ...detail.messages.filter((message) => !existingMessageIds.has(message.id)),
+          ],
+          artifacts: [
+            ...previousDetail.artifacts,
+            ...detail.artifacts.filter(
+              (artifact) => !existingArtifactIds.has(artifact.id),
+            ),
+          ],
+          next_message_cursor: messageCursor
+            ? detail.next_message_cursor
+            : previousDetail.next_message_cursor,
+          next_artifact_cursor: artifactCursor
+            ? detail.next_artifact_cursor
+            : previousDetail.next_artifact_cursor,
+        });
+      } else {
+        setSessionDetail(detail);
+      }
+      setSessionStatus(detail ? "ready" : "empty");
+    } catch (caught) {
+      if (requestId !== sessionRequestRef.current) return;
+      setSessionError(normalizeError(caught));
+      setSessionStatus("error");
+    }
+  }
+
+  /** Cancel a pending renderer-side session request without mutating Library state. */
+  function onCancelSessionLoad() {
+    sessionRequestRef.current += 1;
+    setSessionStatus("cancelled");
+  }
+
+  /** Clear stale explorer rows after a completed sync changes the projection. */
+  function resetSessionExplorer() {
+    setSessionPage(null);
+    setSelectedSessionKey(null);
+    setSessionDetail(null);
+    setSessionStatus("idle");
   }
 
   /**
@@ -248,6 +395,146 @@ export function App({ bridge }: AppProps) {
         >
           Repair library
         </button>
+      </section>
+
+      <section
+        className="form"
+        aria-label="Session explorer"
+        data-testid="session-explorer"
+      >
+        <h2>Sessions</h2>
+        <label htmlFor="session-search">Search sessions</label>
+        <input
+          id="session-search"
+          value={sessionQuery}
+          onChange={(event) => setSessionQuery(event.target.value)}
+          placeholder="Search current projection…"
+        />
+        <label htmlFor="session-lane">Workflow lane</label>
+        <select
+          id="session-lane"
+          value={sessionLane}
+          onChange={(event) => setSessionLane(event.target.value as WorkflowLane)}
+        >
+          <option value="all">All</option>
+          <option value="needs_review">Needs Review</option>
+          <option value="train_ready">Train Ready</option>
+          <option value="holdout_ready">Holdout Ready</option>
+          <option value="favorites">Favorites</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => void onLoadSessions()}
+          disabled={!home.trim()}
+        >
+          Load sessions
+        </button>
+        <p data-testid="session-explorer-status">Sessions: {sessionStatus}</p>
+        {sessionStatus === "loading" ? (
+          <button type="button" onClick={onCancelSessionLoad}>
+            Cancel session load
+          </button>
+        ) : null}
+        {sessionError ? (
+          <p className="error" data-testid="session-explorer-error">
+            {sessionError.code}: {sessionError.message}
+          </p>
+        ) : null}
+        {sessionPage?.items.length ? (
+          <ul data-testid="session-list">
+            {sessionPage.items.map((item) => (
+              <li key={sessionKey(item)}>
+                <button
+                  type="button"
+                  aria-pressed={selectedSessionKey === sessionKey(item)}
+                  onClick={() => void onSelectSession(item)}
+                >
+                  {item.title} · {item.workflow_state} · {item.message_count} messages
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {sessionPage?.next_cursor ? (
+          <button
+            type="button"
+            onClick={() => void onLoadSessions(sessionPage.next_cursor)}
+          >
+            Load more sessions
+          </button>
+        ) : null}
+        {sessionDetail ? (
+          <article data-testid="session-detail-panel">
+            <h3>{sessionDetail.summary.title ?? "Untitled session"}</h3>
+            <p>{sessionDetail.project_path ?? "No project path"}</p>
+            <p>Source URL: {sessionDetail.source_url ?? "No source URL"}</p>
+            <p>{sessionDetail.projection_summary ?? "No summary"}</p>
+            <p>
+              Started: {sessionDetail.started_at ?? "unknown"} · Updated:{" "}
+              {sessionDetail.updated_at ?? "unknown"}
+            </p>
+            <p>
+              Raw captures:{" "}
+              {sessionDetail.raw_capture_count ??
+                sessionDetail.summary.accepted_capture_count}
+            </p>
+            <p>
+              Attempts: {sessionDetail.summary.normalization_attempt_count} · Generation:{" "}
+              {sessionDetail.summary.successful_projection_generation}
+            </p>
+            <p>
+              Labels:{" "}
+              {(sessionDetail.labels ?? []).map((label) => label.name).join(", ") ||
+                "none"}
+            </p>
+            <p>
+              Tags:{" "}
+              {(sessionDetail.tags ?? []).map((tag) => tag.name).join(", ") || "none"}
+            </p>
+            <pre>{sessionDetail.metadata_json}</pre>
+            <ol>
+              {sessionDetail.messages.map((message) => (
+                <li key={message.id}>
+                  <strong>{message.role}</strong>: {message.text}
+                </li>
+              ))}
+            </ol>
+            <ul>
+              {sessionDetail.artifacts.map((artifact) => (
+                <li key={artifact.id}>
+                  {artifact.artifact_type}: {artifact.text_preview ?? "artifact"}
+                </li>
+              ))}
+            </ul>
+            {sessionDetail.next_message_cursor && selectedSessionKey && sessionPage ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const item = sessionPage.items.find(
+                    (candidate) => sessionKey(candidate) === selectedSessionKey,
+                  );
+                  if (item) void onSelectSession(item, sessionDetail.next_message_cursor);
+                }}
+              >
+                Load more transcript
+              </button>
+            ) : null}
+            {sessionDetail.next_artifact_cursor && selectedSessionKey && sessionPage ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const item = sessionPage.items.find(
+                    (candidate) => sessionKey(candidate) === selectedSessionKey,
+                  );
+                  if (item)
+                    void onSelectSession(item, null, sessionDetail.next_artifact_cursor);
+                }}
+              >
+                Load more artifacts
+              </button>
+            ) : null}
+          </article>
+        ) : null}
       </section>
 
       <section aria-live="polite" className="status">
@@ -411,6 +698,16 @@ export function App({ bridge }: AppProps) {
       ) : null}
     </main>
   );
+}
+
+function sessionKey(
+  item: Pick<SessionListItem, "source_kind" | "external_session_id">,
+): string {
+  return `${item.source_kind}:${item.external_session_id}`;
+}
+
+function sessionKeyFromSummary(summary: SessionDetail["summary"]): string {
+  return `${summary.source_kind}:${summary.external_session_id}`;
 }
 
 /**

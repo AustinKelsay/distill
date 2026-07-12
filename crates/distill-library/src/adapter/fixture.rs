@@ -249,6 +249,10 @@ fn parse_fixture_jsonl(
     let mut artifacts = Vec::new();
     let mut title = candidate.title.clone();
     let mut summary = None;
+    let mut project_path = None;
+    let mut source_url = None;
+    let mut started_at = None;
+    let mut updated_at = None;
     let mut metadata = json!({});
 
     for (line_no, line) in text.lines().enumerate() {
@@ -355,6 +359,18 @@ fn parse_fixture_jsonl(
                 if let Some(s) = value.get("summary").and_then(Value::as_str) {
                     summary = Some(s.to_string());
                 }
+                if let Some(path) = value.get("project_path").and_then(Value::as_str) {
+                    project_path = Some(path.to_string());
+                }
+                if let Some(url) = value.get("source_url").and_then(Value::as_str) {
+                    source_url = Some(url.to_string());
+                }
+                if let Some(ts) = value.get("started_at").and_then(Value::as_str) {
+                    started_at = Some(ts.to_string());
+                }
+                if let Some(ts) = value.get("updated_at").and_then(Value::as_str) {
+                    updated_at = Some(ts.to_string());
+                }
                 if let Some(meta) = value.get("metadata") {
                     metadata = meta.clone();
                 }
@@ -412,6 +428,10 @@ fn parse_fixture_jsonl(
         synthetic_identity,
         title,
         summary,
+        project_path,
+        source_url,
+        started_at,
+        updated_at,
         metadata,
         facts,
         messages,

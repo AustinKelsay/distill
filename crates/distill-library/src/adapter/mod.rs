@@ -178,6 +178,18 @@ pub struct ParsedCapture {
     pub title: Option<String>,
     /// Optional summary.
     pub summary: Option<String>,
+    /// Optional project path from session metadata.
+    #[serde(default)]
+    pub project_path: Option<String>,
+    /// Optional source URL from session metadata.
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// Optional session started_at timestamp from session metadata.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// Optional session updated_at timestamp from session metadata.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// Session metadata object.
     pub metadata: Value,
     /// Immutable Capture Facts.

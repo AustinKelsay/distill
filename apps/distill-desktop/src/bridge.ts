@@ -11,6 +11,10 @@ import type {
   FixtureJourneyResult,
   HealthReport,
   RepairReport,
+  SessionDetail,
+  SessionDetailRequest,
+  SessionListPage,
+  SessionListRequest,
   SourcePreference,
   SyncProgress,
   SyncRunResult,
@@ -67,6 +71,18 @@ export function createTauriBridge(): DistillBridge {
     },
     async cancelSync(home: string, syncRunId: number): Promise<SyncRunSummary> {
       return invoke<SyncRunSummary>("sync_cancel_command", { home, syncRunId });
+    },
+    async listSessions(
+      home: string,
+      request: SessionListRequest,
+    ): Promise<SessionListPage> {
+      return invoke<SessionListPage>("sessions_list_command", { home, request });
+    },
+    async sessionDetail(
+      home: string,
+      request: SessionDetailRequest,
+    ): Promise<SessionDetail | null> {
+      return invoke<SessionDetail | null>("session_detail_command", { home, request });
     },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       return subscribe(PROGRESS_EVENT, listener);
