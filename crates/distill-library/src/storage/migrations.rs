@@ -21,6 +21,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         5,
         include_str!("../../migrations/0005_legacy_import_markers.sql"),
     ),
+    (
+        6,
+        include_str!("../../migrations/0006_sessions_list_page_index.sql"),
+    ),
 ];
 
 /**
