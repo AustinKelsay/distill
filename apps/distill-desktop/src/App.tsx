@@ -3,6 +3,8 @@
  */
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { ConfirmDialog } from "./a11y/confirm-dialog";
+import { returnFocus } from "./a11y/focus-return";
 import type {
   ActivityListPage,
   CurationMutationResult,
@@ -36,8 +38,16 @@ type AppProps = {
   bridge: DistillBridge;
 };
 
-type SessionExplorerStatus =
-  "idle" | "loading" | "ready" | "empty" | "warning" | "error" | "cancelled";
+/** Session explorer lifecycle, including reload while prior rows stay visible. */
+export type SessionExplorerStatus =
+  | "idle"
+  | "loading"
+  | "refreshing"
+  | "ready"
+  | "empty"
+  | "warning"
+  | "error"
+  | "cancelled";
 
 type DiagnosticsPanelStatus =
   "idle" | "loading" | "empty" | "warning" | "error" | "cancelled" | "ready";
@@ -72,7 +82,7 @@ export function App({ bridge }: AppProps) {
   const [sources, setSources] = useState<SourcePreference[]>([]);
   const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
-  const [confirmRepair, setConfirmRepair] = useState(false);
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false);
   const [error, setError] = useState<HostError | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
   const [sessionLane, setSessionLane] = useState<WorkflowLane>("all");
@@ -100,6 +110,13 @@ export function App({ bridge }: AppProps) {
   const sessionRequestRef = useRef(0);
   const activityRequestRef = useRef(0);
   const operationsRequestRef = useRef(0);
+  const repairTriggerRef = useRef<HTMLButtonElement>(null);
+  const startSyncRef = useRef<HTMLButtonElement>(null);
+  const publishExportRef = useRef<HTMLButtonElement>(null);
+  const loadSessionsRef = useRef<HTMLButtonElement>(null);
+  const loadActivityRef = useRef<HTMLButtonElement>(null);
+  const loadOperationsRef = useRef<HTMLButtonElement>(null);
+  const importLegacyRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const stopJourney = bridge.onProgress((nextPhase) => {
@@ -201,9 +218,11 @@ export function App({ bridge }: AppProps) {
       if (["completed", "warning", "failed", "cancelled"].includes(summary.status)) {
         setActiveSyncRunId(null);
       }
+      returnFocus(startSyncRef.current);
     } catch (caught) {
       setError(normalizeError(caught));
       setStatus("error");
+      returnFocus(startSyncRef.current);
     }
   }
 
@@ -248,13 +267,15 @@ export function App({ bridge }: AppProps) {
   function onCancelMigration() {
     migrationRequestRef.current += 1;
     setMigrationStatus("cancelled");
+    returnFocus(importLegacyRef.current);
   }
 
   /** Load one bounded current-projection session page through the bridge. */
   async function onLoadSessions(cursor: string | null = null) {
     const requestId = ++sessionRequestRef.current;
     const append = cursor !== null;
-    setSessionStatus("loading");
+    const hasVisibleItems = (sessionPage?.items.length ?? 0) > 0;
+    setSessionStatus(hasVisibleItems || append ? "refreshing" : "loading");
     setSessionError(null);
     try {
       const nextPage = await bridge.listSessions(home, {
@@ -329,6 +350,7 @@ export function App({ bridge }: AppProps) {
     activityRequestRef.current += 1;
     setActivityError({ code: "cancelled", message: "Activity load cancelled" });
     setActivityStatus("cancelled");
+    returnFocus(loadActivityRef.current);
   }
 
   /**
@@ -400,6 +422,7 @@ export function App({ bridge }: AppProps) {
     operationsRequestRef.current += 1;
     setOperationsError({ code: "cancelled", message: "Operations load cancelled" });
     setOperationsStatus("cancelled");
+    returnFocus(loadOperationsRef.current);
   }
 
   /** Load a bounded detail page for a selected Session. */
@@ -412,7 +435,7 @@ export function App({ bridge }: AppProps) {
     const continuation = Boolean(messageCursor || artifactCursor);
     const previousDetail = sessionDetail;
     setSelectedSessionKey(sessionKey(item));
-    setSessionStatus("loading");
+    setSessionStatus(continuation ? "refreshing" : "loading");
     setSessionError(null);
     setCurationError(null);
     if (!continuation) setSessionDetail(null);
@@ -472,6 +495,7 @@ export function App({ bridge }: AppProps) {
   function onCancelSessionLoad() {
     sessionRequestRef.current += 1;
     setSessionStatus("cancelled");
+    returnFocus(loadSessionsRef.current);
   }
 
   /** Clear stale explorer rows after a completed sync changes the projection. */
@@ -589,18 +613,23 @@ export function App({ bridge }: AppProps) {
     }
   }
 
-  /**
-   * Run explicit repair only when the confirmation checkbox is checked.
-   */
-  async function onRepair() {
+  /** Open the native repair confirmation dialog; repair stays blocked until confirm. */
+  function onOpenRepairDialog() {
     setError(null);
-    if (!confirmRepair) {
-      setError({
-        code: "validation",
-        message: "repair requires explicit confirmation",
-      });
-      return;
-    }
+    setRepairDialogOpen(true);
+  }
+
+  /** Dismiss the repair confirmation dialog without calling the bridge. */
+  function onCancelRepairDialog() {
+    setRepairDialogOpen(false);
+  }
+
+  /**
+   * Run explicit repair only after the confirmation dialog accepts.
+   */
+  async function onConfirmRepair() {
+    setRepairDialogOpen(false);
+    setError(null);
     try {
       const report = await bridge.repair(home, true);
       setRepairReport(report);
@@ -662,12 +691,23 @@ export function App({ bridge }: AppProps) {
           message: "no active export publication was found",
         });
       }
+      setExportStatus("cancelled");
+      setExportPublishing(false);
     } catch (caught) {
       setExportError(normalizeError(caught));
+      setExportStatus("cancelled");
+      setExportPublishing(false);
+    } finally {
+      returnFocus(publishExportRef.current);
     }
   }
 
   const health = standaloneHealth ?? result?.health ?? null;
+  const sessionBusy = sessionStatus === "loading" || sessionStatus === "refreshing";
+  const activityBusy = activityStatus === "loading";
+  const operationsBusy = operationsStatus === "loading";
+  const migrationBusy = migrationStatus === "loading";
+  const exportBusy = exportStatus === "running";
 
   return (
     <main className="app">
@@ -706,6 +746,7 @@ export function App({ bridge }: AppProps) {
 
       <section className="form" aria-label="Source settings and Sync Run">
         <button
+          ref={startSyncRef}
           type="button"
           onClick={onStartSync}
           disabled={!home.trim() || status === "running"}
@@ -714,7 +755,7 @@ export function App({ bridge }: AppProps) {
         </button>
         <button
           type="button"
-          onClick={onCancelSync}
+          onClick={() => void onCancelSync()}
           disabled={!home.trim() || status !== "running" || activeSyncRunId === null}
         >
           Cancel Sync
@@ -734,27 +775,30 @@ export function App({ bridge }: AppProps) {
         <button type="button" onClick={onCheckHealth} disabled={!home.trim()}>
           Check health
         </button>
-        <label htmlFor="confirm-repair">
-          <input
-            id="confirm-repair"
-            type="checkbox"
-            checked={confirmRepair}
-            onChange={(event) => setConfirmRepair(event.target.checked)}
-          />{" "}
-          Confirm destructive repair
-        </label>
         <button
+          ref={repairTriggerRef}
           type="button"
-          onClick={onRepair}
-          disabled={!home.trim() || !confirmRepair}
+          onClick={onOpenRepairDialog}
+          disabled={!home.trim()}
         >
           Repair library
         </button>
+        <ConfirmDialog
+          open={repairDialogOpen}
+          title="Confirm destructive repair"
+          description="Repair may delete staging partials and orphaned content. This requires explicit confirmation."
+          confirmLabel="Confirm repair"
+          cancelLabel="Cancel repair"
+          onConfirm={() => void onConfirmRepair()}
+          onCancel={onCancelRepairDialog}
+          returnFocusTo={repairTriggerRef.current}
+        />
       </section>
 
       <section
         className="form"
         aria-label="Legacy Electron migration"
+        aria-busy={migrationBusy}
         data-testid="migration-panel"
       >
         <h2>Legacy migration</h2>
@@ -766,6 +810,7 @@ export function App({ bridge }: AppProps) {
           placeholder="/path/to/.distill"
         />
         <button
+          ref={importLegacyRef}
           type="button"
           data-testid="migration-run"
           onClick={() => void onImportLegacy()}
@@ -784,7 +829,9 @@ export function App({ bridge }: AppProps) {
             Cancel migration
           </button>
         ) : null}
-        <p data-testid="migration-status">Migration status: {migrationStatus}</p>
+        <p data-testid="migration-status" aria-live="polite">
+          Migration status: {migrationStatus}
+        </p>
         {migrationError ? (
           <p role="alert" className="error" data-testid="migration-error">
             {migrationError.code}: {migrationError.message}
@@ -803,9 +850,15 @@ export function App({ bridge }: AppProps) {
         ) : null}
       </section>
 
-      <section className="form" aria-label="Activity" data-testid="activity-panel">
+      <section
+        className="form"
+        aria-label="Activity"
+        aria-busy={activityBusy}
+        data-testid="activity-panel"
+      >
         <h2>Activity</h2>
         <button
+          ref={loadActivityRef}
           type="button"
           onClick={() => void onLoadActivity(null)}
           disabled={!home.trim() || activityStatus === "loading"}
@@ -817,7 +870,9 @@ export function App({ bridge }: AppProps) {
             Cancel Activity load
           </button>
         ) : null}
-        <p data-testid="activity-status">Status: {activityStatus}</p>
+        <p data-testid="activity-status" aria-live="polite">
+          Status: {activityStatus}
+        </p>
         {activityError ? (
           <p role="alert" data-testid="activity-error">
             {activityError.code}: {activityError.message}
@@ -844,9 +899,15 @@ export function App({ bridge }: AppProps) {
         ) : null}
       </section>
 
-      <section className="form" aria-label="Operations" data-testid="operations-panel">
+      <section
+        className="form"
+        aria-label="Operations"
+        aria-busy={operationsBusy}
+        data-testid="operations-panel"
+      >
         <h2>Operations</h2>
         <button
+          ref={loadOperationsRef}
           type="button"
           onClick={() => void onLoadOperations(null, null)}
           disabled={!home.trim() || operationsStatus === "loading"}
@@ -858,7 +919,9 @@ export function App({ bridge }: AppProps) {
             Cancel Operations load
           </button>
         ) : null}
-        <p data-testid="operations-status">Status: {operationsStatus}</p>
+        <p data-testid="operations-status" aria-live="polite">
+          Status: {operationsStatus}
+        </p>
         {operationsError ? (
           <p role="alert" data-testid="operations-error">
             {operationsError.code}: {operationsError.message}
@@ -912,46 +975,65 @@ export function App({ bridge }: AppProps) {
       <section
         className="form"
         aria-label="Session explorer"
+        aria-busy={sessionBusy}
         data-testid="session-explorer"
       >
         <h2>Sessions</h2>
-        <label htmlFor="session-search">Search sessions</label>
-        <input
-          id="session-search"
-          value={sessionQuery}
-          onChange={(event) => setSessionQuery(event.target.value)}
-          placeholder="Search current projection…"
-        />
-        <label htmlFor="session-lane">Workflow lane</label>
-        <select
-          id="session-lane"
-          value={sessionLane}
-          onChange={(event) => setSessionLane(event.target.value as WorkflowLane)}
+        <form
+          className="session-search-form"
+          aria-label="Session search and lane"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onLoadSessions();
+          }}
         >
-          <option value="all">All</option>
-          <option value="needs_review">Needs Review</option>
-          <option value="train_ready">Train Ready</option>
-          <option value="holdout_ready">Holdout Ready</option>
-          <option value="favorites">Favorites</option>
-        </select>
-        <button
-          type="button"
-          onClick={() => void onLoadSessions()}
-          disabled={!home.trim()}
-        >
-          Load sessions
-        </button>
-        <p data-testid="session-explorer-status">Sessions: {sessionStatus}</p>
-        {sessionStatus === "loading" ? (
+          <label htmlFor="session-search">Search sessions</label>
+          <input
+            id="session-search"
+            value={sessionQuery}
+            onChange={(event) => setSessionQuery(event.target.value)}
+            placeholder="Search current projection…"
+          />
+          <label htmlFor="session-lane">Workflow lane</label>
+          <select
+            id="session-lane"
+            value={sessionLane}
+            onChange={(event) => setSessionLane(event.target.value as WorkflowLane)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void onLoadSessions();
+              }
+            }}
+          >
+            <option value="all">All</option>
+            <option value="needs_review">Needs Review</option>
+            <option value="train_ready">Train Ready</option>
+            <option value="holdout_ready">Holdout Ready</option>
+            <option value="favorites">Favorites</option>
+          </select>
+          <button
+            ref={loadSessionsRef}
+            type="submit"
+            disabled={!home.trim() || sessionBusy}
+          >
+            {sessionBusy ? "Loading sessions…" : "Load sessions"}
+          </button>
+        </form>
+        <p data-testid="session-explorer-status" aria-live="polite">
+          Sessions: {sessionStatus}
+        </p>
+        {sessionBusy ? (
           <button type="button" onClick={onCancelSessionLoad}>
             Cancel session load
           </button>
         ) : null}
         {sessionError ? (
-          <p className="error" data-testid="session-explorer-error">
+          <p role="alert" className="error" data-testid="session-explorer-error">
             {sessionError.code}: {sessionError.message}
           </p>
         ) : null}
+        {sessionStatus === "empty" ? <p>No sessions match this query.</p> : null}
         {sessionPage?.items.length ? (
           <ul data-testid="session-list">
             {sessionPage.items.map((item) => (
@@ -971,12 +1053,13 @@ export function App({ bridge }: AppProps) {
           <button
             type="button"
             onClick={() => void onLoadSessions(sessionPage.next_cursor)}
+            disabled={sessionBusy}
           >
             Load more sessions
           </button>
         ) : null}
         {sessionDetail ? (
-          <article data-testid="session-detail-panel">
+          <article data-testid="session-detail-panel" aria-label="Session detail">
             <h3>{sessionDetail.summary.title ?? "Untitled session"}</h3>
             <p>{sessionDetail.project_path ?? "No project path"}</p>
             <p>Source URL: {sessionDetail.source_url ?? "No source URL"}</p>
@@ -994,7 +1077,7 @@ export function App({ bridge }: AppProps) {
               Attempts: {sessionDetail.summary.normalization_attempt_count} · Generation:{" "}
               {sessionDetail.summary.successful_projection_generation}
             </p>
-            <div data-testid="session-labels">
+            <div data-testid="session-labels" role="group" aria-label="Session labels">
               <p>Labels</p>
               <ul>
                 {(sessionDetail.labels ?? []).map((label) => (
@@ -1003,7 +1086,7 @@ export function App({ bridge }: AppProps) {
                   </li>
                 ))}
               </ul>
-              <div>
+              <div role="group" aria-label="Toggle session labels">
                 {CURATABLE_LABELS.map((name) => {
                   const isActive = (sessionDetail.labels ?? []).some(
                     (label) => label.name === name,
@@ -1021,13 +1104,14 @@ export function App({ bridge }: AppProps) {
                 })}
               </div>
             </div>
-            <div data-testid="session-tags">
+            <div data-testid="session-tags" role="group" aria-label="Session tags">
               <p>Tags</p>
               <ul>
                 {(sessionDetail.tags ?? []).map((tag) => (
                   <li key={`${tag.id}:${tag.name}`}>
                     <button
                       type="button"
+                      aria-label={`Remove tag ${tag.name}`}
                       onClick={() => void onRemoveSessionTag(tag.name)}
                     >
                       {tag.name} ({tag.origin}) ×
@@ -1035,19 +1119,25 @@ export function App({ bridge }: AppProps) {
                   </li>
                 ))}
               </ul>
-              <label htmlFor="session-tag-input">Add tag</label>
-              <input
-                id="session-tag-input"
-                value={tagDraft}
-                onChange={(event) => setTagDraft(event.target.value)}
-                placeholder="tag name"
-              />
-              <button type="button" onClick={() => void onAddSessionTag()}>
-                Add tag
-              </button>
+              <form
+                aria-label="Add session tag"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void onAddSessionTag();
+                }}
+              >
+                <label htmlFor="session-tag-input">Add tag</label>
+                <input
+                  id="session-tag-input"
+                  value={tagDraft}
+                  onChange={(event) => setTagDraft(event.target.value)}
+                  placeholder="tag name"
+                />
+                <button type="submit">Add tag</button>
+              </form>
             </div>
             {curationError ? (
-              <p className="error" data-testid="session-curation-error">
+              <p role="alert" className="error" data-testid="session-curation-error">
                 {curationError.code}: {curationError.message}
               </p>
             ) : null}
@@ -1097,7 +1187,12 @@ export function App({ bridge }: AppProps) {
         ) : null}
       </section>
 
-      <section className="form" aria-label="Dataset export" data-testid="export-panel">
+      <section
+        className="form"
+        aria-label="Dataset export"
+        aria-busy={exportBusy}
+        data-testid="export-panel"
+      >
         <h2>Export</h2>
         <label htmlFor="export-dataset">Dataset</label>
         <select
@@ -1123,6 +1218,7 @@ export function App({ bridge }: AppProps) {
           Preview export
         </button>
         <button
+          ref={publishExportRef}
           type="button"
           onClick={() => void onPublishExport()}
           disabled={!home.trim() || !exportPreview || exportStatus === "running"}
@@ -1134,12 +1230,14 @@ export function App({ bridge }: AppProps) {
             Cancel export
           </button>
         ) : null}
-        <p data-testid="export-status">Export: {exportStatus}</p>
-        {exportProgress ? (
-          <p data-testid="export-progress">progress: {exportProgress.type}</p>
-        ) : null}
+        <div data-testid="export-live-region" aria-live="polite" aria-atomic="true">
+          <p data-testid="export-status">Export: {exportStatus}</p>
+          {exportProgress ? (
+            <p data-testid="export-progress">progress: {exportProgress.type}</p>
+          ) : null}
+        </div>
         {exportError ? (
-          <p className="error" data-testid="export-error">
+          <p role="alert" className="error" data-testid="export-error">
             {exportError.code}: {exportError.message}
           </p>
         ) : null}
@@ -1167,16 +1265,17 @@ export function App({ bridge }: AppProps) {
         ) : null}
       </section>
 
-      <section aria-live="polite" className="status">
+      <section aria-live="polite" aria-atomic="true" className="status">
         <p>
           Status: <strong data-testid="status">{status}</strong>
           {phase ? ` · phase: ${phase}` : null}
           {syncProgress ? ` · sync: ${syncProgress.type}` : null}
+          {exportProgress ? ` · export: ${exportProgress.type}` : null}
         </p>
       </section>
 
       {error ? (
-        <section className="panel error" data-testid="error-panel">
+        <section className="panel error" role="alert" data-testid="error-panel">
           <h2>Error</h2>
           <p>
             <code>{error.code}</code>: {error.message}

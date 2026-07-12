@@ -865,9 +865,13 @@ describe("first-run Fixture UI", () => {
     render(<App bridge={bridge} />);
 
     await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
-    expect(screen.getByRole("button", { name: /repair library/i })).toBeDisabled();
-    await user.click(screen.getByLabelText(/confirm destructive repair/i));
+    expect(screen.queryByTestId("repair-confirm-dialog")).not.toBeNull();
+    expect(screen.getByTestId("repair-confirm-dialog")).not.toHaveAttribute("open");
     await user.click(screen.getByRole("button", { name: /repair library/i }));
+    expect(
+      screen.getByRole("dialog", { name: /confirm destructive repair/i }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /confirm repair/i }));
 
     await waitFor(() => {
       expect(screen.getByTestId("repair-panel")).toHaveTextContent(
