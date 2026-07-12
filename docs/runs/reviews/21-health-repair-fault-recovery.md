@@ -6,7 +6,7 @@
 - Slice type: AFK tracer bullet
 - Acceptance criteria: complete typed health classification; real-boundary fault/reopen evidence; reported safe open reconciliation; explicit idempotent destructive repair; Library/CLI/desktop surfaces
 - Baseline: `b5713cc`
-- Current diff: `git diff b5713cc...1799b5b`
+- Current diff: `git diff b5713cc...f1d3244`
 
 ## Implementation Summary
 
@@ -15,7 +15,7 @@ The Library now classifies migration/SQLite integrity, referenced content, exact
 ## Implementation Evidence
 
 - `implement` sessions: Grok 4.5 xhigh AFK worker plus independent-audit remediation, integrated by Codex
-- `tdd` used: Yes — 12 health/repair contracts and 8 feature-gated fault/reopen contracts over real temporary homes, SQLite, CAS, and Fixture ingest
+- `tdd` used: Yes — 13 health/repair contracts and 8 feature-gated fault/reopen contracts over real temporary homes, SQLite, CAS, and Fixture ingest
 - Independent audit fixes: valid empty projections; ancestor symlink/path escape; strict staging names; all FTS fields; canonical `capture_failed` recovery rather than fake Attempts; Session counter drift; SQLite integrity/FK checks; typed cfg-gated faults; repair transactions; explicit operations handoff
 - Thin callers: CLI 6, Tauri host 5, renderer 7 tests
 - Gates: fmt, Clippy warnings denied, workspace tests/build, feature fault suite, renderer typecheck/lint/format/test/build, optimized Tauri `--no-bundle`, legacy Node 26 tests 103/103
@@ -58,4 +58,12 @@ Resolution:
 - Health reports `unsafe_staging_root` and unrecognized staging entries as blocking, because automatic repair intentionally cannot remove them.
 - Added a contract proving health, repair, and reopen never touch a canonical-looking external partial behind a staging-root symlink.
 
-Focused re-review: Pending.
+Focused re-review:
+
+```text
+STANDARDS_STATUS: pass
+STANDARDS_FINDINGS: None
+
+SPEC_STATUS: pass
+SPEC_FINDINGS: None
+```

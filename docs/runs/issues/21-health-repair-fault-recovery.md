@@ -5,8 +5,8 @@
 - Issue: [#21](https://github.com/AustinKelsay/distill/issues/21)
 - Fixed point before session: `b5713cc`
 - Worker session: Grok 4.5 xhigh AFK implementation + independent-audit remediation
-- Commit: Pending (worker instructed not to commit)
-- Status: Audit fixes applied — verification green; review pending
+- Commits: `1799b5b`, `f1d3244`
+- Status: Complete — both review axes pass
 
 ## Inputs
 
@@ -56,11 +56,12 @@
 
 ## Review
 
-- Review fixed point: Pending (post-audit remediation)
+- Review fixed point: `b5713cc...1799b5b`; focused re-review `1799b5b...f1d3244`
 - Standards findings: Symlinked staging-root traversal was a blocker; unrecognized staging severity was a judgement call
 - Spec findings: Pass; no findings
 - Worthy fixes applied: audit items 1–10 plus home-layout symlink rejection, staging-root non-traversal, blocking unsafe/unrecognized staging classification, and an external-target regression
-- Findings ignored with reasons: none
+- Findings ignored with reasons: Counter-query duplication and the large cohesive contract file were non-blocking judgement calls; deferred until a second consumer or navigability cost justifies extraction
+- Final review result: Standards pass; Spec pass; focused re-review pass on both axes
 
 ## Risks
 
@@ -68,4 +69,3 @@
 - Export crash recovery remains #25.
 - Fault injection is feature-gated via typed `InjectedTestFault`; production default builds contain no fault arming or message-prefix special case.
 - Mid-SQLite-transaction fault points assert rollback rather than durable partial Facts/FTS rows, matching real transaction boundaries.
-- Commit still pending (worker instructed not to commit).
