@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#23 complete; #24 ready
+- Current status: #18–#24 complete; #25 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -28,8 +28,8 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
 - Ticket sessions: #18–#21 implemented; #21 review pending
 - Agent briefs: Pending
-- Review packets: #18–#23 complete
-- Local CodeRabbit report: #23 pre-commit findings applied; post-fix attempt rate-limited by service
+- Review packets: #18–#24 complete
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; post-fix attempts were rate-limited by service
 - PR URL: Pending
 
 ## Commands
@@ -51,7 +51,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #21 Health/repair/fault recovery | AFK | Complete | Grok xhigh standards + spec | Staging-root symlink blocker fixed; both axes pass | 13 health + 8 fault contracts; Rust/desktop/Tauri/legacy gates pass |
 | #22 Async source settings/Sync Runs | AFK | Complete | Grok xhigh AFK worker + two independent reviews + focused rereview | All findings applied; final CodeRabbit attempt rate-limited for 10 minutes | Library 17 OSR checks; CLI/host 7 each; renderer 11; Rust/desktop/Tauri/legacy gates |
 | #23 Search/lanes/detail/virtualization | AFK | Complete | Grok xhigh standards + spec rereview; CodeRabbit follow-ups applied | Two CodeRabbit findings fixed; final attempt rate-limited | Rust/desktop/Tauri gates; CLI/host seams; Node 22 legacy baseline unchanged |
-| #24 Transactional Curation | AFK | Blocked by #23 | — | — | No |
+| #24 Transactional Curation | AFK | Complete | Grok xhigh standards + spec rereview | Low evidence findings applied; CodeRabbit attempt rate-limited | Library/CLI/host/renderer/Rust/desktop/Tauri gates pass |
 | #25 Recoverable export | AFK | Blocked by #18, #24 | — | — | No |
 | #26 Codex Source | AFK | Blocked by #18, #22 | — | — | No |
 | #27 Claude Code Source | AFK | Blocked by #18, #22 | — | — | No |
@@ -82,6 +82,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #21 | `b5713cc` | Grok 4.5 xhigh AFK + audit remediation | `1799b5b`, `f1d3244` | Both axes pass after staging-root symlink hardening | 13 health + 8 fault; CLI 6; host 5; renderer 7; Tauri release; legacy 103 |
 | #22 | `3e420df` | Grok 4.5 xhigh AFK implementation | `ab2cc83` | Standards + spec + final focused rereview pass; CodeRabbit prior findings applied, final attempt rate-limited | fmt/clippy/workspace + fault/lease suites; library_ops_sync 17; CLI/host 7; renderer 11; desktop frontend/Tauri; legacy 103 on Node 26 |
 | #23 | `d175b5b` | Grok 4.5 xhigh implementation + independent rereview | `9f3043d` | PASS; CodeRabbit findings applied, final attempt rate-limited | fmt/clippy/workspace; Library query 6; CLI/host 8 each; renderer 14; frontend/Tauri release |
+| #24 | `2921523` | Grok 4.5 xhigh implementation + independent rereview | `5f6fd09` | PASS; low evidence findings applied; CodeRabbit attempt rate-limited | Library curation 9; CLI/host 9 each; renderer/Vitest 16; fmt/clippy/workspace; frontend/Tauri release |
 
 ## Open Questions
 
