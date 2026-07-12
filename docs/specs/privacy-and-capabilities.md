@@ -39,6 +39,12 @@ home, leaves the Fixture source unchanged, and preserves the export across a
 quit/relaunch. This is runtime containment evidence for the local ad-hoc `.app`, not
 an application-encryption, notarization, or secure-deletion claim.
 
+The Linux CI package smoke installs the generated Debian package on Ubuntu, launches
+the installed host under Xvfb/dbus, and applies the same capability-source, chosen-home,
+Fixture-hash, and restart checks. AppImage creation is verified as an artifact; the
+Debian install is the primary runtime proof. This remains containment evidence, not an
+application-encryption, package-signing, or screen-reader claim.
+
 ## Required Evidence
 
 The hostile-input contract is executable through:
@@ -48,5 +54,6 @@ The hostile-input contract is executable through:
 - `apps/distill-desktop/src-tauri/tests/host_hostile_inputs.rs` for typed host validation, safe Library error translation, and the least-privilege capability file
 - `apps/distill-desktop/src/bridge.test.ts` for the invoke/listen-only renderer bridge and exact command payloads
 - `apps/distill-desktop/scripts/macos-package-smoke.mjs` for the local macOS bundle capability, chosen-home containment, Fixture immutability, and restart artifact checks
+- `apps/distill-desktop/scripts/linux-package-smoke.mjs` and `.github/workflows/linux-package-smoke.yml` for Ubuntu installed-host capability, chosen-home containment, Fixture immutability, and restart artifact checks
 
 These contracts are privacy hardening, not a promise of application encryption or deletion semantics absent from v1.

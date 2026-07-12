@@ -45,3 +45,6 @@ Accessibility and proves the packaged search/detail/curation/export journey plus
 quit/relaunch artifact persistence. It does not convert Accessibility automation into
 VoiceOver coverage; the Linux packaged gate remains #36, and assistive-technology
 validation is recorded in `apps/distill-desktop/docs/a11y-human-checklist.md`.
+The Linux package gate mirrors the journey under Ubuntu/Xvfb/dbus, locating controls
+through the AT-SPI accessible tree and activating them with `xdotool`. It is an
+install/runtime smoke rather than screen-reader or AT-SPI conformance evidence.

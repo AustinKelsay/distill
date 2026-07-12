@@ -34,6 +34,13 @@ npm run desktop:package:macos
 npm run desktop:smoke:macos
 ```
 
+Ubuntu/Linux CI only:
+
+```bash
+npm run desktop:package:linux
+npm run desktop:smoke:linux
+```
+
 The package identifier is `dev.distill.desktop`, the minimum macOS version is 12.0,
 and the bundle target is an `.app` (DMG distribution is deferred). The checked-in green
 icon is a placeholder product mark; `icon.icns` is generated from it and committed so
@@ -53,3 +60,14 @@ Fixture sync, search, detail, one curation mutation, export, quit/relaunch, and 
 existence/write-containment checks. It does not claim migration, crash recovery, privacy,
 scale, export-atomicity, or VoiceOver proof; those remain their own contract gates and the
 human accessibility checklist.
+
+Linux packaging is intended to be built and smoke-tested on Ubuntu 24.04 in
+`.github/workflows/linux-package-smoke.yml`. It emits `.deb` and AppImage artifacts;
+the CI smoke is designed to verify the `.deb` `Depends` metadata, install it, and
+launch the installed `/usr/bin/distill-desktop` under Xvfb/dbus with `xdotool`.
+Build/runtime dependencies and the supported baseline are documented in
+`apps/distill-desktop/docs/linux-runtime-deps.md`. Once #36 passes in Ubuntu CI, Linux package smoke will
+be the runtime evidence for install, Fixture sync, search, detail, train curation,
+export, restart, and chosen-home/Fixture containment; AT-SPI locates controls but does
+not claim screen-reader conformance, and the slice does not claim migration,
+crash-recovery, privacy, scale, or export-atomicity behavior.

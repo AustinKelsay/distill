@@ -16,6 +16,8 @@
     "a11y:smoke": "node scripts/a11y-keyboard-smoke.mjs",
     "package:macos": "tauri build --bundles app --no-sign",
     "smoke:macos": "node scripts/macos-package-smoke.mjs",
+    "package:linux": "tauri build --bundles deb,appimage",
+    "smoke:linux": "node scripts/linux-package-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

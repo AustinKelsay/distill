@@ -36,6 +36,9 @@ cargo tauri build --no-bundle
 # or npm run desktop:build when configured
 npm run desktop:package:macos
 npm run desktop:smoke:macos
+# Ubuntu CI only:
+npm run desktop:package:linux
+npm run desktop:smoke:linux
 npm --prefix apps/distill-desktop run test:a11y
 npm --prefix apps/distill-desktop run a11y:smoke
 cargo test -p distill-library --test library_scale_budgets
@@ -54,6 +57,16 @@ write containment. It does not claim Developer ID signing, hardened runtime,
 notarization, migration, crash recovery, privacy, scale, export atomicity, or
 VoiceOver coverage. The Cargo `tauri` subcommand is not required for this package
 gate and is unavailable in the recorded environment.
+
+Linux packaging is a Linux-only CI gate in `.github/workflows/linux-package-smoke.yml`.
+It installs Ubuntu WebKitGTK/GTK, Xvfb, dbus, AT-SPI, and `xdotool` dependencies,
+builds `.deb` and AppImage artifacts, verifies the Debian `Depends` metadata, installs
+the `.deb`, and drives the installed `/usr/bin/distill-desktop` under Ubuntu's
+`dbus-run-session`/Xvfb environment. The smoke verifies the installed control tree and
+checks the same
+Fixture/search/detail/train-curation/export/restart/artifact/containment path as macOS.
+It does not claim screen-reader, migration, crash-recovery, privacy, scale, or export
+atomicity coverage.
 
 Scale reports are Library-only JSON evidence. The default test is a bounded synthetic
 smoke; the 25k Session / 1M message / 10 GiB logical-home run is environment-gated and
