@@ -18,8 +18,10 @@ signed/notarized packaging, Windows packaging, or production deployment.
 - Remediation: registry status is now `pending—Ubuntu packaged evidence`; GAP-R007 says
   the Linux contract will be satisfied only after the Ubuntu workflow is green; this
   issue packet and the companion review packet are now present.
-- Final disposition: pending final CI rerun and a post-CI rereview; no implementation
-  finding remains accepted without Ubuntu runtime evidence.
+- Final disposition: PASS after Ubuntu workflow `29213051808` exercised the installed
+  package and green artifact-producing job. No implementation finding remains; the
+  review continues to make no screen-reader or signed-release claim.
+- Post-CI Grok 4.5 xhigh rereview: `PASS`; no remediation remains.
 
 ## Required Checks
 
@@ -28,4 +30,5 @@ signed/notarized packaging, Windows packaging, or production deployment.
 - Desktop typecheck, lint, 39-test suite, and frontend build: passed locally.
 - CodeRabbit CLI: rate-limited before analysis; fresh Grok rereview was used as the
   fallback and found no remaining implementation issue after remediation.
-- Ubuntu package/install smoke: pending; authoritative for AT-SPI runtime behavior.
+- Ubuntu package/install smoke: passed in run `29213051808`; authoritative AT-SPI
+  runtime evidence for this slice.

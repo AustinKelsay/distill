@@ -59,9 +59,10 @@ commands on Darwin; the Ubuntu workflow is the authoritative Linux package gate.
 
 ## Remaining honest human or out-of-scope items
 
-- VoiceOver/Narrator output, packaged dialog focus, and assistive-technology behavior
-  remain human release checks in `apps/distill-desktop/docs/a11y-human-checklist.md`;
-  `A11Y-005` stays `human-gate-open`.
+- VoiceOver/Narrator output and packaged macOS dialog-focus behavior remain human release
+  checks in `apps/distill-desktop/docs/a11y-human-checklist.md`. Follow-up #39 now
+  records installed Ubuntu AT-SPI focus containment/return; `A11Y-005` remains open
+  only for the human screen-reader gate.
 - The macOS artifact is local unsigned/ad-hoc. There is no Developer ID, hardened
   runtime, notarization, stapling, or store-signing claim.
 - Windows packaging is out of scope for v1.

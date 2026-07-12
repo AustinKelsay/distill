@@ -4,8 +4,8 @@
 
 - Issue: [#39](https://github.com/AustinKelsay/distill/issues/39)
 - Fixed point before session: `a59ed65`
-- Implementation commit: pending
-- Status: In progress — local evidence and review are recorded; Ubuntu CI is authoritative
+- Implementation commit: `fca341b`
+- Status: Complete — Ubuntu CI is green; screen-reader and signed-release gates remain explicit
 - Review packet: `docs/runs/reviews/39-linux-packaged-dialog-focus.md`
 
 ## Intended Contract
@@ -41,6 +41,8 @@
 - CodeRabbit CLI `coderabbit review --agent --type all --base staging` — rate-limited
   before analysis; fresh Grok rereview is the required fallback and found no remaining
   implementation issue after the documentation timing fix.
+- Post-CI Grok 4.5 xhigh rereview: PASS; the green Ubuntu evidence and remaining
+  human/out-of-scope boundaries are accurately recorded.
 - Grok 4.5 xhigh independent review initially found the pre-CI registry overclaim and
   missing issue/review packets; those documentation findings are being remediated in
   this session. AT-SPI runtime behavior remains unverified on this Darwin host until
@@ -48,7 +50,8 @@
 
 ## Remaining Scope
 
-- Ubuntu workflow must build/install the package and exercise the new dialog-focus path.
-- After green CI, record the run URL and artifact evidence here and in the review packet,
-  then close #39. VoiceOver/Narrator, packaged macOS dialog focus, signing/notarization,
-  Windows packaging, and production deployment remain outside this slice.
+- Ubuntu workflow `29213051808` passed on Ubuntu 24.04 x86_64, including package build,
+  `.deb` installation, and the installed-host dialog focus/Tab/Escape/trigger-return
+  assertions: <https://github.com/AustinKelsay/distill/actions/runs/29213051808>.
+- VoiceOver/Narrator, packaged macOS dialog focus, signing/notarization, Windows
+  packaging, and production deployment remain outside this slice.

@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#37 complete; #39 Linux dialog-focus follow-up is in progress; staging handoff remains the non-draft PR #38
+- Current status: #18–#39 complete; staging handoff remains the non-draft PR #38
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#39](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#37 implemented and review packets recorded; #36 Ubuntu CI green; #39 follow-up in progress
+- Ticket sessions: #18–#39 implemented and review packets recorded; Ubuntu CI green through #39
 - Agent briefs: Pending
-- Review packets: #18–#37 complete; #37 matrix/cutover report and per-scenario registry recorded; #39 issue/review packets recorded with Ubuntu CI still pending
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit; #36 one major README evidence-status finding fixed before commit; #37 two documentation evidence/count findings fixed before commit; #39 attempt rate-limited before analysis and covered by a fresh Grok rereview
+- Review packets: #18–#39 complete; #37 matrix/cutover report and per-scenario registry recorded; #39 issue/review packets record Ubuntu evidence
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit; #36 one major README evidence-status finding fixed before commit; #37 two documentation evidence/count findings fixed before commit; #39 rate-limited before analysis, fresh Grok rereview PASS after documentation remediation
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
@@ -65,7 +65,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #35 macOS packaging                    | AFK  | Complete    | Grok xhigh implementation + independent rereview; CodeRabbit minor finding fixed  | `.app` metadata/capability gate, clean packaged Fixture-to-export journey, restart persistence, train export, Fixture hashes, and temp-parent containment                | Package/smoke; Rust/desktop/a11y gates; Grok PASS                                                       |
 | #36 Linux packaging                    | AFK  | Complete    | Grok xhigh implementation + final rereview PASS; Ubuntu CI green                  | Ubuntu `.deb`/AppImage package, installed-host Xvfb/dbus smoke, and CI artifact evidence                                                                                 | Yes                                                                                                     |
 | #37 Matrix/cutover                     | AFK  | Complete    | Grok xhigh acceptance audit + final gate review                                   | 130-row scenario evidence registry, coverage additions, dependency/security decision, gate log, gap-register update, and Electron cutover report                             | Yes                                                                                                     |
-| #39 Linux packaged dialog focus        | AFK  | In progress | Grok xhigh implementation + independent rereview                                  | Installed Ubuntu AT-SPI dialog focus, Tab containment, Escape cancellation, and trigger-focus return; keep screen-reader claims human-only                             | Ubuntu package smoke; renderer/desktop gates; CodeRabbit and Grok review pending                       |
+| #39 Linux packaged dialog focus        | AFK  | Complete    | Grok xhigh implementation + independent rereview; CodeRabbit rate-limited            | Installed Ubuntu AT-SPI dialog focus, Tab containment, Escape cancellation, and trigger-focus return; keep screen-reader claims human-only                             | Ubuntu workflow 29213051808 green; renderer/desktop gates; review packet recorded                    |
 
 ## Parked HITL Slices
 
@@ -97,7 +97,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #35   | `76fb500`   | Grok 4.5 xhigh packaging implementation + independent rereview                                                 | `e5ea3c6`                       | PASS after plist/signing/search/artifact/containment evidence fixes; CodeRabbit one minor signing-classification finding fixed                                                                        | Package/smoke on Darwin arm64; desktop 39 + a11y 12; workspace clippy/tests/fault/release; Grok PASS                                   |
 | #36   | `dc40858`   | Grok 4.5 xhigh Linux packaging implementation + final rereview                                                 | `1a73549`, `0d7989d`, `bffe87c` | PASS after Debian `Depends`, AT-SPI, fail-closed binary, evidence wording, Xvfb focus, and offscreen scroll fixes; Ubuntu workflow 29210244139 green; CodeRabbit README finding fixed                 | Local Rust/desktop gates pass; Ubuntu 24.04 x64 package/install/smoke/artifact evidence; no screen-reader claim                        |
 | #37   | `7b1fe3d`   | Grok 4.5 xhigh matrix/cutover acceptance audit                                            | `7b8305a`                            | PASS after per-scenario registry, missing coverage rows, fresh Node 26/Rust/desktop/dependency/package gates, and explicit residual/cutover report; CodeRabbit final review findings fixed | 130 registry rows; launcher/all gates; Node 26 legacy 104/104; macOS package/smoke; Ubuntu workflow 29210575567; human SR and Rust advisory scan remain explicit |
-| #39   | `a59ed65`   | Grok 4.5 xhigh bounded implementation; independent rereview pending                      | pending                               | Pending; scope is AT-SPI focus state only and does not claim VoiceOver/Narrator or signed release behavior                                                        | Local syntax/format/desktop gates pending; Ubuntu package workflow authoritative                                      |
+| #39   | `a59ed65`   | Grok 4.5 xhigh bounded implementation + independent rereview                              | `fca341b`                            | PASS after pre-CI evidence-status/packet findings were fixed; CodeRabbit rate-limited before analysis; no implementation finding remains; screen-reader claims stay human-only | Node/Python syntax; desktop typecheck/lint/39 tests/frontend build; Ubuntu workflow 29213051808 green |
 
 ## Open Questions
 

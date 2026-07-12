@@ -83,8 +83,8 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
   records supported screen readers without converting manual observations into automated
   claims. #35 satisfies the macOS metadata, Accessibility journey, restart, and
   containment half with explicit unsigned/notarization non-claims; #39 satisfies the
-  installed Linux dialog-focus/cancellation contract once the Ubuntu workflow is green;
-  macOS dialog-focus and all screen-reader evidence remain open.
+  installed Linux dialog-focus/cancellation contract; macOS dialog-focus and all
+  screen-reader evidence remain open.
 
 ### GAP-R008: Scale And Latency Budget Evidence
 
