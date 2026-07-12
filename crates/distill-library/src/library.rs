@@ -7,13 +7,14 @@ use semver::Version;
 
 use crate::adapter::{FixtureAdapter, ParserIdentity, SourceAdapter, FIXTURE_PARSER_ID};
 use crate::error::LibraryResult;
+use crate::health::{self as health_ops};
 use crate::ingest;
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
     ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
-    IngestReport, RenormalizeReport, SearchHit, SessionDetail, SourceSummary,
-    DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport, SearchHit,
+    SessionDetail, SourceSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -23,11 +24,17 @@ pub struct Library {
     max_capture_bytes: u64,
     /// Registered Fixture parser identity used for ingest and renormalize Attempts.
     fixture_parser: ParserIdentity,
+    /// Safe reconciliation performed during the most recent open.
+    open_reconciliation: OpenReconciliation,
 }
 
 impl Library {
     /**
      * Open or create a Distill home, apply checksummed migrations, and return a Library.
+     *
+     * Safe open reconciliation removes disposable staging partials only and records
+     * what was reconciled. Destructive orphan or incomplete-state repair requires
+     * [`Self::repair`].
      *
      * Parameters:
      * - `home`: Distill home directory path. Created with mode `0o700` when missing.
@@ -47,6 +54,7 @@ impl Library {
         let paths = ensure_home_layout(home.as_ref())?;
         let mut conn = open_connection(&paths)?;
         migrate_to_latest(&mut conn)?;
+        let open_reconciliation = health_ops::reconcile_on_open(&paths)?;
         Ok(Self {
             paths,
             conn,
@@ -55,12 +63,18 @@ impl Library {
                 id: FIXTURE_PARSER_ID.to_string(),
                 version: crate::adapter::FIXTURE_PARSER_VERSION.to_string(),
             },
+            open_reconciliation,
         })
     }
 
     /// Absolute Distill home path.
     pub fn home(&self) -> &Path {
         &self.paths.home
+    }
+
+    /// Safe reconciliation report from the most recent open.
+    pub fn open_reconciliation(&self) -> &OpenReconciliation {
+        &self.open_reconciliation
     }
 
     /**
@@ -271,10 +285,31 @@ impl Library {
     }
 
     /**
-     * Report schema, content, and FTS health for this Distill home.
+     * Report schema, content, FTS, staging, orphan, and incomplete-state health.
+     *
+     * Stale Sync operations are not representable until issue #22.
      */
     pub fn health(&self) -> LibraryResult<HealthReport> {
-        query::health(&self.conn, &self.paths.home)
+        health_ops::health(&self.conn, &self.paths, &self.open_reconciliation)
+    }
+
+    /**
+     * Explicit idempotent repair for documented repairable states.
+     *
+     * Destructive actions require caller-selected [`RepairOptions`]. Safe staging
+     * cleanup is always included. Referenced content and immutable Captures/Facts
+     * are never deleted.
+     *
+     * Parameters:
+     * - `options`: which documented destructive repairs to perform.
+     */
+    pub fn repair(&mut self, options: RepairOptions) -> LibraryResult<RepairReport> {
+        health_ops::repair(
+            &mut self.conn,
+            &self.paths,
+            &options,
+            &self.open_reconciliation,
+        )
     }
 
     /**

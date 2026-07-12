@@ -267,15 +267,26 @@ pub(super) fn publish_projection(
                 now,
             ],
         )?;
-        let message_id = tx.last_insert_rowid();
-        message_ids.push(message_id);
+        message_ids.push(tx.last_insert_rowid());
+    }
+
+    #[cfg(feature = "test-faults")]
+    crate::faults::check(crate::faults::FaultPoint::DuringPublishAfterFactsBeforeFts)?;
+
+    for (message_id, message) in message_ids.iter().zip(parsed.messages.iter()) {
+        let project_path: String = tx.query_row(
+            "SELECT COALESCE(project_path, '') FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
         tx.execute(
             "INSERT INTO projection_fts (session_id, message_id, title, project_path, role, text)
-             VALUES (?1, ?2, ?3, '', ?4, ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 session_id,
                 message_id,
                 parsed.title.clone().unwrap_or_default(),
+                project_path,
                 message.role,
                 message.text,
             ],
@@ -306,6 +317,9 @@ pub(super) fn publish_projection(
         )?;
     }
 
+    #[cfg(feature = "test-faults")]
+    crate::faults::check(crate::faults::FaultPoint::DuringPublishAfterFtsBeforeAttemptSuccess)?;
+
     tx.execute(
         "UPDATE normalization_attempts
          SET outcome = 'succeeded', finished_at = ?1, projection_generation = ?2
@@ -326,6 +340,9 @@ pub(super) fn publish_projection(
             json!({ "projection_generation": generation }).to_string(),
         ],
     )?;
+
+    #[cfg(feature = "test-faults")]
+    crate::faults::check(crate::faults::FaultPoint::DuringPublishAfterActivityBeforeCommit)?;
 
     tx.commit()?;
     Ok(())

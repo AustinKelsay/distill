@@ -10,7 +10,9 @@ import type {
   DistillBridge,
   FixtureJourneyPhase,
   FixtureJourneyResult,
+  HealthReport,
   HostError,
+  RepairReport,
 } from "./types";
 
 /**
@@ -65,7 +67,12 @@ function sampleResult(): FixtureJourneyResult {
       schema_status: "ok",
       content_status: "ok",
       fts_status: "ok",
+      staging_status: "ok",
+      orphan_status: "ok",
+      incomplete_status: "ok",
+      operations_status: "not_applicable",
       issues: [],
+      open_reconciliation: { removed_staging_partials: 0 },
     },
   };
 }
@@ -77,6 +84,8 @@ function createFakeBridge(options?: {
   result?: FixtureJourneyResult;
   error?: HostError;
   phases?: FixtureJourneyPhase[];
+  health?: HealthReport;
+  repair?: RepairReport;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   return {
@@ -91,6 +100,22 @@ function createFakeBridge(options?: {
       }
       if (options?.error) throw options.error;
       return options?.result ?? sampleResult();
+    },
+    async health() {
+      if (options?.error) throw options.error;
+      return options?.health ?? sampleResult().health;
+    },
+    async repair(_home, confirm) {
+      if (!confirm) {
+        throw { code: "validation", message: "repair requires explicit confirmation" };
+      }
+      if (options?.error) throw options.error;
+      return (
+        options?.repair ?? {
+          actions: [{ name: "removed_staging_partials", count: 0 }],
+          health_after: sampleResult().health,
+        }
+      );
     },
     onProgress(listener) {
       listeners.add(listener);
@@ -170,6 +195,11 @@ describe("first-run Fixture UI", () => {
     });
     const bridge: DistillBridge = {
       runFixtureJourney: () => pending,
+      health: async () => sampleResult().health,
+      repair: async () => ({
+        actions: [],
+        health_after: sampleResult().health,
+      }),
       onProgress: () => () => undefined,
     };
     render(<App bridge={bridge} />);
@@ -186,5 +216,31 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("status")).toHaveTextContent("success");
     });
+  });
+
+  it("requires confirmation before repair and renders typed repair actions", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      repair: {
+        actions: [{ name: "removed_orphan_blobs", count: 1 }],
+        health_after: {
+          ...sampleResult().health,
+          ok: true,
+        },
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    expect(screen.getByRole("button", { name: /repair library/i })).toBeDisabled();
+    await user.click(screen.getByLabelText(/confirm destructive repair/i));
+    await user.click(screen.getByRole("button", { name: /repair library/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("repair-panel")).toHaveTextContent(
+        "removed_orphan_blobs",
+      );
+    });
+    expect(screen.getByTestId("repair-panel")).toHaveTextContent("1");
   });
 });

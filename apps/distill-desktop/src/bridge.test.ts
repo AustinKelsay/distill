@@ -32,6 +32,22 @@ describe("Tauri bridge", () => {
     });
   });
 
+  it("invokes health and repair commands with confirm flag", async () => {
+    tauri.invoke.mockResolvedValue({ ok: true });
+    const bridge = createTauriBridge();
+
+    await bridge.health("/tmp/distill-home");
+    expect(tauri.invoke).toHaveBeenCalledWith("health_command", {
+      home: "/tmp/distill-home",
+    });
+
+    await bridge.repair("/tmp/distill-home", true);
+    expect(tauri.invoke).toHaveBeenCalledWith("repair_command", {
+      home: "/tmp/distill-home",
+      confirm: true,
+    });
+  });
+
   it("unsubscribes when cleanup happens before async listener registration finishes", async () => {
     let finishRegistration!: (unlisten: () => void) => void;
     tauri.listen.mockReturnValue(

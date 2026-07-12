@@ -112,8 +112,14 @@ pub fn store_capture_bytes(
         });
     }
 
+    #[cfg(feature = "test-faults")]
+    crate::faults::check(crate::faults::FaultPoint::AfterStageWriteBeforeRename)?;
+
     fs::rename(&stage_path, &absolute)?;
     set_file_mode_600(&absolute)?;
+
+    #[cfg(feature = "test-faults")]
+    crate::faults::check(crate::faults::FaultPoint::AfterBlobRenameBeforeCaptureAccept)?;
 
     Ok(ContentRef::Blob {
         relative_path: relative,

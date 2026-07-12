@@ -118,7 +118,7 @@ The clean rebuild centers product behavior in one deep Rust `Library` crate (`cr
 
 Public Library methods for the Fixture tracer and thin callers:
 
-- `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files)
+- `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files), and perform safe open reconciliation that removes only canonical `{64 lowercase hex}.partial` staging files while reporting what was reconciled
 - `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
 - `detect_fixture(fixture_root)` — return a caller-facing `SourceSummary` through the production Fixture SourceAdapter detect path
 - `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only; the ingest report includes distinct `SessionIdentity` values projected during the run
@@ -128,13 +128,16 @@ Public Library methods for the Fixture tracer and thin callers:
 - `run_fixture_journey(fixture_root, on_progress)` — first-run helper that detects, ingests, loads the first projected Session, and returns health as a `FixtureJourneyResult` with typed progress phases
 - `session_slice` / bounded `search` — read a bounded slice of the current Session Projection and FTS index; cursor paging lands in issue #23
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
-- `health()` — report schema/migration, content, and FTS integrity
+- `health()` — report schema/migration integrity (including SQLite quick/integrity/foreign-key checks), referenced inline/blob size+checksum without following CAS symlinks or leaving the Distill home, exact projection↔FTS agreement across session_id/message_id/title/project_path/role/text, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections (empty successful projections are valid), and mismatched Session counters as typed `HealthIssue` values with redacted summaries; `operations_status` is `not_applicable` until issue #22 switches it to Sync stale detection
+- `repair(options)` — explicit idempotent transactional repair for documented repairable states (orphan CAS deletion of in-root regular canonical blobs only, incomplete-state resolution via failed pending Attempts plus `capture_failed` recovery Activity without inventing Attempts, Session counter recompute, FTS rebuild from Session title/project_path, staging cleanup of canonical `{64 hex}.partial` only); never silently deletes referenced content or immutable Captures/Facts
 - `recent_activity(limit)` — return a bounded first Activity slice for the tracer; cursor paging and operations views land in issue #30
 
 Thin callers:
 
-- `crates/distill-cli` — `distill --home <path> --fixture <path> [--format human|json]` invokes the same Fixture journey; exit `0` success, `1` Library/runtime failure, `2` usage/validation
-- `apps/distill-desktop` — Tauri 2 host runs the journey off the UI thread, validates inputs, emits typed progress, and returns source/sync/session/health results to a sandboxed React renderer with a minimal capability file
+- `crates/distill-cli` — `distill --home <path> --fixture <path> [--format human|json]` invokes the Fixture journey; `distill health --home <path>` and `distill repair --home <path> --confirm` are owning health/repair commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
+- `apps/distill-desktop` — Tauri 2 host runs journey/health/repair off the UI thread, validates inputs, emits typed progress, and returns typed results to a sandboxed React renderer with a minimal capability file; repair requires explicit confirmation
+
+Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, and mid-projection publication points). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
 
 The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
 

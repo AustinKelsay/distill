@@ -8,8 +8,9 @@ mod host;
 
 pub use error::HostError;
 pub use host::{
-    run_fixture_journey as execute_fixture_journey, validate_fixture_journey_request,
-    FixtureJourneyRequest,
+    run_fixture_journey as execute_fixture_journey, run_health as execute_health,
+    run_repair as execute_repair, validate_fixture_journey_request, validate_home_request,
+    FixtureJourneyRequest, HomeRequest,
 };
 
 use distill_library::FixtureJourneyPhase;
@@ -24,7 +25,9 @@ pub const FIXTURE_JOURNEY_PROGRESS_EVENT: &str = "fixture-journey-progress";
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            commands::run_fixture_journey_command
+            commands::run_fixture_journey_command,
+            commands::health_command,
+            commands::repair_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running Distill desktop");

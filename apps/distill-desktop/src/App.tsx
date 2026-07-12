@@ -7,7 +7,9 @@ import type {
   DistillBridge,
   FixtureJourneyPhase,
   FixtureJourneyResult,
+  HealthReport,
   HostError,
+  RepairReport,
 } from "./types";
 
 /** Explicit UI lifecycle for the first-run Fixture journey. */
@@ -27,6 +29,9 @@ export function App({ bridge }: AppProps) {
   const [status, setStatus] = useState<UiStatus>("idle");
   const [phase, setPhase] = useState<FixtureJourneyPhase | null>(null);
   const [result, setResult] = useState<FixtureJourneyResult | null>(null);
+  const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
+  const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
+  const [confirmRepair, setConfirmRepair] = useState(false);
   const [error, setError] = useState<HostError | null>(null);
 
   useEffect(() => {
@@ -44,6 +49,8 @@ export function App({ bridge }: AppProps) {
     setStatus("running");
     setError(null);
     setResult(null);
+    setStandaloneHealth(null);
+    setRepairReport(null);
     setPhase(null);
     try {
       const next = await bridge.runFixtureJourney({ home, fixtureRoot });
@@ -54,6 +61,43 @@ export function App({ bridge }: AppProps) {
       setStatus("error");
     }
   }
+
+  /**
+   * Refresh typed health for the chosen Distill home.
+   */
+  async function onCheckHealth() {
+    setError(null);
+    setRepairReport(null);
+    try {
+      const health = await bridge.health(home);
+      setStandaloneHealth(health);
+    } catch (caught) {
+      setError(normalizeError(caught));
+    }
+  }
+
+  /**
+   * Run explicit repair only when the confirmation checkbox is checked.
+   */
+  async function onRepair() {
+    setError(null);
+    if (!confirmRepair) {
+      setError({
+        code: "validation",
+        message: "repair requires explicit confirmation",
+      });
+      return;
+    }
+    try {
+      const report = await bridge.repair(home, true);
+      setRepairReport(report);
+      setStandaloneHealth(report.health_after);
+    } catch (caught) {
+      setError(normalizeError(caught));
+    }
+  }
+
+  const health = standaloneHealth ?? result?.health ?? null;
 
   return (
     <main className="app">
@@ -89,6 +133,28 @@ export function App({ bridge }: AppProps) {
           {status === "running" ? "Running…" : "Run Fixture journey"}
         </button>
       </form>
+
+      <section className="form" aria-label="Library health and repair">
+        <button type="button" onClick={onCheckHealth} disabled={!home.trim()}>
+          Check health
+        </button>
+        <label htmlFor="confirm-repair">
+          <input
+            id="confirm-repair"
+            type="checkbox"
+            checked={confirmRepair}
+            onChange={(event) => setConfirmRepair(event.target.checked)}
+          />{" "}
+          Confirm destructive repair
+        </label>
+        <button
+          type="button"
+          onClick={onRepair}
+          disabled={!home.trim() || !confirmRepair}
+        >
+          Repair library
+        </button>
+      </section>
 
       <section aria-live="polite" className="status">
         <p>
@@ -170,21 +236,54 @@ export function App({ bridge }: AppProps) {
               <p>No Session Projection was produced.</p>
             )}
           </section>
-
-          <section className="panel" data-testid="health-panel">
-            <h2>Health</h2>
-            <dl>
-              <dt>OK</dt>
-              <dd>{String(result.health.ok)}</dd>
-              <dt>Schema</dt>
-              <dd>{result.health.schema_status}</dd>
-              <dt>Content</dt>
-              <dd>{result.health.content_status}</dd>
-              <dt>FTS</dt>
-              <dd>{result.health.fts_status}</dd>
-            </dl>
-          </section>
         </div>
+      ) : null}
+
+      {health ? (
+        <section className="panel" data-testid="health-panel">
+          <h2>Health</h2>
+          <dl>
+            <dt>OK</dt>
+            <dd>{String(health.ok)}</dd>
+            <dt>Schema</dt>
+            <dd>{health.schema_status}</dd>
+            <dt>Content</dt>
+            <dd>{health.content_status}</dd>
+            <dt>FTS</dt>
+            <dd>{health.fts_status}</dd>
+            <dt>Staging</dt>
+            <dd>{health.staging_status}</dd>
+            <dt>Orphan</dt>
+            <dd>{health.orphan_status}</dd>
+            <dt>Incomplete</dt>
+            <dd>{health.incomplete_status}</dd>
+            <dt>Operations</dt>
+            <dd>{health.operations_status}</dd>
+          </dl>
+          {health.issues.length > 0 ? (
+            <ul data-testid="health-issues">
+              {health.issues.map((issue) => (
+                <li key={`${issue.code}-${issue.summary}`}>
+                  <code>{issue.code}</code> ({issue.severity}/{issue.category}):{" "}
+                  {issue.summary}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
+      {repairReport ? (
+        <section className="panel" data-testid="repair-panel">
+          <h2>Repair</h2>
+          <ul>
+            {repairReport.actions.map((action) => (
+              <li key={action.name}>
+                {action.name}: {action.count}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </main>
   );

@@ -9,6 +9,8 @@ import type {
   FixtureJourneyInput,
   FixtureJourneyPhase,
   FixtureJourneyResult,
+  HealthReport,
+  RepairReport,
 } from "./types";
 
 const PROGRESS_EVENT = "fixture-journey-progress";
@@ -23,6 +25,12 @@ export function createTauriBridge(): DistillBridge {
         home: input.home,
         fixtureRoot: input.fixtureRoot,
       });
+    },
+    async health(home: string): Promise<HealthReport> {
+      return invoke<HealthReport>("health_command", { home });
+    },
+    async repair(home: string, confirm: boolean): Promise<RepairReport> {
+      return invoke<RepairReport>("repair_command", { home, confirm });
     },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       let unlisten: (() => void) | undefined;

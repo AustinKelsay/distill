@@ -1,10 +1,13 @@
 //! Tauri IPC command adapters for Distill desktop.
 
-use distill_library::FixtureJourneyResult;
+use distill_library::{FixtureJourneyResult, HealthReport, RepairReport};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
-use crate::host::{run_fixture_journey, validate_fixture_journey_request};
+use crate::host::{
+    run_fixture_journey, run_health, run_repair, validate_fixture_journey_request,
+    validate_home_request,
+};
 use crate::FIXTURE_JOURNEY_PROGRESS_EVENT;
 
 /**
@@ -33,4 +36,39 @@ pub async fn run_fixture_journey_command(
         code: "join".to_string(),
         message: err.to_string(),
     })?
+}
+
+/**
+ * Tauri command: open a Distill home and return typed health.
+ *
+ * Parameters:
+ * - `home`: Distill home path.
+ */
+#[tauri::command]
+pub async fn health_command(home: String) -> Result<HealthReport, HostError> {
+    let request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_health(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: explicit Library repair after renderer confirmation.
+ *
+ * Parameters:
+ * - `home`: Distill home path.
+ * - `confirm`: must be true to authorize destructive repair.
+ */
+#[tauri::command]
+pub async fn repair_command(home: String, confirm: bool) -> Result<RepairReport, HostError> {
+    let request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_repair(&request, confirm))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
 }

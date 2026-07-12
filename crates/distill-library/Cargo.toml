@@ -7,6 +7,11 @@ edition.workspace = true
 license.workspace = true
 description = "Distill local conversation library (capture, normalize, query, health)"
 
+[features]
+default = []
+## Test-only ingest fault injection. Absent from production default builds.
+test-faults = []
+
 [dependencies]
 chrono = { workspace = true }
 hex = { workspace = true }
@@ -18,5 +23,9 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true }
+hex = { workspace = true }
+rusqlite = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tempfile = { workspace = true }

@@ -1,15 +1,14 @@
-//! Public query, replay, and health helpers over Library storage.
+//! Public query and replay helpers over Library storage.
 
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
-use sha2::{Digest, Sha256};
 
 use crate::error::{LibraryError, LibraryResult};
-use crate::storage::{read_capture_bytes, verify_migration_checksums, ContentRef};
+use crate::storage::{read_capture_bytes, ContentRef};
 use crate::types::{
-    ActivityEventSummary, AttemptSummary, HealthReport, ProjectedArtifact, ProjectedMessage,
-    SearchHit, SessionDetail, SessionSummary,
+    ActivityEventSummary, AttemptSummary, ProjectedArtifact, ProjectedMessage, SearchHit,
+    SessionDetail, SessionSummary,
 };
 
 /**
@@ -286,88 +285,4 @@ pub fn list_activity(conn: &Connection, limit: u32) -> LibraryResult<Vec<Activit
         out.push(row?);
     }
     Ok(out)
-}
-
-/**
- * Build a Library health report covering migrations, blobs, and FTS presence.
- */
-pub fn health(conn: &Connection, home: &Path) -> LibraryResult<HealthReport> {
-    let mut issues = Vec::new();
-    let schema_status = match verify_migration_checksums(conn) {
-        Ok(()) => "ok".to_string(),
-        Err(err) => {
-            issues.push(err.to_string());
-            "failed".to_string()
-        }
-    };
-
-    let mut content_status = "ok".to_string();
-    let mut stmt = conn.prepare(
-        "SELECT id, content_kind, sha256, byte_size, inline_text, blob_path FROM captures",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, i64>(3)?,
-            row.get::<_, Option<String>>(4)?,
-            row.get::<_, Option<String>>(5)?,
-        ))
-    })?;
-    for row in rows {
-        let (id, kind, sha256, byte_size, inline_text, blob_path) = row?;
-        match kind.as_str() {
-            "inline" => {
-                let text = inline_text.unwrap_or_default();
-                let actual = hex::encode(Sha256::digest(text.as_bytes()));
-                if actual != sha256 || text.len() as i64 != byte_size {
-                    issues.push(format!("inline capture {id} failed checksum or size check"));
-                    content_status = "failed".to_string();
-                }
-            }
-            "blob" => {
-                let relative = blob_path.unwrap_or_default();
-                let absolute = home.join(&relative);
-                if !absolute.is_file() {
-                    issues.push(format!("blob capture {id} missing file {relative}"));
-                    content_status = "failed".to_string();
-                    continue;
-                }
-                let bytes = std::fs::read(&absolute)?;
-                let actual = hex::encode(Sha256::digest(&bytes));
-                if actual != sha256 || bytes.len() as i64 != byte_size {
-                    issues.push(format!("blob capture {id} failed checksum or size check"));
-                    content_status = "failed".to_string();
-                }
-            }
-            other => {
-                issues.push(format!("capture {id} has unknown content_kind {other}"));
-                content_status = "failed".to_string();
-            }
-        }
-    }
-
-    let fts_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM projection_fts", [], |row| row.get(0))?;
-    let message_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM projection_messages", [], |row| {
-            row.get(0)
-        })?;
-    let fts_status = if fts_count == message_count {
-        "ok".to_string()
-    } else {
-        issues.push(format!(
-            "fts/projection mismatch: fts={fts_count} messages={message_count}"
-        ));
-        "failed".to_string()
-    };
-
-    Ok(HealthReport {
-        ok: issues.is_empty(),
-        schema_status,
-        content_status,
-        fts_status,
-        issues,
-    })
 }

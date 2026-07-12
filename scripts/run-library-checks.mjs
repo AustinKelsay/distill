@@ -29,13 +29,14 @@ const supportedModes = new Set([
   "fmt",
   "clippy",
   "test",
+  "faults",
   "desktop",
   "npm",
   "all",
 ]);
 if (!supportedModes.has(mode)) {
   console.error(
-    "Usage: node scripts/run-library-checks.mjs [rebuild|library|fmt|clippy|test|desktop|npm|all]",
+    "Usage: node scripts/run-library-checks.mjs [rebuild|library|fmt|clippy|test|faults|desktop|npm|all]",
   );
   process.exit(2);
 }
@@ -55,6 +56,9 @@ if (mode === "clippy" || mode === "rebuild" || mode === "library" || mode === "a
 }
 if (mode === "test" || mode === "rebuild" || mode === "library" || mode === "all") {
   run("cargo", ["test", "--workspace"]);
+}
+if (mode === "faults" || mode === "all") {
+  run("cargo", ["test", "-p", "distill-library", "--features", "test-faults"]);
 }
 if (mode === "desktop" || mode === "all") {
   run("npm", ["run", "desktop:typecheck"]);

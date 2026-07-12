@@ -76,6 +76,14 @@ pub enum LibraryError {
     /// Generic invalid argument.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+
+    /// Test-only injected fault at a named ingest boundary.
+    #[cfg(feature = "test-faults")]
+    #[error("injected test fault: {point:?}")]
+    InjectedTestFault {
+        /// Boundary that was armed when the fault fired.
+        point: crate::faults::FaultPoint,
+    },
 }
 
 impl LibraryError {
@@ -93,6 +101,8 @@ impl LibraryError {
             Self::StagedContentIntegrity { .. } => "staged_content_integrity",
             Self::NotFound(_) => "not_found",
             Self::InvalidArgument(_) => "invalid_argument",
+            #[cfg(feature = "test-faults")]
+            Self::InjectedTestFault { .. } => "injected_test_fault",
         }
     }
 }

@@ -57,6 +57,7 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Audit and operational behavior: `docs/specs/activity-and-ops.md`
 - Known implementation drift: `docs/gaps/current-state-gap-register.md`
 - Required contract tests: `docs/testing/contract-test-matrix.md`
+- Verification gates: `docs/gates.md`
 - Delivery sequence: `docs/roadmap/spec-alignment-plan.md`
 - Contribution rules: `docs/governance/spec-governance.md`
 

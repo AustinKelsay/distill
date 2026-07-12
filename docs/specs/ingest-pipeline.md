@@ -242,5 +242,13 @@ The Rust Library ingest path preserves the Electron-era invariants above and add
 8. Changed bytes for the same source path create a new immutable Capture and a new Attempt. A successful Attempt fully replaces the prior projection, including when the new message or artifact set is shorter or empty.
 9. The same accepted Capture can be re-normalized from Distill-owned replay bytes by a newer version of the registered Fixture parser without creating a new Capture. Prior Attempts and Capture Facts remain immutable and observable through caller-safe Attempt summaries.
 10. Replay and health read Distill-owned content only; deleting the original source must not break replay.
+11. Interrupted ingest reopen contracts (issue #21) use the real transaction boundaries:
+    - stage write before CAS rename → disposable canonical `staging/{64 lowercase hex}.partial` only; safe open removes it; noncanonical staging names are reported, never silently deleted
+    - CAS rename before Capture DB acceptance → unreferenced blob; explicit repair may delete only in-root regular canonical orphans and never follows CAS symlinks or leaves the Distill home
+    - Capture insert before `capture_recorded` inside the same SQLite transaction → full rollback (no durable Capture/Activity split)
+    - after Capture+`capture_recorded` commit before Attempt → incomplete Capture; explicit repair appends Capture-scoped `capture_failed` with safe interruption context and does not invent a Normalization Attempt; later explicit renormalize may retry; exact duplicates remain inert
+    - after pending Attempt before projection publication → pending Attempt remains; last-good projection preserved; repair fails the pending Attempt and recomputes Session counters
+    - Fact/projection rows before FTS, after FTS before Attempt success/Activity, and after `projection_replaced` before commit → publication transaction rolls back; pending Attempt remains; last-good projection/FTS preserved
+12. Test-only fault injection behind the non-default `test-faults` feature proves those reopen states via a typed cfg-gated fault variant. Production default builds do not expose fault controls or message-prefix fault special cases.
 
 Legacy Electron still uses the `CaptureStatus` state machine documented above. The rebuild gap register tracks the dual-model period until Electron cutover.

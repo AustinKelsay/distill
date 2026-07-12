@@ -32,7 +32,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/attempt-retry/projection/query/replay/health. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
+- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/attempt-retry/projection/query/replay/health/repair. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
 - Impacted files/modules: future Library operations, Curation, export, CLI, host, and renderer modules.
 - Severity: high — the native tracer cannot yet complete the product loop.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, and downstream caller tickets.
@@ -40,11 +40,11 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
 
-- Status: open
+- Status: resolved
 - Rule: interrupted Capture acceptance, projection publication, and related transitions reopen into a defined repair state.
-- Current drift: #20 covers ordinary typed parse/projection failure with transaction rollback and last-good preservation. Fault-injection crash points and reopen repair remain unimplemented.
-- Impacted files/modules: `crates/distill-library` ingest/content seams; future health/repair APIs.
-- Severity: medium — ordinary failures are safe, but mid-write process death is not yet proven.
+- Current drift: none for ingest fault/health/repair. Library health classifies schema (migration checksums + SQLite quick/integrity/foreign-key checks), referenced content without following CAS symlinks or leaving the Distill home, exact projection/FTS agreement across all searchable fields, canonical staging partials plus unrecognized staging entries, orphan CAS blobs, incomplete Captures/Attempts/projection linkage, and Session counter drift. Empty successful projections are healthy. Safe open reconciles only `{64 lowercase hex}.partial` files. Explicit idempotent transactional `repair` handles orphans (in-root regular canonical blobs only), incomplete state via `capture_failed` recovery (never inventing Attempts), counter recompute, and FTS rebuild from Session title/project_path. Test-only `test-faults` proves the documented ingest boundaries with a typed cfg-gated fault variant. `operations_status` is explicitly `not_applicable` until #22; export crash recovery remains #25.
+- Impacted files/modules: `crates/distill-library` health/repair/fault seams; thin CLI/Tauri/React health/repair callers.
+- Severity: resolved for #21 ingest recovery; Sync/export recovery still open under later gaps/tickets.
 - Target branch/ticket: `feature/distill-clean-rebuild`, #21.
 - Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state.
 

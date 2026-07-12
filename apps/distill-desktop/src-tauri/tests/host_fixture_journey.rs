@@ -5,7 +5,10 @@
 use std::fs;
 use std::path::Path;
 
-use distill_desktop_lib::{execute_fixture_journey, validate_fixture_journey_request, HostError};
+use distill_desktop_lib::{
+    execute_fixture_journey, execute_health, execute_repair, validate_fixture_journey_request,
+    validate_home_request, HostError,
+};
 use distill_library::FixtureJourneyPhase;
 use tempfile::TempDir;
 
@@ -109,4 +112,38 @@ fn host_translates_library_detect_failure() {
     let err: HostError = execute_fixture_journey(&request, |_| {}).expect_err("detect fail");
     assert_eq!(err.code, "source_adapter");
     assert!(!err.message.is_empty());
+}
+
+#[test]
+fn host_health_and_repair_require_home_and_confirm() {
+    let err = validate_home_request("  ").expect_err("empty home");
+    assert_eq!(err.code, "validation");
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let journey =
+        validate_fixture_journey_request(home.to_str().unwrap(), fixture.to_str().unwrap())
+            .expect("validate journey");
+    execute_fixture_journey(&journey, |_| {}).expect("journey");
+
+    let request = validate_home_request(home.to_str().unwrap()).expect("validate home");
+    let health = execute_health(&request).expect("health");
+    assert!(health.ok);
+    assert_eq!(health.staging_status, "ok");
+    assert_eq!(health.orphan_status, "ok");
+    assert_eq!(health.incomplete_status, "ok");
+
+    let denied = execute_repair(&request, false).expect_err("confirm required");
+    assert_eq!(denied.code, "validation");
+
+    let repaired = execute_repair(&request, true).expect("repair");
+    assert!(repaired.health_after.ok);
+    assert!(repaired
+        .actions
+        .iter()
+        .any(|action| action.name == "removed_staging_partials"));
 }

@@ -73,6 +73,8 @@ pub fn ingest_adapter(
                 &content,
                 snapshot.source_modified_at.as_deref(),
             )?;
+            #[cfg(feature = "test-faults")]
+            crate::faults::check(crate::faults::FaultPoint::AfterCaptureInsertBeforeActivity)?;
             emit_activity(
                 &tx,
                 "capture_recorded",
@@ -85,6 +87,8 @@ pub fn ingest_adapter(
             tx.commit()?;
             capture_id
         };
+        #[cfg(feature = "test-faults")]
+        crate::faults::check(crate::faults::FaultPoint::AfterCaptureRecordedBeforeAttempt)?;
         report.accepted_captures += 1;
         report.capture_ids.push(capture_id);
 
@@ -99,6 +103,8 @@ pub fn ingest_adapter(
                     None,
                     None,
                 )?;
+                #[cfg(feature = "test-faults")]
+                crate::faults::check(crate::faults::FaultPoint::AfterPendingAttemptBeforePublish)?;
                 match publish_projection(conn, capture_id, attempt_id, &candidate, &parsed) {
                     Ok(()) => {
                         report.successful_attempts += 1;
@@ -108,7 +114,16 @@ pub fn ingest_adapter(
                             &parsed.external_session_id,
                         );
                     }
-                    Err(_err) => {
+                    Err(err) => {
+                        // Injected faults simulate process death: leave the pending Attempt
+                        // and last-good projection untouched instead of recording an ordinary
+                        // projection_failed outcome. Present only when `test-faults` is enabled.
+                        #[cfg(feature = "test-faults")]
+                        if matches!(&err, crate::error::LibraryError::InjectedTestFault { .. }) {
+                            return Err(err);
+                        }
+                        #[cfg(not(feature = "test-faults"))]
+                        let _ = err;
                         fail_attempt(
                             conn,
                             attempt_id,

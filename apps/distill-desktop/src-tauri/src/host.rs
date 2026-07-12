@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use distill_library::{FixtureJourneyPhase, FixtureJourneyResult, Library};
+use distill_library::{
+    FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions, RepairReport,
+};
 
 use crate::error::HostError;
 
@@ -13,6 +15,13 @@ pub struct FixtureJourneyRequest {
     pub home: PathBuf,
     /// Fixture root containing `distill.fixture.json`.
     pub fixture_root: PathBuf,
+}
+
+/// Validated Distill-home-only request for health and repair.
+#[derive(Clone, Debug)]
+pub struct HomeRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
 }
 
 /**
@@ -47,6 +56,22 @@ pub fn validate_fixture_journey_request(
 }
 
 /**
+ * Validate a Distill home path for health or repair commands.
+ *
+ * Parameters:
+ * - `home`: Distill home path string.
+ */
+pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
+    let home = home.trim();
+    if home.is_empty() {
+        return Err(HostError::validation("home path must not be empty"));
+    }
+    Ok(HomeRequest {
+        home: PathBuf::from(home),
+    })
+}
+
+/**
  * Run the Library Fixture journey and report typed progress phases.
  *
  * This function is intentionally synchronous so Tauri can schedule it off the
@@ -69,5 +94,35 @@ where
         .run_fixture_journey(Path::new(&request.fixture_root), |phase| {
             on_progress(phase);
         })
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Open a Distill home and return typed health.
+ *
+ * Parameters:
+ * - `request`: validated Distill home.
+ */
+pub fn run_health(request: &HomeRequest) -> Result<HealthReport, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.health().map_err(HostError::from_library)
+}
+
+/**
+ * Explicit Library repair after the renderer supplies confirmation.
+ *
+ * Parameters:
+ * - `request`: validated Distill home.
+ * - `confirm`: must be true; otherwise returns a validation error.
+ */
+pub fn run_repair(request: &HomeRequest, confirm: bool) -> Result<RepairReport, HostError> {
+    if !confirm {
+        return Err(HostError::validation(
+            "repair requires explicit confirmation because it performs destructive cleanup",
+        ));
+    }
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .repair(RepairOptions::all_documented())
         .map_err(HostError::from_library)
 }

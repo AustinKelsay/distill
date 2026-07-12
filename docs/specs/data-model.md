@@ -347,8 +347,22 @@ Rebuild schema entities (fresh Distill home; no legacy schema inclusion):
 
 Inline versus blob storage is an internal Library choice. The documented threshold is **64 KiB** (`INLINE_CONTENT_THRESHOLD_BYTES`). Larger Captures are staged, checksummed, atomically renamed into the content-addressed store, then accepted in SQLite.
 
+Health and recovery classification over that durable state:
+
+- migration/schema integrity via checksummed `schema_migrations` plus SQLite quick/integrity/foreign-key checks with stable redacted messages
+- referenced Capture content presence, size, and checksum (inline or blob), never following CAS symlinks and never reading outside the Distill home even when `blob_path` is absolute or traverses parents
+- exact current `projection_messages` ↔ `projection_fts` agreement across session_id, message_id, title, project_path, role, and text (not count-only)
+- canonical disposable staging partials (`{64 lowercase hex}.partial`) and unrecognized staging entries under the Distill `staging/` directory
+- unreferenced regular in-root canonical CAS blobs under `blobs/`, with symlinks/malformed tree entries reported as blocking rather than deletion candidates
+- incomplete Captures (no Attempt and no Capture-scoped `capture_failed` recovery), pending Attempts, Sessions with broken `current_attempt_id`/generation linkage, and mismatched materialized Session counters
+- empty successful projections are valid when linkage invariants hold
+- `operations_status` is explicitly `not_applicable` until issue #22
+
+Safe open reconciliation may remove only canonical `{64 lowercase hex}.partial` staging files and must report what it reconciled. Orphan CAS deletion (in-root regular canonical files only) and incomplete durable-state repair require an explicit `repair` call; repair is idempotent, transactional for related SQLite mutations, returns typed named actions/counts, appends `capture_failed` for Attempt-less interrupted Captures without inventing Attempts, recomputes Session counters, rebuilds FTS from Session title/project_path, and never silently deletes referenced content or immutable Captures/Facts.
+
 Public Library read/write extensions for Attempt history and retry:
 
 - `capture_attempts(capture_id)` returns immutable Attempt summaries with parser identity/version, outcome, typed error class/message, optional projection generation, and Fact count
 - `renormalize_capture(capture_id)` re-runs the Library-registered Fixture parser against Distill-owned Capture bytes without accepting a new Capture or accepting caller-supplied arbitrary parser ids
 - `set_registered_fixture_parser_version(version)` accepts only a strictly newer semantic version and advances only the registered Fixture parser used by ingest and renormalize
+- `health()` / `repair(options)` own integrity classification and documented recovery; see architecture and ingest-pipeline rebuild notes

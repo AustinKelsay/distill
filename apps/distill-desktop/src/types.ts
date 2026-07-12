@@ -62,13 +62,44 @@ export type SessionDetail = {
   metadata_json: string;
 };
 
+/** Typed Library health issue with redacted summary. */
+export type HealthIssue = {
+  code: string;
+  severity: string;
+  category: string;
+  summary: string;
+};
+
+/** Safe open reconciliation counts. */
+export type OpenReconciliation = {
+  removed_staging_partials: number;
+};
+
 /** Library health report. */
 export type HealthReport = {
   ok: boolean;
   schema_status: string;
   content_status: string;
   fts_status: string;
-  issues: string[];
+  staging_status: string;
+  orphan_status: string;
+  incomplete_status: string;
+  /** Sync/operations stale-job status; `not_applicable` until issue #22. */
+  operations_status: string;
+  issues: HealthIssue[];
+  open_reconciliation: OpenReconciliation;
+};
+
+/** Named repair action count. */
+export type RepairAction = {
+  name: string;
+  count: number;
+};
+
+/** Explicit Library repair result. */
+export type RepairReport = {
+  actions: RepairAction[];
+  health_after: HealthReport;
 };
 
 /** Combined first-run Fixture journey result. */
@@ -105,6 +136,17 @@ export type DistillBridge = {
    * @param input - chosen Distill home and Fixture root
    */
   runFixtureJourney(input: FixtureJourneyInput): Promise<FixtureJourneyResult>;
+  /**
+   * Load typed Library health for a Distill home.
+   * @param home - Distill home path
+   */
+  health(home: string): Promise<HealthReport>;
+  /**
+   * Explicit Library repair after user confirmation.
+   * @param home - Distill home path
+   * @param confirm - must be true to authorize destructive repair
+   */
+  repair(home: string, confirm: boolean): Promise<RepairReport>;
   /**
    * Subscribe to typed progress phases.
    * @param listener - progress callback

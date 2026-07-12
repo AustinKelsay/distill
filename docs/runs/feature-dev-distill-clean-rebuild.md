@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#20 complete; dependency frontier is #21–#23
+- Current status: #18–#21 complete pending review; #22–#23 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,9 +26,9 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#20 complete
+- Ticket sessions: #18–#21 implemented; #21 review pending
 - Agent briefs: Pending
-- Review packets: #18–#20 complete
+- Review packets: #18–#20 complete; #21 pending
 - Local CodeRabbit report: #20 follow-up pass with 0 findings; final full-branch review still pending
 - PR URL: Pending
 
@@ -36,10 +36,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 
 - Install: `npm install` (legacy Electron baseline + desktop workspace)
 - Typecheck: `npm run build` (legacy); `npm run desktop:typecheck` (rebuild renderer)
-- Test: `npm test` (legacy); `cargo test --workspace` (rebuild); `npm run desktop:test` (renderer)
+- Test: `npm test` (legacy); `cargo test --workspace` (rebuild); `cargo test -p distill-library --features test-faults` (fault contracts); `npm run desktop:test` (renderer)
 - Build: `npm run build` (legacy); `cargo build --workspace`; `npm run desktop:frontend:build`
 - Visual verification: legacy `npm start`; rebuild `npm run desktop:dev` (host boundary; packaging deferred)
-- Rebuild gates: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`
+- Rebuild gates: see `docs/gates.md`; `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`; `cargo test -p distill-library --features test-faults`
 
 ## Ticket Ledger
 
@@ -48,7 +48,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #18 Library Fixture tracer | AFK | Complete | Grok xhigh standards + spec | All applied; both axes pass | Rust 5 pass; legacy 93 pass/10 baseline runtime failures |
 | #19 Thin Tauri/React/CLI callers | AFK | Complete | Grok xhigh standards + spec | Both axes pass; ACL finding withdrawn | Rust/renderer/Tauri release gates; legacy 103 pass on Node 26 |
 | #20 Attempt retry/replay/replacement | AFK | Complete | Grok xhigh standards + spec | Docs inventory and diagnostic safety fixed; both axes pass | Rust/renderer/Tauri release gates; legacy 103 pass; CodeRabbit 0 findings |
-| #21 Health/repair/fault recovery | AFK | Ready — frontier | — | — | No |
+| #21 Health/repair/fault recovery | AFK | Implemented — audit remediation applied; review pending | Pending Grok xhigh review | Pending | Evidence in `docs/runs/issues/21-health-repair-fault-recovery.md` |
 | #22 Async source settings/Sync Runs | AFK | Ready — frontier | — | — | No |
 | #23 Search/lanes/detail/virtualization | AFK | Ready — frontier | — | — | No |
 | #24 Transactional Curation | AFK | Blocked by #23 | — | — | No |

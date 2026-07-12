@@ -105,3 +105,17 @@ The current normative operational scope does not require:
 - a general-purpose background worker system
 - distributed job processing
 - job types for indexing or auto-tagging
+
+## Library Health And Repair
+
+Library health and repair are operational surfaces owned by the deep Library seam, not Activity Event rewrites:
+
+- `health()` classifies schema/migration (checksums plus SQLite quick/integrity/foreign-key checks), referenced content, projection/FTS agreement across every searchable field, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections, and Session counter drift
+- empty successful projections are valid when `current_attempt_id` points at a succeeded Attempt for the claimed generation
+- Captures interrupted before parser execution are incomplete until they have an Attempt or a Capture-scoped `capture_failed` recovery Activity; repair appends that Activity and never invents a Normalization Attempt
+- user-facing diagnostics use typed issue codes and stable redacted summaries; raw filesystem paths, SQL, and payloads must not leak
+- safe open reconciliation removes only canonical `{64 lowercase hex}.partial` staging files and reports counts; noncanonical staging entries are reported, never silently deleted
+- CAS discovery/repair never follows symlinks and never reads or deletes outside the Distill home, even if a corrupted `blob_path` is absolute or traverses parents
+- explicit `repair` is idempotent, uses transactions for related SQLite mutations, requires caller opt-in for destructive actions, and returns typed named action counts
+- repair never deletes referenced content or mutates immutable Captures/Facts
+- `operations_status` is `not_applicable` until issue #22; that ticket switches the field to actual Sync stale-operation detection. Export crash recovery remains issue #25.

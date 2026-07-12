@@ -172,19 +172,89 @@ pub struct ActivityEventSummary {
     pub session_id: Option<i64>,
 }
 
+/// Typed health issue with stable codes and redacted summaries.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HealthIssue {
+    /// Stable machine-readable issue code.
+    pub code: String,
+    /// Issue severity: `blocking`, `repairable`, or `info`.
+    pub severity: String,
+    /// Issue category: `schema`, `content`, `fts`, `staging`, `orphan`, or `incomplete`.
+    pub category: String,
+    /// Redacted human summary without raw paths or payloads.
+    pub summary: String,
+}
+
+/// Safe actions performed while opening a Distill home.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OpenReconciliation {
+    /// Disposable staging partial files removed on open.
+    pub removed_staging_partials: u64,
+}
+
+/// Caller options for explicit destructive Library repair.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RepairOptions {
+    /// Delete CAS blobs not referenced by any Capture.
+    pub remove_orphan_blobs: bool,
+    /// Resolve incomplete Captures and pending Attempts with safe recovery bookkeeping.
+    pub resolve_incomplete_state: bool,
+    /// Rebuild FTS rows from current projection messages when identity/content disagree.
+    pub rebuild_fts: bool,
+}
+
+impl RepairOptions {
+    /// Enable every documented destructive repair action.
+    pub fn all_documented() -> Self {
+        Self {
+            remove_orphan_blobs: true,
+            resolve_incomplete_state: true,
+            rebuild_fts: true,
+        }
+    }
+}
+
+/// One named repair action with an affected-row/file count.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RepairAction {
+    /// Stable snake_case action name.
+    pub name: String,
+    /// Number of entities affected by this action.
+    pub count: u64,
+}
+
+/// Result of an explicit Library repair call.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RepairReport {
+    /// Named actions performed (zero counts when already clean / idempotent).
+    pub actions: Vec<RepairAction>,
+    /// Health after repair.
+    pub health_after: HealthReport,
+}
+
 /// Library health report.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HealthReport {
-    /// True when no blocking integrity issues were found.
+    /// True when no integrity or incomplete-state issues were found.
     pub ok: bool,
-    /// Schema and migration status text.
+    /// Schema and migration status text (`ok` or `failed`).
     pub schema_status: String,
-    /// Content-store status text.
+    /// Referenced content presence/checksum status (`ok` or `failed`).
     pub content_status: String,
-    /// FTS/projection consistency status text.
+    /// Projection/FTS identity+content agreement (`ok` or `failed`).
     pub fts_status: String,
-    /// Non-blocking or blocking issue messages.
-    pub issues: Vec<String>,
+    /// Disposable staging partial status (`ok` or `failed`).
+    pub staging_status: String,
+    /// Unreferenced CAS blob status (`ok` or `failed`).
+    pub orphan_status: String,
+    /// Incomplete Capture/Attempt/projection status (`ok` or `failed`).
+    pub incomplete_status: String,
+    /// Sync/operations stale-job status. `#21` reports `not_applicable`; `#22` switches to real detection.
+    pub operations_status: String,
+    /// Typed integrity and recovery issues.
+    pub issues: Vec<HealthIssue>,
+    /// Safe reconciliation performed on the most recent open.
+    pub open_reconciliation: OpenReconciliation,
 }
 
 /// Caller-safe Normalization Attempt summary with immutable Fact counts.
