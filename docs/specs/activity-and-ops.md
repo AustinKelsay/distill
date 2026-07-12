@@ -52,12 +52,14 @@ Current normative job type:
 
 - `sync_sources`
 
+Rebuild Sync Runs are durable operational bookkeeping distinct from Activity. Status is the closed set `queued`, `running`, `completed`, `warning`, `failed`, `cancelled`. A partial unique index (or equivalent transaction-safe invariant) permits only one queued/running Sync Run per Distill home. Queue and canonical sync Activity transitions commit together where required. A second start returns typed `sync_already_running` and creates no Sync Run or Activity side effects. Unknown Source kinds and selections that resolve to zero enabled Sources return typed safe errors (`invalid_argument` / `sync_no_enabled_sources`) with zero Sync Run and Activity side effects.
+
 Sync jobs may track:
 
-- queued/running/completed/failed status
+- queued/running/completed/warning/failed/cancelled status
 - warning status for non-fatal sync completions with warning details
 - attempts
-- scheduling metadata
+- owner/lease/heartbeat metadata for stale detection
 - aggregated import metrics
 - last error
 
@@ -68,6 +70,20 @@ Warning-only sync state is operational only:
 - it means the sync completed without a fatal job failure
 - warning details and aggregate metrics remain visible in jobs/logs
 - warning-only sync state must not by itself imply a canonical `sync_failed` audit event for the overall sync run
+- warning Sync Runs still emit canonical `sync_completed` with warning metrics in the payload
+- one successful Source/candidate plus one failed sibling terminates as `warning`; all-failing no-progress execution terminates as `failed`
+
+Cancellation uses the closed Activity taxonomy:
+
+- operational Sync Run status becomes `cancelled`
+- the canonical Activity Event is `sync_failed` with structured `reason: "cancelled"` (there is no `sync_cancelled` event type)
+- never treat operational logs as audit truth
+- `request_sync_cancel` on a terminal run is explicitly idempotent (no status mutation)
+- `sync_status(None)` with no runs returns typed `not_found`
+
+Active Sync Runs carry an owner id plus heartbeat/lease. Production uses system UTC only; there is no public injectable Library clock. The deterministic stale threshold is 60 seconds without heartbeat renewal. A background lease heartbeat on a separate connection renews ownership for the run lifetime so long candidates are not falsely marked stale; it stops promptly on terminalization and never renews a terminal or ownership-lost run. Lease refresh and terminal updates require `id + owner_id + active status`; zero changed rows surface typed `sync_lease_lost` so a worker whose lease was failed on reopen cannot overwrite status/Activity or continue candidate work. On Library open, only stale active runs are idempotently failed with one `sync_failed` Activity each. Stale repair and normal owner terminalization are mutually exclusive. Health `operations_status` is `ok`, `active`, or `failed` (stale/inconsistent).
+
+Every post-queue Sync execution path reaches exactly one terminal durable state and matching Activity, or returns `sync_lease_lost` after another opener already terminalized the run. Ordinary per-Source detect/discover/snapshot/config failures become failed Source outcomes with stable redacted diagnostics so sibling Sources continue. Internal fatal errors best-effort terminalize as `failed` without overwriting an already terminal/stale row.
 
 ## Logs Behavior
 
@@ -118,4 +134,4 @@ Library health and repair are operational surfaces owned by the deep Library sea
 - CAS discovery/repair never follows symlinks and never reads or deletes outside the Distill home, even if a corrupted `blob_path` is absolute or traverses parents
 - explicit `repair` is idempotent, uses transactions for related SQLite mutations, requires caller opt-in for destructive actions, and returns typed named action counts
 - repair never deletes referenced content or mutates immutable Captures/Facts
-- `operations_status` is `not_applicable` until issue #22; that ticket switches the field to actual Sync stale-operation detection. Export crash recovery remains issue #25.
+- `operations_status` is `ok` / `active` / `failed` based on Sync Run lease health (issue #22). Export crash recovery remains issue #25.

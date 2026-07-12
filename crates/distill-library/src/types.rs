@@ -249,12 +249,171 @@ pub struct HealthReport {
     pub orphan_status: String,
     /// Incomplete Capture/Attempt/projection status (`ok` or `failed`).
     pub incomplete_status: String,
-    /// Sync/operations stale-job status. `#21` reports `not_applicable`; `#22` switches to real detection.
+    /// Sync/operations status: `ok`, `active`, or `failed` when Sync Runs exist.
     pub operations_status: String,
     /// Typed integrity and recovery issues.
     pub issues: Vec<HealthIssue>,
     /// Safe reconciliation performed on the most recent open.
     pub open_reconciliation: OpenReconciliation,
+}
+
+/// Persisted per-Source preference surfaced to callers.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourcePreference {
+    /// Source kind string such as `fixture`.
+    pub kind: String,
+    /// Whether the Source is eligible for Sync Runs.
+    pub enabled: bool,
+    /// Optional canonical configured-root override.
+    pub configured_root: Option<String>,
+    /// Last observed display name when known.
+    pub display_name: Option<String>,
+    /// Last observed data root when known.
+    pub data_root: Option<String>,
+}
+
+/// One independent Source detection request.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceDetectRequest {
+    /// Source kind to detect.
+    pub kind: String,
+    /// Optional configured-root override for this detection only.
+    pub configured_root: Option<String>,
+}
+
+/// Independent typed detection outcome for one requested Source.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceDetectResult {
+    /// Requested Source kind.
+    pub kind: String,
+    /// Typed health/status: `ok`, `disabled`, `unavailable`, `missing`, or `unhealthy`.
+    pub status: String,
+    /// Executable path or name when applicable; `None` for Fixture.
+    pub executable: Option<String>,
+    /// Effective data root when detection succeeded.
+    pub effective_data_root: Option<String>,
+    /// Human-readable label when known.
+    pub display_name: Option<String>,
+    /// Typed error class when not ok.
+    pub error_class: Option<String>,
+    /// Redacted safe diagnostic message.
+    pub error_message: Option<String>,
+}
+
+/// Request to start a Sync Run over enabled Sources.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SyncRequest {
+    /// Optional Source kind filter. Empty means every enabled Source.
+    pub source_kinds: Vec<String>,
+}
+
+/// Typed Sync Run progress events for CLI/host/renderer surfaces.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SyncProgress {
+    /// Sync Run row queued with matching Activity.
+    RunQueued {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+    },
+    /// Sync Run transitioned to running.
+    RunStarted {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+    },
+    /// About to process one Source.
+    SourceStarted {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+        /// Source kind string.
+        source_kind: String,
+    },
+    /// Finished processing one Source.
+    SourceFinished {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+        /// Source kind string.
+        source_kind: String,
+        /// Per-source outcome status.
+        status: String,
+    },
+    /// About to process one Capture Candidate (logical identity only).
+    CandidateStarted {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+        /// Source kind string.
+        source_kind: String,
+        /// Logical source path or virtual identity (never absolute FS diagnostics).
+        candidate_id: String,
+    },
+    /// Finished one Capture Candidate.
+    CandidateFinished {
+        /// Durable Sync Run id.
+        sync_run_id: i64,
+        /// Source kind string.
+        source_kind: String,
+        /// Logical candidate identity.
+        candidate_id: String,
+        /// Candidate outcome: `accepted`, `skipped_duplicate`, `failed`, or `cancelled`.
+        outcome: String,
+    },
+}
+
+/// Compact Sync Run summary for status queries.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SyncRunSummary {
+    /// Durable Sync Run id.
+    pub id: i64,
+    /// Explicit status: queued/running/completed/warning/failed/cancelled.
+    pub status: String,
+    /// Whether a cancel request is pending.
+    pub cancel_requested: bool,
+    /// Aggregate accepted Capture count.
+    pub accepted_captures: u64,
+    /// Aggregate skipped duplicates.
+    pub skipped_duplicates: u64,
+    /// Aggregate successful Attempts.
+    pub successful_attempts: u64,
+    /// Aggregate failed Attempts.
+    pub failed_attempts: u64,
+    /// Typed terminal error class when failed/cancelled.
+    pub error_class: Option<String>,
+    /// Redacted terminal message when present.
+    pub error_message: Option<String>,
+    /// Redacted details for non-fatal warning outcomes.
+    pub warning_details: Vec<String>,
+    /// Per-source outcome summaries.
+    pub sources: Vec<SyncSourceOutcome>,
+}
+
+/// Per-Source outcome within one Sync Run.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SyncSourceOutcome {
+    /// Source kind string.
+    pub source_kind: String,
+    /// Outcome status for this Source within the run.
+    pub status: String,
+    /// Accepted Captures for this Source.
+    pub accepted_captures: u64,
+    /// Skipped duplicates for this Source.
+    pub skipped_duplicates: u64,
+    /// Successful Attempts for this Source.
+    pub successful_attempts: u64,
+    /// Failed Attempts for this Source.
+    pub failed_attempts: u64,
+    /// Typed error class when failed.
+    pub error_class: Option<String>,
+    /// Redacted error message when failed.
+    pub error_message: Option<String>,
+}
+
+/// Terminal Sync Run result returned by [`crate::Library::start_sync`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyncRunResult {
+    /// Final Sync Run summary.
+    pub run: SyncRunSummary,
+    /// Distinct Session Identities projected during this run.
+    pub session_identities: Vec<SessionIdentity>,
 }
 
 /// Caller-safe Normalization Attempt summary with immutable Fact counts.

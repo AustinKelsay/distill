@@ -11,6 +11,8 @@ description = "Distill local conversation library (capture, normalize, query, he
 default = []
 ## Test-only ingest fault injection. Absent from production default builds.
 test-faults = []
+## Test-only Sync lease/heartbeat timing overrides. Absent from production default builds.
+test-leases = []
 
 [dependencies]
 chrono = { workspace = true }
@@ -21,6 +23,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }

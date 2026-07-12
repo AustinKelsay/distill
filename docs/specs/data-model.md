@@ -356,9 +356,10 @@ Health and recovery classification over that durable state:
 - unreferenced regular in-root canonical CAS blobs under `blobs/`, with symlinks/malformed tree entries reported as blocking rather than deletion candidates
 - incomplete Captures (no Attempt and no Capture-scoped `capture_failed` recovery), pending Attempts, Sessions with broken `current_attempt_id`/generation linkage, and mismatched materialized Session counters
 - empty successful projections are valid when linkage invariants hold
-- `operations_status` is explicitly `not_applicable` until issue #22
+- `operations_status` is `ok` when no queued/running Sync Run exists, `active` when a live lease is present, and `failed` when a stale or inconsistent Sync Run is detected
+- additive migration `0002` introduces per-Source `enabled` / `configured_root` preferences, durable `sync_runs` with explicit `queued|running|completed|warning|failed|cancelled` status, owner/lease/heartbeat fields, a partial unique index permitting only one queued/running run, and per-source `sync_run_source_outcomes`
 
-Safe open reconciliation may remove only canonical `{64 lowercase hex}.partial` staging files and must report what it reconciled. Orphan CAS deletion (in-root regular canonical files only) and incomplete durable-state repair require an explicit `repair` call; repair is idempotent, transactional for related SQLite mutations, returns typed named actions/counts, appends `capture_failed` for Attempt-less interrupted Captures without inventing Attempts, recomputes Session counters, rebuilds FTS from Session title/project_path, and never silently deletes referenced content or immutable Captures/Facts.
+Safe open reconciliation may remove only canonical `{64 lowercase hex}.partial` staging files and must report what it reconciled. On open, the Library also idempotently fails only stale active Sync Runs (lease expired relative to system UTC; no public injectable clock) and appends one `sync_failed` Activity with safe structured context per newly failed run. Opening another Library against a home with a live lease must not mark the owner stale. Lease refresh and terminal updates are conditional on owner id plus active status; stale repair and owner terminalization are mutually exclusive.
 
 Public Library read/write extensions for Attempt history and retry:
 

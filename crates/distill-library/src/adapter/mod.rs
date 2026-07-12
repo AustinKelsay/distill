@@ -11,11 +11,23 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// Closed Source kind identifiers for v1.
+///
+/// Only [`SourceKind::Fixture`] has a concrete adapter in issue #22. Other kinds
+/// remain registered for detection/preference surfaces and return typed
+/// unavailable results until their dedicated tickets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     /// Synthetic Fixture Source used by contract tests and smoke harnesses.
     Fixture,
+    /// Codex Source (adapter deferred to #26).
+    Codex,
+    /// Claude Code Source (adapter deferred to #27).
+    ClaudeCode,
+    /// OpenCode Source (adapter deferred to #28).
+    OpenCode,
+    /// Droid Source (adapter deferred to #29).
+    Droid,
 }
 
 impl SourceKind {
@@ -23,7 +35,34 @@ impl SourceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Fixture => "fixture",
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude_code",
+            Self::OpenCode => "opencode",
+            Self::Droid => "droid",
         }
+    }
+
+    /// Parse a stable Source kind string.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "fixture" => Some(Self::Fixture),
+            "codex" => Some(Self::Codex),
+            "claude_code" => Some(Self::ClaudeCode),
+            "opencode" => Some(Self::OpenCode),
+            "droid" => Some(Self::Droid),
+            _ => None,
+        }
+    }
+
+    /// Every closed v1 Source kind in stable order.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Fixture,
+            Self::Codex,
+            Self::ClaudeCode,
+            Self::OpenCode,
+            Self::Droid,
+        ]
     }
 }
 
@@ -164,6 +203,18 @@ pub enum SourceStageError {
     /// Parse failed.
     #[error("parse failed: {0}")]
     Parse(String),
+}
+
+impl SourceStageError {
+    /**
+     * Stable public-seam class for redacted SourceAdapter diagnostics.
+     *
+     * Stage details remain internal and are never copied into caller-facing
+     * detection messages.
+     */
+    pub(crate) fn code(&self) -> &'static str {
+        "source_adapter"
+    }
 }
 
 /// Production SourceAdapter seam.

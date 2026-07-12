@@ -13,19 +13,16 @@ cargo test --workspace
 cargo build --workspace
 ```
 
-## Feature-enabled fault contracts (#21)
-
-Fault injection is behind the non-default `test-faults` Cargo feature and is absent from production default builds:
+## Sync / Source settings gates (#22)
 
 ```bash
-cargo test -p distill-library --features test-faults
+cargo test -p distill-library --test library_ops_sync --features test-leases
+cargo test -p distill-cli --test cli_fixture_journey
+cargo test -p distill-desktop --test host_fixture_journey
+npm run desktop:test
 ```
 
-Launcher mode:
-
-```bash
-node scripts/run-library-checks.mjs faults
-```
+Provider subprocess duration bounds and large-stdin cleanup are covered on macOS/Linux. Output-byte caps are covered on all platforms via a deterministic helper without spawning. Heartbeat accuracy uses the non-default `test-leases` feature only.
 
 ## Desktop gates
 

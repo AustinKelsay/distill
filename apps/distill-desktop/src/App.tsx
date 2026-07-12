@@ -1,5 +1,5 @@
 /**
- * First-run Distill UI: home/Fixture inputs and source/sync/session/health results.
+ * First-run Distill UI: home/Fixture inputs, Source settings, Sync Runs, and health.
  */
 
 import { type FormEvent, useEffect, useState } from "react";
@@ -10,17 +10,20 @@ import type {
   HealthReport,
   HostError,
   RepairReport,
+  SourcePreference,
+  SyncProgress,
+  SyncRunResult,
 } from "./types";
 
-/** Explicit UI lifecycle for the first-run Fixture journey. */
-export type UiStatus = "idle" | "running" | "success" | "error";
+/** Explicit UI lifecycle for the first-run Fixture journey and Sync Runs. */
+export type UiStatus = "idle" | "running" | "success" | "warning" | "cancelled" | "error";
 
 type AppProps = {
   bridge: DistillBridge;
 };
 
 /**
- * Render the minimal first-run Fixture caller surface.
+ * Render the Distill first-run Fixture caller plus Source/Sync surfaces.
  * @param props - injected Distill bridge (real Tauri or typed fake)
  */
 export function App({ bridge }: AppProps) {
@@ -28,16 +31,28 @@ export function App({ bridge }: AppProps) {
   const [fixtureRoot, setFixtureRoot] = useState("");
   const [status, setStatus] = useState<UiStatus>("idle");
   const [phase, setPhase] = useState<FixtureJourneyPhase | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [activeSyncRunId, setActiveSyncRunId] = useState<number | null>(null);
   const [result, setResult] = useState<FixtureJourneyResult | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncRunResult | null>(null);
+  const [sources, setSources] = useState<SourcePreference[]>([]);
   const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
   const [confirmRepair, setConfirmRepair] = useState(false);
   const [error, setError] = useState<HostError | null>(null);
 
   useEffect(() => {
-    return bridge.onProgress((nextPhase) => {
+    const stopJourney = bridge.onProgress((nextPhase) => {
       setPhase(nextPhase);
     });
+    const stopSync = bridge.onSyncProgress((progress) => {
+      setSyncProgress(progress);
+      setActiveSyncRunId(progress.sync_run_id);
+    });
+    return () => {
+      stopJourney();
+      stopSync();
+    };
   }, [bridge]);
 
   /**
@@ -49,6 +64,7 @@ export function App({ bridge }: AppProps) {
     setStatus("running");
     setError(null);
     setResult(null);
+    setSyncResult(null);
     setStandaloneHealth(null);
     setRepairReport(null);
     setPhase(null);
@@ -56,6 +72,58 @@ export function App({ bridge }: AppProps) {
       const next = await bridge.runFixtureJourney({ home, fixtureRoot });
       setResult(next);
       setStatus("success");
+    } catch (caught) {
+      setError(normalizeError(caught));
+      setStatus("error");
+    }
+  }
+
+  /**
+   * Enable Fixture Source with the chosen root and start a Sync Run.
+   */
+  async function onStartSync() {
+    setStatus("running");
+    setError(null);
+    setSyncResult(null);
+    setSyncProgress(null);
+    setActiveSyncRunId(null);
+    try {
+      await bridge.setSourcePreference(home, "fixture", true, fixtureRoot || null);
+      const next = await bridge.startSync(home, ["fixture"]);
+      setSyncResult(next);
+      setActiveSyncRunId(null);
+      if (next.run.status === "warning") setStatus("warning");
+      else if (next.run.status === "cancelled") setStatus("cancelled");
+      else if (next.run.status === "failed") setStatus("error");
+      else setStatus("success");
+      const listed = await bridge.listSources(home);
+      setSources(listed);
+    } catch (caught) {
+      setError(normalizeError(caught));
+      setStatus("error");
+    }
+  }
+
+  /**
+   * Request cancellation for the latest Sync Run.
+   */
+  async function onCancelSync() {
+    const id = activeSyncRunId;
+    if (!id) return;
+    try {
+      const summary = await bridge.cancelSync(home, id);
+      setSyncResult({
+        run: summary,
+        session_identities: syncResult?.session_identities ?? [],
+      });
+      if (summary.status === "warning") setStatus("warning");
+      else if (summary.status === "cancelled") setStatus("cancelled");
+      else if (summary.status === "failed") setStatus("error");
+      else if (summary.status === "completed") setStatus("success");
+      else setStatus("running");
+      if (["completed", "warning", "failed", "cancelled"].includes(summary.status)) {
+        setActiveSyncRunId(null);
+      }
     } catch (caught) {
       setError(normalizeError(caught));
       setStatus("error");
@@ -134,6 +202,32 @@ export function App({ bridge }: AppProps) {
         </button>
       </form>
 
+      <section className="form" aria-label="Source settings and Sync Run">
+        <button
+          type="button"
+          onClick={onStartSync}
+          disabled={!home.trim() || status === "running"}
+        >
+          Start Sync Run
+        </button>
+        <button
+          type="button"
+          onClick={onCancelSync}
+          disabled={!home.trim() || status !== "running" || activeSyncRunId === null}
+        >
+          Cancel Sync
+        </button>
+        {sources.length > 0 ? (
+          <ul data-testid="sources-list">
+            {sources.map((source) => (
+              <li key={source.kind}>
+                {source.kind}: {source.enabled ? "enabled" : "disabled"}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
       <section className="form" aria-label="Library health and repair">
         <button type="button" onClick={onCheckHealth} disabled={!home.trim()}>
           Check health
@@ -160,6 +254,7 @@ export function App({ bridge }: AppProps) {
         <p>
           Status: <strong data-testid="status">{status}</strong>
           {phase ? ` · phase: ${phase}` : null}
+          {syncProgress ? ` · sync: ${syncProgress.type}` : null}
         </p>
       </section>
 
@@ -169,6 +264,35 @@ export function App({ bridge }: AppProps) {
           <p>
             <code>{error.code}</code>: {error.message}
           </p>
+        </section>
+      ) : null}
+
+      {syncResult ? (
+        <section className="panel" data-testid="sync-run-panel">
+          <h2>Sync Run</h2>
+          <dl>
+            <dt>Id</dt>
+            <dd>{syncResult.run.id}</dd>
+            <dt>Status</dt>
+            <dd data-testid="sync-run-status">{syncResult.run.status}</dd>
+            <dt>Accepted captures</dt>
+            <dd>{syncResult.run.accepted_captures}</dd>
+            <dt>Sources</dt>
+            <dd>
+              {syncResult.run.sources.length > 0
+                ? syncResult.run.sources
+                    .map((source) => `${source.source_kind}: ${source.status}`)
+                    .join(", ")
+                : "none"}
+            </dd>
+          </dl>
+          {syncResult.run.warning_details?.length ? (
+            <ul data-testid="sync-warning-details">
+              {syncResult.run.warning_details.map((detail) => (
+                <li key={detail}>{detail}</li>
+              ))}
+            </ul>
+          ) : null}
         </section>
       ) : null}
 

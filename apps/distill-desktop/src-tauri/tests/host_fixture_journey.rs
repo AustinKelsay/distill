@@ -48,6 +48,30 @@ fn write_basic_fixture(root: &Path) {
     .expect("manifest");
 }
 
+/** Write two candidates so host cancellation can be observed at the next checkpoint. */
+fn write_two_candidate_fixture(root: &Path) {
+    let captures = root.join("captures");
+    fs::create_dir_all(&captures).expect("captures");
+    for (name, text) in [("one", "one"), ("two", "two")] {
+        fs::write(
+            captures.join(format!("{name}.jsonl")),
+            format!("{{\"record_type\":\"message\",\"role\":\"user\",\"text\":\"{text}\"}}\n"),
+        )
+        .expect("capture");
+    }
+    fs::write(
+        root.join("distill.fixture.json"),
+        r#"{
+  "version": 1,
+  "captures": [
+    {"id": "one", "kind": "file", "relative_path": "captures/one.jsonl", "external_session_id": "host-cancel-one"},
+    {"id": "two", "kind": "file", "relative_path": "captures/two.jsonl", "external_session_id": "host-cancel-two"}
+  ]
+}"#,
+    )
+    .expect("manifest");
+}
+
 #[test]
 fn validates_empty_home_as_typed_host_error() {
     let err = validate_fixture_journey_request("  ", "/tmp").expect_err("empty home");
@@ -146,4 +170,80 @@ fn host_health_and_repair_require_home_and_confirm() {
         .actions
         .iter()
         .any(|action| action.name == "removed_staging_partials"));
+}
+
+#[test]
+fn host_sync_start_and_status() {
+    use distill_desktop_lib::{
+        execute_set_source_preference, execute_sync_start, execute_sync_status,
+        validate_source_preference_request, validate_sync_start_request,
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let pref = validate_source_preference_request(
+        home.to_str().unwrap(),
+        "fixture",
+        true,
+        Some(fixture.to_str().unwrap()),
+    )
+    .expect("pref");
+    execute_set_source_preference(&pref).expect("set");
+
+    let request =
+        validate_sync_start_request(home.to_str().unwrap(), vec!["fixture".into()]).expect("req");
+    let mut progress = Vec::new();
+    let result = execute_sync_start(&request, |event| progress.push(event)).expect("sync");
+    assert_eq!(result.run.status, "completed");
+    assert!(!progress.is_empty());
+
+    let home_req = validate_home_request(home.to_str().unwrap()).expect("home");
+    let status = execute_sync_status(&home_req, Some(result.run.id)).expect("status");
+    assert_eq!(status.id, result.run.id);
+    assert_eq!(status.status, "completed");
+}
+
+#[test]
+fn host_sync_cancel_requests_next_candidate_checkpoint() {
+    use distill_desktop_lib::{
+        execute_set_source_preference, execute_sync_cancel, execute_sync_start,
+        validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
+    };
+    use distill_library::SyncProgress;
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_two_candidate_fixture(&fixture);
+
+    let pref = validate_source_preference_request(
+        home.to_str().unwrap(),
+        "fixture",
+        true,
+        Some(fixture.to_str().unwrap()),
+    )
+    .expect("pref");
+    execute_set_source_preference(&pref).expect("set");
+
+    let request =
+        validate_sync_start_request(home.to_str().unwrap(), vec!["fixture".into()]).expect("req");
+    let mut cancel_response = None;
+    let result = execute_sync_start(&request, |event| {
+        if let SyncProgress::CandidateStarted { sync_run_id, .. } = event {
+            if cancel_response.is_none() {
+                let cancel_request =
+                    validate_sync_id_request(home.to_str().unwrap(), sync_run_id).expect("id");
+                cancel_response = Some(execute_sync_cancel(&cancel_request).expect("cancel"));
+            }
+        }
+    })
+    .expect("sync");
+
+    assert_eq!(result.run.status, "cancelled");
+    assert_eq!(cancel_response.expect("cancel response").status, "running");
 }

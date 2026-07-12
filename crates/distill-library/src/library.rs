@@ -2,19 +2,22 @@
 
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use semver::Version;
 
 use crate::adapter::{FixtureAdapter, ParserIdentity, SourceAdapter, FIXTURE_PARSER_ID};
-use crate::error::LibraryResult;
+use crate::error::{LibraryError, LibraryResult};
 use crate::health::{self as health_ops};
 use crate::ingest;
+use crate::ops::{self, new_owner_id};
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
     ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
     IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport, SearchHit,
-    SessionDetail, SourceSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    SessionDetail, SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary,
+    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES,
+    MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -26,15 +29,17 @@ pub struct Library {
     fixture_parser: ParserIdentity,
     /// Safe reconciliation performed during the most recent open.
     open_reconciliation: OpenReconciliation,
+    /// Owner id for Sync Runs started by this Library instance.
+    owner_id: String,
 }
 
 impl Library {
     /**
      * Open or create a Distill home, apply checksummed migrations, and return a Library.
      *
-     * Safe open reconciliation removes disposable staging partials only and records
-     * what was reconciled. Destructive orphan or incomplete-state repair requires
-     * [`Self::repair`].
+     * Safe open reconciliation removes disposable staging partials only, then
+     * idempotently fails stale Sync Run leases. Destructive orphan or incomplete-state
+     * repair requires [`Self::repair`].
      *
      * Parameters:
      * - `home`: Distill home directory path. Created with mode `0o700` when missing.
@@ -55,6 +60,7 @@ impl Library {
         let mut conn = open_connection(&paths)?;
         migrate_to_latest(&mut conn)?;
         let open_reconciliation = health_ops::reconcile_on_open(&paths)?;
+        ops::fail_stale_active_runs(&mut conn)?;
         Ok(Self {
             paths,
             conn,
@@ -64,6 +70,7 @@ impl Library {
                 version: crate::adapter::FIXTURE_PARSER_VERSION.to_string(),
             },
             open_reconciliation,
+            owner_id: new_owner_id(),
         })
     }
 
@@ -108,6 +115,43 @@ impl Library {
         }
         self.fixture_parser.version = version;
         Ok(())
+    }
+
+    /**
+     * List per-Source preferences, including closed kinds not yet upserted.
+     */
+    pub fn list_sources(&self) -> LibraryResult<Vec<SourcePreference>> {
+        ops::list_source_preferences(&self.conn)
+    }
+
+    /**
+     * Upsert enabled/disabled and optional configured-root preference for one Source.
+     *
+     * Parameters:
+     * - `kind`: closed Source kind string.
+     * - `enabled`: whether Sync may include this Source.
+     * - `configured_root`: optional override directory; `None` clears the override.
+     */
+    pub fn set_source_preference(
+        &mut self,
+        kind: &str,
+        enabled: bool,
+        configured_root: Option<&Path>,
+    ) -> LibraryResult<SourcePreference> {
+        ops::upsert_source_preference(&self.conn, kind, enabled, configured_root)
+    }
+
+    /**
+     * Detect each requested Source independently through typed results.
+     *
+     * Parameters:
+     * - `requests`: one request per Source; failures never abort siblings.
+     */
+    pub fn detect_sources(
+        &self,
+        requests: &[SourceDetectRequest],
+    ) -> LibraryResult<Vec<SourceDetectResult>> {
+        ops::detect_sources(&self.conn, requests, &self.fixture_parser.version)
     }
 
     /**
@@ -163,6 +207,71 @@ impl Library {
             &adapter,
             self.max_capture_bytes,
         )
+    }
+
+    /**
+     * Start a durable Sync Run over enabled Sources.
+     *
+     * A second overlapping start returns [`crate::LibraryError::SyncAlreadyRunning`]
+     * with no Sync Run or Activity side effects. Selection with unknown kinds or zero
+     * enabled Sources fails before any durable side effects.
+     *
+     * Parameters:
+     * - `request`: optional Source kind filter.
+     * - `on_progress`: typed progress observer for run/source/candidate events.
+     */
+    pub fn start_sync<F>(
+        &mut self,
+        request: SyncRequest,
+        on_progress: F,
+    ) -> LibraryResult<SyncRunResult>
+    where
+        F: FnMut(SyncProgress),
+    {
+        ops::start_sync(
+            &mut self.conn,
+            &self.paths,
+            &self.owner_id,
+            &self.fixture_parser,
+            self.max_capture_bytes,
+            &request,
+            on_progress,
+        )
+    }
+
+    /**
+     * Request cancellation of an active Sync Run at the next safe checkpoint.
+     *
+     * Safe for a separate Library instance against the same Distill home.
+     * Terminal runs are idempotent no-ops.
+     *
+     * Parameters:
+     * - `sync_run_id`: durable Sync Run id.
+     */
+    pub fn request_sync_cancel(&mut self, sync_run_id: i64) -> LibraryResult<()> {
+        ops::request_cancel(&self.conn, sync_run_id)
+    }
+
+    /**
+     * Load Sync Run status. When `sync_run_id` is `None`, returns the latest run.
+     *
+     * Parameters:
+     * - `sync_run_id`: optional Sync Run id.
+     */
+    pub fn sync_status(&self, sync_run_id: Option<i64>) -> LibraryResult<SyncRunSummary> {
+        let id = match sync_run_id {
+            Some(id) => id,
+            None => self
+                .conn
+                .query_row(
+                    "SELECT id FROM sync_runs ORDER BY id DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| LibraryError::NotFound("no sync runs".into()))?,
+        };
+        ops::load_sync_run(&self.conn, id)
     }
 
     /**
@@ -285,9 +394,7 @@ impl Library {
     }
 
     /**
-     * Report schema, content, FTS, staging, orphan, and incomplete-state health.
-     *
-     * Stale Sync operations are not representable until issue #22.
+     * Report schema, content, FTS, staging, orphan, incomplete-state, and Sync health.
      */
     pub fn health(&self) -> LibraryResult<HealthReport> {
         health_ops::health(&self.conn, &self.paths, &self.open_reconciliation)

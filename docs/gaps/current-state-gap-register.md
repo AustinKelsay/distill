@@ -30,23 +30,23 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R003: Sync Runs, Curation, Export Deferred
 
-- Status: open
+- Status: open (Sync Runs delivered in #22; Curation/export remain)
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: Library Fixture tracer plus thin CLI/Tauri/React first-run callers cover detect/ingest/attempt-retry/projection/query/replay/health/repair. The first-run "sync" result is the Fixture ingest report, not a generic Sync Run.
-- Impacted files/modules: future Library operations, Curation, export, CLI, host, and renderer modules.
-- Severity: high — the native tracer cannot yet complete the product loop.
-- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, and downstream caller tickets.
+- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, and typed selection/lease-lost edges are implemented for Fixture. Curation and Export Artifacts remain deferred. Provider adapters remain #26–#29.
+- Impacted files/modules: Library ops Sync modules delivered; Curation/export still future; provider adapters still future.
+- Severity: medium for Sync (Fixture-proven); high until Curation/export and providers land.
+- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22 (done for Fixture), Curation #24, export #25, providers #26–#29.
 - Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
 
 - Status: resolved
 - Rule: interrupted Capture acceptance, projection publication, and related transitions reopen into a defined repair state.
-- Current drift: none for ingest fault/health/repair. Library health classifies schema (migration checksums + SQLite quick/integrity/foreign-key checks), referenced content without following CAS symlinks or leaving the Distill home, exact projection/FTS agreement across all searchable fields, canonical staging partials plus unrecognized staging entries, orphan CAS blobs, incomplete Captures/Attempts/projection linkage, and Session counter drift. Empty successful projections are healthy. Safe open reconciles only `{64 lowercase hex}.partial` files. Explicit idempotent transactional `repair` handles orphans (in-root regular canonical blobs only), incomplete state via `capture_failed` recovery (never inventing Attempts), counter recompute, and FTS rebuild from Session title/project_path. Test-only `test-faults` proves the documented ingest boundaries with a typed cfg-gated fault variant. `operations_status` is explicitly `not_applicable` until #22; export crash recovery remains #25.
-- Impacted files/modules: `crates/distill-library` health/repair/fault seams; thin CLI/Tauri/React health/repair callers.
-- Severity: resolved for #21 ingest recovery; Sync/export recovery still open under later gaps/tickets.
-- Target branch/ticket: `feature/distill-clean-rebuild`, #21.
-- Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state.
+- Current drift: none for ingest fault/health/repair. Sync Run stale-lease reopen is covered by #22 (`operations_status` is `ok`/`active`/`failed`). Export crash recovery remains #25.
+- Impacted files/modules: `crates/distill-library` health/repair/fault/Sync seams; thin CLI/Tauri/React callers.
+- Severity: resolved for #21 ingest recovery and #22 Sync lease health; export recovery still open under later gaps/tickets.
+- Target branch/ticket: `feature/distill-clean-rebuild`, #21 / #22.
+- Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state; Sync stale leases fail idempotently on reopen.
 
 ## Historical Electron Gaps
 

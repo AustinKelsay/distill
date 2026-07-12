@@ -56,6 +56,15 @@ if (mode === "clippy" || mode === "rebuild" || mode === "library" || mode === "a
 }
 if (mode === "test" || mode === "rebuild" || mode === "library" || mode === "all") {
   run("cargo", ["test", "--workspace"]);
+  run("cargo", [
+    "test",
+    "-p",
+    "distill-library",
+    "--test",
+    "library_ops_sync",
+    "--features",
+    "test-leases",
+  ]);
 }
 if (mode === "faults" || mode === "all") {
   run("cargo", ["test", "-p", "distill-library", "--features", "test-faults"]);

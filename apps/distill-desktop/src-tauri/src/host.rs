@@ -1,9 +1,10 @@
-//! Testable Tauri host command runner over the public Library Fixture journey.
+//! Testable Tauri host command runner over the public Library seam.
 
 use std::path::{Path, PathBuf};
 
 use distill_library::{
     FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions, RepairReport,
+    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -24,12 +25,39 @@ pub struct HomeRequest {
     pub home: PathBuf,
 }
 
+/// Validated Sync start request.
+#[derive(Clone, Debug)]
+pub struct SyncStartRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Optional Source kind filter.
+    pub source_kinds: Vec<String>,
+}
+
+/// Validated Sync cancel/status request.
+#[derive(Clone, Debug)]
+pub struct SyncIdRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Sync Run id.
+    pub sync_run_id: i64,
+}
+
+/// Validated Source preference update.
+#[derive(Clone, Debug)]
+pub struct SourcePreferenceRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Source kind.
+    pub kind: String,
+    /// Enabled flag.
+    pub enabled: bool,
+    /// Optional configured root.
+    pub configured_root: Option<PathBuf>,
+}
+
 /**
  * Validate renderer-supplied home and Fixture paths.
- *
- * Parameters:
- * - `home`: Distill home path string.
- * - `fixture_root`: Fixture root path string.
  */
 pub fn validate_fixture_journey_request(
     home: &str,
@@ -57,9 +85,6 @@ pub fn validate_fixture_journey_request(
 
 /**
  * Validate a Distill home path for health or repair commands.
- *
- * Parameters:
- * - `home`: Distill home path string.
  */
 pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
     let home = home.trim();
@@ -72,15 +97,66 @@ pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
 }
 
 /**
+ * Validate a Sync start request.
+ */
+pub fn validate_sync_start_request(
+    home: &str,
+    source_kinds: Vec<String>,
+) -> Result<SyncStartRequest, HostError> {
+    let request = validate_home_request(home)?;
+    Ok(SyncStartRequest {
+        home: request.home,
+        source_kinds,
+    })
+}
+
+/**
+ * Validate a Sync id request.
+ */
+pub fn validate_sync_id_request(home: &str, sync_run_id: i64) -> Result<SyncIdRequest, HostError> {
+    let request = validate_home_request(home)?;
+    if sync_run_id <= 0 {
+        return Err(HostError::validation("sync run id must be positive"));
+    }
+    Ok(SyncIdRequest {
+        home: request.home,
+        sync_run_id,
+    })
+}
+
+/**
+ * Validate a Source preference update.
+ */
+pub fn validate_source_preference_request(
+    home: &str,
+    kind: &str,
+    enabled: bool,
+    configured_root: Option<&str>,
+) -> Result<SourcePreferenceRequest, HostError> {
+    let request = validate_home_request(home)?;
+    let kind = kind.trim();
+    if kind.is_empty() {
+        return Err(HostError::validation("source kind must not be empty"));
+    }
+    let configured_root = match configured_root {
+        Some(root) if root.trim().is_empty() => {
+            return Err(HostError::validation(
+                "configured root must not be empty when provided",
+            ));
+        }
+        Some(root) => Some(PathBuf::from(root.trim())),
+        None => None,
+    };
+    Ok(SourcePreferenceRequest {
+        home: request.home,
+        kind: kind.to_string(),
+        enabled,
+        configured_root,
+    })
+}
+
+/**
  * Run the Library Fixture journey and report typed progress phases.
- *
- * This function is intentionally synchronous so Tauri can schedule it off the
- * UI thread via `spawn_blocking`. It never exposes SQLite or filesystem handles
- * to callers beyond path strings already supplied by the host.
- *
- * Parameters:
- * - `request`: validated home and Fixture root.
- * - `on_progress`: phase observer used for typed host events.
  */
 pub fn run_fixture_journey<F>(
     request: &FixtureJourneyRequest,
@@ -99,9 +175,6 @@ where
 
 /**
  * Open a Distill home and return typed health.
- *
- * Parameters:
- * - `request`: validated Distill home.
  */
 pub fn run_health(request: &HomeRequest) -> Result<HealthReport, HostError> {
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
@@ -110,10 +183,6 @@ pub fn run_health(request: &HomeRequest) -> Result<HealthReport, HostError> {
 
 /**
  * Explicit Library repair after the renderer supplies confirmation.
- *
- * Parameters:
- * - `request`: validated Distill home.
- * - `confirm`: must be true; otherwise returns a validation error.
  */
 pub fn run_repair(request: &HomeRequest, confirm: bool) -> Result<RepairReport, HostError> {
     if !confirm {
@@ -124,5 +193,76 @@ pub fn run_repair(request: &HomeRequest, confirm: bool) -> Result<RepairReport, 
     let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
     library
         .repair(RepairOptions::all_documented())
+        .map_err(HostError::from_library)
+}
+
+/**
+ * List Source preferences.
+ */
+pub fn run_list_sources(request: &HomeRequest) -> Result<Vec<SourcePreference>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_sources().map_err(HostError::from_library)
+}
+
+/**
+ * Upsert one Source preference.
+ */
+pub fn run_set_source_preference(
+    request: &SourcePreferenceRequest,
+) -> Result<SourcePreference, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .set_source_preference(
+            &request.kind,
+            request.enabled,
+            request.configured_root.as_deref(),
+        )
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Start a Sync Run off the UI thread with typed progress.
+ */
+pub fn run_sync_start<F>(
+    request: &SyncStartRequest,
+    on_progress: F,
+) -> Result<SyncRunResult, HostError>
+where
+    F: FnMut(SyncProgress),
+{
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .start_sync(
+            SyncRequest {
+                source_kinds: request.source_kinds.clone(),
+            },
+            on_progress,
+        )
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Load Sync Run status.
+ */
+pub fn run_sync_status(
+    request: &HomeRequest,
+    sync_run_id: Option<i64>,
+) -> Result<SyncRunSummary, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .sync_status(sync_run_id)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Request Sync Run cancellation.
+ */
+pub fn run_sync_cancel(request: &SyncIdRequest) -> Result<SyncRunSummary, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .request_sync_cancel(request.sync_run_id)
+        .map_err(HostError::from_library)?;
+    library
+        .sync_status(Some(request.sync_run_id))
         .map_err(HostError::from_library)
 }

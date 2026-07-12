@@ -1,7 +1,7 @@
 //! Library health, open reconciliation, and explicit repair contracts for issue #21.
 //!
-//! Public-seam TDD over real temporary Distill homes. Sync-run stale operations are
-//! reported as `operations_status = not_applicable` until issue #22.
+//! Public-seam TDD over real temporary Distill homes. Sync-run operations status is
+//! `ok`/`active`/`failed` after issue #22 (see `library_ops_sync.rs` and LHR-007).
 
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -113,7 +113,7 @@ fn healthy_home_reports_all_category_status_ok() {
     assert_eq!(health.staging_status, "ok");
     assert_eq!(health.orphan_status, "ok");
     assert_eq!(health.incomplete_status, "ok");
-    assert_eq!(health.operations_status, "not_applicable");
+    assert_eq!(health.operations_status, "ok");
     assert!(health.issues.is_empty());
     assert_eq!(health.open_reconciliation.removed_staging_partials, 0);
 }
@@ -846,15 +846,16 @@ fn missing_referenced_blob_is_blocking_and_not_deleted_by_repair() {
 }
 
 /**
- * LHR-007: operations status is explicit not_applicable until #22; no invented sync codes.
+ * LHR-007: operations status reports ok/active/failed for Sync Runs (issue #22).
+ * Healthy homes with no active Sync Run report `ok` rather than inventing stale codes.
  */
 #[test]
-fn health_reports_operations_status_not_applicable_until_sync_jobs() {
+fn health_reports_operations_status_ok_without_invented_stale_codes() {
     let temp = TempDir::new().expect("temp");
     let home = temp.path().join("home");
     let library = Library::open(&home).expect("open");
     let health = library.health().expect("health");
-    assert_eq!(health.operations_status, "not_applicable");
+    assert_eq!(health.operations_status, "ok");
     assert!(health
         .issues
         .iter()

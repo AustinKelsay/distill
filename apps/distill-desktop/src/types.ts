@@ -84,10 +84,69 @@ export type HealthReport = {
   staging_status: string;
   orphan_status: string;
   incomplete_status: string;
-  /** Sync/operations stale-job status; `not_applicable` until issue #22. */
+  /** Sync/operations status: `ok`, `active`, or `failed`. */
   operations_status: string;
   issues: HealthIssue[];
   open_reconciliation: OpenReconciliation;
+};
+
+/** Per-Source preference. */
+export type SourcePreference = {
+  kind: string;
+  enabled: boolean;
+  configured_root: string | null;
+  display_name: string | null;
+  data_root: string | null;
+};
+
+/** Typed Sync Run progress event. */
+export type SyncProgress =
+  | { type: "run_queued"; sync_run_id: number }
+  | { type: "run_started"; sync_run_id: number }
+  | { type: "source_started"; sync_run_id: number; source_kind: string }
+  | { type: "source_finished"; sync_run_id: number; source_kind: string; status: string }
+  | {
+      type: "candidate_started";
+      sync_run_id: number;
+      source_kind: string;
+      candidate_id: string;
+    }
+  | {
+      type: "candidate_finished";
+      sync_run_id: number;
+      source_kind: string;
+      candidate_id: string;
+      outcome: string;
+    };
+
+/** Sync Run summary. */
+export type SyncRunSummary = {
+  id: number;
+  status: string;
+  cancel_requested: boolean;
+  accepted_captures: number;
+  skipped_duplicates: number;
+  successful_attempts: number;
+  failed_attempts: number;
+  error_class: string | null;
+  error_message: string | null;
+  warning_details?: string[];
+  sources: Array<{
+    source_kind: string;
+    status: string;
+    accepted_captures: number;
+    skipped_duplicates: number;
+    successful_attempts: number;
+    failed_attempts: number;
+    error_class: string | null;
+    error_message: string | null;
+  }>;
+};
+
+/** Terminal Sync Run result. */
+export type SyncRunResult = {
+  run: SyncRunSummary;
+  session_identities: SessionIdentity[];
 };
 
 /** Named repair action count. */
@@ -148,9 +207,39 @@ export type DistillBridge = {
    */
   repair(home: string, confirm: boolean): Promise<RepairReport>;
   /**
-   * Subscribe to typed progress phases.
+   * List Source preferences.
+   * @param home - Distill home path
+   */
+  listSources(home: string): Promise<SourcePreference[]>;
+  /**
+   * Upsert Source preference.
+   */
+  setSourcePreference(
+    home: string,
+    kind: string,
+    enabled: boolean,
+    configuredRoot?: string | null,
+  ): Promise<SourcePreference>;
+  /**
+   * Start a Sync Run.
+   */
+  startSync(home: string, sourceKinds?: string[]): Promise<SyncRunResult>;
+  /**
+   * Load Sync Run status.
+   */
+  syncStatus(home: string, syncRunId?: number | null): Promise<SyncRunSummary>;
+  /**
+   * Request Sync Run cancellation.
+   */
+  cancelSync(home: string, syncRunId: number): Promise<SyncRunSummary>;
+  /**
+   * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback
    * @returns unsubscribe function
    */
   onProgress(listener: (phase: FixtureJourneyPhase) => void): () => void;
+  /**
+   * Subscribe to typed Sync Run progress events.
+   */
+  onSyncProgress(listener: (progress: SyncProgress) => void): () => void;
 };

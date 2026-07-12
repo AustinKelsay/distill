@@ -6,7 +6,13 @@ use sha2::{Digest, Sha256};
 use crate::error::{LibraryError, LibraryResult};
 
 /// Embedded migration scripts in apply order.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../../migrations/0001_initial.sql")),
+    (
+        2,
+        include_str!("../../migrations/0002_source_prefs_sync_runs.sql"),
+    ),
+];
 
 /**
  * Apply all pending checksummed migrations in order.

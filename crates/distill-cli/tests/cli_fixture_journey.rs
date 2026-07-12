@@ -256,3 +256,139 @@ fn cli_repair_requires_confirm_flag() {
     let value: serde_json::Value = serde_json::from_slice(&allowed.stdout).expect("json");
     assert!(!value["repair"]["actions"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn cli_sources_and_sync_commands_human_and_json() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let set = Command::new(distill_bin())
+        .arg("sources")
+        .arg("set")
+        .arg("--home")
+        .arg(&home)
+        .arg("--kind")
+        .arg("fixture")
+        .arg("--enable")
+        .arg("--root")
+        .arg(&fixture)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("sources set");
+    assert_eq!(
+        set.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    let sync = Command::new(distill_bin())
+        .arg("sync")
+        .arg("start")
+        .arg("--home")
+        .arg(&home)
+        .arg("--format")
+        .arg("human")
+        .output()
+        .expect("sync start");
+    assert_eq!(
+        sync.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&sync.stdout);
+    assert!(stdout.contains("sync.status: completed"));
+    assert!(stdout.contains("sync.accepted_captures: 1"));
+
+    let enable_codex = Command::new(distill_bin())
+        .args([
+            "sources",
+            "set",
+            "--home",
+            home.to_str().unwrap(),
+            "--kind",
+            "codex",
+            "--enable",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("enable codex");
+    assert_eq!(enable_codex.status.code(), Some(0));
+
+    let warning = Command::new(distill_bin())
+        .args([
+            "sync",
+            "start",
+            "--home",
+            home.to_str().unwrap(),
+            "--format",
+            "human",
+        ])
+        .output()
+        .expect("warning sync");
+    assert_eq!(warning.status.code(), Some(0));
+    let warning_stdout = String::from_utf8_lossy(&warning.stdout);
+    assert!(warning_stdout.contains("sync.status: warning"));
+    assert!(warning_stdout.contains("sync.warning:"));
+
+    let warning_json = Command::new(distill_bin())
+        .args([
+            "sync",
+            "start",
+            "--home",
+            home.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("warning json sync");
+    assert_eq!(warning_json.status.code(), Some(0));
+    let warning_value: serde_json::Value =
+        serde_json::from_slice(&warning_json.stdout).expect("warning json");
+    let run_id = warning_value["run"]["id"].as_i64().expect("run id");
+    assert!(warning_value["run"]["warning_details"]
+        .as_array()
+        .is_some_and(|details| !details.is_empty()));
+
+    let cancel = Command::new(distill_bin())
+        .args([
+            "sync",
+            "cancel",
+            "--home",
+            home.to_str().unwrap(),
+            "--id",
+            &run_id.to_string(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("cancel terminal run");
+    assert_eq!(cancel.status.code(), Some(0));
+    let cancel_value: serde_json::Value =
+        serde_json::from_slice(&cancel.stdout).expect("cancel json");
+    assert_eq!(cancel_value["run"]["status"], "warning");
+
+    let status = Command::new(distill_bin())
+        .args([
+            "sync",
+            "status",
+            "--home",
+            home.to_str().unwrap(),
+            "--id",
+            &run_id.to_string(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("status");
+    assert_eq!(status.status.code(), Some(0));
+    let status_value: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status json");
+    assert_eq!(status_value["run"]["id"], run_id);
+}

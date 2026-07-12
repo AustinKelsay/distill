@@ -48,6 +48,42 @@ describe("Tauri bridge", () => {
     });
   });
 
+  it("invokes sync and source preference commands", async () => {
+    tauri.invoke.mockResolvedValue({ ok: true });
+    const bridge = createTauriBridge();
+
+    await bridge.setSourcePreference("/tmp/home", "fixture", true, "/tmp/fixture");
+    expect(tauri.invoke).toHaveBeenCalledWith("set_source_preference_command", {
+      home: "/tmp/home",
+      kind: "fixture",
+      enabled: true,
+      configuredRoot: "/tmp/fixture",
+    });
+
+    await bridge.startSync("/tmp/home", ["fixture"]);
+    expect(tauri.invoke).toHaveBeenCalledWith("sync_start_command", {
+      home: "/tmp/home",
+      sourceKinds: ["fixture"],
+    });
+
+    await bridge.cancelSync("/tmp/home", 7);
+    expect(tauri.invoke).toHaveBeenCalledWith("sync_cancel_command", {
+      home: "/tmp/home",
+      syncRunId: 7,
+    });
+
+    await bridge.listSources("/tmp/home");
+    expect(tauri.invoke).toHaveBeenCalledWith("list_sources_command", {
+      home: "/tmp/home",
+    });
+
+    await bridge.syncStatus("/tmp/home", 7);
+    expect(tauri.invoke).toHaveBeenCalledWith("sync_status_command", {
+      home: "/tmp/home",
+      syncRunId: 7,
+    });
+  });
+
   it("unsubscribes when cleanup happens before async listener registration finishes", async () => {
     let finishRegistration!: (unlisten: () => void) => void;
     tauri.listen.mockReturnValue(

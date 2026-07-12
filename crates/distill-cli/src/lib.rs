@@ -1,4 +1,5 @@
-//! Thin Distill CLI over the public Library Fixture journey, health, and repair.
+//! Thin Distill CLI over the public Library Fixture journey, health, repair,
+//! Source preferences, and Sync Runs.
 //!
 //! Exit codes:
 //! - `0` — command succeeded
@@ -13,7 +14,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
     FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, LibraryError, RepairOptions,
-    RepairReport,
+    RepairReport, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 use serde::Serialize;
 
@@ -35,19 +36,15 @@ pub enum OutputFormat {
 }
 
 /// Distill CLI arguments.
-///
-/// When no subcommand is provided, `--home` and `--fixture` run the Fixture journey
-/// (preserved thin-caller contract). Owning `health` and `repair` subcommands cover
-/// issue #21 recovery surfaces.
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, and repair",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, and sync",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
-    /// Owning health/repair commands. Absent means Fixture journey mode.
+    /// Owning commands. Absent means Fixture journey mode.
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -72,7 +69,6 @@ pub enum Command {
         /// Distill home directory to open.
         #[arg(long, value_name = "PATH")]
         home: PathBuf,
-
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -82,11 +78,100 @@ pub enum Command {
         /// Distill home directory to open.
         #[arg(long, value_name = "PATH")]
         home: PathBuf,
-
         /// Required confirmation flag for destructive repair actions.
         #[arg(long)]
         confirm: bool,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Source preference commands.
+    Sources {
+        /// Nested source list/set action.
+        #[command(subcommand)]
+        action: SourcesCommand,
+    },
+    /// Sync Run start/status/cancel commands.
+    Sync {
+        /// Nested sync start/status/cancel action.
+        #[command(subcommand)]
+        action: SyncCommand,
+    },
+}
 
+/// Source preference subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SourcesCommand {
+    /// List per-Source preferences.
+    List {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Set enabled/disabled and optional configured-root for one Source.
+    Set {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Closed Source kind string.
+        #[arg(long)]
+        kind: String,
+        /// Enable the Source for Sync Runs.
+        #[arg(long, group = "enabled_flag")]
+        enable: bool,
+        /// Disable the Source for Sync Runs.
+        #[arg(long, group = "enabled_flag")]
+        disable: bool,
+        /// Optional configured-root override.
+        #[arg(long, value_name = "PATH")]
+        root: Option<PathBuf>,
+        /// Clear any configured-root override.
+        #[arg(long)]
+        clear_root: bool,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+}
+
+/// Sync Run subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SyncCommand {
+    /// Start a Sync Run over enabled Sources.
+    Start {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Optional Source kind filter (repeatable).
+        #[arg(long = "kind", value_name = "KIND")]
+        kinds: Vec<String>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Show Sync Run status.
+    Status {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Optional Sync Run id; defaults to latest.
+        #[arg(long, value_name = "ID")]
+        id: Option<i64>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Request Sync Run cancellation at the next safe checkpoint.
+    Cancel {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Sync Run id to cancel.
+        #[arg(long, value_name = "ID")]
+        id: i64,
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -111,9 +196,6 @@ pub struct CliErrorBody {
 
 /**
  * Execute the selected CLI command and write stable output to stdout/stderr.
- *
- * Parameters:
- * - `cli`: parsed CLI arguments.
  */
 pub fn run(cli: Cli) -> ExitCode {
     match execute(cli) {
@@ -128,7 +210,6 @@ pub fn run(cli: Cli) -> ExitCode {
     }
 }
 
-/// Internal CLI failure with documented exit code.
 struct CliFailure {
     code: u8,
     format: OutputFormat,
@@ -167,9 +248,6 @@ impl CliFailure {
     }
 }
 
-/**
- * Validate inputs and dispatch journey, health, or repair.
- */
 fn execute(cli: Cli) -> Result<String, CliFailure> {
     match cli.command {
         Some(Command::Health { home, format }) => execute_health(home, format),
@@ -178,13 +256,12 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
             confirm,
             format,
         }) => execute_repair(home, confirm, format),
+        Some(Command::Sources { action }) => execute_sources(action),
+        Some(Command::Sync { action }) => execute_sync(action),
         None => execute_journey(cli.home, cli.fixture, cli.format),
     }
 }
 
-/**
- * Run the Fixture journey using the legacy flat `--home` / `--fixture` flags.
- */
 fn execute_journey(
     home: Option<PathBuf>,
     fixture: Option<PathBuf>,
@@ -210,13 +287,9 @@ fn execute_journey(
     let result = library
         .run_fixture_journey(&fixture, |phase| phases.push(phase))
         .map_err(|err| CliFailure::runtime(format, err))?;
-
     Ok(render_journey_success(format, &result, &phases))
 }
 
-/**
- * Open a Distill home and print typed health.
- */
 fn execute_health(home: PathBuf, format: OutputFormat) -> Result<String, CliFailure> {
     if home.as_os_str().is_empty() {
         return Err(CliFailure::usage(format, "home path must not be empty"));
@@ -228,9 +301,6 @@ fn execute_health(home: PathBuf, format: OutputFormat) -> Result<String, CliFail
     Ok(render_health(format, &health))
 }
 
-/**
- * Open a Distill home and run explicit documented repair after `--confirm`.
- */
 fn execute_repair(
     home: PathBuf,
     confirm: bool,
@@ -252,9 +322,109 @@ fn execute_repair(
     Ok(render_repair(format, &report))
 }
 
-/**
- * Render a successful journey in the requested format.
- */
+fn execute_sources(action: SourcesCommand) -> Result<String, CliFailure> {
+    match action {
+        SourcesCommand::List { home, format } => {
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let sources = library
+                .list_sources()
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_sources(format, &sources))
+        }
+        SourcesCommand::Set {
+            home,
+            kind,
+            enable,
+            disable,
+            root,
+            clear_root,
+            format,
+        } => {
+            if !enable && !disable {
+                return Err(CliFailure::usage(
+                    format,
+                    "sources set requires --enable or --disable",
+                ));
+            }
+            if enable && disable {
+                return Err(CliFailure::usage(
+                    format,
+                    "sources set cannot use both --enable and --disable",
+                ));
+            }
+            if root.is_some() && clear_root {
+                return Err(CliFailure::usage(
+                    format,
+                    "sources set cannot use both --root and --clear-root",
+                ));
+            }
+            let configured_root = if clear_root { None } else { root.as_deref() };
+            // When neither root nor clear_root is supplied, preserve existing root by
+            // reading current preference first.
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let existing_root = if root.is_none() && !clear_root {
+                library
+                    .list_sources()
+                    .map_err(|err| CliFailure::runtime(format, err))?
+                    .into_iter()
+                    .find(|pref| pref.kind == kind)
+                    .and_then(|pref| pref.configured_root)
+            } else {
+                None
+            };
+            let root_path = configured_root
+                .map(std::path::Path::new)
+                .or(existing_root.as_ref().map(std::path::Path::new));
+            let pref = library
+                .set_source_preference(&kind, enable, root_path)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_source(format, &pref))
+        }
+    }
+}
+
+fn execute_sync(action: SyncCommand) -> Result<String, CliFailure> {
+    match action {
+        SyncCommand::Start {
+            home,
+            kinds,
+            format,
+        } => {
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let mut progress = Vec::new();
+            let result = library
+                .start_sync(
+                    SyncRequest {
+                        source_kinds: kinds,
+                    },
+                    |event| progress.push(event),
+                )
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_sync_result(format, &result, &progress))
+        }
+        SyncCommand::Status { home, id, format } => {
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let summary = library
+                .sync_status(id)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_sync_status(format, &summary))
+        }
+        SyncCommand::Cancel { home, id, format } => {
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            library
+                .request_sync_cancel(id)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            let summary = library
+                .sync_status(Some(id))
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_sync_status(format, &summary))
+        }
+    }
+}
+
 fn render_journey_success(
     format: OutputFormat,
     result: &FixtureJourneyResult,
@@ -328,9 +498,6 @@ fn render_journey_success(
     }
 }
 
-/**
- * Render a health report for CLI callers.
- */
 fn render_health(format: OutputFormat, health: &HealthReport) -> String {
     match format {
         OutputFormat::Json => {
@@ -367,9 +534,6 @@ fn render_health(format: OutputFormat, health: &HealthReport) -> String {
     }
 }
 
-/**
- * Render a repair report for CLI callers.
- */
 fn render_repair(format: OutputFormat, report: &RepairReport) -> String {
     match format {
         OutputFormat::Json => {
@@ -392,6 +556,105 @@ fn render_repair(format: OutputFormat, report: &RepairReport) -> String {
                 "health.incomplete_status: {}",
                 report.health_after.incomplete_status
             ));
+            lines.join("\n")
+        }
+    }
+}
+
+fn render_sources(format: OutputFormat, sources: &[SourcePreference]) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "sources": sources,
+        }))
+        .expect("json"),
+        OutputFormat::Human => sources
+            .iter()
+            .map(|pref| {
+                format!(
+                    "source.{} enabled={} root={}",
+                    pref.kind,
+                    pref.enabled,
+                    pref.configured_root.as_deref().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn render_source(format: OutputFormat, pref: &SourcePreference) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "source": pref,
+        }))
+        .expect("json"),
+        OutputFormat::Human => format!(
+            "source.{} enabled={} root={}",
+            pref.kind,
+            pref.enabled,
+            pref.configured_root.as_deref().unwrap_or("")
+        ),
+    }
+}
+
+fn render_sync_result(
+    format: OutputFormat,
+    result: &SyncRunResult,
+    progress: &[SyncProgress],
+) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "progress": progress,
+            "run": result.run,
+            "session_identities": result.session_identities,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("ok: true"),
+                format!("sync.id: {}", result.run.id),
+                format!("sync.status: {}", result.run.status),
+                format!("sync.accepted_captures: {}", result.run.accepted_captures),
+                format!(
+                    "sync.successful_attempts: {}",
+                    result.run.successful_attempts
+                ),
+                format!("sync.failed_attempts: {}", result.run.failed_attempts),
+            ];
+            for source in &result.run.sources {
+                lines.push(format!(
+                    "sync.source.{} status={}",
+                    source.source_kind, source.status
+                ));
+            }
+            for detail in &result.run.warning_details {
+                lines.push(format!("sync.warning: {detail}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+fn render_sync_status(format: OutputFormat, summary: &SyncRunSummary) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "run": summary,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("sync.id: {}", summary.id),
+                format!("sync.status: {}", summary.status),
+                format!("sync.cancel_requested: {}", summary.cancel_requested),
+                format!("sync.accepted_captures: {}", summary.accepted_captures),
+            ];
+            for detail in &summary.warning_details {
+                lines.push(format!("sync.warning: {detail}"));
+            }
             lines.join("\n")
         }
     }

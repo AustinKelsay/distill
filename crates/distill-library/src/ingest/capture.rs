@@ -92,8 +92,10 @@ pub(super) fn upsert_source(
 ) -> LibraryResult<i64> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO sources (kind, display_name, data_root, metadata_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, '{}', ?4, ?4)
+        "INSERT INTO sources (
+            kind, display_name, data_root, metadata_json, created_at, updated_at,
+            enabled, configured_root
+         ) VALUES (?1, ?2, ?3, '{}', ?4, ?4, 0, NULL)
          ON CONFLICT(kind) DO UPDATE SET
            display_name = excluded.display_name,
            data_root = excluded.data_root,

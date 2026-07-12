@@ -77,6 +77,39 @@ pub enum LibraryError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// A Sync Run is already queued or running for this Distill home.
+    ///
+    /// Starting again creates no Sync Run row and no Activity side effects.
+    #[error("sync already running")]
+    SyncAlreadyRunning,
+
+    /// Sync selection resolved to zero enabled Sources.
+    ///
+    /// Starting creates no Sync Run row and no Activity side effects.
+    #[error("sync selection has no enabled sources")]
+    SyncNoEnabledSources,
+
+    /// This Library instance lost Sync Run lease ownership.
+    ///
+    /// The run was terminalized elsewhere (for example stale reopen repair). The
+    /// former owner must not overwrite status, Activity, or continue candidate work.
+    #[error("sync lease lost")]
+    SyncLeaseLost,
+
+    /// Configured Source root failed canonicalization or does not exist as a directory.
+    #[error("invalid configured root: {detail}")]
+    InvalidConfiguredRoot {
+        /// Redacted safe detail without raw path dumps when possible.
+        detail: String,
+    },
+
+    /// Provider subprocess exceeded duration or output bounds.
+    #[error("provider process bound exceeded: {detail}")]
+    ProviderProcessBoundExceeded {
+        /// Redacted bound-failure detail.
+        detail: String,
+    },
+
     /// Test-only injected fault at a named ingest boundary.
     #[cfg(feature = "test-faults")]
     #[error("injected test fault: {point:?}")]
@@ -101,6 +134,11 @@ impl LibraryError {
             Self::StagedContentIntegrity { .. } => "staged_content_integrity",
             Self::NotFound(_) => "not_found",
             Self::InvalidArgument(_) => "invalid_argument",
+            Self::SyncAlreadyRunning => "sync_already_running",
+            Self::SyncNoEnabledSources => "sync_no_enabled_sources",
+            Self::SyncLeaseLost => "sync_lease_lost",
+            Self::InvalidConfiguredRoot { .. } => "invalid_configured_root",
+            Self::ProviderProcessBoundExceeded { .. } => "provider_process_bound_exceeded",
             #[cfg(feature = "test-faults")]
             Self::InjectedTestFault { .. } => "injected_test_fault",
         }

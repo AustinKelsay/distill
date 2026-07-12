@@ -63,10 +63,12 @@ pub fn reconcile_on_open(paths: &DistillPaths) -> LibraryResult<OpenReconciliati
 
 /**
  * Build a typed health report covering schema, content, FTS, staging, orphans,
- * incomplete durable state, and an explicit operations handoff status.
+ * incomplete durable state, and Sync Run operations status.
  *
- * Sync-run stale operations are not representable until issue #22; the report
- * exposes `operations_status = "not_applicable"` rather than inventing jobs.
+ * Parameters:
+ * - `conn`: Library SQLite connection.
+ * - `paths`: Distill home paths.
+ * - `open_reconciliation`: safe open reconciliation counts.
  */
 pub fn health(
     conn: &Connection,
@@ -81,6 +83,8 @@ pub fn health(
     let staging_status = check_staging_partials(&paths.staging, &mut issues)?;
     let orphan_status = check_orphan_blobs(conn, &paths.home, &paths.blobs, &mut issues)?;
     let incomplete_status = check_incomplete_state(conn, &mut issues)?;
+    let (operations_status, mut ops_issues) = crate::ops::active_sync_operations_status(conn)?;
+    issues.append(&mut ops_issues);
 
     Ok(HealthReport {
         ok: issues.iter().all(|issue| issue.severity == "info"),
@@ -90,8 +94,7 @@ pub fn health(
         staging_status,
         orphan_status,
         incomplete_status,
-        // Explicit until Sync job health lands in #22.
-        operations_status: "not_applicable".to_string(),
+        operations_status,
         issues,
         open_reconciliation: open_reconciliation.clone(),
     })

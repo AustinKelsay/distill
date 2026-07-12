@@ -1,23 +1,23 @@
 //! Tauri IPC command adapters for Distill desktop.
 
-use distill_library::{FixtureJourneyResult, HealthReport, RepairReport};
+use distill_library::{
+    FixtureJourneyResult, HealthReport, RepairReport, SourcePreference, SyncProgress,
+    SyncRunResult, SyncRunSummary,
+};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_fixture_journey, run_health, run_repair, validate_fixture_journey_request,
-    validate_home_request,
+    run_fixture_journey, run_health, run_list_sources, run_repair, run_set_source_preference,
+    run_sync_cancel, run_sync_start, run_sync_status, validate_fixture_journey_request,
+    validate_home_request, validate_source_preference_request, validate_sync_id_request,
+    validate_sync_start_request,
 };
-use crate::FIXTURE_JOURNEY_PROGRESS_EVENT;
+use crate::{FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
 
 /**
  * Tauri command: validate inputs, run the Fixture journey off the UI thread,
  * emit typed progress, and return source/sync/session/health results.
- *
- * Parameters:
- * - `app`: Tauri app handle used to emit progress events.
- * - `home`: Distill home path.
- * - `fixture_root`: Fixture root path.
  */
 #[tauri::command]
 pub async fn run_fixture_journey_command(
@@ -40,9 +40,6 @@ pub async fn run_fixture_journey_command(
 
 /**
  * Tauri command: open a Distill home and return typed health.
- *
- * Parameters:
- * - `home`: Distill home path.
  */
 #[tauri::command]
 pub async fn health_command(home: String) -> Result<HealthReport, HostError> {
@@ -57,15 +54,101 @@ pub async fn health_command(home: String) -> Result<HealthReport, HostError> {
 
 /**
  * Tauri command: explicit Library repair after renderer confirmation.
- *
- * Parameters:
- * - `home`: Distill home path.
- * - `confirm`: must be true to authorize destructive repair.
  */
 #[tauri::command]
 pub async fn repair_command(home: String, confirm: bool) -> Result<RepairReport, HostError> {
     let request = validate_home_request(&home)?;
     tauri::async_runtime::spawn_blocking(move || run_repair(&request, confirm))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: list Source preferences.
+ */
+#[tauri::command]
+pub async fn list_sources_command(home: String) -> Result<Vec<SourcePreference>, HostError> {
+    let request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_list_sources(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: upsert Source preference.
+ */
+#[tauri::command]
+pub async fn set_source_preference_command(
+    home: String,
+    kind: String,
+    enabled: bool,
+    configured_root: Option<String>,
+) -> Result<SourcePreference, HostError> {
+    let request =
+        validate_source_preference_request(&home, &kind, enabled, configured_root.as_deref())?;
+    tauri::async_runtime::spawn_blocking(move || run_set_source_preference(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: start Sync Run off the UI thread with typed progress events.
+ */
+#[tauri::command]
+pub async fn sync_start_command(
+    app: AppHandle,
+    home: String,
+    source_kinds: Option<Vec<String>>,
+) -> Result<SyncRunResult, HostError> {
+    let request = validate_sync_start_request(&home, source_kinds.unwrap_or_default())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_sync_start(&request, |progress: SyncProgress| {
+            let _ = app.emit(SYNC_PROGRESS_EVENT, progress);
+        })
+    })
+    .await
+    .map_err(|err| HostError {
+        code: "join".to_string(),
+        message: err.to_string(),
+    })?
+}
+
+/**
+ * Tauri command: Sync Run status.
+ */
+#[tauri::command]
+pub async fn sync_status_command(
+    home: String,
+    sync_run_id: Option<i64>,
+) -> Result<SyncRunSummary, HostError> {
+    let request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_sync_status(&request, sync_run_id))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: request Sync Run cancellation.
+ */
+#[tauri::command]
+pub async fn sync_cancel_command(
+    home: String,
+    sync_run_id: i64,
+) -> Result<SyncRunSummary, HostError> {
+    let request = validate_sync_id_request(&home, sync_run_id)?;
+    tauri::async_runtime::spawn_blocking(move || run_sync_cancel(&request))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),
