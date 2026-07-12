@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#36 complete; #37 final matrix/cutover in progress
+- Current status: #18–#37 complete; staging handoff is the non-draft PR #38
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#36 implemented and review packets recorded; #36 Ubuntu CI green
+- Ticket sessions: #18–#37 implemented and review packets recorded; #36 Ubuntu CI green
 - Agent briefs: Pending
-- Review packets: #18–#36 complete; #37 pending
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit; #36 one major README evidence-status finding fixed before commit
+- Review packets: #18–#37 complete; #37 matrix/cutover report and per-scenario registry recorded
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit; #36 one major README evidence-status finding fixed before commit; #37 two documentation evidence/count findings fixed before commit
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
@@ -64,7 +64,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #34 Scale/performance                  | AFK  | Complete    | Grok xhigh performance review + final rereview PASS                               | Added bounded synthetic corpus, full target benchmark, session paging index, selective FTS probe, cadence/cancellation evidence, and governed docs                       | Full 25k/1M/10 GiB run; Rust scale suite; workspace gates; CodeRabbit                                   |
 | #35 macOS packaging                    | AFK  | Complete    | Grok xhigh implementation + independent rereview; CodeRabbit minor finding fixed  | `.app` metadata/capability gate, clean packaged Fixture-to-export journey, restart persistence, train export, Fixture hashes, and temp-parent containment                | Package/smoke; Rust/desktop/a11y gates; Grok PASS                                                       |
 | #36 Linux packaging                    | AFK  | Complete    | Grok xhigh implementation + final rereview PASS; Ubuntu CI green                  | Ubuntu `.deb`/AppImage package, installed-host Xvfb/dbus smoke, and CI artifact evidence                                                                                 | Yes                                                                                                     |
-| #37 Matrix/cutover                     | AFK  | In progress | —                                                                                 | Final contract matrix/gap/cutover verification and staging handoff                                                                                                       | No                                                                                                      |
+| #37 Matrix/cutover                     | AFK  | Complete    | Grok xhigh acceptance audit + final gate review                                   | 130-row scenario evidence registry, coverage additions, dependency/security decision, gate log, gap-register update, and Electron cutover report                             | Yes                                                                                                     |
 
 ## Parked HITL Slices
 
@@ -95,6 +95,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #34   | `1dc5519`   | Grok 4.5 xhigh scale implementation + independent performance review                                           | `90c8dbc`                       | PASS after full-corpus budget miss was fixed with migration 0006 and selective deterministic FTS probe; CodeRabbit rate-limited with no findings                                                      | Full 25k/1M/10 GiB JSON run; scale smoke; workspace clippy/tests/fault/release gates                                                   |
 | #35   | `76fb500`   | Grok 4.5 xhigh packaging implementation + independent rereview                                                 | `e5ea3c6`                       | PASS after plist/signing/search/artifact/containment evidence fixes; CodeRabbit one minor signing-classification finding fixed                                                                        | Package/smoke on Darwin arm64; desktop 39 + a11y 12; workspace clippy/tests/fault/release; Grok PASS                                   |
 | #36   | `dc40858`   | Grok 4.5 xhigh Linux packaging implementation + final rereview                                                 | `1a73549`, `0d7989d`, `bffe87c` | PASS after Debian `Depends`, AT-SPI, fail-closed binary, evidence wording, Xvfb focus, and offscreen scroll fixes; Ubuntu workflow 29210244139 green; CodeRabbit README finding fixed                 | Local Rust/desktop gates pass; Ubuntu 24.04 x64 package/install/smoke/artifact evidence; no screen-reader claim                        |
+| #37   | `7b1fe3d`   | Grok 4.5 xhigh matrix/cutover acceptance audit                                            | pending                              | PASS after per-scenario registry, missing coverage rows, fresh Node 26/Rust/desktop/dependency/package gates, and explicit residual/cutover report; CodeRabbit final review findings fixed | 130 registry rows; launcher/all gates; Node 26 legacy 104/104; macOS package/smoke; Ubuntu workflow 29210575567; human SR and Rust advisory scan remain explicit |
 
 ## Open Questions
 

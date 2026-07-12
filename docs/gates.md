@@ -80,6 +80,29 @@ npm test
 
 Preferred Node for the documented legacy suite: Node 26 (`/opt/homebrew/Cellar/node/26.0.0/bin` on this machine). Node 22 may hit the known inspector incompatibility.
 
+## Security and dependency gates
+
+These are the repository-available dependency gates for the rebuild cutover:
+
+```bash
+cargo tree --workspace --locked
+npm audit --audit-level=moderate --ignore-scripts
+```
+
+`cargo tree --locked` proves the Rust workspace resolves from the checked-in lockfile;
+`npm audit` is the JavaScript advisory scan, including the retained Electron baseline.
+A Rust advisory-database scan such as
+`cargo audit` is not part of the pinned workspace toolchain, so the cutover report must
+keep that tool availability limitation explicit rather than implying an advisory scan
+that was not run.
+
+## Documentation-drift gate
+
+`npm test` includes `src/test/docs.test.ts`, which verifies the canonical docs package,
+authority order, gap register, matrix, fixture manifest, and agent instructions. The
+cutover evidence records this as the documentation-drift result; a docs-only change
+must still run the same test.
+
 ## Combined launcher
 
 ```bash

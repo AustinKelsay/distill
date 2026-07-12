@@ -25,7 +25,8 @@ test("canonical docs package exists", () => {
     "docs/governance/spec-governance.md",
     "docs/gaps/current-state-gap-register.md",
     "docs/roadmap/spec-alignment-plan.md",
-    "docs/testing/contract-test-matrix.md"
+    "docs/testing/contract-test-matrix.md",
+    "docs/testing/contract-scenario-evidence.md"
   ];
 
   for (const relativePath of requiredFiles) {
@@ -51,7 +52,8 @@ test("docs index defines authority order and links the canonical spec set", () =
     "docs/governance/spec-governance.md",
     "docs/gaps/current-state-gap-register.md",
     "docs/roadmap/spec-alignment-plan.md",
-    "docs/testing/contract-test-matrix.md"
+    "docs/testing/contract-test-matrix.md",
+    "docs/testing/contract-scenario-evidence.md"
   ];
 
   for (const relativePath of requiredLinks) {
@@ -174,6 +176,64 @@ test("ingest fixture manifest covers the required shared connector-contract corp
       true,
       `${fixtureId} fixture directory should exist`
     );
+  }
+});
+
+test("cutover registry covers every matrix scenario and cites executable files", () => {
+  const matrix = readRepoFile("docs/testing/contract-test-matrix.md");
+  const registry = readRepoFile("docs/testing/contract-scenario-evidence.md");
+  const scenarioSection = matrix.split("## Scenario Matrix")[1]?.split("## Executable")[0] ?? "";
+  const matrixIds = [...scenarioSection.matchAll(/^\| `([^`]+)`/gm)].map((match) => match[1]);
+  const registryRows = registry
+    .split("\n")
+    .filter((line) => /^\| [A-Z0-9-]+ \|/.test(line) && !line.startsWith("| ---"));
+  const registryIds = registryRows.map((line) => line.split("|")[1].trim());
+
+  assert.deepEqual(new Set(registryIds), new Set(matrixIds));
+  assert.equal(registryRows.length, matrixIds.length);
+
+  for (const line of registryRows) {
+    const symbolCell = line.split("|")[5] ?? "";
+    const paths = symbolCell.match(/(?:src|crates|apps)\/[^\s:+]+\.(?:tsx|ts|rs|mjs|json)(?=[:\s]|\x60|$)/g) ?? [];
+    assert.ok(paths.length > 0, `registry symbol should name an executable file: ${symbolCell}`);
+    assert.ok(paths.some((relativePath) => fs.existsSync(path.join(repoRoot, relativePath))), symbolCell);
+
+    for (const symbol of symbolCell.split(" + ").map((entry) => entry.trim())) {
+      const relativePath = paths.find((candidate) => symbol.includes(candidate));
+      if (!relativePath) continue;
+
+      const source = readRepoFile(relativePath);
+      const suffix = symbol.slice(symbol.indexOf(relativePath) + relativePath.length).trim();
+      for (const [, , title] of suffix.matchAll(/::(?:test|it)\((["'])(.*?)\1\)/g)) {
+        assert.ok(
+          source.includes(`test(\"${title}\"`) ||
+            source.includes(`test('${title}'`) ||
+            source.includes(`it(\"${title}\"`) ||
+            source.includes(`it('${title}'`),
+          `${relativePath} should contain test title ${title}`
+        );
+      }
+
+      if (relativePath.endsWith(".rs")) {
+        const functionName = suffix.match(/^::(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+        if (functionName) {
+          assert.match(source, new RegExp(`\\bfn\\s+${functionName}\\b`), `${relativePath} should define ${functionName}`);
+        }
+      } else if (suffix.startsWith("::")) {
+        const title = suffix.slice(2);
+        if (relativePath.endsWith(".json")) {
+          assert.ok(source.includes(`\"${title}\"`), `${relativePath} should define ${title}`);
+        } else if (!suffix.includes("::test(") && !suffix.includes("::it(")) {
+          assert.ok(
+            source.includes(`it(\"${title}\"`) ||
+            source.includes(`it('${title}'`) ||
+            source.includes(`test(\"${title}\"`) ||
+            source.includes(`test('${title}'`),
+            `${relativePath} should contain test title ${title}`
+          );
+        }
+      }
+    }
   }
 });
 

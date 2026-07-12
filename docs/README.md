@@ -20,8 +20,9 @@ Authoritative normative documents:
 10. `docs/specs/scale-and-latency.md`
 11. `docs/governance/spec-governance.md`
 12. `docs/testing/contract-test-matrix.md`
-13. `docs/gaps/current-state-gap-register.md`
-14. `docs/roadmap/spec-alignment-plan.md`
+13. `docs/testing/contract-scenario-evidence.md` (the #37 per-scenario evidence registry)
+14. `docs/gaps/current-state-gap-register.md`
+15. `docs/roadmap/spec-alignment-plan.md`
 
 Non-normative documents explain the current implementation, preserve research notes, or provide navigation:
 
@@ -50,8 +51,9 @@ Read the documents in this order:
 10. `docs/specs/scale-and-latency.md`
 11. `docs/gaps/current-state-gap-register.md`
 12. `docs/testing/contract-test-matrix.md`
-13. `docs/roadmap/spec-alignment-plan.md`
-14. `docs/governance/spec-governance.md`
+13. `docs/testing/contract-scenario-evidence.md`
+14. `docs/roadmap/spec-alignment-plan.md`
+15. `docs/governance/spec-governance.md`
 
 That order moves from system intent to entity semantics to pipeline behavior to current drift, tests, delivery order, and process.
 
@@ -69,6 +71,7 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Scale, latency, progress, and cancellation budgets: `docs/specs/scale-and-latency.md`
 - Known implementation drift: `docs/gaps/current-state-gap-register.md`
 - Required contract tests: `docs/testing/contract-test-matrix.md`
+- Per-scenario cutover evidence: `docs/testing/contract-scenario-evidence.md`
 - Verification gates: `docs/gates.md`
 - Delivery sequence: `docs/roadmap/spec-alignment-plan.md`
 - Contribution rules: `docs/governance/spec-governance.md`

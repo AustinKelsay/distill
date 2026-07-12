@@ -63,6 +63,25 @@ fn library_fixture_tracer_journey() {
 
     let mut library = Library::open(&home).expect("open library");
 
+    let migrations = rusqlite::Connection::open(home.join("distill.db"))
+        .expect("open migration inspection connection");
+    let migration_rows = migrations
+        .prepare("SELECT version, checksum FROM schema_migrations ORDER BY version")
+        .expect("prepare migration inspection")
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("read migration rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect migration rows");
+    assert!(
+        !migration_rows.is_empty(),
+        "fresh homes must record migrations"
+    );
+    assert!(migration_rows
+        .iter()
+        .all(|(_, checksum)| checksum.len() == 64));
+
     let home_mode = fs::metadata(&home).expect("home meta").permissions().mode() & 0o777;
     assert_eq!(home_mode, 0o700, "Distill home must be 0o700");
     let db_mode = fs::metadata(home.join("distill.db"))
@@ -138,6 +157,7 @@ fn library_fixture_tracer_journey() {
 
     let health = library.health().expect("health");
     assert!(health.ok, "health issues: {:?}", health.issues);
+    assert_eq!(health.schema_status, "ok");
 
     drop(library);
     let reopened = Library::open(&home).expect("reopen library");
@@ -157,6 +177,7 @@ fn library_fixture_tracer_journey() {
         "reopen health issues: {:?}",
         health_reopen.issues
     );
+    assert_eq!(health_reopen.schema_status, "ok");
 }
 
 #[test]

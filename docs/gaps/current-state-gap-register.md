@@ -10,11 +10,11 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R001: Dual Runtime During Rebuild
 
-- Status: open
-- Rule: the rebuild Library is the target product interface; Electron remains until cutover.
-- Current drift: Electron under `src/**` still serves the shipping baseline while the native Library, thin CLI, and first-run Tauri/React Fixture callers exist beside it. macOS and Linux package/source-to-export smokes are complete; final cutover remains incomplete.
+- Status: resolved for routine native use; Electron intentionally retained as legacy evidence
+- Rule: the rebuild Library is the target product interface; Electron remains as explicit migration/baseline evidence until a separately approved retirement.
+- Current drift: Electron under `src/**` remains available for migration and baseline comparison, but the Rust Library, thin CLI, and Tauri/React desktop now own the routine source-to-export path. macOS and Linux package/source-to-export smokes are complete, and the #37 registry records the native contract evidence.
 - Impacted files/modules: legacy `src/**`; native `crates/distill-library`; `crates/distill-cli`; `apps/distill-desktop`.
-- Severity: high — the rebuild cannot replace the shipped runtime until provider Sources, Sync Runs, Curation, export, migration, and packaging paths are complete.
+- Severity: low — the remaining dual runtime is an intentional migration/baseline policy, not a native routine-use dependency.
 - Target branch/ticket: `feature/distill-clean-rebuild`, final cutover gate #37.
 - Acceptance criteria: native desktop and CLI pass the contract matrix and packaged routine source-to-export smoke; Electron remains read-only migration evidence rather than a routine dependency.
 
@@ -31,13 +31,13 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R003: Final Cutover Deferred
 
-- Status: open (Fixture/Codex/Claude/OpenCode/Droid Sync Runs, Curation, export, and Activity/Operations diagnostics delivered in #22/#24/#25/#26/#27/#28/#29/#30; final cutover remains)
+- Status: resolved for routine native cutover; release and human residuals remain explicit
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, and separate cursor-paged Activity/Operations diagnostics are implemented for all five v1 Sources. macOS #35 and Linux #36 packaging are proven; final cutover remains #37.
+- Current drift: none for the documented native routine loop. Durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, separate cursor-paged Activity/Operations diagnostics, all five v1 Sources, and macOS #35/Linux #36 package smokes are implemented and recorded in the #37 matrix/cutover report.
 - Impacted files/modules: Library ops, curation, export, provider adapters, and packaging/cutover surfaces.
-- Severity: medium — the Fixture loop is proven, but real provider coverage and final cutover are incomplete.
+- Severity: medium — routine native use is cut over, while screen-reader/dialog-focus human evidence, signed/notarized release packaging, Windows packaging, and a Rust advisory-database scan remain explicit residuals.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, diagnostics #30, final cutover #37.
-- Acceptance criteria: async Sync Runs, transactional manual Curation, previewed crash-recoverable JSONL export, and Activity/Operations diagnostics pass their public Library, CLI, host, and renderer contracts; provider adapters and packaging then pass the final cutover gate.
+- Acceptance criteria: async Sync Runs, transactional manual Curation, previewed crash-recoverable JSONL export, Activity/Operations diagnostics, provider adapters, callers, and macOS/Linux packaging pass the public contracts; the cutover report lists every remaining human or out-of-scope item without treating it as a native routine-loop failure.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
 
@@ -51,7 +51,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R005: Legacy Electron Home Migration
 
-- Status: resolved for the migration seam; final runtime cutover remains open in GAP-R001/GAP-R003.
+- Status: resolved for the migration seam; Electron remains only as intentional legacy evidence under GAP-R001.
 - Rule: a legacy Electron home is read-only evidence and must not be opened or mutated as a destination database.
 - Resolution: issue #31 adds a WAL-safe private SQLite snapshot, path-alias/traversal rejection, representative Capture/Attempt/Fact/Projection/Curation/Activity/export mapping, redacted reports, fingerprint markers, and import-owned CAS/export rollback cleanup.
 - Impacted files/modules: `crates/distill-library/src/migrate`; Library/CLI/Tauri/React callers; `docs/specs/legacy-migration.md`.
@@ -60,11 +60,11 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R006: Hostile Inputs And Desktop Capabilities
 
-- Status: resolved for the v1 Library, CLI, Tauri host, and renderer bridge boundary; final packaged cutover remains open in GAP-R001/GAP-R003.
+- Status: resolved for the v1 Library, CLI, Tauri host, renderer bridge, and macOS/Linux packaged capability boundary; human assistive-technology residuals remain in GAP-R007.
 - Rule: every SourceAdapter and thin caller must bound hostile input, preserve typed failure semantics, redact caller/Activity/Operations diagnostics, and deny ambient renderer authority.
 - Resolution: issue #32 adds the shared privacy policy, pre-snapshot Capture-size gate, bounded JSON document/line/depth parsing, symlink-safe discovery, secret/path/SQL/payload redaction, safe CLI/Tauri messages, typed Tauri path/enumeration validation, events-only capabilities, and hostile-input/bridge contracts. The v1 privacy boundary is explicit: `sensitive` is export-only; no application encryption, per-session delete, retention purge, or secure-forget.
 - Impacted files/modules: `crates/distill-library/src/privacy.rs`; SourceAdapters/ingest/query/migration; `crates/distill-cli`; Tauri host/error/capabilities; React bridge; `docs/specs/privacy-and-capabilities.md`.
-- Severity: resolved for the hostile-input/capability slice and macOS/Linux packaged capability gates; final cutover remains open.
+- Severity: resolved for the hostile-input/capability slice and macOS/Linux packaged capability gates; release-signing and assistive-technology residuals remain explicit in GAP-R007.
 - Target branch/ticket: `feature/distill-clean-rebuild`, #32.
 - Acceptance criteria: the shared hostile corpus and provider-bound suites pass; no false Captures or raw diagnostic payload leaks occur; Tauri capabilities remain events-only and bridge calls remain typed invoke/listen.
 
@@ -89,10 +89,10 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: resolved for #34 on the recorded host; keep the full benchmark as a scheduled/manual regression gate for other hardware.
 - Rule: the rebuild must remain usable at 25,000 Sessions, 1,000,000 current-projection messages, and 10 GiB logical Distill-home content without exposing private histories or claiming UI performance from Library-only measurements.
-- Current drift: existing query, curation, Sync, and export contracts are correct at small fixtures, but no deterministic large-corpus generator, p95 report, 500 ms progress-gap evidence, or 1 s safe-checkpoint cancellation evidence existed before #34.
+- Current drift: the bounded PR smoke does not reproduce the full target home, but #34 now records the deterministic 25k/1M/10 GiB host run, p95 report, progress-gap evidence, and safe-checkpoint cancellation evidence; other hardware remains scheduled regression coverage.
 - Resolution: `library_scale_budgets` seeds a fixed synthetic SQLite/FTS corpus and benchmark-owned sparse padding in a temporary home, measures public Library APIs with cold/warm separation, and reports actionable JSON. Migration `0006_sessions_list_page_index.sql` keeps current-session paging bounded at scale; full logical-size runs remain ignored/env-gated rather than a default PR cost.
 - Impacted files/modules: `crates/distill-library/tests/library_scale_budgets.rs`, Library query/curation/ops/export seams, `docs/specs/scale-and-latency.md`, and scheduled benchmark commands.
-- Severity: high for cutover confidence; the default smoke is bounded and cannot stand in for the full 25k/1M/10 GiB scheduled evidence.
+- Severity: medium for cross-host regression confidence; the default smoke remains bounded and cannot stand in for the recorded full 25k/1M/10 GiB run.
 - Target branch/ticket: `feature/distill-clean-rebuild`, #34.
 - Acceptance evidence: deterministic targets, warm p95 budgets (150 ms page/search/detail; 100 ms curation), progress gaps ≤500 ms, cancellation acknowledgement ≤1 s at safe checkpoints, and reproducible hardware/cold/warm/actionable reports all pass without private or committed corpus data. Full run evidence is recorded in `docs/runs/issues/34-scale-latency.md`.
 
