@@ -20,22 +20,23 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R002: Remaining Provider SourceAdapters Not Yet In Library
 
-- Status: open
+- Status: resolved
 - Rule: Codex, Claude Code, OpenCode, Droid, and Fixture share one SourceAdapter seam.
-- Current drift: Fixture, Codex, Claude Code, and OpenCode are implemented in the Rust Library tracer; Droid remains deferred.
+- Current drift: none for the five v1 Sources. Fixture, Codex, Claude Code, OpenCode, and Droid are implemented in the Rust Library tracer and use the shared Library preservation path.
 - Impacted files/modules: `crates/distill-library/src/adapter`; provider fixture corpus and Source contract tests.
-- Severity: high — remaining provider histories cannot enter the native Library yet.
-- Target branch/tickets: `feature/distill-clean-rebuild`, #29.
-- Acceptance criteria: each remaining launch Source passes its appendix and shared conformance corpus through the same internal adapter and Library preservation path; Codex, Claude Code, and OpenCode satisfy this in #26–#28.
+- Severity: resolved for the provider-adapter slice.
+- Target branch/tickets: `feature/distill-clean-rebuild`, #18 and #26–#29.
+- Resolution: Droid #29 adds the file-backed adapter, default/override roots, exact replay, mixed-block parsing, sidecar metadata, typed diagnostics, and the `library_droid_source` contract suite.
+- Acceptance criteria: each launch Source passes its appendix and shared conformance corpus through the same internal adapter and Library preservation path.
 
-### GAP-R003: Provider Sources And Final Cutover Deferred
+### GAP-R003: Final Cutover Deferred
 
-- Status: open (Fixture/Codex/Claude/OpenCode Sync Runs, Curation, and export delivered in #22/#24/#25/#26/#27/#28; Droid and final cutover remain)
+- Status: open (Fixture/Codex/Claude/OpenCode/Droid Sync Runs, Curation, and export delivered in #22/#24/#25/#26/#27/#28/#29; final cutover remains)
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, and the previewed crash-recoverable Export Artifact path are implemented for Fixture, Codex, Claude Code, and OpenCode. Droid remains #29, and final packaging/cutover remains #37.
-- Impacted files/modules: Library ops, curation, and export modules delivered for Fixture/Codex/Claude/OpenCode; Droid adapter and packaging still future.
+- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, and the previewed crash-recoverable Export Artifact path are implemented for all five v1 Sources. Final packaging/cutover remains #37.
+- Impacted files/modules: Library ops, curation, export, provider adapters, and packaging/cutover surfaces.
 - Severity: medium — the Fixture loop is proven, but real provider coverage and final cutover are incomplete.
-- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22 (done for Fixture/Codex/Claude/OpenCode), Curation #24, export #25, provider #29.
+- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, final cutover #37.
 - Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts; provider adapters and packaging then pass the final cutover gate.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
