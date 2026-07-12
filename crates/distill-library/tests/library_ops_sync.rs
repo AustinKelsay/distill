@@ -286,7 +286,7 @@ fn detection_isolates_failures_across_independent_fixture_requests() {
                 configured_root: Some(good.display().to_string()),
             },
             SourceDetectRequest {
-                kind: "codex".into(),
+                kind: "claude_code".into(),
                 configured_root: None,
             },
             SourceDetectRequest {
@@ -758,7 +758,8 @@ fn sync_request_rejects_unknown_or_disabled_selection_without_side_effects() {
 }
 
 /**
- * OSR-010: one good Fixture Source plus one unavailable provider terminates as warning.
+ * OSR-010: one good Fixture Source plus one enabled Codex Source without a
+ * configured root terminates as warning.
  */
 #[test]
 fn sync_partial_source_success_terminates_as_warning() {
@@ -851,7 +852,8 @@ fn sync_partial_candidate_success_terminates_as_warning() {
 }
 
 /**
- * OSR-012: bad Fixture manifest + enabled unavailable provider fails with no progress.
+ * OSR-012: bad Fixture manifest + enabled Codex Source without a configured
+ * root fails with no progress.
  */
 #[test]
 fn sync_all_sources_failing_terminates_as_failed() {

@@ -1,7 +1,10 @@
-//! SourceAdapter seam shared by Fixture and future provider adapters.
+//! SourceAdapter seam shared by Fixture, Codex, and future provider adapters.
 
+mod codex;
 mod fixture;
 
+pub(crate) use codex::find_executable;
+pub use codex::CodexAdapter;
 pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
 
 use std::path::PathBuf;
@@ -12,15 +15,15 @@ use thiserror::Error;
 
 /// Closed Source kind identifiers for v1.
 ///
-/// Only [`SourceKind::Fixture`] has a concrete adapter in issue #22. Other kinds
-/// remain registered for detection/preference surfaces and return typed
-/// unavailable results until their dedicated tickets.
+/// [`SourceKind::Fixture`] and [`SourceKind::Codex`] have concrete adapters.
+/// Remaining kinds stay registered for preference/detection surfaces and return
+/// typed unavailable results until their dedicated tickets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     /// Synthetic Fixture Source used by contract tests and smoke harnesses.
     Fixture,
-    /// Codex Source (adapter deferred to #26).
+    /// Codex Source adapter (#26).
     Codex,
     /// Claude Code Source (adapter deferred to #27).
     ClaudeCode,

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use crate::adapter::{FixtureAdapter, SourceAdapter, SourceKind};
+use crate::adapter::{find_executable, CodexAdapter, FixtureAdapter, SourceAdapter, SourceKind};
 use crate::error::LibraryResult;
 use crate::ops::paths::canonicalize_configured_root;
 use crate::ops::prefs::list_source_preferences;
@@ -13,8 +13,8 @@ use crate::types::{SourceDetectRequest, SourceDetectResult};
 /**
  * Detect each requested Source independently.
  *
- * A failing Source never aborts sibling results. Fixture is the only concrete
- * adapter; other closed kinds return typed `unavailable` until their tickets.
+ * A failing Source never aborts sibling results. Fixture and Codex use concrete
+ * adapters; other closed kinds return typed `unavailable` until their tickets.
  */
 pub fn detect_sources(
     conn: &Connection,
@@ -64,7 +64,21 @@ fn detect_one(
             }
             detect_fixture(request, pref, fixture_parser_version)
         }
-        SourceKind::Codex | SourceKind::ClaudeCode | SourceKind::OpenCode | SourceKind::Droid => {
+        SourceKind::Codex => {
+            if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
+                return SourceDetectResult {
+                    kind: kind.as_str().into(),
+                    status: "disabled".into(),
+                    executable: find_executable("codex").map(|path| path.display().to_string()),
+                    effective_data_root: pref.and_then(|p| p.configured_root.clone()),
+                    display_name: Some("Codex".into()),
+                    error_class: None,
+                    error_message: None,
+                };
+            }
+            detect_codex(request, pref)
+        }
+        SourceKind::ClaudeCode | SourceKind::OpenCode | SourceKind::Droid => {
             let effective_data_root = match resolve_root_text(request, pref) {
                 Ok(root) => root,
                 Err(err) => {
@@ -107,7 +121,7 @@ fn detect_fixture(
                 effective_data_root: None,
                 display_name: Some("Fixture".into()),
                 error_class: Some("configured_root_required".into()),
-                error_message: Some("fixture detection requires a configured root".into()),
+                error_message: Some(stable_detect_message("configured_root_required")),
             };
         }
         Err(err) => {
@@ -152,6 +166,80 @@ fn detect_fixture(
     }
 }
 
+fn detect_codex(
+    request: &SourceDetectRequest,
+    pref: Option<&crate::types::SourcePreference>,
+) -> SourceDetectResult {
+    detect_codex_with_executable(
+        request,
+        pref,
+        find_executable("codex").map(|path| path.display().to_string()),
+    )
+}
+
+fn detect_codex_with_executable(
+    request: &SourceDetectRequest,
+    pref: Option<&crate::types::SourcePreference>,
+    executable: Option<String>,
+) -> SourceDetectResult {
+    let root = match resolve_root_path(request, pref) {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            return SourceDetectResult {
+                kind: SourceKind::Codex.as_str().into(),
+                status: "missing".into(),
+                executable,
+                effective_data_root: None,
+                display_name: Some("Codex".into()),
+                error_class: Some("configured_root_required".into()),
+                error_message: Some(stable_detect_message("configured_root_required")),
+            };
+        }
+        Err(err) => {
+            return SourceDetectResult {
+                kind: SourceKind::Codex.as_str().into(),
+                status: "unhealthy".into(),
+                executable,
+                effective_data_root: None,
+                display_name: Some("Codex".into()),
+                error_class: Some(err.code().into()),
+                error_message: Some(stable_detect_message(err.code())),
+            };
+        }
+    };
+
+    let adapter = CodexAdapter::new(root);
+    match adapter.detect() {
+        Ok(discovered) if executable.is_some() => SourceDetectResult {
+            kind: SourceKind::Codex.as_str().into(),
+            status: "ok".into(),
+            executable,
+            effective_data_root: Some(discovered.data_root.display().to_string()),
+            display_name: Some(discovered.display_name),
+            error_class: None,
+            error_message: None,
+        },
+        Ok(discovered) => SourceDetectResult {
+            kind: SourceKind::Codex.as_str().into(),
+            status: "unavailable".into(),
+            executable,
+            effective_data_root: Some(discovered.data_root.display().to_string()),
+            display_name: Some(discovered.display_name),
+            error_class: Some("executable_not_found".into()),
+            error_message: Some(stable_detect_message("executable_not_found")),
+        },
+        Err(err) => SourceDetectResult {
+            kind: SourceKind::Codex.as_str().into(),
+            status: "unhealthy".into(),
+            executable,
+            effective_data_root: None,
+            display_name: Some("Codex".into()),
+            error_class: Some(err.code().into()),
+            error_message: Some(stable_detect_message(err.code())),
+        },
+    }
+}
+
 fn resolve_root_path(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
@@ -178,10 +266,37 @@ fn resolve_root_text(
 fn stable_detect_message(error_class: &str) -> String {
     match error_class {
         "invalid_configured_root" => "configured root is invalid".into(),
-        "source_adapter" => "fixture detection failed".into(),
-        "configured_root_required" => "fixture detection requires a configured root".into(),
+        "source_adapter" => "source detection failed".into(),
+        "configured_root_required" => "source detection requires a configured root".into(),
         "unknown_source_kind" => "unknown source kind".into(),
         "adapter_not_registered" => "source adapter is not registered in this build".into(),
+        "executable_not_found" => "source executable is unavailable".into(),
         _ => "source detection failed".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn codex_detection_classifies_missing_executable_without_provider_text() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("codex-home");
+        std::fs::create_dir_all(&root).expect("root");
+        let result = detect_codex_with_executable(
+            &SourceDetectRequest {
+                kind: "codex".into(),
+                configured_root: Some(root.display().to_string()),
+            },
+            None,
+            None,
+        );
+        assert_eq!(result.status, "unavailable");
+        assert_eq!(result.error_class.as_deref(), Some("executable_not_found"));
+        let message = result.error_message.as_deref().unwrap_or_default();
+        assert!(!message.contains("codex"));
+        assert!(!message.contains('/'));
     }
 }

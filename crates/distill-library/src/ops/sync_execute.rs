@@ -4,7 +4,9 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::adapter::{FixtureAdapter, ParserIdentity, SourceKind, FIXTURE_PARSER_ID};
+use crate::adapter::{
+    CodexAdapter, FixtureAdapter, ParserIdentity, SourceAdapter, SourceKind, FIXTURE_PARSER_ID,
+};
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
 use crate::ops::sync::cancel_requested;
@@ -34,17 +36,75 @@ where
     F: FnMut(SyncProgress),
 {
     match source_kind {
-        SourceKind::Fixture => sync_fixture_source(
-            conn,
-            paths,
-            sync_run_id,
-            owner_id,
-            fixture_parser,
-            max_capture_bytes,
-            on_progress,
-            aggregate,
-        ),
-        SourceKind::Codex | SourceKind::ClaudeCode | SourceKind::OpenCode | SourceKind::Droid => {
+        SourceKind::Fixture => {
+            let root = match load_configured_root(conn, source_kind) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "configured_root_required",
+                        "source sync requires a configured root",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = FixtureAdapter::with_parser(
+                root,
+                ParserIdentity {
+                    id: FIXTURE_PARSER_ID.to_string(),
+                    version: fixture_parser.version.clone(),
+                },
+            );
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
+        }
+        SourceKind::Codex => {
+            let root = match load_configured_root(conn, source_kind) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "configured_root_required",
+                        "source sync requires a configured root",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = CodexAdapter::new(root);
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
+        }
+        SourceKind::ClaudeCode | SourceKind::OpenCode | SourceKind::Droid => {
             Ok(SyncSourceOutcome {
                 source_kind: source_kind.as_str().into(),
                 status: "failed".into(),
@@ -59,13 +119,17 @@ where
     }
 }
 
+/**
+ * Run one concrete SourceAdapter through the shared Sync checkpoint ingest path.
+ */
 #[allow(clippy::too_many_arguments)]
-fn sync_fixture_source<F>(
+fn sync_adapter_source<F>(
     conn: &mut Connection,
     paths: &DistillPaths,
     sync_run_id: i64,
     owner_id: &str,
-    fixture_parser: &ParserIdentity,
+    source_kind: SourceKind,
+    adapter: &dyn SourceAdapter,
     max_capture_bytes: u64,
     on_progress: &mut F,
     aggregate: &mut IngestReport,
@@ -73,33 +137,6 @@ fn sync_fixture_source<F>(
 where
     F: FnMut(SyncProgress),
 {
-    let source_kind = SourceKind::Fixture;
-    let root = match load_configured_root(conn, source_kind) {
-        Ok(Some(root)) => root,
-        Ok(None) => {
-            return Ok(failed_outcome(
-                source_kind,
-                "configured_root_required",
-                "fixture sync requires a configured root",
-            ));
-        }
-        Err(err) => {
-            return Ok(failed_outcome(
-                source_kind,
-                err.code(),
-                "fixture configured root is invalid",
-            ));
-        }
-    };
-
-    let adapter = FixtureAdapter::with_parser(
-        root,
-        ParserIdentity {
-            id: FIXTURE_PARSER_ID.to_string(),
-            version: fixture_parser.version.clone(),
-        },
-    );
-
     let check_paths = paths.clone();
     let owner = owner_id.to_string();
     let cancelled = std::cell::Cell::new(false);
@@ -138,7 +175,7 @@ where
         match ingest::ingest_adapter_with_checkpoints(
             conn,
             paths,
-            &adapter,
+            adapter,
             max_capture_bytes,
             IngestCheckpoints {
                 should_cancel: &mut should_cancel,
@@ -154,7 +191,7 @@ where
                 return Ok(failed_outcome(
                     source_kind,
                     redact_error_class(&err),
-                    "fixture source sync failed",
+                    "source sync failed",
                 ));
             }
             Err(err) => return Err(err),
