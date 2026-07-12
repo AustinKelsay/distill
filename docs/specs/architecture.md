@@ -128,6 +128,7 @@ Public Library methods for the Fixture tracer and thin callers:
 - `run_fixture_journey(fixture_root, on_progress)` — first-run helper that detects, ingests, loads the first projected Session, and returns health as a `FixtureJourneyResult` with typed progress phases
 - `session_slice` / `session_detail` / `list_sessions` — read bounded current-projection detail and deterministic cursor-paged list/search pages over the FTS index, intersected with manual workflow lanes
 - `add_session_tag` / `remove_session_tag` / `toggle_session_label` — transactionally mutate manual session curation by Session Identity, append matching Activity Events, enforce dataset-label exclusivity, and return the current manual curation snapshot plus derived workflow state
+- `preview_export(dataset)` / `publish_export(dataset, on_progress)` — derive one current-projection eligibility snapshot for `distill-session-jsonl-v1`, preview without side effects, and publish a checksummed Library-owned JSONL artifact through the durable `preparing` → `committed` → rename → `published` lifecycle with restart reconciliation and cancellation
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
 - `health()` — report schema/migration integrity (including SQLite quick/integrity/foreign-key checks), referenced inline/blob size+checksum without following CAS symlinks or leaving the Distill home, exact projection↔FTS agreement across session_id/message_id/title/project_path/role/text, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections (empty successful projections are valid), mismatched Session counters, and Sync Run operations status (`ok` / `active` / `failed`, including stale leases) as typed `HealthIssue` values with redacted summaries
 - `list_sources` / `set_source_preference` — persist enabled/disabled and optional canonical configured-root overrides per Source without exposing adapter or storage internals
@@ -138,10 +139,10 @@ Public Library methods for the Fixture tracer and thin callers:
 
 Thin callers:
 
-- `crates/distill-cli` — Fixture journey plus owning `health`, `repair`, `sources list|set`, `sync start|status|cancel`, and `sessions tag-add|tag-remove|label-toggle` commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
-- `apps/distill-desktop` — Tauri 2 host runs journey/health/repair/sync/curation off the UI thread via `spawn_blocking`, validates inputs, emits typed Fixture and Sync progress, and returns typed results to a sandboxed React renderer; repair requires explicit confirmation; renderer remains bridge-only
+- `crates/distill-cli` — Fixture journey plus owning `health`, `repair`, `sources list|set`, `sync start|status|cancel`, `sessions tag-add|tag-remove|label-toggle`, and `export preview|publish` commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
+- `apps/distill-desktop` — Tauri 2 host runs journey/health/repair/sync/curation/export off the UI thread via `spawn_blocking`, validates inputs, emits typed Fixture, Sync, and Export progress, and returns typed results to a sandboxed React renderer; repair requires explicit confirmation; renderer remains bridge-only
 
-Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, and mid-projection publication points). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
+Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, mid-projection publication points, and export temp-write/commit/rename boundaries). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
 
 The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
 

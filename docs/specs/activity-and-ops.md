@@ -134,4 +134,4 @@ Library health and repair are operational surfaces owned by the deep Library sea
 - CAS discovery/repair never follows symlinks and never reads or deletes outside the Distill home, even if a corrupted `blob_path` is absolute or traverses parents
 - explicit `repair` is idempotent, uses transactions for related SQLite mutations, requires caller opt-in for destructive actions, and returns typed named action counts
 - repair never deletes referenced content or mutates immutable Captures/Facts
-- `operations_status` is `ok` / `active` / `failed` based on Sync Run lease health (issue #22). Export crash recovery remains issue #25.
+- `operations_status` is `ok` / `active` / `failed` based on Sync Run lease health (issue #22). Export rows have their own durable lifecycle; opening a home reconciles incomplete `preparing`/`committed` rows and reports recovery through typed export results rather than overloading Sync status.

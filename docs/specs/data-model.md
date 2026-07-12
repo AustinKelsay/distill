@@ -260,8 +260,13 @@ Purpose:
 
 Canonical semantics:
 
-- one row per completed export artifact written by Distill
-- export rows describe operational output, not raw capture history
+- one row per export attempt, with terminal `published`, `failed_publish`, or `cancelled` state
+- `preparing` and `committed` rows are restart-repairable publication states
+- published rows describe operational output, not raw capture history, and include format, dataset,
+  final/temp paths, checksum, byte size, record count, and eligibility snapshot metadata
+- `preparing`/`committed` rows may retain an intended final path for checksum-based restart
+  reconciliation; only a `published` row reports that path as authoritative and may emit
+  `export_written`
 
 ## `activity_events`
 
@@ -307,7 +312,6 @@ Append-only entities:
 - `captures`
 - `capture_records`
 - `activity_events`
-- `exports`
 
 Replace-on-success projection entities:
 
@@ -320,6 +324,7 @@ Mutable operational or preference entities:
 - `sources`
 - `jobs`
 - `user_preferences`
+- `exports` (mutable restart-repairable lifecycle rows; published artifacts remain immutable)
 - manual curation descriptors and assignments
 
 ## Current Implementation Mapping
@@ -345,6 +350,7 @@ Rebuild schema entities (fresh Distill home; no legacy schema inclusion):
 - `sessions` with separately named `accepted_capture_count`, `normalization_attempt_count`, and `successful_projection_generation`
 - `projection_messages`, `projection_artifacts`
 - `tags`, `tag_assignments`, `labels`, and `label_assignments` with session-scoped object identity and assignment origin
+- `exports` (migration `0004_exports.sql`) with durable publication lifecycle, checksums, and eligibility snapshots
 - FTS5 over the current projection (`projection_fts`)
 - `activity_events`
 

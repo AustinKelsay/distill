@@ -28,23 +28,23 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Target branch/tickets: `feature/distill-clean-rebuild`, #26 through #29.
 - Acceptance criteria: every launch Source passes its appendix and shared conformance corpus through the same internal adapter and Library preservation path.
 
-### GAP-R003: Sync Runs, Curation, Export Deferred
+### GAP-R003: Provider Sources And Final Cutover Deferred
 
-- Status: open (Sync Runs delivered in #22; Curation/export remain)
+- Status: open (Fixture Sync Runs, Curation, and export delivered in #22/#24/#25; provider Sources and final cutover remain)
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, and typed selection/lease-lost edges are implemented for Fixture. Curation and Export Artifacts remain deferred. Provider adapters remain #26–#29.
-- Impacted files/modules: Library ops Sync modules delivered; Curation/export still future; provider adapters still future.
-- Severity: medium for Sync (Fixture-proven); high until Curation/export and providers land.
+- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, and the previewed crash-recoverable Export Artifact path are implemented for Fixture. Provider adapters remain #26–#29, and final packaging/cutover remains #37.
+- Impacted files/modules: Library ops, curation, and export modules delivered for Fixture; provider adapters and packaging still future.
+- Severity: medium — the Fixture loop is proven, but real provider coverage and final cutover are incomplete.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22 (done for Fixture), Curation #24, export #25, providers #26–#29.
-- Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts.
+- Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts; provider adapters and packaging then pass the final cutover gate.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
 
 - Status: resolved
 - Rule: interrupted Capture acceptance, projection publication, and related transitions reopen into a defined repair state.
-- Current drift: none for ingest fault/health/repair. Sync Run stale-lease reopen is covered by #22 (`operations_status` is `ok`/`active`/`failed`). Export crash recovery remains #25.
+- Current drift: none for ingest, Sync Run, or Export fault/health/recovery contracts. Sync Run stale-lease reopen is covered by #22 (`operations_status` is `ok`/`active`/`failed`), and export reopen checksum reconciliation is covered by #25.
 - Impacted files/modules: `crates/distill-library` health/repair/fault/Sync seams; thin CLI/Tauri/React callers.
-- Severity: resolved for #21 ingest recovery and #22 Sync lease health; export recovery still open under later gaps/tickets.
+- Severity: resolved for #21 ingest recovery, #22 Sync lease health, and #25 export recovery.
 - Target branch/ticket: `feature/distill-clean-rebuild`, #21 / #22.
 - Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state; Sync stale leases fail idempotently on reopen.
 

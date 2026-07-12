@@ -76,4 +76,4 @@
 - Concurrent Sync cancel/overlap tests use real second Library connections against one temp home; they can be timing-sensitive under extreme load though they avoid flaky multi-second sleeps.
 - Stale-lease tests age durable SQLite lease columns then reopen normally; heartbeat timing proofs use `test-leases` only.
 - CLI `sources set` without `--root`/`--clear-root` preserves the existing configured root by re-reading preferences before upsert.
-- No commit created per AFK worker instructions.
+- The implementation commit is `ab2cc83`; the review packet records the completed worker and audit evidence.
