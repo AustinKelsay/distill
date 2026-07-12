@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#21 complete; #22–#23 are the dependency frontier
+- Current status: #18–#22 complete; #23 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -49,7 +49,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #19 Thin Tauri/React/CLI callers | AFK | Complete | Grok xhigh standards + spec | Both axes pass; ACL finding withdrawn | Rust/renderer/Tauri release gates; legacy 103 pass on Node 26 |
 | #20 Attempt retry/replay/replacement | AFK | Complete | Grok xhigh standards + spec | Docs inventory and diagnostic safety fixed; both axes pass | Rust/renderer/Tauri release gates; legacy 103 pass; CodeRabbit 0 findings |
 | #21 Health/repair/fault recovery | AFK | Complete | Grok xhigh standards + spec | Staging-root symlink blocker fixed; both axes pass | 13 health + 8 fault contracts; Rust/desktop/Tauri/legacy gates pass |
-| #22 Async source settings/Sync Runs | AFK | Ready — frontier | — | — | No |
+| #22 Async source settings/Sync Runs | AFK | Complete | Grok xhigh AFK worker + two independent reviews + focused rereview | All findings applied; final CodeRabbit attempt rate-limited for 10 minutes | Library 17 OSR checks; CLI/host 7 each; renderer 11; Rust/desktop/Tauri/legacy gates |
 | #23 Search/lanes/detail/virtualization | AFK | Ready — frontier | — | — | No |
 | #24 Transactional Curation | AFK | Blocked by #23 | — | — | No |
 | #25 Recoverable export | AFK | Blocked by #18, #24 | — | — | No |
@@ -80,6 +80,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #19 | `5655cde` | Grok 4.5 xhigh edit session | `e9cd49a`, `e39c451` | Both axes pass; ACL finding withdrawn | Rust workspace 14 + renderer 5; Tauri release build; legacy 103 pass on Node 26 |
 | #20 | `4564d28` | Grok 4.5 xhigh edit session | `50d8633`, `f4b3514` | Both axes pass after architecture/diagnostic fixes; CodeRabbit 0 findings | fmt/clippy/workspace tests + desktop typecheck/test/frontend/Tauri no-bundle + legacy 103 on Node 26 |
 | #21 | `b5713cc` | Grok 4.5 xhigh AFK + audit remediation | `1799b5b`, `f1d3244` | Both axes pass after staging-root symlink hardening | 13 health + 8 fault; CLI 6; host 5; renderer 7; Tauri release; legacy 103 |
+| #22 | `3e420df` | Grok 4.5 xhigh AFK implementation | `ab2cc83` | Standards + spec + final focused rereview pass; CodeRabbit prior findings applied, final attempt rate-limited | fmt/clippy/workspace + fault/lease suites; library_ops_sync 17; CLI/host 7; renderer 11; desktop frontend/Tauri; legacy 103 on Node 26 |
 
 ## Open Questions
 
