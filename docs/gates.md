@@ -118,7 +118,9 @@ lockfile is unchanged.
 Local Darwin hosts may not have `cargo-audit` on `PATH`. That availability limitation
 is explicit: this environment does **not** treat a local Darwin `cargo audit` as
 authoritative evidence. CI is the authoritative Rust advisory-database evidence for
-this gate, and no Actions run ID is recorded yet for #40.
+this gate. Final-head run `29213826861` passed on Ubuntu 24.04 x86_64 and emitted the
+same 17 allowed warnings; it is not an advisory-clean claim:
+<https://github.com/AustinKelsay/distill/actions/runs/29213826861>.
 
 A non-authoritative advisory inventory observed against the current lockfile
 (warnings only; not a CI pass/fail claim) is recorded in
@@ -126,8 +128,7 @@ A non-authoritative advisory inventory observed against the current lockfile
 (`atk`, `atk-sys`, `gdk`, `gdk-sys`, `gdkwayland-sys`, `gdkx11`, `gdkx11-sys`,
 `gtk`, `gtk-sys`, `gtk3-macros`) as unmaintained, plus `proc-macro-error` and the
 `unic-*` crates as unmaintained, and `glib` `0.18.5` as unsound
-(`RUSTSEC-2024-0429`). Re-confirm that inventory only from CI after the workflow
-runs.
+(`RUSTSEC-2024-0429`). The final CI run confirms the same warning inventory.
 
 ## Documentation-drift gate
 

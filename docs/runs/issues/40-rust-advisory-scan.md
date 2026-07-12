@@ -4,8 +4,8 @@
 
 - Issue: [#40](https://github.com/AustinKelsay/distill/issues/40)
 - Fixed point before session: `05d9294`
-- Implementation: uncommitted on this branch (do not claim a commit SHA until committed)
-- Status: In progress — allowlisted docs/packets updated; CI advisory evidence not yet recorded
+- Implementation commit: `f678801`
+- Status: Complete — final-head Rust advisory workflow passed; 17 allowed warnings remain explicit
 - Review packet: `docs/runs/reviews/40-rust-advisory-scan.md`
 
 ## Intended Contract
@@ -30,7 +30,7 @@
   `cargo audit --file Cargo.lock` on Ubuntu 24.04 with pinned `cargo-audit` `0.22.2`,
   on Cargo/workspace changes and on a weekly schedule.
 - `docs/gates.md` records the CI command, pin, Darwin limitation, warning-vs-vuln
-  failure rule, and that CI evidence is still pending.
+  failure rule, weekly refresh, and final CI evidence.
 
 ## Recorded `cargo audit` warning inventory (non-authoritative)
 
@@ -70,21 +70,24 @@ CI must still confirm the live advisory-database result.
 
 ## Verification
 
-- Docs/packets for #40 updated to in-progress with no CI overclaim.
+- Docs/packets for #40 updated to Complete only after the final-head CI run.
 - `PATH=/opt/homebrew/Cellar/node/26.0.0/bin:$PATH npm test` — passed; 104 tests.
 - `cargo tree --workspace --locked` — passed.
 - `npm audit --audit-level=moderate --ignore-scripts` — passed; 0 vulnerabilities.
 - Local Darwin `cargo-audit --file Cargo.lock` 0.22.2 — exit 0 with 17 allowed warnings;
   diagnostic only, not authoritative gate evidence.
-- CodeRabbit CLI — rate-limited before analysis; Grok policy rereview findings were
-  applied, with no remaining implementation remediation before CI.
-- GitHub Actions run for `.github/workflows/rust-audit.yml` — pending; no run ID recorded.
+- CodeRabbit CLI — initial attempts were rate-limited before analysis; a docs-only pass
+  completed with 0 findings, and a later wording-only retry was rate-limited. Grok policy
+  rereview findings were applied.
+- GitHub Actions Rust advisory workflow `29213826861` — passed on Ubuntu 24.04 x86_64;
+  the log emitted the same 17 allowed warnings and no vulnerability-class failure:
+  <https://github.com/AustinKelsay/distill/actions/runs/29213826861>.
 - Product code / dependency upgrades — not modified in this continuation.
 
 ## Remaining Scope
 
-- First Ubuntu workflow run (green or advisory-failing) must be recorded with a run URL
-  before #40 can move to Complete.
+- The weekly schedule continues to refresh the live RustSec database; a future
+  vulnerability-class failure requires a separate remediation slice.
 - If CI reports actionable vulnerability advisories, remediate in a follow-up that may
   upgrade dependencies; this slice only adds the scan gate.
 - Production release, Windows packaging, screen-reader claims, signing/notarization, and
