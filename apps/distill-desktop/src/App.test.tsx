@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import type {
+  CurationMutationResult,
   DistillBridge,
   FixtureJourneyPhase,
   FixtureJourneyResult,
@@ -100,6 +101,10 @@ function createFakeBridge(options?: {
   sessionDetail?: SessionDetail | null;
   sessionDetails?: Record<string, SessionDetail | null>;
   pendingSessions?: Promise<SessionListPage>;
+  onListSessions?: () => void;
+  onSessionDetail?: () => void;
+  curationResult?: CurationMutationResult;
+  curationError?: HostError;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -220,6 +225,7 @@ function createFakeBridge(options?: {
       );
     },
     async listSessions(_home, request) {
+      options?.onListSessions?.();
       if (options?.error) throw options.error;
       if (options?.pendingSessions) return options.pendingSessions;
       if (options?.sessionPages && request.cursor) {
@@ -228,12 +234,73 @@ function createFakeBridge(options?: {
       return options?.sessionPage ?? { items: [], next_cursor: null };
     },
     async sessionDetail(_home, request) {
+      options?.onSessionDetail?.();
       if (options?.error) throw options.error;
       if (options?.sessionDetails) {
         const cursor = request.message_cursor ?? request.artifact_cursor;
         if (cursor) return options.sessionDetails[cursor] ?? null;
       }
       return options?.sessionDetail ?? null;
+    },
+    async addSessionTag(_home, request) {
+      if (options?.curationError) throw options.curationError;
+      return (
+        options?.curationResult ?? {
+          changed: true,
+          identity: {
+            source_kind: request.source_kind,
+            external_session_id: request.external_session_id,
+          },
+          tags: [
+            {
+              id: 1,
+              name: request.name.trim().toLowerCase(),
+              kind: "manual",
+              origin: "manual",
+            },
+          ],
+          labels: [],
+          workflow_state: "neutral",
+        }
+      );
+    },
+    async removeSessionTag(_home, request) {
+      if (options?.curationError) throw options.curationError;
+      return (
+        options?.curationResult ?? {
+          changed: true,
+          identity: {
+            source_kind: request.source_kind,
+            external_session_id: request.external_session_id,
+          },
+          tags: [],
+          labels: [],
+          workflow_state: "neutral",
+        }
+      );
+    },
+    async toggleSessionLabel(_home, request) {
+      if (options?.curationError) throw options.curationError;
+      return (
+        options?.curationResult ?? {
+          changed: true,
+          identity: {
+            source_kind: request.source_kind,
+            external_session_id: request.external_session_id,
+          },
+          tags: [],
+          labels: [
+            {
+              id: 1,
+              name: request.name.trim().toLowerCase(),
+              scope: "session",
+              origin: "manual",
+            },
+          ],
+          workflow_state:
+            request.name.trim().toLowerCase() === "train" ? "train_ready" : "favorite",
+        }
+      );
     },
     onProgress(listener) {
       listeners.add(listener);
@@ -556,6 +623,15 @@ describe("first-run Fixture UI", () => {
       },
       listSessions: async () => ({ items: [], next_cursor: null }),
       sessionDetail: async () => null,
+      addSessionTag: async () => {
+        throw new Error("not used");
+      },
+      removeSessionTag: async () => {
+        throw new Error("not used");
+      },
+      toggleSessionLabel: async () => {
+        throw new Error("not used");
+      },
       onProgress: () => () => undefined,
       onSyncProgress: () => () => undefined,
     };
@@ -737,5 +813,149 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("status")).toHaveTextContent("success");
     });
+  });
+
+  it("applies curation snapshots immediately and shows manual origins", async () => {
+    const user = userEvent.setup();
+    let listCalls = 0;
+    let detailCalls = 0;
+    const sessionPage: SessionListPage = {
+      items: [
+        {
+          id: 8,
+          source_kind: "fixture",
+          external_session_id: "session-explorer",
+          title: "Explorer session",
+          project_path: "/workspace/demo",
+          updated_at: "2026-01-01T00:00:00Z",
+          preview: "Preview",
+          message_count: 2,
+          accepted_capture_count: 1,
+          normalization_attempt_count: 1,
+          successful_projection_generation: 1,
+          labels: [],
+          tags: [],
+          workflow_state: "neutral",
+        },
+      ],
+      next_cursor: null,
+    };
+    const bridge = createFakeBridge({
+      sessionPage,
+      sessionDetail: {
+        ...sampleResult().session!,
+        summary: {
+          ...sampleResult().session!.summary,
+          external_session_id: "session-explorer",
+          title: "Explorer session",
+        },
+        labels: [],
+        tags: [],
+        workflow_state: "neutral",
+      },
+      curationResult: {
+        changed: true,
+        identity: {
+          source_kind: "fixture",
+          external_session_id: "session-explorer",
+        },
+        tags: [{ id: 3, name: "research", kind: "manual", origin: "manual" }],
+        labels: [{ id: 2, name: "train", scope: "session", origin: "manual" }],
+        workflow_state: "train_ready",
+      },
+      onListSessions: () => {
+        listCalls += 1;
+      },
+      onSessionDetail: () => {
+        detailCalls += 1;
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /Explorer session/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-detail-panel")).toBeTruthy();
+    });
+
+    await user.type(screen.getByLabelText("Add tag"), "research");
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-tags")).toHaveTextContent("research (manual)");
+    });
+    expect(screen.getByTestId("session-labels")).toHaveTextContent("train (manual)");
+    expect(screen.getByRole("button", { name: /Explorer session/ })).toHaveTextContent(
+      "train_ready",
+    );
+    const listCallsAfterLoad = listCalls;
+    const detailCallsAfterLoad = detailCalls;
+    await user.click(screen.getByRole("button", { name: "train" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "train" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+    expect(listCalls).toBe(listCallsAfterLoad);
+    expect(detailCalls).toBe(detailCallsAfterLoad);
+  });
+
+  it("surfaces a typed curation mutation error without clearing the detail", async () => {
+    const user = userEvent.setup();
+    const sessionPage: SessionListPage = {
+      items: [
+        {
+          id: 8,
+          source_kind: "fixture",
+          external_session_id: "session-explorer",
+          title: "Explorer session",
+          project_path: null,
+          updated_at: null,
+          preview: null,
+          message_count: 1,
+          accepted_capture_count: 1,
+          normalization_attempt_count: 1,
+          successful_projection_generation: 1,
+          labels: [],
+          tags: [],
+          workflow_state: "neutral",
+        },
+      ],
+      next_cursor: null,
+    };
+    const bridge = createFakeBridge({
+      sessionPage,
+      sessionDetail: {
+        ...sampleResult().session!,
+        summary: {
+          ...sampleResult().session!.summary,
+          external_session_id: "session-explorer",
+          title: "Explorer session",
+        },
+        labels: [],
+        tags: [],
+        workflow_state: "neutral",
+      },
+      curationError: { code: "curation", message: "mutation failed" },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /Explorer session/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-detail-panel")).toBeTruthy();
+    });
+
+    await user.click(screen.getByRole("button", { name: "train" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("session-curation-error")).toHaveTextContent(
+        "curation: mutation failed",
+      );
+    });
+    expect(screen.getByTestId("session-detail-panel")).toHaveTextContent(
+      "Explorer session",
+    );
   });
 });

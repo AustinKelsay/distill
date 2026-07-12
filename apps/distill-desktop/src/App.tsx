@@ -4,6 +4,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type {
+  CurationMutationResult,
   DistillBridge,
   FixtureJourneyPhase,
   FixtureJourneyResult,
@@ -28,6 +29,15 @@ type AppProps = {
 
 type SessionExplorerStatus =
   "idle" | "loading" | "ready" | "empty" | "warning" | "error" | "cancelled";
+
+/** Seeded catalog labels the detail panel can toggle. */
+const CURATABLE_LABELS = [
+  "train",
+  "holdout",
+  "exclude",
+  "sensitive",
+  "favorite",
+] as const;
 
 /**
  * Render the Distill first-run Fixture caller plus Source/Sync surfaces.
@@ -54,6 +64,8 @@ export function App({ bridge }: AppProps) {
   const [sessionError, setSessionError] = useState<HostError | null>(null);
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  const [curationError, setCurationError] = useState<HostError | null>(null);
   const sessionRequestRef = useRef(0);
 
   useEffect(() => {
@@ -224,6 +236,7 @@ export function App({ bridge }: AppProps) {
     setSelectedSessionKey(sessionKey(item));
     setSessionStatus("loading");
     setSessionError(null);
+    setCurationError(null);
     if (!continuation) setSessionDetail(null);
     try {
       const detail = await bridge.sessionDetail(home, {
@@ -288,7 +301,114 @@ export function App({ bridge }: AppProps) {
     setSessionPage(null);
     setSelectedSessionKey(null);
     setSessionDetail(null);
+    setTagDraft("");
+    setCurationError(null);
     setSessionStatus("idle");
+  }
+
+  /**
+   * Apply a Library curation snapshot to the selected detail and matching list row.
+   * @param result - typed mutation result from the bridge
+   */
+  function applyCurationSnapshot(result: CurationMutationResult) {
+    setSessionDetail((previous) => {
+      if (!previous) return previous;
+      if (
+        previous.summary.source_kind !== result.identity.source_kind ||
+        previous.summary.external_session_id !== result.identity.external_session_id
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        tags: result.tags,
+        labels: result.labels,
+        workflow_state: result.workflow_state,
+      };
+    });
+    setSessionPage((previous) => {
+      if (!previous) return previous;
+      return {
+        ...previous,
+        items: previous.items.map((item) =>
+          item.source_kind === result.identity.source_kind &&
+          item.external_session_id === result.identity.external_session_id
+            ? {
+                ...item,
+                tags: result.tags,
+                labels: result.labels,
+                workflow_state: result.workflow_state,
+              }
+            : item,
+        ),
+      };
+    });
+  }
+
+  /** Add a manual tag for the selected session through the bridge. */
+  async function onAddSessionTag() {
+    if (!sessionDetail) return;
+    const name = tagDraft.trim();
+    if (!name) return;
+    const requestId = ++sessionRequestRef.current;
+    setCurationError(null);
+    try {
+      const result = await bridge.addSessionTag(home, {
+        source_kind: sessionDetail.summary.source_kind,
+        external_session_id: sessionDetail.summary.external_session_id,
+        name,
+      });
+      if (requestId !== sessionRequestRef.current) return;
+      applyCurationSnapshot(result);
+      setTagDraft("");
+    } catch (caught) {
+      if (requestId !== sessionRequestRef.current) return;
+      setCurationError(normalizeError(caught));
+    }
+  }
+
+  /**
+   * Remove a manual tag for the selected session through the bridge.
+   * @param name - tag name to remove
+   */
+  async function onRemoveSessionTag(name: string) {
+    if (!sessionDetail) return;
+    const requestId = ++sessionRequestRef.current;
+    setCurationError(null);
+    try {
+      const result = await bridge.removeSessionTag(home, {
+        source_kind: sessionDetail.summary.source_kind,
+        external_session_id: sessionDetail.summary.external_session_id,
+        name,
+      });
+      if (requestId !== sessionRequestRef.current) return;
+      applyCurationSnapshot(result);
+    } catch (caught) {
+      if (requestId !== sessionRequestRef.current) return;
+      setCurationError(normalizeError(caught));
+    }
+  }
+
+  /**
+   * Toggle a catalog label for the selected session through the bridge.
+   * @param name - label catalog name
+   */
+  async function onToggleSessionLabel(name: string) {
+    if (!sessionDetail) return;
+    const requestId = ++sessionRequestRef.current;
+    setCurationError(null);
+    try {
+      const result = await bridge.toggleSessionLabel(home, {
+        source_kind: sessionDetail.summary.source_kind,
+        external_session_id: sessionDetail.summary.external_session_id,
+        name,
+      });
+      if (requestId !== sessionRequestRef.current) return;
+      applyCurationSnapshot(result);
+    } catch (caught) {
+      if (requestId !== sessionRequestRef.current) return;
+      setCurationError(normalizeError(caught));
+    }
   }
 
   /**
@@ -482,15 +602,63 @@ export function App({ bridge }: AppProps) {
               Attempts: {sessionDetail.summary.normalization_attempt_count} · Generation:{" "}
               {sessionDetail.summary.successful_projection_generation}
             </p>
-            <p>
-              Labels:{" "}
-              {(sessionDetail.labels ?? []).map((label) => label.name).join(", ") ||
-                "none"}
-            </p>
-            <p>
-              Tags:{" "}
-              {(sessionDetail.tags ?? []).map((tag) => tag.name).join(", ") || "none"}
-            </p>
+            <div data-testid="session-labels">
+              <p>Labels</p>
+              <ul>
+                {(sessionDetail.labels ?? []).map((label) => (
+                  <li key={`${label.id}:${label.name}`}>
+                    {label.name} ({label.origin})
+                  </li>
+                ))}
+              </ul>
+              <div>
+                {CURATABLE_LABELS.map((name) => {
+                  const isActive = (sessionDetail.labels ?? []).some(
+                    (label) => label.name === name,
+                  );
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => void onToggleSessionLabel(name)}
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div data-testid="session-tags">
+              <p>Tags</p>
+              <ul>
+                {(sessionDetail.tags ?? []).map((tag) => (
+                  <li key={`${tag.id}:${tag.name}`}>
+                    <button
+                      type="button"
+                      onClick={() => void onRemoveSessionTag(tag.name)}
+                    >
+                      {tag.name} ({tag.origin}) ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <label htmlFor="session-tag-input">Add tag</label>
+              <input
+                id="session-tag-input"
+                value={tagDraft}
+                onChange={(event) => setTagDraft(event.target.value)}
+                placeholder="tag name"
+              />
+              <button type="button" onClick={() => void onAddSessionTag()}>
+                Add tag
+              </button>
+            </div>
+            {curationError ? (
+              <p className="error" data-testid="session-curation-error">
+                {curationError.code}: {curationError.message}
+              </p>
+            ) : null}
             <pre>{sessionDetail.metadata_json}</pre>
             <ol>
               {sessionDetail.messages.map((message) => (

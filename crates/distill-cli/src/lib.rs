@@ -13,9 +13,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
-    FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, LibraryError, RepairOptions,
-    RepairReport, SessionDetailRequest, SessionListRequest, SourcePreference, SyncProgress,
-    SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
+    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library,
+    LibraryError, RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest,
+    SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    WorkflowLane,
 };
 use serde::Serialize;
 
@@ -98,15 +99,15 @@ pub enum Command {
         #[command(subcommand)]
         action: SyncCommand,
     },
-    /// Current-projection session list/search/detail commands.
+    /// Current-projection session list/search/detail/curation commands.
     Sessions {
-        /// Nested session list/detail action.
+        /// Nested session list/detail/curation action.
         #[command(subcommand)]
         action: SessionCommand,
     },
 }
 
-/// Session query subcommands.
+/// Session query and curation subcommands.
 #[derive(Debug, Subcommand)]
 pub enum SessionCommand {
     /// List or search current sessions with a workflow lane and cursor.
@@ -153,6 +154,60 @@ pub enum SessionCommand {
         /// Opaque artifact continuation cursor.
         #[arg(long)]
         artifact_cursor: Option<String>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Add a manual tag by Session Identity.
+    TagAdd {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Source kind such as `fixture`.
+        #[arg(long)]
+        source_kind: String,
+        /// Stable external Session Identity.
+        #[arg(long)]
+        external_session_id: String,
+        /// Tag name (trimmed and Unicode-lowercased by Library).
+        #[arg(long)]
+        name: String,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Remove a manual tag by Session Identity.
+    TagRemove {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Source kind such as `fixture`.
+        #[arg(long)]
+        source_kind: String,
+        /// Stable external Session Identity.
+        #[arg(long)]
+        external_session_id: String,
+        /// Tag name (trimmed and Unicode-lowercased by Library).
+        #[arg(long)]
+        name: String,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Toggle a catalog label by Session Identity.
+    LabelToggle {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Source kind such as `fixture`.
+        #[arg(long)]
+        source_kind: String,
+        /// Stable external Session Identity.
+        #[arg(long)]
+        external_session_id: String,
+        /// Label name (`train`, `holdout`, `exclude`, `sensitive`, `favorite`).
+        #[arg(long)]
+        name: String,
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -548,7 +603,81 @@ fn execute_sessions(action: SessionCommand) -> Result<String, CliFailure> {
                 })?;
             Ok(render_session_detail(format, &detail))
         }
+        SessionCommand::TagAdd {
+            home,
+            source_kind,
+            external_session_id,
+            name,
+            format,
+        } => {
+            validate_curation_identity(format, &source_kind, &external_session_id)?;
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let result = library
+                .add_session_tag(SessionCurationRequest {
+                    source_kind,
+                    external_session_id,
+                    name,
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_curation_mutation(format, &result))
+        }
+        SessionCommand::TagRemove {
+            home,
+            source_kind,
+            external_session_id,
+            name,
+            format,
+        } => {
+            validate_curation_identity(format, &source_kind, &external_session_id)?;
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let result = library
+                .remove_session_tag(SessionCurationRequest {
+                    source_kind,
+                    external_session_id,
+                    name,
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_curation_mutation(format, &result))
+        }
+        SessionCommand::LabelToggle {
+            home,
+            source_kind,
+            external_session_id,
+            name,
+            format,
+        } => {
+            validate_curation_identity(format, &source_kind, &external_session_id)?;
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let result = library
+                .toggle_session_label(SessionCurationRequest {
+                    source_kind,
+                    external_session_id,
+                    name,
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_curation_mutation(format, &result))
+        }
     }
+}
+
+fn validate_curation_identity(
+    format: OutputFormat,
+    source_kind: &str,
+    external_session_id: &str,
+) -> Result<(), CliFailure> {
+    if source_kind.trim().is_empty() {
+        return Err(CliFailure::usage(format, "source kind must not be empty"));
+    }
+    if external_session_id.trim().is_empty() {
+        return Err(CliFailure::usage(
+            format,
+            "external session id must not be empty",
+        ));
+    }
+    Ok(())
 }
 
 fn render_journey_success(
@@ -849,6 +978,44 @@ fn render_session_detail(format: OutputFormat, detail: &distill_library::Session
             }
             if let Some(cursor) = &detail.next_artifact_cursor {
                 lines.push(format!("session.next_artifact_cursor: {cursor}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+/**
+ * Render a typed curation mutation snapshot for human or JSON callers.
+ */
+fn render_curation_mutation(format: OutputFormat, result: &CurationMutationResult) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "curation": result,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("curation.changed: {}", result.changed),
+                format!(
+                    "curation.identity: {}:{}",
+                    result.identity.source_kind, result.identity.external_session_id
+                ),
+                format!("curation.workflow_state: {:?}", result.workflow_state),
+            ];
+            if result.tags.is_empty() {
+                lines.push("curation.tags: none".to_string());
+            } else {
+                for tag in &result.tags {
+                    lines.push(format!("curation.tag: {} ({})", tag.name, tag.origin));
+                }
+            }
+            if result.labels.is_empty() {
+                lines.push("curation.labels: none".to_string());
+            } else {
+                for label in &result.labels {
+                    lines.push(format!("curation.label: {} ({})", label.name, label.origin));
+                }
             }
             lines.join("\n")
         }

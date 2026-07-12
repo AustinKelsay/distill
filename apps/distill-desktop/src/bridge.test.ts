@@ -113,6 +113,48 @@ describe("Tauri bridge", () => {
         artifact_cursor: null,
       },
     });
+
+    await bridge.addSessionTag("/tmp/home", {
+      source_kind: "fixture",
+      external_session_id: "session-1",
+      name: "research",
+    });
+    expect(tauri.invoke).toHaveBeenCalledWith("add_session_tag_command", {
+      home: "/tmp/home",
+      request: {
+        source_kind: "fixture",
+        external_session_id: "session-1",
+        name: "research",
+      },
+    });
+
+    await bridge.removeSessionTag("/tmp/home", {
+      source_kind: "fixture",
+      external_session_id: "session-1",
+      name: "research",
+    });
+    expect(tauri.invoke).toHaveBeenCalledWith("remove_session_tag_command", {
+      home: "/tmp/home",
+      request: {
+        source_kind: "fixture",
+        external_session_id: "session-1",
+        name: "research",
+      },
+    });
+
+    await bridge.toggleSessionLabel("/tmp/home", {
+      source_kind: "fixture",
+      external_session_id: "session-1",
+      name: "train",
+    });
+    expect(tauri.invoke).toHaveBeenCalledWith("toggle_session_label_command", {
+      home: "/tmp/home",
+      request: {
+        source_kind: "fixture",
+        external_session_id: "session-1",
+        name: "train",
+      },
+    });
   });
 
   it("unsubscribes when cleanup happens before async listener registration finishes", async () => {

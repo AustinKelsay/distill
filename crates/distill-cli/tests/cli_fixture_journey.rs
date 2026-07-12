@@ -493,3 +493,102 @@ fn cli_sessions_list_search_and_detail_are_bounded() {
     );
     assert!(detail_value["session"]["next_message_cursor"].is_string());
 }
+
+#[test]
+fn cli_sessions_tag_and_label_mutations_return_curation_snapshot() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let journey = Command::new(distill_bin())
+        .args([
+            "--home",
+            home.to_str().unwrap(),
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("journey");
+    assert_eq!(journey.status.code(), Some(0));
+
+    let tag_add = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "tag-add",
+            "--home",
+            home.to_str().unwrap(),
+            "--source-kind",
+            "fixture",
+            "--external-session-id",
+            "fixture-session-cli",
+            "--name",
+            "  Research ",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("tag-add");
+    assert_eq!(
+        tag_add.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&tag_add.stderr)
+    );
+    let tag_value: serde_json::Value =
+        serde_json::from_slice(&tag_add.stdout).expect("tag-add json");
+    assert_eq!(tag_value["ok"], true);
+    assert_eq!(tag_value["curation"]["changed"], true);
+    assert_eq!(
+        tag_value["curation"]["identity"]["external_session_id"],
+        "fixture-session-cli"
+    );
+    assert_eq!(tag_value["curation"]["tags"][0]["name"], "research");
+    assert_eq!(tag_value["curation"]["tags"][0]["origin"], "manual");
+
+    let tag_remove_human = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "tag-remove",
+            "--home",
+            home.to_str().unwrap(),
+            "--source-kind",
+            "fixture",
+            "--external-session-id",
+            "fixture-session-cli",
+            "--name",
+            "research",
+        ])
+        .output()
+        .expect("tag-remove");
+    assert_eq!(tag_remove_human.status.code(), Some(0));
+    let tag_remove_stdout = String::from_utf8_lossy(&tag_remove_human.stdout);
+    assert!(tag_remove_stdout.contains("curation.changed: true"));
+    assert!(tag_remove_stdout.contains("curation.tags: none"));
+
+    let label_toggle = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "label-toggle",
+            "--home",
+            home.to_str().unwrap(),
+            "--source-kind",
+            "fixture",
+            "--external-session-id",
+            "fixture-session-cli",
+            "--name",
+            "train",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("label-toggle");
+    assert_eq!(label_toggle.status.code(), Some(0));
+    let label_value: serde_json::Value =
+        serde_json::from_slice(&label_toggle.stdout).expect("label-toggle json");
+    assert_eq!(label_value["curation"]["changed"], true);
+    assert_eq!(label_value["curation"]["labels"][0]["name"], "train");
+    assert_eq!(label_value["curation"]["labels"][0]["origin"], "manual");
+    assert_eq!(label_value["curation"]["workflow_state"], "train_ready");
+}

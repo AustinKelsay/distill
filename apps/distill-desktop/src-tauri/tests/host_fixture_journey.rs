@@ -294,3 +294,77 @@ fn host_sessions_list_and_detail_are_typed_and_bounded() {
     assert_eq!(detail.summary.external_session_id, "fixture-session-host");
     assert!(detail.next_message_cursor.is_some());
 }
+
+#[test]
+fn host_session_curation_mutations_return_typed_snapshot() {
+    use distill_desktop_lib::{
+        execute_add_session_tag, execute_fixture_journey, execute_remove_session_tag,
+        execute_toggle_session_label, validate_fixture_journey_request,
+        validate_session_curation_request,
+    };
+    use distill_library::SessionCurationRequest;
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let journey =
+        validate_fixture_journey_request(home.to_str().unwrap(), fixture.to_str().unwrap())
+            .expect("request");
+    execute_fixture_journey(&journey, |_| {}).expect("journey");
+
+    let (home_request, tag_request) = validate_session_curation_request(
+        home.to_str().unwrap(),
+        SessionCurationRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "  Topic ".into(),
+        },
+    )
+    .expect("tag request");
+    let tagged = execute_add_session_tag(&home_request, tag_request).expect("add tag");
+    assert!(tagged.changed);
+    assert_eq!(tagged.tags.len(), 1);
+    assert_eq!(tagged.tags[0].name, "topic");
+    assert_eq!(tagged.tags[0].origin, "manual");
+
+    let removed = execute_remove_session_tag(
+        &home_request,
+        SessionCurationRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "topic".into(),
+        },
+    )
+    .expect("remove tag");
+    assert!(removed.changed);
+    assert!(removed.tags.is_empty());
+
+    let (_home_request, label_request) = validate_session_curation_request(
+        home.to_str().unwrap(),
+        SessionCurationRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "favorite".into(),
+        },
+    )
+    .expect("label request");
+    let labeled = execute_toggle_session_label(&home_request, label_request).expect("toggle label");
+    assert!(labeled.changed);
+    assert!(labeled.labels.iter().any(|label| label.name == "favorite"));
+    assert_eq!(
+        labeled.workflow_state,
+        distill_library::WorkflowState::Favorite
+    );
+
+    let empty = validate_session_curation_request(
+        home.to_str().unwrap(),
+        SessionCurationRequest {
+            source_kind: "  ".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "x".into(),
+        },
+    );
+    assert!(empty.is_err());
+}

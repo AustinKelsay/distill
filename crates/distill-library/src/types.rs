@@ -283,6 +283,37 @@ pub struct SessionLabel {
     pub origin: String,
 }
 
+/// Session Identity plus a tag or label name for a curation mutation.
+///
+/// Callers address sessions by `(source_kind, external_session_id)` only.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionCurationRequest {
+    /// Source kind string such as `fixture`.
+    pub source_kind: String,
+    /// Stable Session Identity external id.
+    pub external_session_id: String,
+    /// Tag or label name; normalized with trim + Unicode lowercase.
+    pub name: String,
+}
+
+/// Result of a manual tag or label mutation.
+///
+/// Always carries the current manual curation snapshot so callers can refresh
+/// list/detail rows without a second storage round-trip.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CurationMutationResult {
+    /// `true` when an assignment row and matching Activity Event were committed.
+    pub changed: bool,
+    /// Session Identity targeted by the request.
+    pub identity: SessionIdentity,
+    /// Current manual tags (`origin = "manual"`), ordered by name.
+    pub tags: Vec<SessionTag>,
+    /// Current manual labels (`origin = "manual"`), ordered by name.
+    pub labels: Vec<SessionLabel>,
+    /// Derived workflow state from the current manual labels.
+    pub workflow_state: WorkflowState,
+}
+
 /// Request for a deterministic session list or search page.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionListRequest {

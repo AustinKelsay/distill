@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use distill_library::{
-    FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions, RepairReport,
-    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourcePreference,
-    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library,
+    RepairOptions, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
+    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRequest,
+    SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -78,6 +79,73 @@ pub fn run_session_detail(
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
     library
         .session_detail(detail)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus Session Identity fields for a curation mutation.
+ */
+pub fn validate_session_curation_request(
+    home: &str,
+    request: SessionCurationRequest,
+) -> Result<(HomeRequest, SessionCurationRequest), HostError> {
+    let home_request = validate_home_request(home)?;
+    let source_kind = request.source_kind.trim();
+    let external_session_id = request.external_session_id.trim();
+    if source_kind.is_empty() {
+        return Err(HostError::validation("source kind must not be empty"));
+    }
+    if external_session_id.is_empty() {
+        return Err(HostError::validation(
+            "external session id must not be empty",
+        ));
+    }
+    Ok((
+        home_request,
+        SessionCurationRequest {
+            source_kind: source_kind.to_string(),
+            external_session_id: external_session_id.to_string(),
+            name: request.name,
+        },
+    ))
+}
+
+/**
+ * Add a manual tag through the public Library seam.
+ */
+pub fn run_add_session_tag(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .add_session_tag(curation)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Remove a manual tag through the public Library seam.
+ */
+pub fn run_remove_session_tag(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .remove_session_tag(curation)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Toggle a catalog label through the public Library seam.
+ */
+pub fn run_toggle_session_label(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .toggle_session_label(curation)
         .map_err(HostError::from_library)
 }
 

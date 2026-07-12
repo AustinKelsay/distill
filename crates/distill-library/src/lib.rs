@@ -7,6 +7,7 @@
 #![deny(missing_docs)]
 
 mod adapter;
+mod curation;
 mod error;
 #[cfg(feature = "test-faults")]
 pub mod faults;
@@ -34,11 +35,11 @@ pub mod test_support {
 }
 pub use types::{
     derive_workflow_state, matches_workflow_lane, ActivityEventSummary, AttemptSummary,
-    FixtureJourneyPhase, FixtureJourneyResult, HealthIssue, HealthReport, IngestReport,
-    OpenReconciliation, ProjectedArtifact, ProjectedMessage, RenormalizeReport, RepairAction,
-    RepairOptions, RepairReport, SearchHit, SessionDetail, SessionDetailRequest, SessionIdentity,
-    SessionLabel, SessionListItem, SessionListPage, SessionListRequest, SessionSummary, SessionTag,
-    SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary, SyncProgress,
-    SyncRequest, SyncRunResult, SyncRunSummary, SyncSourceOutcome, WorkflowLane, WorkflowState,
-    INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
+    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthIssue, HealthReport,
+    IngestReport, OpenReconciliation, ProjectedArtifact, ProjectedMessage, RenormalizeReport,
+    RepairAction, RepairOptions, RepairReport, SearchHit, SessionCurationRequest, SessionDetail,
+    SessionDetailRequest, SessionIdentity, SessionLabel, SessionListItem, SessionListPage,
+    SessionListRequest, SessionSummary, SessionTag, SourceDetectRequest, SourceDetectResult,
+    SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    SyncSourceOutcome, WorkflowLane, WorkflowState, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
 };

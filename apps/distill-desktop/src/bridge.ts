@@ -5,12 +5,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  CurationMutationResult,
   DistillBridge,
   FixtureJourneyInput,
   FixtureJourneyPhase,
   FixtureJourneyResult,
   HealthReport,
   RepairReport,
+  SessionCurationRequest,
   SessionDetail,
   SessionDetailRequest,
   SessionListPage,
@@ -83,6 +85,30 @@ export function createTauriBridge(): DistillBridge {
       request: SessionDetailRequest,
     ): Promise<SessionDetail | null> {
       return invoke<SessionDetail | null>("session_detail_command", { home, request });
+    },
+    async addSessionTag(
+      home: string,
+      request: SessionCurationRequest,
+    ): Promise<CurationMutationResult> {
+      return invoke<CurationMutationResult>("add_session_tag_command", { home, request });
+    },
+    async removeSessionTag(
+      home: string,
+      request: SessionCurationRequest,
+    ): Promise<CurationMutationResult> {
+      return invoke<CurationMutationResult>("remove_session_tag_command", {
+        home,
+        request,
+      });
+    },
+    async toggleSessionLabel(
+      home: string,
+      request: SessionCurationRequest,
+    ): Promise<CurationMutationResult> {
+      return invoke<CurationMutationResult>("toggle_session_label_command", {
+        home,
+        request,
+      });
     },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       return subscribe(PROGRESS_EVENT, listener);

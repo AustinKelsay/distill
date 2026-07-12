@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension};
 use semver::Version;
 
 use crate::adapter::{FixtureAdapter, ParserIdentity, SourceAdapter, FIXTURE_PARSER_ID};
+use crate::curation;
 use crate::error::{LibraryError, LibraryResult};
 use crate::health::{self as health_ops};
 use crate::ingest;
@@ -13,9 +14,10 @@ use crate::ops::{self, new_owner_id};
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
-    ActivityEventSummary, AttemptSummary, FixtureJourneyPhase, FixtureJourneyResult, HealthReport,
-    IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport, SearchHit,
-    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
+    ActivityEventSummary, AttemptSummary, CurationMutationResult, FixtureJourneyPhase,
+    FixtureJourneyResult, HealthReport, IngestReport, OpenReconciliation, RenormalizeReport,
+    RepairOptions, RepairReport, SearchHit, SessionCurationRequest, SessionDetail,
+    SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
     SourceDetectResult, SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult,
     SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
@@ -451,6 +453,55 @@ impl Library {
     pub fn recent_activity(&self, limit: u32) -> LibraryResult<Vec<ActivityEventSummary>> {
         validate_page_size(limit)?;
         query::list_activity(&self.conn, limit)
+    }
+
+    /**
+     * Add a manual tag to a session by Session Identity.
+     *
+     * Blank names, missing sessions, and duplicate assignments are typed no-ops
+     * (`changed: false`) with no Activity side effects.
+     *
+     * Parameters:
+     * - `request`: `(source_kind, external_session_id)` plus tag name.
+     */
+    pub fn add_session_tag(
+        &mut self,
+        request: SessionCurationRequest,
+    ) -> LibraryResult<CurationMutationResult> {
+        curation::add_session_tag(&mut self.conn, request)
+    }
+
+    /**
+     * Remove a manual tag from a session by Session Identity.
+     *
+     * Blank names, missing sessions, unknown tags, and missing assignments are
+     * typed no-ops (`changed: false`) with no Activity side effects.
+     *
+     * Parameters:
+     * - `request`: `(source_kind, external_session_id)` plus tag name.
+     */
+    pub fn remove_session_tag(
+        &mut self,
+        request: SessionCurationRequest,
+    ) -> LibraryResult<CurationMutationResult> {
+        curation::remove_session_tag(&mut self.conn, request)
+    }
+
+    /**
+     * Toggle a seeded catalog label on a session by Session Identity.
+     *
+     * Enabling a dataset label removes conflicting dataset labels in the same
+     * transaction. Blank names, unknown labels, and missing sessions are typed
+     * no-ops (`changed: false`) with no Activity side effects.
+     *
+     * Parameters:
+     * - `request`: `(source_kind, external_session_id)` plus label name.
+     */
+    pub fn toggle_session_label(
+        &mut self,
+        request: SessionCurationRequest,
+    ) -> LibraryResult<CurationMutationResult> {
+        curation::toggle_session_label(&mut self.conn, request)
     }
 }
 

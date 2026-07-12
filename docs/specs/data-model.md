@@ -245,6 +245,8 @@ Canonical semantics:
 - dataset-label exclusivity must be enforced transactionally when a manual toggle enables a conflicting dataset label
 - labels take precedence over tags when export or review behavior would otherwise conflict
 - UI surfaces should present labels before tags, and export metadata should list labels before tags
+- curation mutations target Session Identity, normalize names before lookup, and commit assignment changes with their `tag_added`, `tag_removed`, or `label_toggled` Activity Event in one transaction
+- duplicate, missing-session, blank, unknown-label, and missing-assignment commands are true no-ops with no Activity side effects
 
 Example:
 

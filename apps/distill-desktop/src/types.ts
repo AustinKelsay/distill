@@ -139,6 +139,22 @@ export type SessionDetailRequest = {
   artifact_cursor?: string | null;
 };
 
+/** Session Identity plus a tag or label name for a curation mutation. */
+export type SessionCurationRequest = {
+  source_kind: string;
+  external_session_id: string;
+  name: string;
+};
+
+/** Result of a manual tag or label mutation with the current curation snapshot. */
+export type CurationMutationResult = {
+  changed: boolean;
+  identity: SessionIdentity;
+  tags: SessionTag[];
+  labels: SessionLabel[];
+  workflow_state: WorkflowState;
+};
+
 /** Typed Library health issue with redacted summary. */
 export type HealthIssue = {
   code: string;
@@ -316,6 +332,21 @@ export type DistillBridge = {
     home: string,
     request: SessionDetailRequest,
   ): Promise<SessionDetail | null>;
+  /** Add a manual tag by Session Identity. */
+  addSessionTag(
+    home: string,
+    request: SessionCurationRequest,
+  ): Promise<CurationMutationResult>;
+  /** Remove a manual tag by Session Identity. */
+  removeSessionTag(
+    home: string,
+    request: SessionCurationRequest,
+  ): Promise<CurationMutationResult>;
+  /** Toggle a catalog label by Session Identity. */
+  toggleSessionLabel(
+    home: string,
+    request: SessionCurationRequest,
+  ): Promise<CurationMutationResult>;
   /**
    * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback

@@ -1,17 +1,18 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::{
-    FixtureJourneyResult, HealthReport, RepairReport, SessionDetail, SessionDetailRequest,
-    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
-    SyncRunSummary,
+    CurationMutationResult, FixtureJourneyResult, HealthReport, RepairReport,
+    SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    SessionListRequest, SourcePreference, SyncProgress, SyncRunResult, SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_fixture_journey, run_health, run_list_sessions, run_list_sources, run_repair,
-    run_session_detail, run_set_source_preference, run_sync_cancel, run_sync_start,
-    run_sync_status, validate_fixture_journey_request, validate_home_request,
+    run_add_session_tag, run_fixture_journey, run_health, run_list_sessions, run_list_sources,
+    run_remove_session_tag, run_repair, run_session_detail, run_set_source_preference,
+    run_sync_cancel, run_sync_start, run_sync_status, run_toggle_session_label,
+    validate_fixture_journey_request, validate_home_request, validate_session_curation_request,
     validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
 };
 use crate::{FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
@@ -184,6 +185,57 @@ pub async fn session_detail_command(
 ) -> Result<Option<SessionDetail>, HostError> {
     let home_request = validate_home_request(&home)?;
     tauri::async_runtime::spawn_blocking(move || run_session_detail(&home_request, request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: add a manual session tag off the UI thread.
+ */
+#[tauri::command]
+pub async fn add_session_tag_command(
+    home: String,
+    request: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let (home_request, curation) = validate_session_curation_request(&home, request)?;
+    tauri::async_runtime::spawn_blocking(move || run_add_session_tag(&home_request, curation))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: remove a manual session tag off the UI thread.
+ */
+#[tauri::command]
+pub async fn remove_session_tag_command(
+    home: String,
+    request: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let (home_request, curation) = validate_session_curation_request(&home, request)?;
+    tauri::async_runtime::spawn_blocking(move || run_remove_session_tag(&home_request, curation))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: toggle a catalog session label off the UI thread.
+ */
+#[tauri::command]
+pub async fn toggle_session_label_command(
+    home: String,
+    request: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let (home_request, curation) = validate_session_curation_request(&home, request)?;
+    tauri::async_runtime::spawn_blocking(move || run_toggle_session_label(&home_request, curation))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),
