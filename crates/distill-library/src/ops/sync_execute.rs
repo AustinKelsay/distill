@@ -5,8 +5,8 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::adapter::{
-    ClaudeAdapter, CodexAdapter, FixtureAdapter, ParserIdentity, SourceAdapter, SourceKind,
-    FIXTURE_PARSER_ID,
+    ClaudeAdapter, CodexAdapter, FixtureAdapter, OpenCodeAdapter, ParserIdentity, SourceAdapter,
+    SourceKind, FIXTURE_PARSER_ID,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
@@ -136,7 +136,38 @@ where
                 aggregate,
             )
         }
-        SourceKind::OpenCode | SourceKind::Droid => Ok(SyncSourceOutcome {
+        SourceKind::OpenCode => {
+            let root = match load_configured_root(conn, source_kind) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "configured_root_required",
+                        "source sync requires a configured root",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = OpenCodeAdapter::new(root);
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
+        }
+        SourceKind::Droid => Ok(SyncSourceOutcome {
             source_kind: source_kind.as_str().into(),
             status: "failed".into(),
             accepted_captures: 0,
@@ -250,6 +281,17 @@ where
         "completed"
     };
 
+    // All-candidate failure (no progress) still needs redacted Source diagnostics so
+    // callers can classify the outcome without reading per-candidate Activity rows.
+    let (error_class, error_message) = if status == "failed" {
+        (
+            Some("source_adapter".into()),
+            Some("source sync failed".into()),
+        )
+    } else {
+        (None, None)
+    };
+
     Ok(SyncSourceOutcome {
         source_kind: source_kind.as_str().into(),
         status: status.into(),
@@ -257,8 +299,8 @@ where
         skipped_duplicates: source_report.skipped_duplicates,
         successful_attempts: source_report.successful_attempts,
         failed_attempts: source_report.failed_attempts,
-        error_class: None,
-        error_message: None,
+        error_class,
+        error_message,
     })
 }
 

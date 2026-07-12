@@ -154,6 +154,7 @@ pub fn run_bounded_command(
  *
  * Deterministic helper used by contracts on all platforms.
  */
+#[cfg(feature = "test-leases")]
 pub fn enforce_output_bounds_for_test(
     stdout_bytes: &[u8],
     stderr_bytes: &[u8],

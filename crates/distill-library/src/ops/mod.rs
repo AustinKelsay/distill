@@ -3,8 +3,7 @@
 mod detect;
 mod paths;
 mod prefs;
-#[allow(dead_code)]
-mod process;
+pub(crate) mod process;
 mod sync;
 mod sync_execute;
 mod sync_lease;

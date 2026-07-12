@@ -286,7 +286,7 @@ fn detection_isolates_failures_across_independent_fixture_requests() {
                 configured_root: Some(good.display().to_string()),
             },
             SourceDetectRequest {
-                kind: "opencode".into(),
+                kind: "droid".into(),
                 configured_root: None,
             },
             SourceDetectRequest {
@@ -498,6 +498,15 @@ fn successful_sync_completes_with_activity_and_projection() {
  */
 #[test]
 fn operations_status_active_and_stale_lease_reopen() {
+    // Serialize against tests that shrink the global lease/heartbeat timing seam.
+    #[cfg(feature = "test-leases")]
+    let _timing_lock = LEASE_TIMING_TEST_LOCK.lock().expect("timing lock");
+    #[cfg(feature = "test-leases")]
+    {
+        use distill_library::test_leases::reset_lease_timing_for_test;
+        reset_lease_timing_for_test();
+    }
+
     let temp = TempDir::new().expect("temp");
     let home = temp.path().join("home");
     let fixture = temp.path().join("fixture");
