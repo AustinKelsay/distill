@@ -318,11 +318,9 @@ fn detection_isolates_failures_across_independent_fixture_requests() {
     );
     assert_eq!(results[1].status, "ok");
     assert!(results[1].executable.is_none());
-    assert_eq!(results[2].status, "unavailable");
-    assert_eq!(
-        results[2].error_class.as_deref(),
-        Some("adapter_not_registered")
-    );
+    assert_eq!(results[2].status, "disabled");
+    assert!(results[2].error_class.is_none());
+    assert_eq!(results[2].display_name.as_deref(), Some("Droid"));
     assert_eq!(results[3].status, "unhealthy");
     assert_eq!(
         results[3].error_class.as_deref(),

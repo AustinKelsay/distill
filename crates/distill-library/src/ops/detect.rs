@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::adapter::{
-    find_executable, ClaudeAdapter, CodexAdapter, FixtureAdapter, OpenCodeAdapter, SourceAdapter,
-    SourceKind,
+    default_droid_sessions_root, find_executable, ClaudeAdapter, CodexAdapter, DroidAdapter,
+    FixtureAdapter, OpenCodeAdapter, SourceAdapter, SourceKind,
 };
 use crate::error::LibraryResult;
 use crate::ops::paths::canonicalize_configured_root;
@@ -17,7 +17,7 @@ use crate::types::{SourceDetectRequest, SourceDetectResult};
  * Detect each requested Source independently.
  *
  * A failing Source never aborts sibling results. Fixture, Codex, Claude Code,
- * and OpenCode use concrete adapters; Droid returns typed `unavailable` until #29.
+ * OpenCode, and Droid use concrete adapters.
  */
 pub fn detect_sources(
     conn: &Connection,
@@ -110,29 +110,18 @@ fn detect_one(
             detect_opencode(request, pref)
         }
         SourceKind::Droid => {
-            let effective_data_root = match resolve_root_text(request, pref) {
-                Ok(root) => root,
-                Err(err) => {
-                    return SourceDetectResult {
-                        kind: kind.as_str().into(),
-                        status: "unhealthy".into(),
-                        executable: None,
-                        effective_data_root: None,
-                        display_name: Some(kind.as_str().into()),
-                        error_class: Some(err.code().into()),
-                        error_message: Some(stable_detect_message(err.code())),
-                    };
-                }
-            };
-            SourceDetectResult {
-                kind: kind.as_str().into(),
-                status: "unavailable".into(),
-                executable: None,
-                effective_data_root,
-                display_name: Some(kind.as_str().into()),
-                error_class: Some("adapter_not_registered".into()),
-                error_message: Some("source adapter is not registered in this build".into()),
+            if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
+                return SourceDetectResult {
+                    kind: kind.as_str().into(),
+                    status: "disabled".into(),
+                    executable: None,
+                    effective_data_root: pref.and_then(|p| p.configured_root.clone()),
+                    display_name: Some("Droid".into()),
+                    error_class: None,
+                    error_message: None,
+                };
             }
+            detect_droid(request, pref)
         }
     }
 }
@@ -426,6 +415,59 @@ fn detect_opencode_with_executable(
     }
 }
 
+fn detect_droid(
+    request: &SourceDetectRequest,
+    pref: Option<&crate::types::SourcePreference>,
+) -> SourceDetectResult {
+    let root = match resolve_droid_root(request, pref) {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            return SourceDetectResult {
+                kind: SourceKind::Droid.as_str().into(),
+                status: "missing".into(),
+                executable: None,
+                effective_data_root: None,
+                display_name: Some("Droid".into()),
+                error_class: Some("root_absent".into()),
+                error_message: Some(stable_detect_message("root_absent")),
+            };
+        }
+        Err(err) => {
+            return SourceDetectResult {
+                kind: SourceKind::Droid.as_str().into(),
+                status: "unhealthy".into(),
+                executable: None,
+                effective_data_root: None,
+                display_name: Some("Droid".into()),
+                error_class: Some(err.code().into()),
+                error_message: Some(stable_detect_message(err.code())),
+            };
+        }
+    };
+
+    let adapter = DroidAdapter::new(root);
+    match adapter.detect() {
+        Ok(discovered) => SourceDetectResult {
+            kind: SourceKind::Droid.as_str().into(),
+            status: "ok".into(),
+            executable: None,
+            effective_data_root: Some(discovered.data_root.display().to_string()),
+            display_name: Some(discovered.display_name),
+            error_class: None,
+            error_message: None,
+        },
+        Err(err) => SourceDetectResult {
+            kind: SourceKind::Droid.as_str().into(),
+            status: "unhealthy".into(),
+            executable: None,
+            effective_data_root: None,
+            display_name: Some("Droid".into()),
+            error_class: Some(err.code().into()),
+            error_message: Some(stable_detect_message(err.code())),
+        },
+    }
+}
+
 fn resolve_root_path(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
@@ -439,11 +481,29 @@ fn resolve_root_path(
     Ok(None)
 }
 
-fn resolve_root_text(
+/**
+ * Resolve a Droid sessions root: request override, preference override, then default home root.
+ *
+ * Absent default roots return `Ok(None)` so callers can report typed `missing` without path
+ * leakage. Explicit configured overrides still go through canonical validation.
+ */
+fn resolve_droid_root(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
-) -> LibraryResult<Option<String>> {
-    Ok(resolve_root_path(request, pref)?.map(|path| path.to_string_lossy().into_owned()))
+) -> LibraryResult<Option<PathBuf>> {
+    if let Some(root) = request.configured_root.as_ref() {
+        return Ok(Some(canonicalize_configured_root(Path::new(root))?));
+    }
+    if let Some(root) = pref.and_then(|pref| pref.configured_root.as_ref()) {
+        return Ok(Some(canonicalize_configured_root(Path::new(root))?));
+    }
+    let Some(default_root) = default_droid_sessions_root() else {
+        return Ok(None);
+    };
+    if !default_root.exists() {
+        return Ok(None);
+    }
+    Ok(Some(canonicalize_configured_root(&default_root)?))
 }
 
 /**
@@ -454,6 +514,7 @@ fn stable_detect_message(error_class: &str) -> String {
         "invalid_configured_root" => "configured root is invalid".into(),
         "source_adapter" => "source detection failed".into(),
         "configured_root_required" => "source detection requires a configured root".into(),
+        "root_absent" => "source data root is unavailable".into(),
         "unknown_source_kind" => "unknown source kind".into(),
         "adapter_not_registered" => "source adapter is not registered in this build".into(),
         "executable_not_found" => "source executable is unavailable".into(),

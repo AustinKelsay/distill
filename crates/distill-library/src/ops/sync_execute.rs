@@ -5,8 +5,8 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::adapter::{
-    ClaudeAdapter, CodexAdapter, FixtureAdapter, OpenCodeAdapter, ParserIdentity, SourceAdapter,
-    SourceKind, FIXTURE_PARSER_ID,
+    default_droid_sessions_root, ClaudeAdapter, CodexAdapter, DroidAdapter, FixtureAdapter,
+    OpenCodeAdapter, ParserIdentity, SourceAdapter, SourceKind, FIXTURE_PARSER_ID,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
@@ -167,16 +167,37 @@ where
                 aggregate,
             )
         }
-        SourceKind::Droid => Ok(SyncSourceOutcome {
-            source_kind: source_kind.as_str().into(),
-            status: "failed".into(),
-            accepted_captures: 0,
-            skipped_duplicates: 0,
-            successful_attempts: 0,
-            failed_attempts: 0,
-            error_class: Some("adapter_not_registered".into()),
-            error_message: Some("source adapter is not registered in this build".into()),
-        }),
+        SourceKind::Droid => {
+            let root = match load_droid_root(conn) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "root_absent",
+                        "source data root is unavailable",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = DroidAdapter::new(root);
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
+        }
     }
 }
 
@@ -334,6 +355,24 @@ fn load_configured_root(
         ))?)),
         None => Ok(None),
     }
+}
+
+/**
+ * Resolve the Droid sessions root for Sync: configured preference, else default home root.
+ */
+fn load_droid_root(conn: &Connection) -> LibraryResult<Option<std::path::PathBuf>> {
+    if let Some(root) = load_configured_root(conn, SourceKind::Droid)? {
+        return Ok(Some(root));
+    }
+    let Some(default_root) = default_droid_sessions_root() else {
+        return Ok(None);
+    };
+    if !default_root.exists() {
+        return Ok(None);
+    }
+    Ok(Some(crate::ops::canonicalize_configured_root(
+        &default_root,
+    )?))
 }
 
 fn is_source_outcome_error(err: &LibraryError) -> bool {

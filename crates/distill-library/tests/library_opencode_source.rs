@@ -165,11 +165,8 @@ fn library_detects_opencode_root_and_redacts_missing_root() {
     assert_eq!(results[1].status, "disabled");
     assert!(results[1].error_class.is_none());
 
-    assert_eq!(results[2].status, "unavailable");
-    assert_eq!(
-        results[2].error_class.as_deref(),
-        Some("adapter_not_registered")
-    );
+    assert_eq!(results[2].status, "disabled");
+    assert!(results[2].error_class.is_none());
 
     let mut library = Library::open(&home).expect("reopen");
     library

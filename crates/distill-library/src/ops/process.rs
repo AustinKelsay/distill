@@ -1,4 +1,4 @@
-//! Bounded provider-subprocess policy used by OpenCode (#28) and ready for Droid (#29).
+//! Bounded provider-subprocess policy used by OpenCode (#28).
 //!
 //! This module does not implement provider adapters. It owns hard duration and
 //! stdout/stderr byte caps with stable redacted errors. Stdin is written on a

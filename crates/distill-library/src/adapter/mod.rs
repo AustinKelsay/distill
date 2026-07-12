@@ -1,13 +1,15 @@
-//! SourceAdapter seam shared by Fixture, Codex, Claude Code, OpenCode, and future provider adapters.
+//! SourceAdapter seam shared by Fixture, Codex, Claude Code, OpenCode, and Droid adapters.
 
 mod claude;
 mod codex;
+mod droid;
 mod fixture;
 mod opencode;
 
 pub use claude::ClaudeAdapter;
 pub(crate) use codex::find_executable;
 pub use codex::CodexAdapter;
+pub use droid::{default_droid_sessions_root, DroidAdapter};
 pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
 pub use opencode::OpenCodeAdapter;
 
@@ -20,8 +22,7 @@ use thiserror::Error;
 /// Closed Source kind identifiers for v1.
 ///
 /// [`SourceKind::Fixture`], [`SourceKind::Codex`], [`SourceKind::ClaudeCode`],
-/// and [`SourceKind::OpenCode`] have concrete adapters. Droid stays registered
-/// for preference/detection surfaces and returns typed unavailable results until #29.
+/// [`SourceKind::OpenCode`], and [`SourceKind::Droid`] have concrete adapters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -33,7 +34,7 @@ pub enum SourceKind {
     ClaudeCode,
     /// OpenCode Source adapter (#28).
     OpenCode,
-    /// Droid Source (adapter deferred to #29).
+    /// Factory Droid Source adapter (#29).
     Droid,
 }
 
