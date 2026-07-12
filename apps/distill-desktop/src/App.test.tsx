@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import type {
+  ActivityListPage,
   CurationMutationResult,
   DistillBridge,
   ExportPreview,
@@ -16,6 +17,7 @@ import type {
   FixtureJourneyResult,
   HealthReport,
   HostError,
+  OperationsPage,
   RepairReport,
   SessionDetail,
   SessionListItem,
@@ -114,6 +116,13 @@ function createFakeBridge(options?: {
   pendingExport?: Promise<ExportResult>;
   exportPhases?: ExportProgress[];
   exportCancelRequested?: boolean;
+  activityPage?: ActivityListPage;
+  activityPages?: Record<string, ActivityListPage>;
+  activityError?: HostError;
+  pendingActivity?: Promise<ActivityListPage>;
+  operationsPage?: OperationsPage;
+  operationsError?: HostError;
+  pendingOperations?: Promise<OperationsPage>;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -355,6 +364,81 @@ function createFakeBridge(options?: {
     },
     async cancelExport() {
       return options?.exportCancelRequested ?? true;
+    },
+    async listActivity(_home, request) {
+      if (options?.pendingActivity) return options.pendingActivity;
+      if (options?.activityError) throw options.activityError;
+      if (options?.activityPages && request.cursor) {
+        return options.activityPages[request.cursor] ?? { items: [], next_cursor: null };
+      }
+      return (
+        options?.activityPage ?? {
+          items: [
+            {
+              id: 2,
+              event_type: "projection_replaced",
+              occurred_at: "2026-01-01T00:00:01Z",
+              source_kind: "fixture",
+              session_id: 1,
+              capture_id: 1,
+              attempt_id: 1,
+              payload_json: { projection_generation: 1 },
+            },
+            {
+              id: 1,
+              event_type: "capture_recorded",
+              occurred_at: "2026-01-01T00:00:00Z",
+              source_kind: "fixture",
+              session_id: 1,
+              capture_id: 1,
+              attempt_id: null,
+              payload_json: {},
+            },
+          ],
+          next_cursor: null,
+        }
+      );
+    },
+    async listOperations() {
+      if (options?.pendingOperations) return options.pendingOperations;
+      if (options?.operationsError) throw options.operationsError;
+      return (
+        options?.operationsPage ?? {
+          operations_status: "ok",
+          sync_runs: [
+            {
+              id: 1,
+              status: "completed",
+              cancel_requested: false,
+              accepted_captures: 1,
+              skipped_duplicates: 0,
+              successful_attempts: 1,
+              failed_attempts: 0,
+              error_class: null,
+              error_message: null,
+              warning_details: [],
+              sources: [],
+            },
+          ],
+          next_sync_cursor: null,
+          exports: [
+            {
+              id: 1,
+              dataset: "train",
+              format_id: "distill-session-jsonl-v1",
+              status: "published",
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:00:00Z",
+              sha256: "abc",
+              byte_size: 12,
+              record_count: 1,
+              error_class: null,
+              error_message: null,
+            },
+          ],
+          next_export_cursor: null,
+        }
+      );
     },
     onProgress(listener) {
       listeners.add(listener);
@@ -701,6 +785,14 @@ describe("first-run Fixture UI", () => {
       cancelExport: async () => {
         throw new Error("not used");
       },
+      listActivity: async () => ({ items: [], next_cursor: null }),
+      listOperations: async () => ({
+        operations_status: "ok",
+        sync_runs: [],
+        next_sync_cursor: null,
+        exports: [],
+        next_export_cursor: null,
+      }),
       onProgress: () => () => undefined,
       onSyncProgress: () => () => undefined,
       onExportProgress: () => () => undefined,
@@ -1143,6 +1235,183 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("export-status")).toHaveTextContent("cancelled");
       expect(screen.getByTestId("export-result-status")).toHaveTextContent("cancelled");
+    });
+  });
+
+  it("loads Activity and Operations panels with explicit states and no ambient fetch", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      activityPage: {
+        items: [
+          {
+            id: 3,
+            event_type: "sync_completed",
+            occurred_at: "2026-01-01T00:00:02Z",
+            source_kind: null,
+            session_id: null,
+            capture_id: null,
+            attempt_id: null,
+            payload_json: { status: "completed" },
+          },
+        ],
+        next_cursor: "page-2",
+      },
+      activityPages: {
+        "page-2": {
+          items: [
+            {
+              id: 1,
+              event_type: "capture_recorded",
+              occurred_at: "2026-01-01T00:00:00Z",
+              source_kind: "fixture",
+              session_id: 1,
+              capture_id: 1,
+              attempt_id: null,
+              payload_json: {},
+            },
+          ],
+          next_cursor: null,
+        },
+      },
+      operationsPage: {
+        operations_status: "ok",
+        sync_runs: [
+          {
+            id: 2,
+            status: "warning",
+            cancel_requested: false,
+            accepted_captures: 1,
+            skipped_duplicates: 0,
+            successful_attempts: 1,
+            failed_attempts: 1,
+            error_class: null,
+            error_message: null,
+            warning_details: ["sibling source unavailable"],
+            sources: [],
+          },
+          {
+            id: 1,
+            status: "cancelled",
+            cancel_requested: true,
+            accepted_captures: 0,
+            skipped_duplicates: 0,
+            successful_attempts: 0,
+            failed_attempts: 0,
+            error_class: "cancelled",
+            error_message: "sync run cancelled at a safe checkpoint",
+            warning_details: [],
+            sources: [],
+          },
+        ],
+        next_sync_cursor: null,
+        exports: [
+          {
+            id: 1,
+            dataset: "train",
+            format_id: "distill-session-jsonl-v1",
+            status: "failed_publish",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+            sha256: null,
+            byte_size: null,
+            record_count: 0,
+            error_class: "export_failed",
+            error_message: "export failed",
+          },
+        ],
+        next_export_cursor: null,
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    expect(screen.getByTestId("activity-status")).toHaveTextContent("idle");
+    expect(screen.getByTestId("operations-status")).toHaveTextContent("idle");
+    expect(screen.queryByTestId("activity-list")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("operations-sync-list")).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load Activity" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-status")).toHaveTextContent("ready");
+    });
+    expect(screen.getByTestId("activity-list")).toHaveTextContent("sync_completed");
+    await user.click(screen.getByRole("button", { name: "Load more Activity" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-list")).toHaveTextContent("capture_recorded");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Load Operations" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("operations-status")).toHaveTextContent("warning");
+    });
+    expect(screen.getByTestId("operations-lease-status")).toHaveTextContent("ok");
+    expect(screen.getByTestId("operations-sync-list")).toHaveTextContent("warning");
+    expect(screen.getByTestId("operations-sync-list")).toHaveTextContent("cancelled");
+    expect(screen.getByTestId("operations-export-list")).toHaveTextContent(
+      "failed_publish",
+    );
+  });
+
+  it("renders Activity error state", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      activityError: { code: "runtime", message: "activity failed" },
+    });
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load Activity" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-status")).toHaveTextContent("error");
+    });
+    expect(screen.getByTestId("activity-error")).toHaveTextContent("activity failed");
+  });
+
+  it("cancels in-flight Activity and Operations loads explicitly", async () => {
+    const user = userEvent.setup();
+    const pendingActivity = new Promise<ActivityListPage>(() => {});
+    const pendingOperations = new Promise<OperationsPage>(() => {});
+    const bridge = createFakeBridge({ pendingActivity, pendingOperations });
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+
+    await user.click(screen.getByRole("button", { name: "Load Activity" }));
+    expect(screen.getByTestId("activity-status")).toHaveTextContent("loading");
+    await user.click(screen.getByRole("button", { name: "Cancel Activity load" }));
+    expect(screen.getByTestId("activity-status")).toHaveTextContent("cancelled");
+    expect(screen.getByTestId("activity-error")).toHaveTextContent(
+      "Activity load cancelled",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Load Operations" }));
+    expect(screen.getByTestId("operations-status")).toHaveTextContent("loading");
+    await user.click(screen.getByRole("button", { name: "Cancel Operations load" }));
+    expect(screen.getByTestId("operations-status")).toHaveTextContent("cancelled");
+    expect(screen.getByTestId("operations-error")).toHaveTextContent(
+      "Operations load cancelled",
+    );
+  });
+
+  it("renders Activity and Operations empty states", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      activityPage: { items: [], next_cursor: null },
+      operationsPage: {
+        operations_status: "ok",
+        sync_runs: [],
+        next_sync_cursor: null,
+        exports: [],
+        next_export_cursor: null,
+      },
+    });
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load Activity" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-status")).toHaveTextContent("empty");
+    });
+    await user.click(screen.getByRole("button", { name: "Load Operations" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("operations-status")).toHaveTextContent("empty");
     });
   });
 });

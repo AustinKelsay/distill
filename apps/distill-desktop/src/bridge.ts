@@ -5,6 +5,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ActivityListPage,
+  ActivityListRequest,
   CurationMutationResult,
   DistillBridge,
   ExportDataset,
@@ -15,6 +17,8 @@ import type {
   FixtureJourneyPhase,
   FixtureJourneyResult,
   HealthReport,
+  OperationsPage,
+  OperationsRequest,
   RepairReport,
   SessionCurationRequest,
   SessionDetail,
@@ -123,6 +127,18 @@ export function createTauriBridge(): DistillBridge {
     },
     async cancelExport(home: string, dataset: ExportDataset): Promise<boolean> {
       return invoke<boolean>("export_cancel_command", { home, dataset });
+    },
+    async listActivity(
+      home: string,
+      request: ActivityListRequest,
+    ): Promise<ActivityListPage> {
+      return invoke<ActivityListPage>("activity_list_command", { home, request });
+    },
+    async listOperations(
+      home: string,
+      request: OperationsRequest,
+    ): Promise<OperationsPage> {
+      return invoke<OperationsPage>("operations_list_command", { home, request });
     },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       return subscribe(PROGRESS_EVENT, listener);

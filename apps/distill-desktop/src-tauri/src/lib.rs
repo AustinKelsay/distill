@@ -10,6 +10,7 @@ pub use error::HostError;
 pub use host::{
     run_add_session_tag as execute_add_session_tag, run_export_cancel as execute_export_cancel,
     run_fixture_journey as execute_fixture_journey, run_health as execute_health,
+    run_list_activity as execute_list_activity, run_list_operations as execute_list_operations,
     run_list_sessions as execute_list_sessions, run_list_sources as execute_list_sources,
     run_prepare_export_cancellation as execute_prepare_export_cancellation,
     run_preview_export as execute_preview_export, run_publish_export as execute_publish_export,
@@ -58,7 +59,9 @@ pub fn run() {
             commands::toggle_session_label_command,
             commands::export_preview_command,
             commands::export_publish_command,
-            commands::export_cancel_command
+            commands::export_cancel_command,
+            commands::activity_list_command,
+            commands::operations_list_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running Distill desktop");

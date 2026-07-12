@@ -746,3 +746,122 @@ fn cli_export_preview_and_publish_after_label_toggle() {
         .expect("invalid publish dataset");
     assert_eq!(holdout_invalid.status.code(), Some(2));
 }
+
+#[test]
+fn cli_activity_and_operations_are_stable_json_and_human() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let journey = Command::new(distill_bin())
+        .args([
+            "--home",
+            home.to_str().unwrap(),
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("journey");
+    assert_eq!(journey.status.code(), Some(0));
+
+    let activity_json = Command::new(distill_bin())
+        .args([
+            "activity",
+            "--home",
+            home.to_str().unwrap(),
+            "--limit",
+            "2",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("activity json");
+    assert_eq!(activity_json.status.code(), Some(0));
+    let activity_value: serde_json::Value =
+        serde_json::from_slice(&activity_json.stdout).expect("activity json");
+    assert_eq!(activity_value["ok"], true);
+    let items = activity_value["items"].as_array().expect("items");
+    assert!(!items.is_empty());
+    assert!(items[0].get("id").is_some());
+    assert!(items[0].get("event_type").is_some());
+    assert!(items[0].get("occurred_at").is_some());
+    assert!(items[0].get("payload_json").is_some());
+    assert!(activity_value.get("next_cursor").is_some());
+
+    let activity_human = Command::new(distill_bin())
+        .args(["activity", "--home", home.to_str().unwrap(), "--limit", "5"])
+        .output()
+        .expect("activity human");
+    assert_eq!(activity_human.status.code(), Some(0));
+    let human = String::from_utf8_lossy(&activity_human.stdout);
+    assert!(human.contains("activity.count:"));
+    assert!(human.contains("activity.event:"));
+
+    let empty_home = Command::new(distill_bin())
+        .args(["activity", "--home", "", "--format", "json"])
+        .output()
+        .expect("empty home");
+    assert_eq!(empty_home.status.code(), Some(2));
+
+    let zero_limit = Command::new(distill_bin())
+        .args([
+            "activity",
+            "--home",
+            home.to_str().unwrap(),
+            "--limit",
+            "0",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("zero limit");
+    assert_eq!(zero_limit.status.code(), Some(2));
+
+    let invalid_cursor = Command::new(distill_bin())
+        .args([
+            "activity",
+            "--home",
+            home.to_str().unwrap(),
+            "--cursor",
+            "not-a-cursor",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("invalid Activity cursor");
+    assert_eq!(invalid_cursor.status.code(), Some(1));
+    let invalid_cursor_value: serde_json::Value =
+        serde_json::from_slice(&invalid_cursor.stderr).expect("invalid cursor json");
+    assert_eq!(invalid_cursor_value["error"], "invalid_argument");
+
+    let ops_json = Command::new(distill_bin())
+        .args([
+            "operations",
+            "--home",
+            home.to_str().unwrap(),
+            "--sync-limit",
+            "10",
+            "--export-limit",
+            "10",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("operations json");
+    assert_eq!(ops_json.status.code(), Some(0));
+    let ops_value: serde_json::Value = serde_json::from_slice(&ops_json.stdout).expect("ops json");
+    assert_eq!(ops_value["ok"], true);
+    assert!(ops_value["operations"]["operations_status"].is_string());
+    assert!(ops_value["operations"]["sync_runs"].is_array());
+    assert!(ops_value["operations"]["exports"].is_array());
+
+    let ops_human = Command::new(distill_bin())
+        .args(["operations", "--home", home.to_str().unwrap()])
+        .output()
+        .expect("operations human");
+    assert_eq!(ops_human.status.code(), Some(0));
+    let ops_out = String::from_utf8_lossy(&ops_human.stdout);
+    assert!(ops_out.contains("operations.status:"));
+}

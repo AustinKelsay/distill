@@ -455,6 +455,120 @@ pub struct ActivityEventSummary {
     pub session_id: Option<i64>,
 }
 
+/// Request for a deterministic Activity Event page.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ActivityListRequest {
+    /// Maximum items to return (1..=MAX_PAGE_SIZE).
+    pub limit: u32,
+    /// Opaque keyset cursor from a prior page.
+    pub cursor: Option<String>,
+}
+
+impl Default for ActivityListRequest {
+    fn default() -> Self {
+        Self {
+            limit: 50,
+            cursor: None,
+        }
+    }
+}
+
+/// One append-only Activity Event with safe caller-facing fields.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivityEvent {
+    /// Durable Activity Event id.
+    pub id: i64,
+    /// Canonical event type string.
+    pub event_type: String,
+    /// RFC3339 occurrence timestamp.
+    pub occurred_at: String,
+    /// Optional Source kind when the event is Source-scoped.
+    pub source_kind: Option<String>,
+    /// Optional Session row id.
+    pub session_id: Option<i64>,
+    /// Optional Capture row id.
+    pub capture_id: Option<i64>,
+    /// Optional Normalization Attempt row id.
+    pub attempt_id: Option<i64>,
+    /// Safe structured payload JSON (paths/SQL/provider bodies redacted).
+    pub payload_json: serde_json::Value,
+}
+
+/// Deterministic Activity Event page ordered newest-first by id.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivityListPage {
+    /// Page items in stable newest-first order.
+    pub items: Vec<ActivityEvent>,
+    /// Opaque continuation cursor when more rows exist.
+    pub next_cursor: Option<String>,
+}
+
+/// Request for a paged Operations diagnostics view.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OperationsRequest {
+    /// Maximum Sync Run rows to return (1..=MAX_PAGE_SIZE).
+    pub sync_limit: u32,
+    /// Maximum export lifecycle rows to return (1..=MAX_PAGE_SIZE).
+    pub export_limit: u32,
+    /// Opaque Sync Run continuation cursor.
+    pub sync_cursor: Option<String>,
+    /// Opaque export continuation cursor.
+    pub export_cursor: Option<String>,
+}
+
+impl Default for OperationsRequest {
+    fn default() -> Self {
+        Self {
+            sync_limit: 50,
+            export_limit: 50,
+            sync_cursor: None,
+            export_cursor: None,
+        }
+    }
+}
+
+/// Safe export lifecycle summary for Operations (no filesystem paths).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportLifecycleSummary {
+    /// Durable export row id.
+    pub id: i64,
+    /// Dataset target (`train` or `holdout`).
+    pub dataset: String,
+    /// Format identity string.
+    pub format_id: String,
+    /// Lifecycle status string.
+    pub status: String,
+    /// Row creation timestamp.
+    pub created_at: String,
+    /// Row update timestamp.
+    pub updated_at: String,
+    /// Published SHA-256 when available.
+    pub sha256: Option<String>,
+    /// Published byte size when available.
+    pub byte_size: Option<u64>,
+    /// JSONL record count for this attempt.
+    pub record_count: u64,
+    /// Typed terminal error class when failed/cancelled.
+    pub error_class: Option<String>,
+    /// Redacted terminal message when present.
+    pub error_message: Option<String>,
+}
+
+/// Paged Operations diagnostics: Sync Runs and export lifecycle, not Activity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OperationsPage {
+    /// Sync lease health: `ok`, `active`, or `failed`.
+    pub operations_status: String,
+    /// Current and historical Sync Run summaries, newest-first.
+    pub sync_runs: Vec<SyncRunSummary>,
+    /// Opaque Sync Run continuation cursor when more rows exist.
+    pub next_sync_cursor: Option<String>,
+    /// Export lifecycle summaries, newest-first.
+    pub exports: Vec<ExportLifecycleSummary>,
+    /// Opaque export continuation cursor when more rows exist.
+    pub next_export_cursor: Option<String>,
+}
+
 /// Typed health issue with stable codes and redacted summaries.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HealthIssue {

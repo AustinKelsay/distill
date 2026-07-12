@@ -15,13 +15,14 @@ use crate::ops::{self, new_owner_id};
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
-    ActivityEventSummary, AttemptSummary, CurationMutationResult, ExportDataset, ExportPreview,
-    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthReport, IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport,
-    SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
-    SessionListRequest, SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary,
-    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES,
-    MAX_PAGE_SIZE,
+    ActivityEventSummary, ActivityListPage, ActivityListRequest, AttemptSummary,
+    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
+    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, IngestReport,
+    OpenReconciliation, OperationsPage, OperationsRequest, RenormalizeReport, RepairOptions,
+    RepairReport, SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest,
+    SessionListPage, SessionListRequest, SourceDetectRequest, SourceDetectResult, SourcePreference,
+    SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -455,10 +456,42 @@ impl Library {
 
     /**
      * List Activity Events for contract assertions.
+     *
+     * Compatibility wrapper over the oldest-first Activity slice. Prefer
+     * [`Self::list_activity`] for cursor-paged caller surfaces.
      */
     pub fn recent_activity(&self, limit: u32) -> LibraryResult<Vec<ActivityEventSummary>> {
         validate_page_size(limit)?;
         query::list_activity(&self.conn, limit)
+    }
+
+    /**
+     * List append-only Activity Events newest-first with opaque cursor paging.
+     *
+     * Returns stable caller-safe fields including redacted structured payload JSON.
+     * Read-only: never mutates Activity.
+     *
+     * Parameters:
+     * - `request`: page size and optional opaque continuation cursor.
+     */
+    pub fn list_activity(&self, request: ActivityListRequest) -> LibraryResult<ActivityListPage> {
+        validate_page_size(request.limit)?;
+        query::list_activity_page(&self.conn, &request)
+    }
+
+    /**
+     * List operational Sync Run and export lifecycle summaries with paging.
+     *
+     * Distinct from Activity: jobs/logs remain operational and never rewrite the
+     * append-only audit trail. Export summaries omit filesystem paths.
+     *
+     * Parameters:
+     * - `request`: Sync/export page bounds and optional opaque cursors.
+     */
+    pub fn list_operations(&self, request: OperationsRequest) -> LibraryResult<OperationsPage> {
+        validate_page_size(request.sync_limit)?;
+        validate_page_size(request.export_limit)?;
+        query::list_operations_page(&self.conn, &request)
     }
 
     /**

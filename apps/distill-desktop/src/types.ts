@@ -300,6 +300,62 @@ export type SyncRunResult = {
   session_identities: SessionIdentity[];
 };
 
+/** Request for a paged Activity Event listing. */
+export type ActivityListRequest = {
+  limit: number;
+  cursor?: string | null;
+};
+
+/** One append-only Activity Event with redacted payload JSON. */
+export type ActivityEvent = {
+  id: number;
+  event_type: string;
+  occurred_at: string;
+  source_kind: string | null;
+  session_id: number | null;
+  capture_id: number | null;
+  attempt_id: number | null;
+  payload_json: unknown;
+};
+
+/** Page of Activity Events. */
+export type ActivityListPage = {
+  items: ActivityEvent[];
+  next_cursor: string | null;
+};
+
+/** Request for a paged Operations diagnostics view. */
+export type OperationsRequest = {
+  sync_limit: number;
+  export_limit: number;
+  sync_cursor?: string | null;
+  export_cursor?: string | null;
+};
+
+/** Safe export lifecycle summary without filesystem paths. */
+export type ExportLifecycleSummary = {
+  id: number;
+  dataset: string;
+  format_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  sha256: string | null;
+  byte_size: number | null;
+  record_count: number;
+  error_class: string | null;
+  error_message: string | null;
+};
+
+/** Operations diagnostics page over Sync Runs and exports. */
+export type OperationsPage = {
+  operations_status: string;
+  sync_runs: SyncRunSummary[];
+  next_sync_cursor: string | null;
+  exports: ExportLifecycleSummary[];
+  next_export_cursor: string | null;
+};
+
 /** Named repair action count. */
 export type RepairAction = {
   name: string;
@@ -419,6 +475,10 @@ export type DistillBridge = {
   publishExport(home: string, dataset: ExportDataset): Promise<ExportResult>;
   /** Request cancellation at the next safe export checkpoint. */
   cancelExport(home: string, dataset: ExportDataset): Promise<boolean>;
+  /** List append-only Activity Events with cursor paging. */
+  listActivity(home: string, request: ActivityListRequest): Promise<ActivityListPage>;
+  /** List operational Sync Run and export lifecycle summaries. */
+  listOperations(home: string, request: OperationsRequest): Promise<OperationsPage>;
   /**
    * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback

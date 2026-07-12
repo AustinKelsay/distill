@@ -1,5 +1,6 @@
 //! Thin Distill CLI over the public Library Fixture journey, health, repair,
-//! Source preferences, Sync Runs, session curation, and export preview/publish.
+//! Source preferences, Sync Runs, session curation, export preview/publish,
+//! Activity, and Operations diagnostics.
 //!
 //! Exit codes:
 //! - `0` — command succeeded
@@ -13,9 +14,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
-    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
-    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, LibraryError,
-    RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
+    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
+    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
+    HealthReport, Library, LibraryError, OperationsPage, OperationsRequest, RepairOptions,
+    RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
     SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
@@ -41,7 +43,7 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, and export",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, export, activity, and operations",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
@@ -110,6 +112,42 @@ pub enum Command {
         /// Nested export preview/publish action.
         #[command(subcommand)]
         action: ExportCommand,
+    },
+    /// Append-only Activity Event page.
+    Activity {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Opaque continuation cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Page size.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Operational Sync Run and export lifecycle diagnostics.
+    Operations {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Sync Run page size.
+        #[arg(long, default_value_t = 50)]
+        sync_limit: u32,
+        /// Export lifecycle page size.
+        #[arg(long, default_value_t = 50)]
+        export_limit: u32,
+        /// Opaque Sync Run continuation cursor.
+        #[arg(long)]
+        sync_cursor: Option<String>,
+        /// Opaque export continuation cursor.
+        #[arg(long)]
+        export_cursor: Option<String>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
     },
 }
 
@@ -413,6 +451,27 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
         Some(Command::Sync { action }) => execute_sync(action),
         Some(Command::Sessions { action }) => execute_sessions(action),
         Some(Command::Export { action }) => execute_export(action),
+        Some(Command::Activity {
+            home,
+            cursor,
+            limit,
+            format,
+        }) => execute_activity(home, cursor, limit, format),
+        Some(Command::Operations {
+            home,
+            sync_limit,
+            export_limit,
+            sync_cursor,
+            export_cursor,
+            format,
+        }) => execute_operations(
+            home,
+            sync_limit,
+            export_limit,
+            sync_cursor,
+            export_cursor,
+            format,
+        ),
         None => execute_journey(cli.home, cli.fixture, cli.format),
     }
 }
@@ -777,6 +836,126 @@ fn execute_export(action: ExportCommand) -> Result<String, CliFailure> {
                 })
                 .map_err(|err| CliFailure::runtime(format, err))?;
             Ok(render_export_result(format, &result, &progress))
+        }
+    }
+}
+
+/**
+ * Execute a paged Activity Event listing through the public Library seam.
+ */
+fn execute_activity(
+    home: PathBuf,
+    cursor: Option<String>,
+    limit: u32,
+    format: OutputFormat,
+) -> Result<String, CliFailure> {
+    if home.as_os_str().is_empty() {
+        return Err(CliFailure::usage(format, "home path must not be empty"));
+    }
+    if limit == 0 {
+        return Err(CliFailure::usage(format, "limit must be at least 1"));
+    }
+    let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+    let page = library
+        .list_activity(ActivityListRequest { limit, cursor })
+        .map_err(|err| CliFailure::runtime(format, err))?;
+    Ok(render_activity_page(format, &page))
+}
+
+/**
+ * Execute a paged Operations diagnostics listing through the public Library seam.
+ */
+fn execute_operations(
+    home: PathBuf,
+    sync_limit: u32,
+    export_limit: u32,
+    sync_cursor: Option<String>,
+    export_cursor: Option<String>,
+    format: OutputFormat,
+) -> Result<String, CliFailure> {
+    if home.as_os_str().is_empty() {
+        return Err(CliFailure::usage(format, "home path must not be empty"));
+    }
+    if sync_limit == 0 {
+        return Err(CliFailure::usage(format, "sync-limit must be at least 1"));
+    }
+    if export_limit == 0 {
+        return Err(CliFailure::usage(format, "export-limit must be at least 1"));
+    }
+    let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+    let page = library
+        .list_operations(OperationsRequest {
+            sync_limit,
+            export_limit,
+            sync_cursor,
+            export_cursor,
+        })
+        .map_err(|err| CliFailure::runtime(format, err))?;
+    Ok(render_operations_page(format, &page))
+}
+
+/**
+ * Render a paged Activity Event response.
+ */
+fn render_activity_page(format: OutputFormat, page: &ActivityListPage) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "items": page.items,
+            "next_cursor": page.next_cursor,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![format!("activity.count: {}", page.items.len())];
+            for event in &page.items {
+                lines.push(format!(
+                    "activity.event: id={} type={} at={}",
+                    event.id, event.event_type, event.occurred_at
+                ));
+            }
+            if let Some(cursor) = &page.next_cursor {
+                lines.push(format!("activity.next_cursor: {cursor}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+/**
+ * Render a paged Operations diagnostics response.
+ */
+fn render_operations_page(format: OutputFormat, page: &OperationsPage) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "operations": page,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("operations.status: {}", page.operations_status),
+                format!("operations.sync_runs: {}", page.sync_runs.len()),
+                format!("operations.exports: {}", page.exports.len()),
+            ];
+            for run in &page.sync_runs {
+                lines.push(format!(
+                    "sync.run: id={} status={} accepted={} failed={}",
+                    run.id, run.status, run.accepted_captures, run.failed_attempts
+                ));
+            }
+            for export in &page.exports {
+                lines.push(format!(
+                    "export.row: id={} dataset={} status={}",
+                    export.id, export.dataset, export.status
+                ));
+            }
+            if let Some(cursor) = &page.next_sync_cursor {
+                lines.push(format!("operations.next_sync_cursor: {cursor}"));
+            }
+            if let Some(cursor) = &page.next_export_cursor {
+                lines.push(format!("operations.next_export_cursor: {cursor}"));
+            }
+            lines.join("\n")
         }
     }
 }

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use distill_library::{
-    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
-    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions,
-    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
+    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
+    HealthReport, Library, OperationsPage, OperationsRequest, RepairOptions, RepairReport,
+    SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
     SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
@@ -162,6 +163,30 @@ pub fn run_list_sessions(
 ) -> Result<SessionListPage, HostError> {
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
     library.list_sessions(page).map_err(HostError::from_library)
+}
+
+/**
+ * List append-only Activity Events through the public Library seam.
+ */
+pub fn run_list_activity(
+    request: &HomeRequest,
+    page: ActivityListRequest,
+) -> Result<ActivityListPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_activity(page).map_err(HostError::from_library)
+}
+
+/**
+ * List operational Sync Run and export lifecycle summaries.
+ */
+pub fn run_list_operations(
+    request: &HomeRequest,
+    page: OperationsRequest,
+) -> Result<OperationsPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .list_operations(page)
+        .map_err(HostError::from_library)
 }
 
 /**

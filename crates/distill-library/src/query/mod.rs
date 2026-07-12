@@ -5,12 +5,14 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{LibraryError, LibraryResult};
+use crate::ops::{active_sync_operations_status, load_sync_run};
 use crate::storage::{read_capture_bytes, ContentRef};
 use crate::types::{
-    derive_workflow_state, matches_workflow_lane, ActivityEventSummary, AttemptSummary,
-    ProjectedArtifact, ProjectedMessage, SearchHit, SessionDetail, SessionDetailRequest,
-    SessionLabel, SessionListItem, SessionListPage, SessionListRequest, SessionSummary, SessionTag,
-    WorkflowLane,
+    derive_workflow_state, matches_workflow_lane, ActivityEvent, ActivityEventSummary,
+    ActivityListPage, ActivityListRequest, AttemptSummary, ExportLifecycleSummary, OperationsPage,
+    OperationsRequest, ProjectedArtifact, ProjectedMessage, SearchHit, SessionDetail,
+    SessionDetailRequest, SessionLabel, SessionListItem, SessionListPage, SessionListRequest,
+    SessionSummary, SessionTag, SyncRunSummary, WorkflowLane,
 };
 
 /**
@@ -432,6 +434,8 @@ fn load_content_ref(conn: &Connection, capture_id: i64) -> LibraryResult<Content
 
 /**
  * List recent Activity Events for contract assertions.
+ *
+ * Compatibility wrapper: oldest-first bounded slice without cursor paging.
  */
 pub fn list_activity(conn: &Connection, limit: u32) -> LibraryResult<Vec<ActivityEventSummary>> {
     let mut stmt = conn.prepare(
@@ -452,6 +456,374 @@ pub fn list_activity(conn: &Connection, limit: u32) -> LibraryResult<Vec<Activit
         out.push(row?);
     }
     Ok(out)
+}
+
+/**
+ * List Activity Events newest-first with opaque keyset cursor paging.
+ *
+ * Payload JSON is sanitized for callers: absolute filesystem paths, SQL text,
+ * and nested provider payload blobs are redacted. This read path never mutates
+ * `activity_events`.
+ */
+pub fn list_activity_page(
+    conn: &Connection,
+    request: &ActivityListRequest,
+) -> LibraryResult<ActivityListPage> {
+    let cursor = parse_activity_cursor(request.cursor.as_deref())?;
+    let fetch_limit = i64::from(request.limit) + 1;
+    let mut sql = String::from(
+        "SELECT id, event_type, occurred_at, source_kind, session_id, capture_id, attempt_id,
+                payload_json
+         FROM activity_events",
+    );
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(before_id) = cursor {
+        sql.push_str(" WHERE id < ?1");
+        params_vec.push(before_id.into());
+        sql.push_str(" ORDER BY id DESC LIMIT ?2");
+        params_vec.push(fetch_limit.into());
+    } else {
+        sql.push_str(" ORDER BY id DESC LIMIT ?1");
+        params_vec.push(fetch_limit.into());
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+        let payload_raw: String = row.get(7)?;
+        Ok(ActivityEvent {
+            id: row.get(0)?,
+            event_type: row.get(1)?,
+            occurred_at: row.get(2)?,
+            source_kind: row.get(3)?,
+            session_id: row.get(4)?,
+            capture_id: row.get(5)?,
+            attempt_id: row.get(6)?,
+            payload_json: redact_activity_payload(&payload_raw),
+        })
+    })?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row?);
+    }
+
+    let next_cursor = if items.len() as i64 > i64::from(request.limit) {
+        items.truncate(request.limit as usize);
+        items.last().map(|event| encode_activity_cursor(event.id))
+    } else {
+        None
+    };
+
+    Ok(ActivityListPage { items, next_cursor })
+}
+
+/**
+ * Load a paged Operations diagnostics view over Sync Runs and export rows.
+ *
+ * Operational only: never reads Activity as authority and never mutates audit
+ * history. Export summaries omit filesystem paths.
+ */
+pub fn list_operations_page(
+    conn: &Connection,
+    request: &OperationsRequest,
+) -> LibraryResult<OperationsPage> {
+    let (operations_status, _) = active_sync_operations_status(conn)?;
+    let sync_cursor = parse_ops_id_cursor(request.sync_cursor.as_deref(), "sync")?;
+    let export_cursor = parse_ops_id_cursor(request.export_cursor.as_deref(), "export")?;
+
+    let (sync_runs, next_sync_cursor) = load_sync_run_page(conn, request.sync_limit, sync_cursor)?;
+    let (exports, next_export_cursor) =
+        load_export_lifecycle_page(conn, request.export_limit, export_cursor)?;
+
+    Ok(OperationsPage {
+        operations_status,
+        sync_runs,
+        next_sync_cursor,
+        exports,
+        next_export_cursor,
+    })
+}
+
+/**
+ * Load Sync Run summaries newest-first with keyset paging by id.
+ */
+fn load_sync_run_page(
+    conn: &Connection,
+    limit: u32,
+    cursor: Option<i64>,
+) -> LibraryResult<(Vec<SyncRunSummary>, Option<String>)> {
+    let fetch_limit = i64::from(limit) + 1;
+    let mut sql = String::from("SELECT id FROM sync_runs");
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(before_id) = cursor {
+        sql.push_str(" WHERE id < ?1");
+        params_vec.push(before_id.into());
+        sql.push_str(" ORDER BY id DESC LIMIT ?2");
+        params_vec.push(fetch_limit.into());
+    } else {
+        sql.push_str(" ORDER BY id DESC LIMIT ?1");
+        params_vec.push(fetch_limit.into());
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let ids: Vec<i64> = stmt
+        .query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+            row.get(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut summaries = Vec::new();
+    for id in ids {
+        summaries.push(redact_sync_summary(load_sync_run(conn, id)?));
+    }
+
+    let next_cursor = if summaries.len() as i64 > i64::from(limit) {
+        summaries.truncate(limit as usize);
+        summaries
+            .last()
+            .map(|run| encode_ops_id_cursor("sync", run.id))
+    } else {
+        None
+    };
+    Ok((summaries, next_cursor))
+}
+
+/**
+ * Load export lifecycle summaries newest-first without filesystem path fields.
+ */
+fn load_export_lifecycle_page(
+    conn: &Connection,
+    limit: u32,
+    cursor: Option<i64>,
+) -> LibraryResult<(Vec<ExportLifecycleSummary>, Option<String>)> {
+    let fetch_limit = i64::from(limit) + 1;
+    let mut sql = String::from(
+        "SELECT id, dataset, format_id, status, created_at, updated_at,
+                sha256, byte_size, record_count, error_class, error_message
+         FROM exports",
+    );
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(before_id) = cursor {
+        sql.push_str(" WHERE id < ?1");
+        params_vec.push(before_id.into());
+        sql.push_str(" ORDER BY id DESC LIMIT ?2");
+        params_vec.push(fetch_limit.into());
+    } else {
+        sql.push_str(" ORDER BY id DESC LIMIT ?1");
+        params_vec.push(fetch_limit.into());
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+        let byte_size: Option<i64> = row.get(7)?;
+        let error_message: Option<String> = row.get(10)?;
+        Ok(ExportLifecycleSummary {
+            id: row.get(0)?,
+            dataset: row.get(1)?,
+            format_id: row.get(2)?,
+            status: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            sha256: row.get(6)?,
+            byte_size: byte_size.map(|v| v as u64),
+            record_count: row.get::<_, i64>(8)? as u64,
+            error_class: row.get(9)?,
+            error_message: redact_diagnostic(error_message),
+        })
+    })?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row?);
+    }
+
+    let next_cursor = if items.len() as i64 > i64::from(limit) {
+        items.truncate(limit as usize);
+        items
+            .last()
+            .map(|item| encode_ops_id_cursor("export", item.id))
+    } else {
+        None
+    };
+    Ok((items, next_cursor))
+}
+
+/**
+ * Sanitize Activity payload JSON for caller-facing surfaces.
+ *
+ * Drops path-like keys, nested provider `payload` blobs that are non-objects of
+ * scalars, SQL-looking strings, and absolute filesystem path string values.
+ */
+fn redact_activity_payload(raw: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(value) => redact_json_value(value),
+        Err(_) => serde_json::json!({}),
+    }
+}
+
+fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, child) in map {
+                let lowered = key.to_ascii_lowercase();
+                if is_redacted_payload_key(&lowered) {
+                    continue;
+                }
+                out.insert(key, redact_json_value(child));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_json_value).collect())
+        }
+        serde_json::Value::String(text) => {
+            if looks_like_filesystem_path(&text) || looks_like_sql(&text) {
+                serde_json::Value::String("[redacted]".into())
+            } else {
+                serde_json::Value::String(text)
+            }
+        }
+        other => other,
+    }
+}
+
+fn is_redacted_payload_key(key: &str) -> bool {
+    matches!(
+        key,
+        "sql"
+            | "argv"
+            | "command"
+            | "stderr"
+            | "stdout"
+            | "provider_payload"
+            | "providerpayload"
+            | "raw_payload"
+            | "rawpayload"
+    ) || key.ends_with("path")
+}
+
+fn looks_like_filesystem_path(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+        || (trimmed.len() >= 3
+            && trimmed.as_bytes()[0].is_ascii_alphabetic()
+            && trimmed.as_bytes()[1] == b':'
+            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/'))
+}
+
+fn looks_like_sql(text: &str) -> bool {
+    let lowered = text.trim().to_ascii_lowercase();
+    lowered.starts_with("select ")
+        || lowered.starts_with("insert ")
+        || lowered.starts_with("update ")
+        || lowered.starts_with("delete ")
+        || lowered.starts_with("pragma ")
+        || lowered.starts_with("create ")
+        || lowered.starts_with("alter ")
+        || lowered.starts_with("drop ")
+}
+
+/**
+ * Redact private path-like fragments from caller-facing operational text while
+ * preserving stable diagnostic context such as an error class or reason.
+ */
+fn redact_diagnostic(value: Option<String>) -> Option<String> {
+    value.map(|text| redact_diagnostic_text(&text))
+}
+
+fn redact_diagnostic_text(text: &str) -> String {
+    if looks_like_sql(text) {
+        return "[redacted]".into();
+    }
+
+    text.split_whitespace()
+        .map(|token| {
+            let trimmed = token.trim_matches(|character: char| {
+                matches!(
+                    character,
+                    '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+                )
+            });
+            if looks_like_diagnostic_path(trimmed) {
+                "[redacted]"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_diagnostic_path(text: &str) -> bool {
+    looks_like_filesystem_path(text) || text.contains('/') || text.contains('\\')
+}
+
+fn redact_sync_summary(mut summary: SyncRunSummary) -> SyncRunSummary {
+    summary.error_message = redact_diagnostic(summary.error_message);
+    summary.warning_details = summary
+        .warning_details
+        .iter()
+        .map(|detail| redact_diagnostic_text(detail))
+        .collect();
+    for source in &mut summary.sources {
+        source.error_message = redact_diagnostic(source.error_message.take());
+    }
+    summary
+}
+
+fn encode_activity_cursor(id: i64) -> String {
+    format!("v1\u{1f}{id}")
+}
+
+fn parse_activity_cursor(raw: Option<&str>) -> LibraryResult<Option<i64>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let mut parts = raw.split('\u{1f}');
+    let version = parts.next();
+    let id_text = parts.next();
+    if version != Some("v1") || id_text.is_none() || parts.next().is_some() {
+        return Err(LibraryError::InvalidArgument(
+            "activity cursor must use the v1 format".into(),
+        ));
+    }
+    let id: i64 = id_text
+        .unwrap()
+        .parse()
+        .map_err(|_| LibraryError::InvalidArgument("activity cursor id is invalid".into()))?;
+    Ok(Some(id))
+}
+
+fn encode_ops_id_cursor(kind: &str, id: i64) -> String {
+    format!("v1\u{1f}{kind}\u{1f}{id}")
+}
+
+fn parse_ops_id_cursor(raw: Option<&str>, expected_kind: &str) -> LibraryResult<Option<i64>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let mut parts = raw.split('\u{1f}');
+    let version = parts.next();
+    let kind = parts.next();
+    let id_text = parts.next();
+    if version != Some("v1")
+        || kind != Some(expected_kind)
+        || id_text.is_none()
+        || parts.next().is_some()
+    {
+        return Err(LibraryError::InvalidArgument(format!(
+            "{expected_kind} operations cursor must use the v1 format"
+        )));
+    }
+    let id: i64 = id_text.unwrap().parse().map_err(|_| {
+        LibraryError::InvalidArgument(format!("{expected_kind} operations cursor id is invalid"))
+    })?;
+    Ok(Some(id))
 }
 
 /**

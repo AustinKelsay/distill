@@ -1,22 +1,22 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::{
-    CurationMutationResult, ExportPreview, ExportProgress, ExportResult, FixtureJourneyResult,
-    HealthReport, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
-    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
-    SyncRunSummary,
+    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportPreview, ExportProgress,
+    ExportResult, FixtureJourneyResult, HealthReport, OperationsPage, OperationsRequest,
+    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    SessionListRequest, SourcePreference, SyncProgress, SyncRunResult, SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_list_sessions,
-    run_list_sources, run_prepare_export_cancellation, run_preview_export,
-    run_publish_export_cancellable, run_remove_session_tag, run_repair, run_session_detail,
-    run_set_source_preference, run_sync_cancel, run_sync_start, run_sync_status,
-    run_toggle_session_label, validate_export_request, validate_fixture_journey_request,
-    validate_home_request, validate_session_curation_request, validate_source_preference_request,
-    validate_sync_id_request, validate_sync_start_request,
+    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_list_activity,
+    run_list_operations, run_list_sessions, run_list_sources, run_prepare_export_cancellation,
+    run_preview_export, run_publish_export_cancellable, run_remove_session_tag, run_repair,
+    run_session_detail, run_set_source_preference, run_sync_cancel, run_sync_start,
+    run_sync_status, run_toggle_session_label, validate_export_request,
+    validate_fixture_journey_request, validate_home_request, validate_session_curation_request,
+    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
 };
 use crate::{EXPORT_PROGRESS_EVENT, FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
 
@@ -298,6 +298,40 @@ pub async fn export_publish_command(
 pub async fn export_cancel_command(home: String, dataset: String) -> Result<bool, HostError> {
     let request = validate_export_request(&home, &dataset)?;
     tauri::async_runtime::spawn_blocking(move || run_export_cancel(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: list append-only Activity Events off the UI thread.
+ */
+#[tauri::command]
+pub async fn activity_list_command(
+    home: String,
+    request: ActivityListRequest,
+) -> Result<ActivityListPage, HostError> {
+    let home_request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_list_activity(&home_request, request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: list operational Sync/export diagnostics off the UI thread.
+ */
+#[tauri::command]
+pub async fn operations_list_command(
+    home: String,
+    request: OperationsRequest,
+) -> Result<OperationsPage, HostError> {
+    let home_request = validate_home_request(&home)?;
+    tauri::async_runtime::spawn_blocking(move || run_list_operations(&home_request, request))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),

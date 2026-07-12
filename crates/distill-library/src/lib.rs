@@ -35,10 +35,11 @@ pub mod test_support {
     };
 }
 pub use types::{
-    derive_workflow_state, matches_workflow_lane, ActivityEventSummary, AttemptSummary,
-    CurationMutationResult, ExportDataset, ExportOmission, ExportOmissionReason, ExportPreview,
-    ExportProgress, ExportProgressControl, ExportResult, ExportStatus, FixtureJourneyPhase,
-    FixtureJourneyResult, HealthIssue, HealthReport, IngestReport, OpenReconciliation,
+    derive_workflow_state, matches_workflow_lane, ActivityEvent, ActivityEventSummary,
+    ActivityListPage, ActivityListRequest, AttemptSummary, CurationMutationResult, ExportDataset,
+    ExportLifecycleSummary, ExportOmission, ExportOmissionReason, ExportPreview, ExportProgress,
+    ExportProgressControl, ExportResult, ExportStatus, FixtureJourneyPhase, FixtureJourneyResult,
+    HealthIssue, HealthReport, IngestReport, OpenReconciliation, OperationsPage, OperationsRequest,
     ProjectedArtifact, ProjectedMessage, RenormalizeReport, RepairAction, RepairOptions,
     RepairReport, SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest,
     SessionIdentity, SessionLabel, SessionListItem, SessionListPage, SessionListRequest,

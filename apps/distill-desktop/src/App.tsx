@@ -4,6 +4,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type {
+  ActivityListPage,
   CurationMutationResult,
   DistillBridge,
   ExportDataset,
@@ -15,6 +16,7 @@ import type {
   FixtureJourneyResult,
   HealthReport,
   HostError,
+  OperationsPage,
   RepairReport,
   SessionDetail,
   SessionListItem,
@@ -34,6 +36,9 @@ type AppProps = {
 
 type SessionExplorerStatus =
   "idle" | "loading" | "ready" | "empty" | "warning" | "error" | "cancelled";
+
+type DiagnosticsPanelStatus =
+  "idle" | "loading" | "empty" | "warning" | "error" | "cancelled" | "ready";
 
 /** Seeded catalog labels the detail panel can toggle. */
 const CURATABLE_LABELS = [
@@ -78,7 +83,16 @@ export function App({ bridge }: AppProps) {
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportError, setExportError] = useState<HostError | null>(null);
+  const [activityPage, setActivityPage] = useState<ActivityListPage | null>(null);
+  const [activityStatus, setActivityStatus] = useState<DiagnosticsPanelStatus>("idle");
+  const [activityError, setActivityError] = useState<HostError | null>(null);
+  const [operationsPage, setOperationsPage] = useState<OperationsPage | null>(null);
+  const [operationsStatus, setOperationsStatus] =
+    useState<DiagnosticsPanelStatus>("idle");
+  const [operationsError, setOperationsError] = useState<HostError | null>(null);
   const sessionRequestRef = useRef(0);
+  const activityRequestRef = useRef(0);
+  const operationsRequestRef = useRef(0);
 
   useEffect(() => {
     const stopJourney = bridge.onProgress((nextPhase) => {
@@ -238,6 +252,118 @@ export function App({ bridge }: AppProps) {
       setSessionError(normalizeError(caught));
       setSessionStatus("error");
     }
+  }
+
+  /**
+   * Load a paged Activity Event slice. Explicit user action only (no ambient fetch).
+   */
+  async function onLoadActivity(cursor: string | null = null) {
+    const requestId = ++activityRequestRef.current;
+    const append = cursor !== null;
+    setActivityStatus("loading");
+    setActivityError(null);
+    try {
+      const nextPage = await bridge.listActivity(home, {
+        limit: 50,
+        cursor,
+      });
+      if (requestId !== activityRequestRef.current) return;
+      const priorItems = activityPage?.items ?? [];
+      const items = append
+        ? [
+            ...priorItems,
+            ...nextPage.items.filter(
+              (item) => !priorItems.some((prior) => prior.id === item.id),
+            ),
+          ]
+        : nextPage.items;
+      setActivityPage({ items, next_cursor: nextPage.next_cursor });
+      setActivityStatus(items.length > 0 ? "ready" : "empty");
+    } catch (caught) {
+      if (requestId !== activityRequestRef.current) return;
+      const err = normalizeError(caught);
+      setActivityError(err);
+      if (err.code === "cancelled") setActivityStatus("cancelled");
+      else setActivityStatus("error");
+    }
+  }
+
+  /** Cancel an in-flight Activity read and keep its explicit cancelled state. */
+  function onCancelActivityLoad() {
+    activityRequestRef.current += 1;
+    setActivityError({ code: "cancelled", message: "Activity load cancelled" });
+    setActivityStatus("cancelled");
+  }
+
+  /**
+   * Load Operations diagnostics. Explicit user action only (no ambient fetch).
+   */
+  async function onLoadOperations(
+    syncCursor: string | null = null,
+    exportCursor: string | null = null,
+  ) {
+    const requestId = ++operationsRequestRef.current;
+    const append = syncCursor !== null || exportCursor !== null;
+    setOperationsStatus("loading");
+    setOperationsError(null);
+    try {
+      const nextPage = await bridge.listOperations(home, {
+        sync_limit: 50,
+        export_limit: 50,
+        sync_cursor: syncCursor,
+        export_cursor: exportCursor,
+      });
+      if (requestId !== operationsRequestRef.current) return;
+      const priorSync = operationsPage?.sync_runs ?? [];
+      const priorExports = operationsPage?.exports ?? [];
+      const sync_runs = append
+        ? [
+            ...priorSync,
+            ...nextPage.sync_runs.filter(
+              (run) => !priorSync.some((prior) => prior.id === run.id),
+            ),
+          ]
+        : nextPage.sync_runs;
+      const exports = append
+        ? [
+            ...priorExports,
+            ...nextPage.exports.filter(
+              (row) => !priorExports.some((prior) => prior.id === row.id),
+            ),
+          ]
+        : nextPage.exports;
+      setOperationsPage({
+        operations_status: nextPage.operations_status,
+        sync_runs,
+        next_sync_cursor: nextPage.next_sync_cursor,
+        exports,
+        next_export_cursor: nextPage.next_export_cursor,
+      });
+      const hasRows = sync_runs.length > 0 || exports.length > 0;
+      if (nextPage.operations_status === "failed") setOperationsStatus("warning");
+      else if (!hasRows) setOperationsStatus("empty");
+      else if (
+        sync_runs.some((run) =>
+          ["warning", "failed", "cancelled"].includes(run.status),
+        ) ||
+        exports.some((row) => ["failed_publish", "cancelled"].includes(row.status))
+      ) {
+        setOperationsStatus("warning");
+      } else setOperationsStatus("ready");
+    } catch (caught) {
+      if (requestId !== operationsRequestRef.current) return;
+      const err = normalizeError(caught);
+      setOperationsError(err);
+      if (err.code === "cancelled") setOperationsStatus("cancelled");
+      else setOperationsStatus("error");
+    }
+  }
+
+  /** Cancel an in-flight Operations read and keep its explicit cancelled state. */
+  function onCancelOperationsLoad() {
+    operationsRequestRef.current += 1;
+    setOperationsError({ code: "cancelled", message: "Operations load cancelled" });
+    setOperationsStatus("cancelled");
   }
 
   /** Load a bounded detail page for a selected Session. */
@@ -588,6 +714,112 @@ export function App({ bridge }: AppProps) {
         >
           Repair library
         </button>
+      </section>
+
+      <section className="form" aria-label="Activity" data-testid="activity-panel">
+        <h2>Activity</h2>
+        <button
+          type="button"
+          onClick={() => void onLoadActivity(null)}
+          disabled={!home.trim() || activityStatus === "loading"}
+        >
+          {activityStatus === "loading" ? "Loading Activity…" : "Load Activity"}
+        </button>
+        {activityStatus === "loading" ? (
+          <button type="button" onClick={onCancelActivityLoad}>
+            Cancel Activity load
+          </button>
+        ) : null}
+        <p data-testid="activity-status">Status: {activityStatus}</p>
+        {activityError ? (
+          <p role="alert" data-testid="activity-error">
+            {activityError.code}: {activityError.message}
+          </p>
+        ) : null}
+        {activityStatus === "empty" ? <p>No Activity Events.</p> : null}
+        {activityPage?.items.length ? (
+          <ul data-testid="activity-list">
+            {activityPage.items.map((event) => (
+              <li key={event.id}>
+                <code>{event.event_type}</code> #{event.id} @ {event.occurred_at}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {activityPage?.next_cursor ? (
+          <button
+            type="button"
+            onClick={() => void onLoadActivity(activityPage.next_cursor)}
+            disabled={activityStatus === "loading"}
+          >
+            Load more Activity
+          </button>
+        ) : null}
+      </section>
+
+      <section className="form" aria-label="Operations" data-testid="operations-panel">
+        <h2>Operations</h2>
+        <button
+          type="button"
+          onClick={() => void onLoadOperations(null, null)}
+          disabled={!home.trim() || operationsStatus === "loading"}
+        >
+          {operationsStatus === "loading" ? "Loading Operations…" : "Load Operations"}
+        </button>
+        {operationsStatus === "loading" ? (
+          <button type="button" onClick={onCancelOperationsLoad}>
+            Cancel Operations load
+          </button>
+        ) : null}
+        <p data-testid="operations-status">Status: {operationsStatus}</p>
+        {operationsError ? (
+          <p role="alert" data-testid="operations-error">
+            {operationsError.code}: {operationsError.message}
+          </p>
+        ) : null}
+        {operationsPage ? (
+          <p data-testid="operations-lease-status">
+            Lease: {operationsPage.operations_status}
+          </p>
+        ) : null}
+        {operationsStatus === "empty" ? <p>No Sync Runs or export rows.</p> : null}
+        {operationsPage?.sync_runs.length ? (
+          <ul data-testid="operations-sync-list">
+            {operationsPage.sync_runs.map((run) => (
+              <li key={`sync-${run.id}`}>
+                Sync #{run.id}: {run.status}
+                {run.warning_details?.length
+                  ? ` (${run.warning_details.join("; ")})`
+                  : ""}
+                {run.error_message ? ` — ${run.error_message}` : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {operationsPage?.exports.length ? (
+          <ul data-testid="operations-export-list">
+            {operationsPage.exports.map((row) => (
+              <li key={`export-${row.id}`}>
+                Export #{row.id}: {row.dataset}/{row.status}
+                {row.error_message ? ` — ${row.error_message}` : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {operationsPage?.next_sync_cursor || operationsPage?.next_export_cursor ? (
+          <button
+            type="button"
+            onClick={() =>
+              void onLoadOperations(
+                operationsPage.next_sync_cursor,
+                operationsPage.next_export_cursor,
+              )
+            }
+            disabled={operationsStatus === "loading"}
+          >
+            Load more Operations
+          </button>
+        ) : null}
       </section>
 
       <section
