@@ -4,7 +4,7 @@
 
 - Issue: [#35](https://github.com/AustinKelsay/distill/issues/35)
 - Fixed point before session: `76fb500`
-- Implementation commit: pending
+- Implementation commit: `e5ea3c6`
 - Status: Complete
 - Review packet: `docs/runs/reviews/35-macos-packaging.md`
 

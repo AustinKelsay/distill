@@ -5,7 +5,7 @@
 - Issue: #35
 - Slice: Tauri macOS `.app` packaging and packaged source-to-export smoke
 - Baseline: `76fb500`
-- Implementation: pending (working tree; update after commit)
+- Implementation: `e5ea3c6`
 
 ## Review Findings And Remediation
 
