@@ -678,7 +678,7 @@ mod tests {
             format!(
                 r#"{{"type":"session_start","id":"{session_id}","title":"Droid mixed fixture","owner":"plebdev","cwd":"/tmp/droid-demo"}}"#
             ),
-            r#"{"type":"message","id":"m1","timestamp":"2026-04-12T18:17:28.000Z","message":{"role":"user","content":[{"type":"text","text":"Please review the screenshot."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc"}}]}}"#.to_string(),
+            r#"{"type":"message","id":"m1","timestamp":"2026-04-12T18:17:28.000Z","message":{"role":"user","content":["Plain array text",{"type":"text","text":"Please review the screenshot."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc"}}]}}"#.to_string(),
             r#"{"type":"message","id":"m2","timestamp":"2026-04-12T18:17:29.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"I will tighten the layout."},{"type":"tool_use","id":"t1","name":"Read","input":{"path":"/tmp/app.ts"}},{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"file","file":{"path":"/tmp/app.ts"}},{"type":"custom_block","payload":{"x":1}}]}}"#.to_string(),
             r#"{"type":"message","id":"m3","timestamp":"not-a-timestamp","message":{"role":"system","content":[{"type":"text","text":"unknown role stays fact"}]}}"#.to_string(),
             r#"{"type":"todo_state","id":"todo1","todos":[]}"#.to_string(),
@@ -803,6 +803,7 @@ mod tests {
         );
         assert!(parsed.started_at.is_some());
         assert_eq!(parsed.messages.len(), 2);
+        assert!(parsed.messages[0].text.contains("Plain array text"));
         assert!(!parsed.messages.iter().any(
             |message| message.text.contains("hidden") || message.text.contains("unknown role")
         ));

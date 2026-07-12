@@ -20,7 +20,7 @@ fn write_mixed_session(root: &Path) -> PathBuf {
     let body = concat!(
         r#"{"type":"session_start","id":"123e4567-e89b-12d3-a456-426614174000","title":"Droid mixed content fixture","owner":"plebdev","cwd":"/tmp/droid-demo"}"#,
         "\n",
-        r#"{"type":"message","id":"u1","timestamp":"2026-04-12T18:17:28.000Z","message":{"role":"user","content":[{"type":"text","text":"Please review the screenshot and fix the layout."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"}}]}}"#,
+        r#"{"type":"message","id":"u1","timestamp":"2026-04-12T18:17:28.000Z","message":{"role":"user","content":["Plain array text",{"type":"text","text":"Please review the screenshot and fix the layout."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"}}]}}"#,
         "\n",
         r#"{"type":"message","id":"a1","timestamp":"2026-04-12T18:17:29.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"I will tighten the layout."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/tmp/droid-demo/src/app.ts"}},{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"file","file":{"path":"/tmp/droid-demo/src/app.ts"}},{"type":"custom_block","payload":{"x":1}}]}}"#,
         "\n",
@@ -252,7 +252,7 @@ fn library_sync_droid_mixed_blocks_and_replays_after_source_removal() {
     assert_eq!(detail.messages.len(), 2);
     assert_eq!(
         detail.messages[0].text,
-        "Please review the screenshot and fix the layout."
+        "Plain array text\n\nPlease review the screenshot and fix the layout."
     );
     assert_eq!(detail.messages[1].text, "I will tighten the layout.");
     assert!(detail.messages.iter().all(|message| {
@@ -321,7 +321,7 @@ fn library_sync_droid_mixed_blocks_and_replays_after_source_removal() {
  * Sidecar model/archive metadata and stem/synthetic identity edges stay deterministic.
  */
 #[test]
-fn library_sync_sidecar_model_archive_and_synthetic_identity() {
+fn library_sync_sidecar_model_archive_and_stem_identity() {
     let temp = TempDir::new().expect("temp");
     let home = temp.path().join("distill-home");
     let sessions = temp.path().join("factory-sessions");
