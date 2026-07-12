@@ -116,7 +116,7 @@ An operational unit of work used for source sync or future operational workflows
 
 The clean rebuild centers product behavior in one deep Rust `Library` crate (`crates/distill-library`). Desktop (Tauri), CLI, and contract tests are equal callers of that public seam. SQLite, FTS5, content-addressed files, migrations, and recovery protocols remain Library internals (see ADRs `0001`–`0003`).
 
-Public Library methods for the Fixture tracer and thin callers:
+Public Library methods for the Fixture tracer, Codex Source, and thin callers:
 
 - `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files), and perform safe open reconciliation that removes only canonical `{64 lowercase hex}.partial` staging files while reporting what was reconciled
 - `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
@@ -132,7 +132,7 @@ Public Library methods for the Fixture tracer and thin callers:
 - `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
 - `health()` — report schema/migration integrity (including SQLite quick/integrity/foreign-key checks), referenced inline/blob size+checksum without following CAS symlinks or leaving the Distill home, exact projection↔FTS agreement across session_id/message_id/title/project_path/role/text, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections (empty successful projections are valid), mismatched Session counters, and Sync Run operations status (`ok` / `active` / `failed`, including stale leases) as typed `HealthIssue` values with redacted summaries
 - `list_sources` / `set_source_preference` — persist enabled/disabled and optional canonical configured-root overrides per Source without exposing adapter or storage internals
-- `detect_sources` — return one independent typed detection result per requested Source (executable `None` for Fixture; effective data root; typed health/status); one failing Source never aborts siblings
+- `detect_sources` — return one independent typed detection result per requested Source (Fixture has no executable; Codex reports its executable when present; effective data root; typed health/status); one failing Source never aborts siblings
 - `start_sync` / `request_sync_cancel` / `sync_status` — durable Sync Run bookkeeping with typed progress, safe cancellation checkpoints before each Source and Capture Candidate (cancel requested at CandidateStarted still finishes that candidate; lease ownership is re-asserted after the progress callback before candidate work), `sync_already_running` / `sync_no_enabled_sources` / unknown-kind rejection with no side effects, owner/lease/heartbeat stale detection on open using system UTC only (no public injectable clock), background lease heartbeat for long candidates, and typed `sync_lease_lost` when ownership is lost
 - `repair(options)` — explicit idempotent transactional repair for documented repairable states (orphan CAS deletion of in-root regular canonical blobs only, incomplete-state resolution via failed pending Attempts plus `capture_failed` recovery Activity without inventing Attempts, Session counter recompute, FTS rebuild from Session title/project_path, staging cleanup of canonical `{64 hex}.partial` only); never silently deletes referenced content or immutable Captures/Facts
 - `recent_activity(limit)` — return a bounded first Activity slice for the tracer; cursor paging and operations views land in issue #30
@@ -148,4 +148,4 @@ The legacy Electron application under `src/**` remains available until migration
 
 ## SourceAdapter Seam
 
-Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. The Fixture adapter detects only an explicitly supplied root and is the first production adapter proven through the Library seam.
+Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. Fixture and Codex are the first production adapters proven through the Library seam; remaining providers are added only through their dedicated tickets.
