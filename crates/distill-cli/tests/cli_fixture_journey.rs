@@ -592,3 +592,157 @@ fn cli_sessions_tag_and_label_mutations_return_curation_snapshot() {
     assert_eq!(label_value["curation"]["labels"][0]["origin"], "manual");
     assert_eq!(label_value["curation"]["workflow_state"], "train_ready");
 }
+
+#[test]
+fn cli_export_preview_and_publish_after_label_toggle() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let journey = Command::new(distill_bin())
+        .args([
+            "--home",
+            home.to_str().unwrap(),
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("journey");
+    assert_eq!(journey.status.code(), Some(0));
+
+    let label_toggle = Command::new(distill_bin())
+        .args([
+            "sessions",
+            "label-toggle",
+            "--home",
+            home.to_str().unwrap(),
+            "--source-kind",
+            "fixture",
+            "--external-session-id",
+            "fixture-session-cli",
+            "--name",
+            "train",
+        ])
+        .output()
+        .expect("label-toggle");
+    assert_eq!(label_toggle.status.code(), Some(0));
+
+    let invalid = Command::new(distill_bin())
+        .args([
+            "export",
+            "preview",
+            "--home",
+            home.to_str().unwrap(),
+            "--dataset",
+            "favorites",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("invalid dataset");
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid_value: serde_json::Value =
+        serde_json::from_slice(&invalid.stderr).expect("invalid json");
+    assert_eq!(invalid_value["error"], "usage");
+    assert!(invalid_value["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("train"));
+
+    let preview = Command::new(distill_bin())
+        .args([
+            "export",
+            "preview",
+            "--home",
+            home.to_str().unwrap(),
+            "--dataset",
+            "train",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("preview");
+    assert_eq!(
+        preview.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview_value: serde_json::Value =
+        serde_json::from_slice(&preview.stdout).expect("preview json");
+    assert_eq!(preview_value["ok"], true);
+    assert_eq!(preview_value["preview"]["dataset"], "train");
+    assert_eq!(
+        preview_value["preview"]["format_id"],
+        "distill-session-jsonl-v1"
+    );
+    assert_eq!(
+        preview_value["preview"]["eligible"][0]["external_session_id"],
+        "fixture-session-cli"
+    );
+
+    let cancelled = Command::new(distill_bin())
+        .args([
+            "export",
+            "publish",
+            "--home",
+            home.to_str().unwrap(),
+            "--dataset",
+            "train",
+            "--format",
+            "json",
+            "--cancel",
+        ])
+        .output()
+        .expect("cancelled publish");
+    assert_eq!(
+        cancelled.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&cancelled.stderr)
+    );
+    let cancelled_value: serde_json::Value =
+        serde_json::from_slice(&cancelled.stdout).expect("cancelled json");
+    assert_eq!(cancelled_value["export"]["status"], "cancelled");
+    assert!(cancelled_value["export"]["output_path"].is_null());
+
+    let publish_human = Command::new(distill_bin())
+        .args([
+            "export",
+            "publish",
+            "--home",
+            home.to_str().unwrap(),
+            "--dataset",
+            "train",
+        ])
+        .output()
+        .expect("publish");
+    assert_eq!(
+        publish_human.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&publish_human.stderr)
+    );
+    let publish_stdout = String::from_utf8_lossy(&publish_human.stdout);
+    assert!(publish_stdout.contains("export.status: published"));
+    assert!(publish_stdout.contains("export.dataset: train"));
+    assert!(publish_stdout.contains("export.record_count: 1"));
+    assert!(publish_stdout.contains("export.eligible.identity: fixture:fixture-session-cli"));
+
+    let holdout_invalid = Command::new(distill_bin())
+        .args([
+            "export",
+            "publish",
+            "--home",
+            home.to_str().unwrap(),
+            "--dataset",
+            "all",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("invalid publish dataset");
+    assert_eq!(holdout_invalid.status.code(), Some(2));
+}

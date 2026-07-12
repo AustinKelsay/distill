@@ -22,6 +22,8 @@ pub struct DistillPaths {
     pub blobs: PathBuf,
     /// Staging directory for atomic blob writes.
     pub staging: PathBuf,
+    /// Library-owned export artifact directory.
+    pub exports: PathBuf,
 }
 
 impl DistillPaths {
@@ -32,6 +34,7 @@ impl DistillPaths {
             database: home.join("distill.db"),
             blobs: home.join("blobs"),
             staging: home.join("staging"),
+            exports: home.join("exports"),
             home,
         }
     }
@@ -47,6 +50,7 @@ pub fn ensure_home_layout(home: &Path) -> LibraryResult<DistillPaths> {
     create_dir_secure(&paths.home)?;
     create_dir_secure(&paths.blobs)?;
     create_dir_secure(&paths.staging)?;
+    create_dir_secure(&paths.exports)?;
     ensure_db_file(&paths.database)?;
     Ok(paths)
 }

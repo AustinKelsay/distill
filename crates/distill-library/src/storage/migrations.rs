@@ -16,6 +16,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         3,
         include_str!("../../migrations/0003_curation_read_models.sql"),
     ),
+    (4, include_str!("../../migrations/0004_exports.sql")),
 ];
 
 /**

@@ -7,6 +7,10 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   CurationMutationResult,
   DistillBridge,
+  ExportDataset,
+  ExportPreview,
+  ExportProgress,
+  ExportResult,
   FixtureJourneyInput,
   FixtureJourneyPhase,
   FixtureJourneyResult,
@@ -25,6 +29,7 @@ import type {
 
 const PROGRESS_EVENT = "fixture-journey-progress";
 const SYNC_PROGRESS_EVENT = "sync-progress";
+const EXPORT_PROGRESS_EVENT = "export-progress";
 
 /**
  * Create the real Tauri Distill bridge.
@@ -110,11 +115,23 @@ export function createTauriBridge(): DistillBridge {
         request,
       });
     },
+    async previewExport(home: string, dataset: ExportDataset): Promise<ExportPreview> {
+      return invoke<ExportPreview>("export_preview_command", { home, dataset });
+    },
+    async publishExport(home: string, dataset: ExportDataset): Promise<ExportResult> {
+      return invoke<ExportResult>("export_publish_command", { home, dataset });
+    },
+    async cancelExport(home: string, dataset: ExportDataset): Promise<boolean> {
+      return invoke<boolean>("export_cancel_command", { home, dataset });
+    },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       return subscribe(PROGRESS_EVENT, listener);
     },
     onSyncProgress(listener: (progress: SyncProgress) => void) {
       return subscribe(SYNC_PROGRESS_EVENT, listener);
+    },
+    onExportProgress(listener: (progress: ExportProgress) => void) {
+      return subscribe(EXPORT_PROGRESS_EVENT, listener);
     },
   };
 }

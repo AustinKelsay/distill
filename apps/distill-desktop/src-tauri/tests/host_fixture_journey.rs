@@ -368,3 +368,122 @@ fn host_session_curation_mutations_return_typed_snapshot() {
     );
     assert!(empty.is_err());
 }
+
+#[test]
+fn host_export_preview_publish_and_invalid_dataset() {
+    use distill_desktop_lib::{
+        execute_fixture_journey, execute_preview_export, execute_publish_export,
+        execute_toggle_session_label, validate_export_request, validate_fixture_journey_request,
+        validate_session_curation_request,
+    };
+    use distill_library::{ExportProgress, ExportStatus, SessionCurationRequest};
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let journey =
+        validate_fixture_journey_request(home.to_str().unwrap(), fixture.to_str().unwrap())
+            .expect("request");
+    execute_fixture_journey(&journey, |_| {}).expect("journey");
+
+    let invalid = validate_export_request(home.to_str().unwrap(), "favorites");
+    assert!(invalid.is_err());
+    let invalid_err = invalid.expect_err("invalid dataset");
+    assert_eq!(invalid_err.code, "validation");
+    assert!(invalid_err.message.contains("train"));
+
+    let (home_request, label_request) = validate_session_curation_request(
+        home.to_str().unwrap(),
+        SessionCurationRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "train".into(),
+        },
+    )
+    .expect("label request");
+    let labeled = execute_toggle_session_label(&home_request, label_request).expect("toggle label");
+    assert!(labeled.changed);
+
+    let preview_request =
+        validate_export_request(home.to_str().unwrap(), "train").expect("preview request");
+    let preview = execute_preview_export(&preview_request).expect("preview");
+    assert_eq!(preview.dataset.as_str(), "train");
+    assert_eq!(preview.format_id, "distill-session-jsonl-v1");
+    assert_eq!(preview.eligible.len(), 1);
+    assert_eq!(
+        preview.eligible[0].external_session_id,
+        "fixture-session-host"
+    );
+
+    let publish_request =
+        validate_export_request(home.to_str().unwrap(), "train").expect("publish request");
+    let mut progress = Vec::new();
+    let result =
+        execute_publish_export(&publish_request, |event| progress.push(event)).expect("publish");
+    assert_eq!(result.status, ExportStatus::Published);
+    assert_eq!(result.record_count, 1);
+    assert!(result.output_path.is_some());
+    assert!(progress.iter().any(|event| matches!(
+        event,
+        ExportProgress::Preparing { .. }
+            | ExportProgress::Published { .. }
+            | ExportProgress::Committed { .. }
+    )));
+    assert!(progress
+        .iter()
+        .any(|event| matches!(event, ExportProgress::Published { .. })));
+
+    let holdout_empty =
+        validate_export_request(home.to_str().unwrap(), "holdout").expect("holdout request");
+    let holdout_preview = execute_preview_export(&holdout_empty).expect("holdout preview");
+    assert!(holdout_preview.eligible.is_empty());
+}
+
+#[test]
+fn host_export_cancellation_returns_cancelled_result_without_publication() {
+    use distill_desktop_lib::{
+        execute_export_cancel, execute_fixture_journey, execute_prepare_export_cancellation,
+        execute_publish_export_cancellable, execute_toggle_session_label, validate_export_request,
+        validate_fixture_journey_request, validate_session_curation_request,
+    };
+    use distill_library::{ExportProgress, ExportStatus, SessionCurationRequest};
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let journey =
+        validate_fixture_journey_request(home.to_str().unwrap(), fixture.to_str().unwrap())
+            .expect("request");
+    execute_fixture_journey(&journey, |_| {}).expect("journey");
+
+    let (home_request, label_request) = validate_session_curation_request(
+        home.to_str().unwrap(),
+        SessionCurationRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            name: "train".into(),
+        },
+    )
+    .expect("label request");
+    execute_toggle_session_label(&home_request, label_request).expect("label");
+
+    let request = validate_export_request(home.to_str().unwrap(), "train").expect("export request");
+    assert!(execute_prepare_export_cancellation(&request).expect("prepare cancellation"));
+    assert!(execute_export_cancel(&request).expect("early cancel request"));
+    let mut progress = Vec::new();
+    let result = execute_publish_export_cancellable(&request, |event| {
+        progress.push(event);
+    })
+    .expect("cancelled export is a typed result");
+
+    assert_eq!(result.status, ExportStatus::Cancelled);
+    assert!(result.output_path.is_none());
+    assert!(progress
+        .iter()
+        .any(|event| matches!(event, ExportProgress::Preparing { .. })));
+    assert_eq!(result.error_class.as_deref(), Some("cancelled"));
+}

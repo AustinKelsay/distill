@@ -8,18 +8,20 @@ use semver::Version;
 use crate::adapter::{FixtureAdapter, ParserIdentity, SourceAdapter, FIXTURE_PARSER_ID};
 use crate::curation;
 use crate::error::{LibraryError, LibraryResult};
+use crate::export;
 use crate::health::{self as health_ops};
 use crate::ingest;
 use crate::ops::{self, new_owner_id};
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
 use crate::types::{
-    ActivityEventSummary, AttemptSummary, CurationMutationResult, FixtureJourneyPhase,
-    FixtureJourneyResult, HealthReport, IngestReport, OpenReconciliation, RenormalizeReport,
-    RepairOptions, RepairReport, SearchHit, SessionCurationRequest, SessionDetail,
-    SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
-    SourceDetectResult, SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult,
-    SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    ActivityEventSummary, AttemptSummary, CurationMutationResult, ExportDataset, ExportPreview,
+    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
+    HealthReport, IngestReport, OpenReconciliation, RenormalizeReport, RepairOptions, RepairReport,
+    SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    SessionListRequest, SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary,
+    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES,
+    MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -61,7 +63,11 @@ impl Library {
         let paths = ensure_home_layout(home.as_ref())?;
         let mut conn = open_connection(&paths)?;
         migrate_to_latest(&mut conn)?;
-        let open_reconciliation = health_ops::reconcile_on_open(&paths)?;
+        let mut open_reconciliation = health_ops::reconcile_on_open(&paths)?;
+        let (classified_exports, removed_export_temps) =
+            export::reconcile_incomplete_exports(&mut conn, &paths)?;
+        open_reconciliation.classified_incomplete_exports = classified_exports;
+        open_reconciliation.removed_export_temp_files = removed_export_temps;
         ops::fail_stale_active_runs(&mut conn)?;
         Ok(Self {
             paths,
@@ -502,6 +508,41 @@ impl Library {
         request: SessionCurationRequest,
     ) -> LibraryResult<CurationMutationResult> {
         curation::toggle_session_label(&mut self.conn, request)
+    }
+
+    /**
+     * Preview a `distill-session-jsonl-v1` dataset export without side effects.
+     *
+     * Shares publish eligibility policy over the current projection and manual
+     * curation. Performs no filesystem, export-row, or Activity mutations.
+     *
+     * Parameters:
+     * - `dataset`: approved `train` or `holdout` target.
+     */
+    pub fn preview_export(&self, dataset: ExportDataset) -> LibraryResult<ExportPreview> {
+        export::preview_export(&self.conn, dataset)
+    }
+
+    /**
+     * Publish a recoverable Library-owned `distill-session-jsonl-v1` export.
+     *
+     * Uses the same eligibility snapshot as [`Self::preview_export`], writes under
+     * `<distill-home>/exports`, and reaches `published` only after same-volume
+     * rename plus matching SQLite bookkeeping and `export_written` Activity.
+     *
+     * Parameters:
+     * - `dataset`: approved `train` or `holdout` target.
+     * - `on_progress`: typed progress observer that may request cancellation.
+     */
+    pub fn publish_export<F>(
+        &mut self,
+        dataset: ExportDataset,
+        on_progress: F,
+    ) -> LibraryResult<ExportResult>
+    where
+        F: FnMut(ExportProgress) -> ExportProgressControl,
+    {
+        export::publish_export(&mut self.conn, &self.paths, dataset, on_progress)
     }
 }
 

@@ -6,6 +6,11 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import type {
   CurationMutationResult,
   DistillBridge,
+  ExportDataset,
+  ExportPreview,
+  ExportProgress,
+  ExportResult,
+  ExportUiStatus,
   FixtureJourneyPhase,
   FixtureJourneyResult,
   HealthReport,
@@ -66,6 +71,13 @@ export function App({ bridge }: AppProps) {
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [curationError, setCurationError] = useState<HostError | null>(null);
+  const [exportDataset, setExportDataset] = useState<ExportDataset>("train");
+  const [exportStatus, setExportStatus] = useState<ExportUiStatus>("idle");
+  const [exportPublishing, setExportPublishing] = useState(false);
+  const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
+  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportError, setExportError] = useState<HostError | null>(null);
   const sessionRequestRef = useRef(0);
 
   useEffect(() => {
@@ -76,9 +88,13 @@ export function App({ bridge }: AppProps) {
       setSyncProgress(progress);
       setActiveSyncRunId(progress.sync_run_id);
     });
+    const stopExport = bridge.onExportProgress((progress) => {
+      setExportProgress(progress);
+    });
     return () => {
       stopJourney();
       stopSync();
+      stopExport();
     };
   }, [bridge]);
 
@@ -432,6 +448,63 @@ export function App({ bridge }: AppProps) {
     }
   }
 
+  /**
+   * Preview Library export eligibility for the selected dataset without publishing.
+   */
+  async function onPreviewExport() {
+    setExportStatus("running");
+    setExportPublishing(false);
+    setExportError(null);
+    setExportPreview(null);
+    setExportResult(null);
+    setExportProgress(null);
+    try {
+      const preview = await bridge.previewExport(home, exportDataset);
+      setExportPreview(preview);
+      setExportStatus("success");
+    } catch (caught) {
+      setExportError(normalizeError(caught));
+      setExportStatus("error");
+    }
+  }
+
+  /**
+   * Explicitly publish the selected dataset after a preview has been shown.
+   */
+  async function onPublishExport() {
+    setExportStatus("running");
+    setExportPublishing(true);
+    setExportError(null);
+    setExportProgress(null);
+    try {
+      const result = await bridge.publishExport(home, exportDataset);
+      setExportResult(result);
+      if (result.status === "cancelled") setExportStatus("cancelled");
+      else if (result.status === "failed_publish") setExportStatus("error");
+      else setExportStatus("success");
+    } catch (caught) {
+      setExportError(normalizeError(caught));
+      setExportStatus("error");
+    } finally {
+      setExportPublishing(false);
+    }
+  }
+
+  /** Request cancellation at the next safe Library export checkpoint. */
+  async function onCancelExport() {
+    try {
+      const requested = await bridge.cancelExport(home, exportDataset);
+      if (!requested) {
+        setExportError({
+          code: "export_not_running",
+          message: "no active export publication was found",
+        });
+      }
+    } catch (caught) {
+      setExportError(normalizeError(caught));
+    }
+  }
+
   const health = standaloneHealth ?? result?.health ?? null;
 
   return (
@@ -702,6 +775,76 @@ export function App({ bridge }: AppProps) {
               </button>
             ) : null}
           </article>
+        ) : null}
+      </section>
+
+      <section className="form" aria-label="Dataset export" data-testid="export-panel">
+        <h2>Export</h2>
+        <label htmlFor="export-dataset">Dataset</label>
+        <select
+          id="export-dataset"
+          value={exportDataset}
+          onChange={(event) => {
+            setExportDataset(event.target.value as ExportDataset);
+            setExportPreview(null);
+            setExportResult(null);
+            setExportError(null);
+            setExportStatus("idle");
+            setExportPublishing(false);
+          }}
+        >
+          <option value="train">train</option>
+          <option value="holdout">holdout</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => void onPreviewExport()}
+          disabled={!home.trim() || exportStatus === "running"}
+        >
+          Preview export
+        </button>
+        <button
+          type="button"
+          onClick={() => void onPublishExport()}
+          disabled={!home.trim() || !exportPreview || exportStatus === "running"}
+        >
+          Publish export
+        </button>
+        {exportPublishing ? (
+          <button type="button" onClick={() => void onCancelExport()}>
+            Cancel export
+          </button>
+        ) : null}
+        <p data-testid="export-status">Export: {exportStatus}</p>
+        {exportProgress ? (
+          <p data-testid="export-progress">progress: {exportProgress.type}</p>
+        ) : null}
+        {exportError ? (
+          <p className="error" data-testid="export-error">
+            {exportError.code}: {exportError.message}
+          </p>
+        ) : null}
+        {exportPreview ? (
+          <dl data-testid="export-preview">
+            <dt>Dataset</dt>
+            <dd>{exportPreview.dataset}</dd>
+            <dt>Format</dt>
+            <dd>{exportPreview.format_id}</dd>
+            <dt>Eligible</dt>
+            <dd data-testid="export-eligible-count">{exportPreview.eligible.length}</dd>
+            <dt>Omitted</dt>
+            <dd data-testid="export-omitted-count">{exportPreview.omitted.length}</dd>
+          </dl>
+        ) : null}
+        {exportResult ? (
+          <dl data-testid="export-result">
+            <dt>Status</dt>
+            <dd data-testid="export-result-status">{exportResult.status}</dd>
+            <dt>Records</dt>
+            <dd>{exportResult.record_count}</dd>
+            <dt>Output</dt>
+            <dd>{exportResult.output_path ?? "none"}</dd>
+          </dl>
         ) : null}
       </section>
 

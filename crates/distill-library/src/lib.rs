@@ -9,6 +9,7 @@
 mod adapter;
 mod curation;
 mod error;
+mod export;
 #[cfg(feature = "test-faults")]
 pub mod faults;
 mod health;
@@ -35,11 +36,13 @@ pub mod test_support {
 }
 pub use types::{
     derive_workflow_state, matches_workflow_lane, ActivityEventSummary, AttemptSummary,
-    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthIssue, HealthReport,
-    IngestReport, OpenReconciliation, ProjectedArtifact, ProjectedMessage, RenormalizeReport,
-    RepairAction, RepairOptions, RepairReport, SearchHit, SessionCurationRequest, SessionDetail,
-    SessionDetailRequest, SessionIdentity, SessionLabel, SessionListItem, SessionListPage,
-    SessionListRequest, SessionSummary, SessionTag, SourceDetectRequest, SourceDetectResult,
-    SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
-    SyncSourceOutcome, WorkflowLane, WorkflowState, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
+    CurationMutationResult, ExportDataset, ExportOmission, ExportOmissionReason, ExportPreview,
+    ExportProgress, ExportProgressControl, ExportResult, ExportStatus, FixtureJourneyPhase,
+    FixtureJourneyResult, HealthIssue, HealthReport, IngestReport, OpenReconciliation,
+    ProjectedArtifact, ProjectedMessage, RenormalizeReport, RepairAction, RepairOptions,
+    RepairReport, SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest,
+    SessionIdentity, SessionLabel, SessionListItem, SessionListPage, SessionListRequest,
+    SessionSummary, SessionTag, SourceDetectRequest, SourceDetectResult, SourcePreference,
+    SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, SyncSourceOutcome,
+    WorkflowLane, WorkflowState, EXPORT_FORMAT_ID, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
 };

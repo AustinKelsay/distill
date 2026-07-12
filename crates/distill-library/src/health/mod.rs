@@ -58,6 +58,7 @@ pub fn reconcile_on_open(paths: &DistillPaths) -> LibraryResult<OpenReconciliati
     }
     Ok(OpenReconciliation {
         removed_staging_partials: removed,
+        ..Default::default()
     })
 }
 

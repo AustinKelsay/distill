@@ -1,12 +1,14 @@
 //! Testable Tauri host command runner over the public Library seam.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use distill_library::{
-    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library,
-    RepairOptions, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
-    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRequest,
-    SyncRunResult, SyncRunSummary,
+    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
+    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, RepairOptions,
+    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -56,6 +58,99 @@ pub struct SourcePreferenceRequest {
     pub enabled: bool,
     /// Optional configured root.
     pub configured_root: Option<PathBuf>,
+}
+
+/// Validated export preview/publish request.
+#[derive(Clone, Debug)]
+pub struct ExportRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Approved `train` or `holdout` dataset target.
+    pub dataset: ExportDataset,
+}
+
+struct ExportCancellationState {
+    token: std::sync::atomic::AtomicBool,
+    started: std::sync::atomic::AtomicBool,
+}
+
+type ExportCancellation = Arc<ExportCancellationState>;
+
+static EXPORT_CANCELLATIONS: OnceLock<Mutex<HashMap<String, ExportCancellation>>> = OnceLock::new();
+
+fn export_cancellation_key(request: &ExportRequest) -> String {
+    format!("{}\0{}", request.home.display(), request.dataset.as_str())
+}
+
+fn export_cancellation_registry() -> &'static Mutex<HashMap<String, ExportCancellation>> {
+    EXPORT_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct ExportCancellationGuard {
+    key: String,
+    token: ExportCancellation,
+}
+
+impl Drop for ExportCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut entries) = export_cancellation_registry().lock() {
+            if entries
+                .get(&self.key)
+                .is_some_and(|current| Arc::ptr_eq(current, &self.token))
+            {
+                entries.remove(&self.key);
+            }
+        }
+    }
+}
+
+fn acquire_export_cancellation(
+    request: &ExportRequest,
+) -> Result<ExportCancellationGuard, HostError> {
+    let key = export_cancellation_key(request);
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    let token = entries
+        .entry(key.clone())
+        .or_insert_with(|| {
+            Arc::new(ExportCancellationState {
+                token: std::sync::atomic::AtomicBool::new(false),
+                started: std::sync::atomic::AtomicBool::new(false),
+            })
+        })
+        .clone();
+    token
+        .started
+        .store(true, std::sync::atomic::Ordering::Release);
+    Ok(ExportCancellationGuard { key, token })
+}
+
+/** Register an export cancellation intent before starting its worker. */
+pub fn run_prepare_export_cancellation(request: &ExportRequest) -> Result<bool, HostError> {
+    let key = export_cancellation_key(request);
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    if let Some(state) = entries.get(&key) {
+        return Ok(!state
+            .started
+            .swap(true, std::sync::atomic::Ordering::AcqRel));
+    }
+    entries.insert(
+        key,
+        Arc::new(ExportCancellationState {
+            token: std::sync::atomic::AtomicBool::new(false),
+            started: std::sync::atomic::AtomicBool::new(true),
+        }),
+    );
+    Ok(true)
 }
 
 /**
@@ -358,4 +453,128 @@ pub fn run_sync_cancel(request: &SyncIdRequest) -> Result<SyncRunSummary, HostEr
     library
         .sync_status(Some(request.sync_run_id))
         .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus closed export dataset target.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer
+ * - `dataset`: caller-supplied dataset string (`train` or `holdout`)
+ */
+pub fn validate_export_request(home: &str, dataset: &str) -> Result<ExportRequest, HostError> {
+    let request = validate_home_request(home)?;
+    let dataset = ExportDataset::parse(dataset).map_err(HostError::validation)?;
+    Ok(ExportRequest {
+        home: request.home,
+        dataset,
+    })
+}
+
+/**
+ * Preview export eligibility through the public Library seam.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ */
+pub fn run_preview_export(request: &ExportRequest) -> Result<ExportPreview, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .preview_export(request.dataset)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Publish a recoverable export and report typed progress.
+ *
+ * The compatibility runner continues publication; callers that need
+ * cancellation can use `run_publish_export_cancellable` or the typed control
+ * seam below.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ * - `on_progress`: typed export progress observer
+ */
+pub fn run_publish_export<F>(
+    request: &ExportRequest,
+    mut on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress),
+{
+    run_publish_export_with_control(request, |progress| {
+        on_progress(progress);
+        ExportProgressControl::Continue
+    })
+}
+
+/**
+ * Publish an export while allowing the caller to request cancellation at a
+ * typed Library checkpoint.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ * - `on_progress`: typed observer/control callback
+ */
+pub fn run_publish_export_with_control<F>(
+    request: &ExportRequest,
+    on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress) -> ExportProgressControl,
+{
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .publish_export(request.dataset, on_progress)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Publish an export with a desktop cancellation token registered for the
+ * duration of the blocking operation.
+ */
+pub fn run_publish_export_cancellable<F>(
+    request: &ExportRequest,
+    mut on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress),
+{
+    let guard = acquire_export_cancellation(request)?;
+    let state = Arc::clone(&guard.token);
+
+    run_publish_export_with_control(request, |progress| {
+        on_progress(progress);
+        if state.token.load(std::sync::atomic::Ordering::Acquire) {
+            ExportProgressControl::Cancel
+        } else {
+            ExportProgressControl::Continue
+        }
+    })
+}
+
+/**
+ * Request cancellation for an active desktop export.
+ *
+ * Returns `true` when an active publication was found and signalled.
+ */
+pub fn run_export_cancel(request: &ExportRequest) -> Result<bool, HostError> {
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    let state = entries
+        .entry(export_cancellation_key(request))
+        .or_insert_with(|| {
+            Arc::new(ExportCancellationState {
+                token: std::sync::atomic::AtomicBool::new(true),
+                started: std::sync::atomic::AtomicBool::new(false),
+            })
+        });
+    state
+        .token
+        .store(true, std::sync::atomic::Ordering::Release);
+    Ok(true)
 }

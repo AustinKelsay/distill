@@ -1,21 +1,24 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::{
-    CurationMutationResult, FixtureJourneyResult, HealthReport, RepairReport,
-    SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
-    SessionListRequest, SourcePreference, SyncProgress, SyncRunResult, SyncRunSummary,
+    CurationMutationResult, ExportPreview, ExportProgress, ExportResult, FixtureJourneyResult,
+    HealthReport, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
+    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
+    SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_add_session_tag, run_fixture_journey, run_health, run_list_sessions, run_list_sources,
-    run_remove_session_tag, run_repair, run_session_detail, run_set_source_preference,
-    run_sync_cancel, run_sync_start, run_sync_status, run_toggle_session_label,
-    validate_fixture_journey_request, validate_home_request, validate_session_curation_request,
-    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
+    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_list_sessions,
+    run_list_sources, run_prepare_export_cancellation, run_preview_export,
+    run_publish_export_cancellable, run_remove_session_tag, run_repair, run_session_detail,
+    run_set_source_preference, run_sync_cancel, run_sync_start, run_sync_status,
+    run_toggle_session_label, validate_export_request, validate_fixture_journey_request,
+    validate_home_request, validate_session_curation_request, validate_source_preference_request,
+    validate_sync_id_request, validate_sync_start_request,
 };
-use crate::{FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
+use crate::{EXPORT_PROGRESS_EVENT, FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
 
 /**
  * Tauri command: validate inputs, run the Fixture journey off the UI thread,
@@ -236,6 +239,65 @@ pub async fn toggle_session_label_command(
 ) -> Result<CurationMutationResult, HostError> {
     let (home_request, curation) = validate_session_curation_request(&home, request)?;
     tauri::async_runtime::spawn_blocking(move || run_toggle_session_label(&home_request, curation))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: preview export eligibility off the UI thread.
+ */
+#[tauri::command]
+pub async fn export_preview_command(
+    home: String,
+    dataset: String,
+) -> Result<ExportPreview, HostError> {
+    let request = validate_export_request(&home, &dataset)?;
+    tauri::async_runtime::spawn_blocking(move || run_preview_export(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: publish a recoverable export off the UI thread with typed progress.
+ */
+#[tauri::command]
+pub async fn export_publish_command(
+    app: AppHandle,
+    home: String,
+    dataset: String,
+) -> Result<ExportResult, HostError> {
+    let request = validate_export_request(&home, &dataset)?;
+    if !run_prepare_export_cancellation(&request)? {
+        return Err(HostError {
+            code: "export_already_running".to_string(),
+            message: "an export for this home and dataset is already running".to_string(),
+        });
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        run_publish_export_cancellable(&request, |progress: ExportProgress| {
+            let _ = app.emit(EXPORT_PROGRESS_EVENT, progress);
+        })
+    })
+    .await
+    .map_err(|err| HostError {
+        code: "join".to_string(),
+        message: err.to_string(),
+    })?
+}
+
+/**
+ * Tauri command: request cancellation of an active export publication.
+ */
+#[tauri::command]
+pub async fn export_cancel_command(home: String, dataset: String) -> Result<bool, HostError> {
+    let request = validate_export_request(&home, &dataset)?;
+    tauri::async_runtime::spawn_blocking(move || run_export_cancel(&request))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),

@@ -9,6 +9,9 @@ import { App } from "./App";
 import type {
   CurationMutationResult,
   DistillBridge,
+  ExportPreview,
+  ExportProgress,
+  ExportResult,
   FixtureJourneyPhase,
   FixtureJourneyResult,
   HealthReport,
@@ -105,9 +108,16 @@ function createFakeBridge(options?: {
   onSessionDetail?: () => void;
   curationResult?: CurationMutationResult;
   curationError?: HostError;
+  exportPreview?: ExportPreview;
+  exportResult?: ExportResult;
+  exportError?: HostError;
+  pendingExport?: Promise<ExportResult>;
+  exportPhases?: ExportProgress[];
+  exportCancelRequested?: boolean;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
+  const exportListeners = new Set<(progress: ExportProgress) => void>();
   return {
     async runFixtureJourney() {
       for (const phase of options?.phases ?? [
@@ -302,6 +312,50 @@ function createFakeBridge(options?: {
         }
       );
     },
+    async previewExport(_home, dataset) {
+      if (options?.exportError) throw options.exportError;
+      return (
+        options?.exportPreview ?? {
+          dataset,
+          format_id: "distill-session-jsonl-v1",
+          eligible: [
+            { source_kind: "fixture", external_session_id: "fixture-session-ui" },
+          ],
+          omitted: [],
+        }
+      );
+    },
+    async publishExport(_home, dataset) {
+      for (const progress of options?.exportPhases ?? [
+        { type: "preparing" as const, export_id: 1 },
+        { type: "published" as const, export_id: 1 },
+      ]) {
+        exportListeners.forEach((listener) => listener(progress));
+      }
+      if (options?.pendingExport) return options.pendingExport;
+      if (options?.exportError) throw options.exportError;
+      return (
+        options?.exportResult ?? {
+          export_id: 1,
+          dataset,
+          format_id: "distill-session-jsonl-v1",
+          status: "published",
+          output_path: "/tmp/home/exports/train-sessions.jsonl",
+          sha256: "abc",
+          byte_size: 12,
+          record_count: 1,
+          eligible: [
+            { source_kind: "fixture", external_session_id: "fixture-session-ui" },
+          ],
+          omitted: [],
+          error_class: null,
+          error_message: null,
+        }
+      );
+    },
+    async cancelExport() {
+      return options?.exportCancelRequested ?? true;
+    },
     onProgress(listener) {
       listeners.add(listener);
       return () => {
@@ -312,6 +366,12 @@ function createFakeBridge(options?: {
       syncListeners.add(listener);
       return () => {
         syncListeners.delete(listener);
+      };
+    },
+    onExportProgress(listener) {
+      exportListeners.add(listener);
+      return () => {
+        exportListeners.delete(listener);
       };
     },
   };
@@ -632,8 +692,18 @@ describe("first-run Fixture UI", () => {
       toggleSessionLabel: async () => {
         throw new Error("not used");
       },
+      previewExport: async () => {
+        throw new Error("not used");
+      },
+      publishExport: async () => {
+        throw new Error("not used");
+      },
+      cancelExport: async () => {
+        throw new Error("not used");
+      },
       onProgress: () => () => undefined,
       onSyncProgress: () => () => undefined,
+      onExportProgress: () => () => undefined,
     };
     render(<App bridge={bridge} />);
 
@@ -957,5 +1027,122 @@ describe("first-run Fixture UI", () => {
     expect(screen.getByTestId("session-detail-panel")).toHaveTextContent(
       "Explorer session",
     );
+  });
+
+  it("previews then publishes export with explicit lifecycle states", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      exportPreview: {
+        dataset: "train",
+        format_id: "distill-session-jsonl-v1",
+        eligible: [{ source_kind: "fixture", external_session_id: "fixture-session-ui" }],
+        omitted: [],
+      },
+      exportResult: {
+        export_id: 9,
+        dataset: "train",
+        format_id: "distill-session-jsonl-v1",
+        status: "published",
+        output_path: "/tmp/home/exports/train.jsonl",
+        sha256: "deadbeef",
+        byte_size: 42,
+        record_count: 1,
+        eligible: [{ source_kind: "fixture", external_session_id: "fixture-session-ui" }],
+        omitted: [],
+        error_class: null,
+        error_message: null,
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    expect(screen.getByTestId("export-status")).toHaveTextContent("idle");
+    expect(screen.getByRole("button", { name: "Publish export" })).toBeDisabled();
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Preview export" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("export-status")).toHaveTextContent("success");
+    });
+    expect(screen.getByTestId("export-preview")).toHaveTextContent("train");
+    expect(screen.getByTestId("export-eligible-count")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: "Publish export" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Publish export" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("export-result-status")).toHaveTextContent("published");
+    });
+    expect(screen.getByTestId("export-status")).toHaveTextContent("success");
+    expect(screen.getByTestId("export-progress")).toHaveTextContent("published");
+  });
+
+  it("surfaces export error state without inventing eligibility", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      exportError: {
+        code: "validation",
+        message: "dataset must be one of: train, holdout",
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Preview export" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("export-status")).toHaveTextContent("error");
+    });
+    expect(screen.getByTestId("export-error")).toHaveTextContent(
+      "validation: dataset must be one of: train, holdout",
+    );
+    expect(screen.queryByTestId("export-preview")).toBeNull();
+  });
+
+  it("requests export cancellation and renders the cancelled terminal state", async () => {
+    const user = userEvent.setup();
+    let resolveExport!: (result: ExportResult) => void;
+    const pendingExport = new Promise<ExportResult>((resolve) => {
+      resolveExport = resolve;
+    });
+    const bridge = createFakeBridge({
+      pendingExport,
+      exportPreview: {
+        dataset: "train",
+        format_id: "distill-session-jsonl-v1",
+        eligible: [{ source_kind: "fixture", external_session_id: "fixture-session-ui" }],
+        omitted: [],
+      },
+    });
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Preview export" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Publish export" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Publish export" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Cancel export" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel export" }));
+
+    resolveExport({
+      export_id: 1,
+      dataset: "train",
+      format_id: "distill-session-jsonl-v1",
+      status: "cancelled",
+      output_path: null,
+      sha256: null,
+      byte_size: null,
+      record_count: 0,
+      eligible: [],
+      omitted: [],
+      error_class: null,
+      error_message: null,
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("export-status")).toHaveTextContent("cancelled");
+      expect(screen.getByTestId("export-result-status")).toHaveTextContent("cancelled");
+    });
   });
 });

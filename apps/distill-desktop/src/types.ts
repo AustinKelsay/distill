@@ -155,6 +155,62 @@ export type CurationMutationResult = {
   workflow_state: WorkflowState;
 };
 
+/** Closed export dataset targets owned by the Library. */
+export type ExportDataset = "train" | "holdout";
+
+/** Why a labeled session was omitted from a dataset export. */
+export type ExportOmissionReason = "exclude" | "sensitive" | "conflicting_dataset_labels";
+
+/** One session omitted from an eligibility snapshot. */
+export type ExportOmission = {
+  identity: SessionIdentity;
+  reason: ExportOmissionReason;
+};
+
+/** Side-effect-free export eligibility preview from the Library. */
+export type ExportPreview = {
+  dataset: ExportDataset;
+  format_id: string;
+  eligible: SessionIdentity[];
+  omitted: ExportOmission[];
+};
+
+/** Typed export publication progress events. */
+export type ExportProgress =
+  | { type: "preparing"; export_id: number }
+  | {
+      type: "writing";
+      export_id: number;
+      records_written: number;
+      record_total: number;
+    }
+  | { type: "committed"; export_id: number }
+  | { type: "renamed"; export_id: number }
+  | { type: "published"; export_id: number };
+
+/** Terminal export publication status. */
+export type ExportStatus =
+  "preparing" | "committed" | "published" | "failed_publish" | "cancelled";
+
+/** Terminal result of an export publish call. */
+export type ExportResult = {
+  export_id: number;
+  dataset: ExportDataset;
+  format_id: string;
+  status: ExportStatus;
+  output_path: string | null;
+  sha256: string | null;
+  byte_size: number | null;
+  record_count: number;
+  eligible: SessionIdentity[];
+  omitted: ExportOmission[];
+  error_class: string | null;
+  error_message: string | null;
+};
+
+/** Explicit export panel lifecycle for preview/publish callers. */
+export type ExportUiStatus = "idle" | "running" | "success" | "error" | "cancelled";
+
 /** Typed Library health issue with redacted summary. */
 export type HealthIssue = {
   code: string;
@@ -166,6 +222,8 @@ export type HealthIssue = {
 /** Safe open reconciliation counts. */
 export type OpenReconciliation = {
   removed_staging_partials: number;
+  classified_incomplete_exports?: number;
+  removed_export_temp_files?: number;
 };
 
 /** Library health report. */
@@ -348,6 +406,20 @@ export type DistillBridge = {
     request: SessionCurationRequest,
   ): Promise<CurationMutationResult>;
   /**
+   * Preview export eligibility for a closed dataset target.
+   * @param home - Distill home path
+   * @param dataset - `train` or `holdout`
+   */
+  previewExport(home: string, dataset: ExportDataset): Promise<ExportPreview>;
+  /**
+   * Publish a recoverable Library-owned export for a closed dataset target.
+   * @param home - Distill home path
+   * @param dataset - `train` or `holdout`
+   */
+  publishExport(home: string, dataset: ExportDataset): Promise<ExportResult>;
+  /** Request cancellation at the next safe export checkpoint. */
+  cancelExport(home: string, dataset: ExportDataset): Promise<boolean>;
+  /**
    * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback
    * @returns unsubscribe function
@@ -357,4 +429,8 @@ export type DistillBridge = {
    * Subscribe to typed Sync Run progress events.
    */
   onSyncProgress(listener: (progress: SyncProgress) => void): () => void;
+  /**
+   * Subscribe to typed export publication progress events.
+   */
+  onExportProgress(listener: (progress: ExportProgress) => void): () => void;
 };

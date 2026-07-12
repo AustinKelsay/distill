@@ -5,7 +5,7 @@ mod home;
 mod migrations;
 
 pub use content::{read_capture_bytes, store_capture_bytes, ContentRef};
-pub use home::{ensure_home_layout, open_connection, DistillPaths};
+pub use home::{ensure_home_layout, open_connection, set_file_mode_600, DistillPaths};
 pub use migrations::{migrate_to_latest, verify_migration_checksums};
 
 use rusqlite::Connection;

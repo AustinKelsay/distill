@@ -1,5 +1,5 @@
 //! Thin Distill CLI over the public Library Fixture journey, health, repair,
-//! Source preferences, and Sync Runs.
+//! Source preferences, Sync Runs, session curation, and export preview/publish.
 //!
 //! Exit codes:
 //! - `0` — command succeeded
@@ -13,10 +13,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
-    CurationMutationResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library,
-    LibraryError, RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest,
-    SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
-    WorkflowLane,
+    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
+    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, Library, LibraryError,
+    RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
+    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
 
@@ -41,7 +41,7 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, and sync",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, and export",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
@@ -104,6 +104,44 @@ pub enum Command {
         /// Nested session list/detail/curation action.
         #[command(subcommand)]
         action: SessionCommand,
+    },
+    /// Dataset export preview and publish commands.
+    Export {
+        /// Nested export preview/publish action.
+        #[command(subcommand)]
+        action: ExportCommand,
+    },
+}
+
+/// Export preview/publish subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ExportCommand {
+    /// Preview `train` or `holdout` export eligibility without side effects.
+    Preview {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Dataset target (`train` or `holdout`).
+        #[arg(long)]
+        dataset: String,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Publish a recoverable Library-owned `train` or `holdout` export.
+    Publish {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Dataset target (`train` or `holdout`).
+        #[arg(long)]
+        dataset: String,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+        /// Request a deterministic cancellation at the first safe checkpoint.
+        #[arg(long)]
+        cancel: bool,
     },
 }
 
@@ -374,6 +412,7 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
         Some(Command::Sources { action }) => execute_sources(action),
         Some(Command::Sync { action }) => execute_sync(action),
         Some(Command::Sessions { action }) => execute_sessions(action),
+        Some(Command::Export { action }) => execute_export(action),
         None => execute_journey(cli.home, cli.fixture, cli.format),
     }
 }
@@ -678,6 +717,168 @@ fn validate_curation_identity(
         ));
     }
     Ok(())
+}
+
+/**
+ * Parse a closed export dataset target for CLI callers.
+ *
+ * Parameters:
+ * - `format`: output format used for usage failures
+ * - `raw`: caller-supplied dataset string
+ */
+fn parse_export_dataset(format: OutputFormat, raw: &str) -> Result<ExportDataset, CliFailure> {
+    ExportDataset::parse(raw).map_err(|message| CliFailure::usage(format, message))
+}
+
+/**
+ * Execute export preview or publish through the public Library seam.
+ *
+ * Parameters:
+ * - `action`: nested preview/publish command
+ */
+fn execute_export(action: ExportCommand) -> Result<String, CliFailure> {
+    match action {
+        ExportCommand::Preview {
+            home,
+            dataset,
+            format,
+        } => {
+            if home.as_os_str().is_empty() {
+                return Err(CliFailure::usage(format, "home path must not be empty"));
+            }
+            let dataset = parse_export_dataset(format, &dataset)?;
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let preview = library
+                .preview_export(dataset)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_export_preview(format, &preview))
+        }
+        ExportCommand::Publish {
+            home,
+            dataset,
+            format,
+            cancel,
+        } => {
+            if home.as_os_str().is_empty() {
+                return Err(CliFailure::usage(format, "home path must not be empty"));
+            }
+            let dataset = parse_export_dataset(format, &dataset)?;
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let mut progress = Vec::new();
+            let result = library
+                .publish_export(dataset, |event: ExportProgress| {
+                    progress.push(event);
+                    if cancel {
+                        ExportProgressControl::Cancel
+                    } else {
+                        ExportProgressControl::Continue
+                    }
+                })
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_export_result(format, &result, &progress))
+        }
+    }
+}
+
+/**
+ * Render a side-effect-free export eligibility preview.
+ */
+fn render_export_preview(format: OutputFormat, preview: &ExportPreview) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "preview": preview,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("ok: true"),
+                format!("export.dataset: {}", preview.dataset.as_str()),
+                format!("export.format_id: {}", preview.format_id),
+                format!("export.eligible: {}", preview.eligible.len()),
+                format!("export.omitted: {}", preview.omitted.len()),
+            ];
+            for identity in &preview.eligible {
+                lines.push(format!(
+                    "export.eligible.identity: {}:{}",
+                    identity.source_kind, identity.external_session_id
+                ));
+            }
+            for omission in &preview.omitted {
+                lines.push(format!(
+                    "export.omission: {}:{} {}",
+                    omission.identity.source_kind,
+                    omission.identity.external_session_id,
+                    omission.reason.as_str()
+                ));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+/**
+ * Render a terminal export publication result plus progress events.
+ */
+fn render_export_result(
+    format: OutputFormat,
+    result: &ExportResult,
+    progress: &[ExportProgress],
+) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "progress": progress,
+            "export": result,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("ok: true"),
+                format!("export.id: {}", result.export_id),
+                format!("export.dataset: {}", result.dataset.as_str()),
+                format!("export.format_id: {}", result.format_id),
+                format!("export.status: {}", result.status.as_str()),
+                format!(
+                    "export.output_path: {}",
+                    result.output_path.as_deref().unwrap_or("")
+                ),
+                format!("export.sha256: {}", result.sha256.as_deref().unwrap_or("")),
+                format!(
+                    "export.byte_size: {}",
+                    result
+                        .byte_size
+                        .map(|size| size.to_string())
+                        .unwrap_or_default()
+                ),
+                format!("export.record_count: {}", result.record_count),
+                format!("export.eligible: {}", result.eligible.len()),
+                format!("export.omitted: {}", result.omitted.len()),
+            ];
+            for identity in &result.eligible {
+                lines.push(format!(
+                    "export.eligible.identity: {}:{}",
+                    identity.source_kind, identity.external_session_id
+                ));
+            }
+            for omission in &result.omitted {
+                lines.push(format!(
+                    "export.omission: {}:{} {}",
+                    omission.identity.source_kind,
+                    omission.identity.external_session_id,
+                    omission.reason.as_str()
+                ));
+            }
+            if let Some(error_class) = &result.error_class {
+                lines.push(format!("export.error_class: {error_class}"));
+            }
+            if let Some(error_message) = &result.error_message {
+                lines.push(format!("export.error_message: {error_message}"));
+            }
+            lines.join("\n")
+        }
+    }
 }
 
 fn render_journey_success(

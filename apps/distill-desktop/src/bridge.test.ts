@@ -155,6 +155,24 @@ describe("Tauri bridge", () => {
         name: "train",
       },
     });
+
+    await bridge.previewExport("/tmp/home", "train");
+    expect(tauri.invoke).toHaveBeenCalledWith("export_preview_command", {
+      home: "/tmp/home",
+      dataset: "train",
+    });
+
+    await bridge.publishExport("/tmp/home", "holdout");
+    expect(tauri.invoke).toHaveBeenCalledWith("export_publish_command", {
+      home: "/tmp/home",
+      dataset: "holdout",
+    });
+
+    await bridge.cancelExport("/tmp/home", "holdout");
+    expect(tauri.invoke).toHaveBeenCalledWith("export_cancel_command", {
+      home: "/tmp/home",
+      dataset: "holdout",
+    });
   });
 
   it("unsubscribes when cleanup happens before async listener registration finishes", async () => {

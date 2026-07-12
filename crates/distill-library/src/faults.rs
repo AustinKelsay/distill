@@ -26,6 +26,14 @@ pub enum FaultPoint {
     DuringPublishAfterFtsBeforeAttemptSuccess,
     /// Inside projection tx after `projection_replaced`, before commit.
     DuringPublishAfterActivityBeforeCommit,
+    /// After export temporary JSONL write/flush, before moving the row to `committed`.
+    AfterExportTempWrite,
+    /// After export row reaches `committed`, before same-volume final rename.
+    AfterExportCommittedBeforeRename,
+    /// After export final rename, before `published` + `export_written` finalization.
+    AfterExportRenameBeforeFinalization,
+    /// Inside final export bookkeeping, before the publish transaction commits.
+    DuringExportFinalizationBeforeCommit,
 }
 
 thread_local! {

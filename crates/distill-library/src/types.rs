@@ -473,6 +473,12 @@ pub struct HealthIssue {
 pub struct OpenReconciliation {
     /// Disposable staging partial files removed on open.
     pub removed_staging_partials: u64,
+    /// Incomplete export rows terminalized to `failed_publish` on open.
+    #[serde(default)]
+    pub classified_incomplete_exports: u64,
+    /// Disposable export temporary files removed on open.
+    #[serde(default)]
+    pub removed_export_temp_files: u64,
 }
 
 /// Caller options for explicit destructive Library repair.
@@ -735,4 +741,213 @@ pub struct RenormalizeReport {
     pub parser_id: String,
     /// Registered parser version used for the Attempt.
     pub parser_version: String,
+}
+
+/// Published export format identity for v1 JSONL session lines.
+pub const EXPORT_FORMAT_ID: &str = "distill-session-jsonl-v1";
+
+/// Approved dataset export targets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportDataset {
+    /// Sessions labeled `train` that pass export safety policy.
+    Train,
+    /// Sessions labeled `holdout` that pass export safety policy.
+    Holdout,
+}
+
+impl ExportDataset {
+    /// Stable dataset string used in SQLite rows and JSONL bookkeeping.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Train => "train",
+            Self::Holdout => "holdout",
+        }
+    }
+
+    /**
+     * Parse a dataset target from caller text.
+     *
+     * Parameters:
+     * - `raw`: trimmed case-insensitive `train` or `holdout`.
+     */
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "train" => Ok(Self::Train),
+            "holdout" => Ok(Self::Holdout),
+            _ => Err("dataset must be one of: train, holdout".into()),
+        }
+    }
+}
+
+/// Durable export publication status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportStatus {
+    /// Temporary file is being written.
+    Preparing,
+    /// Temporary file is flushed with checksum/counts; rename not finished.
+    Committed,
+    /// Final path and SQLite bookkeeping agree; `export_written` was appended.
+    Published,
+    /// Publication failed terminally without inventing success.
+    FailedPublish,
+    /// Caller cancelled at a safe checkpoint.
+    Cancelled,
+}
+
+impl ExportStatus {
+    /// Stable status string stored in SQLite.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preparing => "preparing",
+            Self::Committed => "committed",
+            Self::Published => "published",
+            Self::FailedPublish => "failed_publish",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /**
+     * Parse a stored export status string.
+     *
+     * Parameters:
+     * - `raw`: SQLite status value.
+     */
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "preparing" => Ok(Self::Preparing),
+            "committed" => Ok(Self::Committed),
+            "published" => Ok(Self::Published),
+            "failed_publish" => Ok(Self::FailedPublish),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(format!("unknown export status: {other}")),
+        }
+    }
+}
+
+/// Why a labeled session was omitted from a dataset export.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportOmissionReason {
+    /// Session carries the review-only `exclude` label.
+    Exclude,
+    /// Session carries the review-only `sensitive` label.
+    Sensitive,
+    /// Session carries both `train` and `holdout`.
+    ConflictingDatasetLabels,
+    /// Session has no dataset label and is therefore unreviewed.
+    Unreviewed,
+    /// Session is marked only as a favorite and has no dataset label.
+    FavoriteOnly,
+}
+
+impl ExportOmissionReason {
+    /// Stable omission reason string for snapshots and tests.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exclude => "exclude",
+            Self::Sensitive => "sensitive",
+            Self::ConflictingDatasetLabels => "conflicting_dataset_labels",
+            Self::Unreviewed => "unreviewed",
+            Self::FavoriteOnly => "favorite_only",
+        }
+    }
+}
+
+/// One session omitted from an eligibility snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportOmission {
+    /// Session Identity considered by the export curation policy.
+    pub identity: SessionIdentity,
+    /// Policy reason the session was omitted.
+    pub reason: ExportOmissionReason,
+}
+
+/// Side-effect-free export eligibility preview.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportPreview {
+    /// Requested dataset target.
+    pub dataset: ExportDataset,
+    /// Format identity that publish would emit.
+    pub format_id: String,
+    /// Eligible Session Identities in deterministic export order.
+    pub eligible: Vec<SessionIdentity>,
+    /// Sessions considered for the target but blocked by the curation policy.
+    pub omitted: Vec<ExportOmission>,
+}
+
+/// Typed export publication progress for thin callers.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExportProgress {
+    /// Export row created in `preparing` state.
+    Preparing {
+        /// Durable export row id.
+        export_id: i64,
+    },
+    /// Temporary JSONL write progress.
+    Writing {
+        /// Durable export row id.
+        export_id: i64,
+        /// Records flushed so far.
+        records_written: u64,
+        /// Total eligible records for this publish.
+        record_total: u64,
+    },
+    /// Temporary file flushed; row moved to `committed`.
+    Committed {
+        /// Durable export row id.
+        export_id: i64,
+    },
+    /// Same-volume rename to the final path completed.
+    Renamed {
+        /// Durable export row id.
+        export_id: i64,
+    },
+    /// Row reached `published` with matching `export_written` Activity.
+    Published {
+        /// Durable export row id.
+        export_id: i64,
+    },
+}
+
+/// Progress callback control for export publication.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportProgressControl {
+    /// Continue publication.
+    #[default]
+    Continue,
+    /// Cancel at the next safe checkpoint.
+    Cancel,
+}
+
+/// Terminal result of [`crate::Library::publish_export`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportResult {
+    /// Durable export row id.
+    pub export_id: i64,
+    /// Requested dataset target.
+    pub dataset: ExportDataset,
+    /// Format identity written into bookkeeping.
+    pub format_id: String,
+    /// Terminal publication status.
+    pub status: ExportStatus,
+    /// Final Library-owned output path when `status` is [`ExportStatus::Published`].
+    pub output_path: Option<String>,
+    /// SHA-256 of published bytes when available.
+    pub sha256: Option<String>,
+    /// Published byte size when available.
+    pub byte_size: Option<u64>,
+    /// JSONL record count written for this attempt.
+    pub record_count: u64,
+    /// Eligible identities included in the snapshot.
+    pub eligible: Vec<SessionIdentity>,
+    /// Omitted candidates that carried the dataset label.
+    pub omitted: Vec<ExportOmission>,
+    /// Typed terminal error class when failed or cancelled.
+    pub error_class: Option<String>,
+    /// Redacted terminal message when present.
+    pub error_message: Option<String>,
 }
