@@ -4,8 +4,8 @@
 
 - Issue: [#36](https://github.com/AustinKelsay/distill/issues/36)
 - Fixed point before session: `dc40858`
-- Implementation commit: pending
-- Status: In progress
+- Implementation commit: `1a73549`
+- Status: In progress — implementation complete; Ubuntu CI pending
 - Review packet: `docs/runs/reviews/36-linux-packaging.md`
 
 ## Intended Contracts
@@ -27,7 +27,7 @@
   target unchanged.
 - Root/workspace scripts expose `desktop:package:linux` and `desktop:smoke:linux`.
 - `apps/distill-desktop/scripts/linux-package-smoke.mjs` verifies both artifacts and
-  verifies Debian `Depends` metadata and drives the installed window by accessible
+  Debian `Depends` metadata, then drives the installed window by accessible
   control name under Xvfb, then checks the chosen home, curated train JSONL, restart
   persistence, Fixture SHA-256 contents, and temp-parent containment.
 - `.github/workflows/linux-package-smoke.yml` installs Ubuntu build/smoke dependencies,
@@ -42,9 +42,9 @@
   is the authoritative Ubuntu evidence path.
 - `node --check apps/distill-desktop/scripts/linux-package-smoke.mjs` and repository
   formatting/type checks are required before commit.
-- Independent Grok 4.5 xhigh design review recommended CLI-selected `deb,appimage`, a
-  Debian installed-host smoke under Xvfb/dbus, events-only capabilities, and explicit
-  Linux runtime non-claims.
+- Independent Grok 4.5 xhigh implementation rereview: PASS after Debian `Depends`,
+  AT-SPI, fail-closed binary, and evidence-wording remediations. Ubuntu CI is still the
+  authoritative runtime evidence path.
 
 ## Remaining Scope
 

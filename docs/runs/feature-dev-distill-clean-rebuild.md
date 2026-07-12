@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#35 complete; #36 in progress
+- Current status: #18–#36 implementation complete; #36 Ubuntu CI pending
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#35 implemented and review packets recorded; #36 implementation in progress
+- Ticket sessions: #18–#36 implemented and review packets recorded; #36 awaits Ubuntu CI evidence
 - Agent briefs: Pending
-- Review packets: #18–#35 complete; #36 pending
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit
+- Review packets: #18–#35 complete; #36 code review PASS with Ubuntu CI pending
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit; #36 one major README evidence-status finding fixed before commit
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
@@ -63,7 +63,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #33 Accessibility/visual states        | AFK  | Complete                | Grok xhigh implementation + independent rereview; CodeRabbit minor findings fixed | Focus/keyboard coverage, semantic/live/busy/alerts, contrast/reduced-motion/200% evidence, deterministic snapshots, human SR checklist, honest packaged deferral applied | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release gates; CodeRabbit 2 minor findings fixed |
 | #34 Scale/performance                  | AFK  | Complete                | Grok xhigh performance review + final rereview PASS                               | Added bounded synthetic corpus, full target benchmark, session paging index, selective FTS probe, cadence/cancellation evidence, and governed docs                       | Full 25k/1M/10 GiB run; Rust scale suite; workspace gates; CodeRabbit                                   |
 | #35 macOS packaging                    | AFK  | Complete                | Grok xhigh implementation + independent rereview; CodeRabbit minor finding fixed  | `.app` metadata/capability gate, clean packaged Fixture-to-export journey, restart persistence, train export, Fixture hashes, and temp-parent containment                | Package/smoke; Rust/desktop/a11y gates; Grok PASS                                                       |
-| #36 Linux packaging                    | AFK  | In progress             | Grok xhigh design sidecar; implementation/review pending                          | Ubuntu `.deb`/AppImage package, installed-host Xvfb/dbus smoke, and CI artifact evidence                                                                                 | No                                                                                                      |
+| #36 Linux packaging                    | AFK  | In progress             | Grok xhigh implementation + final rereview PASS; Ubuntu CI pending                | Ubuntu `.deb`/AppImage package, installed-host Xvfb/dbus smoke, and CI artifact evidence                                                                                 | No                                                                                                      |
 | #37 Matrix/cutover                     | AFK  | Blocked by #21, #26–#36 | —                                                                                 | —                                                                                                                                                                        | No                                                                                                      |
 
 ## Parked HITL Slices
@@ -94,7 +94,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #33   | `bdeb5c6`   | Grok 4.5 xhigh implementation + independent rereview                                                           | `5e0e595`                       | PASS after keyboard/focus coverage, source-level interactive audit, dialog Tab loop, 200% evidence, human checklist, live-region and docs fixes; CodeRabbit returned two minor findings, both fixed   | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release; Tauri CLI unavailable in environment                                   |
 | #34   | `1dc5519`   | Grok 4.5 xhigh scale implementation + independent performance review                                           | `90c8dbc`                       | PASS after full-corpus budget miss was fixed with migration 0006 and selective deterministic FTS probe; CodeRabbit rate-limited with no findings                                                      | Full 25k/1M/10 GiB JSON run; scale smoke; workspace clippy/tests/fault/release gates                                                   |
 | #35   | `76fb500`   | Grok 4.5 xhigh packaging implementation + independent rereview                                                 | `e5ea3c6`                       | PASS after plist/signing/search/artifact/containment evidence fixes; CodeRabbit one minor signing-classification finding fixed                                                                        | Package/smoke on Darwin arm64; desktop 39 + a11y 12; workspace clippy/tests/fault/release; Grok PASS                                   |
-| #36   | `dc40858`   | Grok 4.5 xhigh Linux packaging design sidecar                                                                  | pending                         | Implementation in progress; Ubuntu workflow result and independent rereview pending                                                                                                                   | Linux-only package/install/smoke CI; no local Darwin package claim                                                                     |
+| #36   | `dc40858`   | Grok 4.5 xhigh Linux packaging implementation + final rereview                                                 | `1a73549`                       | PASS after Debian `Depends`, AT-SPI, fail-closed binary, and evidence wording fixes; Ubuntu workflow result remains pending; CodeRabbit README finding fixed                                          | Local Rust/desktop gates pass; Linux-only package/install/smoke CI remains required; no local Darwin package claim                     |
 
 ## Open Questions
 
