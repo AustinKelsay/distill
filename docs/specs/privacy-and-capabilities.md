@@ -32,6 +32,13 @@ The packaged Tauri renderer receives only `core:event:default` in its default ca
 
 The renderer bridge uses only Tauri `invoke` and `listen`. Host command arguments are validated in Rust, and progress events are emitted from typed Rust enums and consumed through typed bridge contracts. The bridge has no ambient filesystem, process, SQL, shell, or markup authority.
 
+The macOS packaged smoke additionally inspects the built bundle and capability source,
+then exercises the packaged renderer against a temporary home and Fixture root. The
+journey records that the app writes the Library database/export only under the chosen
+home, leaves the Fixture source unchanged, and preserves the export across a
+quit/relaunch. This is runtime containment evidence for the local ad-hoc `.app`, not
+an application-encryption, notarization, or secure-deletion claim.
+
 ## Required Evidence
 
 The hostile-input contract is executable through:
@@ -40,5 +47,6 @@ The hostile-input contract is executable through:
 - `crates/distill-library/tests/library_opencode_source.rs` and `crates/distill-library/tests/library_ops_sync.rs` for OpenCode timeout/output bounds and large-stdin behavior
 - `apps/distill-desktop/src-tauri/tests/host_hostile_inputs.rs` for typed host validation, safe Library error translation, and the least-privilege capability file
 - `apps/distill-desktop/src/bridge.test.ts` for the invoke/listen-only renderer bridge and exact command payloads
+- `apps/distill-desktop/scripts/macos-package-smoke.mjs` for the local macOS bundle capability, chosen-home containment, Fixture immutability, and restart artifact checks
 
 These contracts are privacy hardening, not a promise of application encryption or deletion semantics absent from v1.

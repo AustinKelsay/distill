@@ -39,6 +39,9 @@ process, or database authority.
 
 The checked-in `a11y:smoke` command builds the renderer and runs the deterministic Vitest
 contracts. It is not a signed or packaged WebView test and does not claim screen-reader
-verification. Packaged keyboard/focus smoke belongs to the macOS and Linux packaging
-tickets (#35 and #36). Assistive-technology validation is recorded in
-`apps/distill-desktop/docs/a11y-human-checklist.md` until a supported packaged harness exists.
+verification. The macOS package gate (`npm run desktop:package:macos` followed by
+`npm run desktop:smoke:macos`) launches the local ad-hoc `.app` through macOS
+Accessibility and proves the packaged search/detail/curation/export journey plus
+quit/relaunch artifact persistence. It does not convert Accessibility automation into
+VoiceOver coverage; the Linux packaged gate remains #36, and assistive-technology
+validation is recorded in `apps/distill-desktop/docs/a11y-human-checklist.md`.

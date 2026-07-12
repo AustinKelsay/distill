@@ -34,6 +34,8 @@ cargo build -p distill-desktop
 # release host proof without packaging:
 cargo tauri build --no-bundle
 # or npm run desktop:build when configured
+npm run desktop:package:macos
+npm run desktop:smoke:macos
 npm --prefix apps/distill-desktop run test:a11y
 npm --prefix apps/distill-desktop run a11y:smoke
 cargo test -p distill-library --test library_scale_budgets
@@ -42,8 +44,16 @@ DISTILL_SCALE_BENCH=1 cargo test -p distill-library --test library_scale_budgets
 ```
 
 The a11y smoke is a post-build renderer check. It does not claim signed packaged
-WebView or screen-reader coverage; those remain the #35/#36 packaging gates and the
-human checklist at `apps/distill-desktop/docs/a11y-human-checklist.md`.
+WebView or screen-reader coverage; Linux packaging remains #36 and the human
+checklist at `apps/distill-desktop/docs/a11y-human-checklist.md` records assistive
+technology observations. On macOS, `desktop:package:macos` builds an `.app` through
+the workspace-installed Tauri CLI with `--no-sign`, and `desktop:smoke:macos` proves
+the local ad-hoc bundle metadata, restricted capability source, Fixture sync,
+search/detail/curation/export journey, quit/relaunch, artifact persistence, and
+write containment. It does not claim Developer ID signing, hardened runtime,
+notarization, migration, crash recovery, privacy, scale, export atomicity, or
+VoiceOver coverage. The Cargo `tauri` subcommand is not required for this package
+gate and is unavailable in the recorded environment.
 
 Scale reports are Library-only JSON evidence. The default test is a bounded synthetic
 smoke; the 25k Session / 1M message / 10 GiB logical-home run is environment-gated and

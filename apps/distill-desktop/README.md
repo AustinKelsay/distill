@@ -26,4 +26,30 @@ Development host (requires platform Tauri dependencies):
 npm run desktop:dev
 ```
 
-`desktop:build` proves the release host with `--no-bundle`. Packaging is deferred to later tickets; `bundle.active` is false for this slice and the checked-in green icons are placeholders required by the Tauri build context.
+`desktop:build` proves the release host with `--no-bundle`. The macOS package gate uses
+the workspace-installed Tauri CLI (the Cargo `tauri` subcommand is not required):
+
+```bash
+npm run desktop:package:macos
+npm run desktop:smoke:macos
+```
+
+The package identifier is `dev.distill.desktop`, the minimum macOS version is 12.0,
+and the bundle target is an `.app` (DMG distribution is deferred). The checked-in green
+icon is a placeholder product mark; `icon.icns` is generated from it and committed so
+the package has a deterministic macOS icon.
+
+The local package command intentionally uses `--no-sign`, producing an unsigned/ad-hoc
+developer artifact. Developer ID signing, hardened-runtime entitlements, notarization,
+and ticket stapling require Apple credentials and are documented release-only gates; no
+local smoke result claims those properties. The default capability remains
+`core:event:default` only: the renderer receives no filesystem, shell, process, SQL,
+dialog, HTTP, or OS-plugin permission.
+
+The macOS smoke script inspects the built `.app`, records bundle/signing metadata, and
+can launch it for a short packaged UI journey when Accessibility automation is available.
+It never substitutes CLI/host tests for packaged-renderer evidence. The journey scope is
+Fixture sync, search, detail, one curation mutation, export, quit/relaunch, and artifact
+existence/write-containment checks. It does not claim migration, crash recovery, privacy,
+scale, export-atomicity, or VoiceOver proof; those remain their own contract gates and the
+human accessibility checklist.

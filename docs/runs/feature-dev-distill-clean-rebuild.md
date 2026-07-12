@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#34 complete; #35 ready
+- Current status: #18–#35 complete; #36 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#34 implemented and review packets recorded
+- Ticket sessions: #18–#35 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#34 complete
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings
+- Review packets: #18–#35 complete
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings; #35 one minor signing-classification finding fixed before commit
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
@@ -38,7 +38,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Typecheck: `npm run build` (legacy); `npm run desktop:typecheck` (rebuild renderer)
 - Test: `npm test` (legacy); `cargo test --workspace` (rebuild); `cargo test -p distill-library --features test-faults` (fault contracts); `npm run desktop:test` (renderer)
 - Build: `npm run build` (legacy); `cargo build --workspace`; `npm run desktop:frontend:build`
-- Visual verification: legacy `npm start`; rebuild `npm run desktop:dev` (host boundary; packaging deferred)
+- Visual verification: legacy `npm start`; rebuild `npm run desktop:dev`; macOS package `npm run desktop:smoke:macos`; Linux packaging remains deferred to #36
 - Rebuild gates: see `docs/gates.md`; `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`; `cargo test -p distill-library --features test-faults`
 
 ## Ticket Ledger
@@ -62,8 +62,8 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #32 Hostile-input/capability audit | AFK | Complete | Grok xhigh implementation + independent rereview | Shared privacy policy, hostile corpus, CLI/Tauri redaction, capability deny boundary, governed privacy spec/matrix applied; CodeRabbit subject to rate limit | Library hostile 8; OpenCode/ops bound suites; host 4; bridge 5; workspace/desktop gates |
 | #33 Accessibility/visual states | AFK | Complete | Grok xhigh implementation + independent rereview; CodeRabbit minor findings fixed | Focus/keyboard coverage, semantic/live/busy/alerts, contrast/reduced-motion/200% evidence, deterministic snapshots, human SR checklist, honest packaged deferral applied | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release gates; CodeRabbit 2 minor findings fixed |
 | #34 Scale/performance | AFK | Complete | Grok xhigh performance review + final rereview PASS | Added bounded synthetic corpus, full target benchmark, session paging index, selective FTS probe, cadence/cancellation evidence, and governed docs | Full 25k/1M/10 GiB run; Rust scale suite; workspace gates; CodeRabbit |
-| #35 macOS packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
-| #36 Linux packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
+| #35 macOS packaging | AFK | Complete | Grok xhigh implementation + independent rereview; CodeRabbit minor finding fixed | `.app` metadata/capability gate, clean packaged Fixture-to-export journey, restart persistence, train export, Fixture hashes, and temp-parent containment | Package/smoke; Rust/desktop/a11y gates; Grok PASS |
+| #36 Linux packaging | AFK | Ready | — | macOS packaging is complete; Linux package/smoke remains | No |
 | #37 Matrix/cutover | AFK | Blocked by #21, #26–#36 | — | — | No |
 
 ## Parked HITL Slices
@@ -93,6 +93,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #32 | `f420b37` | Grok 4.5 xhigh hostile-input/capability implementation + independent rereview | `6a66947`, `bdeb5c6` | PASS after shared bounds/redaction, CLI safe errors, governed privacy spec, matrix/gap updates; CodeRabbit rate-limited before analysis | Library hostile 8; OpenCode/ops bounds; host 4; bridge 5; workspace/desktop gates |
 | #33 | `bdeb5c6` | Grok 4.5 xhigh implementation + independent rereview | `5e0e595` | PASS after keyboard/focus coverage, source-level interactive audit, dialog Tab loop, 200% evidence, human checklist, live-region and docs fixes; CodeRabbit returned two minor findings, both fixed | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release; Tauri CLI unavailable in environment |
 | #34 | `1dc5519` | Grok 4.5 xhigh scale implementation + independent performance review | `90c8dbc` | PASS after full-corpus budget miss was fixed with migration 0006 and selective deterministic FTS probe; CodeRabbit rate-limited with no findings | Full 25k/1M/10 GiB JSON run; scale smoke; workspace clippy/tests/fault/release gates |
+| #35 | `76fb500` | Grok 4.5 xhigh packaging implementation + independent rereview | pending | PASS after plist/signing/search/artifact/containment evidence fixes; CodeRabbit one minor signing-classification finding fixed | Package/smoke on Darwin arm64; desktop 39 + a11y 12; workspace clippy/tests/fault/release; Grok PASS |
 
 ## Open Questions
 

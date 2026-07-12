@@ -16,6 +16,8 @@
     "test": "npm run build && node --test dist/test/*.test.js",
     "desktop:dev": "npm run --workspace @distill/desktop tauri -- dev",
     "desktop:build": "npm run --workspace @distill/desktop tauri -- build --no-bundle",
+    "desktop:package:macos": "npm run --workspace @distill/desktop package:macos",
+    "desktop:smoke:macos": "npm run --workspace @distill/desktop smoke:macos",
     "desktop:test": "npm run --workspace @distill/desktop test",
     "desktop:typecheck": "npm run --workspace @distill/desktop typecheck",
     "desktop:lint": "npm run --workspace @distill/desktop lint",
