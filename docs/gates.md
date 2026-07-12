@@ -91,10 +91,43 @@ npm audit --audit-level=moderate --ignore-scripts
 
 `cargo tree --locked` proves the Rust workspace resolves from the checked-in lockfile;
 `npm audit` is the JavaScript advisory scan, including the retained Electron baseline.
-A Rust advisory-database scan such as
-`cargo audit` is not part of the pinned workspace toolchain, so the cutover report must
-keep that tool availability limitation explicit rather than implying an advisory scan
-that was not run.
+
+### RustSec advisory scan (#40)
+
+The checked-in `Cargo.lock` / Cargo workspace is scanned in CI by
+`.github/workflows/rust-audit.yml`. That workflow installs a pinned `cargo-audit`
+release (`CARGO_AUDIT_VERSION`, currently `0.22.2`) on Ubuntu 24.04 with the same
+`dtolnay/rust-toolchain@stable` style as the Linux package smoke, then runs:
+
+```bash
+cargo audit --file Cargo.lock
+```
+
+The job fails on vulnerability-class advisories (the default `cargo-audit` threshold).
+It does not upgrade dependencies or change product code. Unmaintained / unsound
+**warnings** alone do not fail the default gate. A local 0.22.2 probe exits 0 with 17
+allowed warnings rather than a clean advisory inventory: the GTK3/gtk-rs IDs are
+`RUSTSEC-2024-0411` through `RUSTSEC-2024-0420`, plus `RUSTSEC-2024-0370`,
+`RUSTSEC-2024-0429`, `RUSTSEC-2025-0075`, `RUSTSEC-2025-0080`,
+`RUSTSEC-2025-0081`, `RUSTSEC-2025-0098`, and `RUSTSEC-2025-0100`.
+`RUSTSEC-2024-0429` is an unsoundness warning in the GTK3 stack; it is not silently
+represented as “no advisories” and remains a follow-up dependency decision outside
+this gate. A weekly scheduled run refreshes the live RustSec database even when the
+lockfile is unchanged.
+
+Local Darwin hosts may not have `cargo-audit` on `PATH`. That availability limitation
+is explicit: this environment does **not** treat a local Darwin `cargo audit` as
+authoritative evidence. CI is the authoritative Rust advisory-database evidence for
+this gate, and no Actions run ID is recorded yet for #40.
+
+A non-authoritative advisory inventory observed against the current lockfile
+(warnings only; not a CI pass/fail claim) is recorded in
+`docs/runs/issues/40-rust-advisory-scan.md`. It lists gtk-rs GTK3 bindings
+(`atk`, `atk-sys`, `gdk`, `gdk-sys`, `gdkwayland-sys`, `gdkx11`, `gdkx11-sys`,
+`gtk`, `gtk-sys`, `gtk3-macros`) as unmaintained, plus `proc-macro-error` and the
+`unic-*` crates as unmaintained, and `glib` `0.18.5` as unsound
+(`RUSTSEC-2024-0429`). Re-confirm that inventory only from CI after the workflow
+runs.
 
 ## Documentation-drift gate
 

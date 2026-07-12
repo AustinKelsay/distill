@@ -1,0 +1,47 @@
+# Reproducible RustSec advisory scan for the checked-in Cargo.lock/workspace.
+# CI is authoritative; local Darwin hosts may lack cargo-audit on PATH.
+
+name: Distill Rust advisory scan
+
+on:
+  pull_request:
+    branches: [staging]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "apps/distill-desktop/src-tauri/**"
+      - ".github/workflows/rust-audit.yml"
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned scanner release so the CI command stays auditable without product upgrades.
+  CARGO_AUDIT_VERSION: "0.22.2"
+
+jobs:
+  rust-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out rebuild
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pinned cargo-audit
+        run: cargo install cargo-audit --locked --version "${CARGO_AUDIT_VERSION}"
+
+      - name: Audit checked-in Cargo.lock
+        # Default cargo-audit fails the job on vulnerability-class advisories. The
+        # scheduled run refreshes the live RustSec database when Cargo.lock is unchanged.
+        # Unmaintained/unsound/yanked warnings remain visible and are triaged in the packet;
+        # no dependency upgrades occur in this gate.
+        run: cargo audit --file Cargo.lock
