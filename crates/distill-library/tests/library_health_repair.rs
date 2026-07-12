@@ -187,6 +187,47 @@ fn noncanonical_staging_partials_are_reported_not_deleted() {
 }
 
 /**
+ * LHR-002c: a symlinked staging root is blocking and never traversed by health/repair/open.
+ */
+#[test]
+fn symlinked_staging_root_never_touches_external_files() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let outside = temp.path().join("outside-staging");
+    fs::create_dir_all(&outside).expect("outside");
+    let external_partial = outside.join(format!("{}.partial", "a".repeat(64)));
+    fs::write(&external_partial, b"do-not-delete").expect("external partial");
+
+    let mut library = Library::open(&home).expect("open");
+    fs::remove_dir(home.join("staging")).expect("remove staging");
+    symlink(&outside, home.join("staging")).expect("staging symlink");
+
+    let health = library.health().expect("health");
+    assert!(!health.ok);
+    assert!(health
+        .issues
+        .iter()
+        .any(|issue| issue.code == "unsafe_staging_root" && issue.severity == "blocking"));
+
+    let repaired = library
+        .repair(RepairOptions::all_documented())
+        .expect("repair");
+    assert!(!repaired.health_after.ok);
+    assert_eq!(
+        fs::read(&external_partial).expect("external partial remains"),
+        b"do-not-delete"
+    );
+    drop(library);
+
+    let err = match Library::open(&home) {
+        Ok(_) => panic!("reopen must reject unsafe layout"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("unsafe directory entry"));
+    assert!(external_partial.exists());
+}
+
+/**
  * LHR-003: orphan CAS blobs are health issues and require explicit repair.
  */
 #[test]

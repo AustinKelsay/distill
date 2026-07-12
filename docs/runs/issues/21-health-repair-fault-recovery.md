@@ -42,7 +42,7 @@
 
 | Gate | Command | Exit | Summary |
 | --- | --- | --- | --- |
-| Library health suite | `cargo test -p distill-library --test library_health_repair` | 0 | 12 passed |
+| Library health suite | `cargo test -p distill-library --test library_health_repair` | 0 | 13 passed |
 | Fault suite | `cargo test -p distill-library --features test-faults --test library_fault_injection` | 0 | 8 passed |
 | Library + faults | `cargo test -p distill-library --features test-faults` | 0 | attempt/fixture/health/fault green |
 | fmt | `cargo fmt --all -- --check` | 0 | PASS |
@@ -57,9 +57,9 @@
 ## Review
 
 - Review fixed point: Pending (post-audit remediation)
-- Standards findings: Pending
-- Spec findings: Pending
-- Worthy fixes applied: audit items 1–10 (empty projections, CAS symlink/path hardening, staging name strictness, full FTS field agreement, `capture_failed` recovery, counter recompute, schema PRAGMA checks, cfg-gated typed faults, transactional repair, explicit operations_status)
+- Standards findings: Symlinked staging-root traversal was a blocker; unrecognized staging severity was a judgement call
+- Spec findings: Pass; no findings
+- Worthy fixes applied: audit items 1–10 plus home-layout symlink rejection, staging-root non-traversal, blocking unsafe/unrecognized staging classification, and an external-target regression
 - Findings ignored with reasons: none
 
 ## Risks

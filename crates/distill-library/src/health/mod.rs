@@ -30,7 +30,12 @@ use repair_ops::{rebuild_fts_from_projection, remove_orphan_blobs, resolve_incom
  */
 pub fn reconcile_on_open(paths: &DistillPaths) -> LibraryResult<OpenReconciliation> {
     let mut removed = 0_u64;
-    if paths.staging.is_dir() {
+    let safe_staging_dir = match fs::symlink_metadata(&paths.staging) {
+        Ok(metadata) => !metadata.file_type().is_symlink() && metadata.is_dir(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err.into()),
+    };
+    if safe_staging_dir {
         for entry in fs::read_dir(&paths.staging)? {
             let entry = entry?;
             let path = entry.path();

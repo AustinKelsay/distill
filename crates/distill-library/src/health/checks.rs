@@ -150,7 +150,21 @@ pub(super) fn check_staging_partials(
 ) -> LibraryResult<String> {
     let mut canonical = 0_u64;
     let mut unrecognized = 0_u64;
-    if staging.is_dir() {
+    let safe_staging_dir = match fs::symlink_metadata(staging) {
+        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => true,
+        Ok(_) => {
+            issues.push(HealthIssue {
+                code: "unsafe_staging_root".into(),
+                severity: "blocking".into(),
+                category: "staging".into(),
+                summary: "staging root is a symlink or non-directory entry".into(),
+            });
+            false
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err.into()),
+    };
+    if safe_staging_dir {
         for entry in fs::read_dir(staging)? {
             let entry = entry?;
             let path = entry.path();
@@ -195,7 +209,7 @@ pub(super) fn check_staging_partials(
         status = "failed".to_string();
         issues.push(HealthIssue {
             code: "unrecognized_staging_entry".into(),
-            severity: "repairable".into(),
+            severity: "blocking".into(),
             category: "staging".into(),
             summary: format!("{unrecognized} unrecognized staging entr(y/ies) present"),
         });

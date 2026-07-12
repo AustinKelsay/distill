@@ -64,8 +64,18 @@ pub fn open_connection(paths: &DistillPaths) -> LibraryResult<Connection> {
  * Create a directory with mode `0o700` on Unix.
  */
 fn create_dir_secure(path: &Path) -> LibraryResult<()> {
-    if !path.exists() {
-        fs::create_dir_all(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(crate::error::LibraryError::InvalidArgument(
+                    "Distill home layout contains an unsafe directory entry".into(),
+                ));
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(path)?;
+        }
+        Err(err) => return Err(err.into()),
     }
     #[cfg(unix)]
     {
@@ -79,12 +89,22 @@ fn create_dir_secure(path: &Path) -> LibraryResult<()> {
  * Ensure the database file exists with mode `0o600` on Unix.
  */
 fn ensure_db_file(path: &Path) -> LibraryResult<()> {
-    if !path.exists() {
-        let mut opts = OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        opts.mode(0o600);
-        let _file = opts.open(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(crate::error::LibraryError::InvalidArgument(
+                    "Distill home layout contains an unsafe database entry".into(),
+                ));
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut opts = OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            opts.mode(0o600);
+            let _file = opts.open(path)?;
+        }
+        Err(err) => return Err(err.into()),
     }
     #[cfg(unix)]
     {
