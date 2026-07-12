@@ -49,6 +49,15 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Target branch/ticket: `feature/distill-clean-rebuild`, #21 / #22.
 - Acceptance criteria: fault-injection contracts interrupt staging/rename/acceptance/projection/FTS/activity transitions and reopen into the documented repair state; Sync stale leases fail idempotently on reopen.
 
+### GAP-R005: Legacy Electron Home Migration
+
+- Status: resolved for the migration seam; final runtime cutover remains open in GAP-R001/GAP-R003.
+- Rule: a legacy Electron home is read-only evidence and must not be opened or mutated as a destination database.
+- Resolution: issue #31 adds a WAL-safe private SQLite snapshot, path-alias/traversal rejection, representative Capture/Attempt/Fact/Projection/Curation/Activity/export mapping, redacted reports, fingerprint markers, and import-owned CAS/export rollback cleanup.
+- Impacted files/modules: `crates/distill-library/src/migrate`; Library/CLI/Tauri/React callers; `docs/specs/legacy-migration.md`.
+- Severity: resolved for the import contract; final Electron retirement remains a cutover concern.
+- Acceptance criteria: WAL and rollback-journal homes remain byte-for-byte unchanged; repeated imports reuse markers; unsafe/missing content is skipped with stable redacted reasons; mapped sessions are searchable, curated, activity-visible, and export-metadata complete.
+
 ## Historical Electron Gaps
 
 ## GAP-001: Raw Capture Recoverability

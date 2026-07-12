@@ -312,6 +312,7 @@ Append-only entities:
 - `captures`
 - `capture_records`
 - `activity_events`
+- `legacy_import_markers` (migration `0005_legacy_import_markers.sql`) keyed by a combined legacy DB/WAL/content fingerprint and storing only a redacted import report
 
 Replace-on-success projection entities:
 

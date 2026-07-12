@@ -14,10 +14,11 @@ Authoritative normative documents:
 4. `docs/specs/connectors.md`
 5. `docs/specs/search-curation-export.md`
 6. `docs/specs/activity-and-ops.md`
-7. `docs/governance/spec-governance.md`
-8. `docs/testing/contract-test-matrix.md`
-9. `docs/gaps/current-state-gap-register.md`
-10. `docs/roadmap/spec-alignment-plan.md`
+7. `docs/specs/legacy-migration.md`
+8. `docs/governance/spec-governance.md`
+9. `docs/testing/contract-test-matrix.md`
+10. `docs/gaps/current-state-gap-register.md`
+11. `docs/roadmap/spec-alignment-plan.md`
 
 Non-normative documents explain the current implementation, preserve research notes, or provide navigation:
 
@@ -40,10 +41,11 @@ Read the documents in this order:
 4. `docs/specs/connectors.md`
 5. `docs/specs/search-curation-export.md`
 6. `docs/specs/activity-and-ops.md`
-7. `docs/gaps/current-state-gap-register.md`
-8. `docs/testing/contract-test-matrix.md`
-9. `docs/roadmap/spec-alignment-plan.md`
-10. `docs/governance/spec-governance.md`
+7. `docs/specs/legacy-migration.md`
+8. `docs/gaps/current-state-gap-register.md`
+9. `docs/testing/contract-test-matrix.md`
+10. `docs/roadmap/spec-alignment-plan.md`
+11. `docs/governance/spec-governance.md`
 
 That order moves from system intent to entity semantics to pipeline behavior to current drift, tests, delivery order, and process.
 
@@ -55,6 +57,7 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Connector boundary: `docs/specs/connectors.md`
 - Search, curation, and export behavior: `docs/specs/search-curation-export.md`
 - Audit and operational behavior: `docs/specs/activity-and-ops.md`
+- Legacy Electron migration behavior: `docs/specs/legacy-migration.md`
 - Known implementation drift: `docs/gaps/current-state-gap-register.md`
 - Required contract tests: `docs/testing/contract-test-matrix.md`
 - Verification gates: `docs/gates.md`

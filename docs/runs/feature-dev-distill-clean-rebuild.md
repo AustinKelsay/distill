@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#30 complete; #31 ready
+- Current status: #18–#31 complete; #32 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -28,7 +28,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
 - Ticket sessions: #18–#30 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#30 complete
+- Review packets: #18–#31 complete
 - Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit
 - PR URL: Pending
 
@@ -58,7 +58,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #28 OpenCode Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Shared bounded subprocess policy, native parse evidence, docs, matrix, executable detection, redaction, and replay findings applied | Library/adapter, Sync/replay, timeout/overflow/malformed, fmt/clippy/workspace gates |
 | #29 Droid Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Default/override roots, recursive file discovery, sidecars, exact replay, mixed parsing, typed diagnostics, native evidence, and governed docs applied | Library Droid 6 + adapter 7; Codex/Claude/OpenCode/Sync suites; fmt/clippy; CodeRabbit rate-limited |
 | #30 Activity/operations diagnostics | AFK | Complete | Grok xhigh standards + focused rereview | Nested payload redaction, operational diagnostic redaction, explicit cancellation, cursor evidence, and one minor CodeRabbit docs finding applied | Rust/CLI/host/renderer gates; Grok PASS |
-| #31 Electron migration | AFK | Ready | — | — | No |
+| #31 Electron migration | AFK | Complete | Grok xhigh implementation + two remediation rereviews | WAL snapshot, transactional file cleanup, atomic export writes, fidelity-loss reporting, and governed docs applied; CodeRabbit rate-limited | Library migration 8; CLI/host/renderer migration seams; Rust workspace/fault/desktop/Tauri gates |
 | #32 Hostile-input/capability audit | AFK | Blocked by #19, #26–#29 | — | — | No |
 | #33 Accessibility/visual states | AFK | Blocked by #19, #22–#25, #30 | — | — | No |
 | #34 Scale/performance | AFK | Blocked by #22–#25 | — | — | No |
@@ -89,6 +89,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #28 | `2ced5ef` | Grok 4.5 xhigh OpenCode adapter implementation + independent standards/spec rereview | `cd491d6` | PASS after shared-runner, native-evidence, governed-doc, matrix, ledger, and redaction/replay remediations; CodeRabbit rate-limited before analysis | Library OpenCode 5 + adapter 3; Codex/Claude/Sync suites; workspace/fmt/clippy |
 | #29 | `b426f23` | Grok 4.5 xhigh Droid adapter implementation + independent standards/spec rereview | `3f3205a`, `315db4e`, `1a09132` | PASS after native evidence, identity/discovery coverage, sidecar assertions, governed-doc, matrix, and ledger remediations; CodeRabbit rate-limited before analysis (23 minutes) | Library Droid 6 + adapter 7; Library all-features; workspace tests; fmt/clippy |
 | #30 | `d7cc576` | Grok 4.5 xhigh Activity/Operations implementation + independent standards/spec rereview | `c73d412`, `f0b069b` | PASS after production-shaped nested payload redaction, diagnostic privacy, explicit renderer cancellation, and invalid-cursor evidence; one minor CodeRabbit docs finding fixed | Library Activity/Operations 8; CLI fixture 11; host Activity/Operations 2; renderer 23; desktop typecheck/lint/format |
+| #31 | `2692cac` | Grok 4.5 xhigh legacy migration implementation + two independent remediation rereviews | `f420b37` | PASS after private WAL snapshot, import-owned cleanup, atomic export writes, fidelity-loss reporting, reuse/unsupported-source evidence, and governed docs; CodeRabbit rate-limited before analysis | Library Legacy Import 8; CLI/host/renderer migration seams; workspace/fault Rust; desktop/Tauri gates |
 
 ## Open Questions
 

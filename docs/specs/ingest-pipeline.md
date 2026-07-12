@@ -255,3 +255,7 @@ The Rust Library ingest path preserves the Electron-era invariants above and add
 14. Configured Source roots are canonicalized, must exist as directories, reject empty/traversal escapes, and may resolve through symlinks to a stored canonical path. Provider subprocess policy (a direct-child/process-group best-effort duration bound, stdout/stderr byte caps, and redacted errors) is Library-internal and used by OpenCode #28; descendants that detach from the child process group are outside this boundary. Codex #26 and Droid #29 are file-backed and do not require a provider subprocess during Sync.
 
 Legacy Electron still uses the `CaptureStatus` state machine documented above. The rebuild gap register tracks the dual-model period until Electron cutover.
+
+## Legacy Electron Home Import
+
+Issue #31 provides the read-only bridge from the legacy Electron schema to the rebuild model. It snapshots `distill.db` plus WAL sidecars into destination staging before opening SQLite, verifies the source fingerprint is stable, and resolves only regular in-home capture/export files. The source home is never mutated. Mapping and loss rules, redacted report fields, marker-based idempotency, and import-owned CAS cleanup are normative in `docs/specs/legacy-migration.md`.

@@ -138,10 +138,11 @@ Public Library methods for the Fixture tracer, Codex Source, and thin callers:
 - `recent_activity(limit)` — return a bounded oldest-first Activity slice retained for tracer compatibility
 - `list_activity(ActivityListRequest)` — return newest-first append-only Activity Events with opaque keyset cursors and caller-safe redacted payload JSON; the read path never mutates audit history
 - `list_operations(OperationsRequest)` — return independent cursor-paged Sync Run and export lifecycle summaries plus `operations_status`; operational diagnostics omit export paths and redact path-bearing error text without consulting Activity as authority
+- `import_legacy_electron_home(source_home)` — snapshot a legacy Electron SQLite home read-only (including WAL sidecars), reject unsafe path relationships, map representative history/curation/activity/export data into the native model, and return a redacted idempotent `LegacyImportReport`
 
 Thin callers:
 
-- `crates/distill-cli` — Fixture journey plus owning `health`, `repair`, `sources list|set`, `sync start|status|cancel`, `sessions tag-add|tag-remove|label-toggle`, `export preview|publish`, `activity`, and `operations` commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
+- `crates/distill-cli` — Fixture journey plus owning `health`, `repair`, `sources list|set`, `sync start|status|cancel`, `sessions tag-add|tag-remove|label-toggle`, `export preview|publish`, `activity`, `operations`, and `migrate`/`import-legacy` commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
 - `apps/distill-desktop` — Tauri 2 host runs journey/health/repair/sync/curation/export/activity/operations off the UI thread via `spawn_blocking`, validates inputs, emits typed Fixture, Sync, and Export progress, and returns typed results to a sandboxed React renderer; repair requires explicit confirmation; Activity and Operations panels load only on explicit action and expose idle/loading/empty/warning/error/cancelled states; renderer remains bridge-only
 
 Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, mid-projection publication points, and export temp-write/commit/rename boundaries). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
