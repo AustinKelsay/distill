@@ -107,6 +107,15 @@ Canonical rule:
 
 If jobs and activity disagree, activity is the authoritative domain audit and the gap must be treated as an implementation bug.
 
+## Caller Read Models
+
+The Rust Library exposes two read models for thin callers:
+
+- `list_activity(ActivityListRequest)` returns immutable Activity Events newest-first by durable event id. The `v1` keyset cursor is opaque to callers and replaying a cursor returns the same page. Structured payloads retain safe provenance, reason, status, and metrics fields while redacting filesystem paths, SQL, command/output streams, and provider/raw payload blobs. Malformed payload JSON reads as an empty object. This query is read-only and never performs log cleanup or rewrites an audit row.
+- `list_operations(OperationsRequest)` returns `operations_status` plus independent newest-first pages for Sync Runs and export lifecycle rows. Sync and export cursors advance separately. Export rows expose lifecycle, checksum, size, count, and typed diagnostics but never output or temporary filesystem paths. Path-like fragments in Sync/export diagnostics are redacted while stable context is retained.
+
+The CLI surfaces these models as `activity` and `operations` commands with stable JSON envelopes (`ok` plus the page shape) and documented exit codes. The Tauri host and React renderer use the same typed requests. Activity and Operations are explicit-action panels: each renders idle, loading, empty, warning, error, and cancelled states. Cancelling a panel invalidates its in-flight response and leaves the panel in a visible cancelled state; no ambient fetch is required.
+
 ## Current In-Scope Operational Features
 
 The current normative operational scope includes:

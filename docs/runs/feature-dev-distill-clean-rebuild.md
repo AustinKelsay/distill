@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#29 complete; #30 ready
+- Current status: #18–#30 complete; #31 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#29 implemented and review packets recorded
+- Ticket sessions: #18–#30 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#29 complete
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; post-fix attempts were rate-limited by service
+- Review packets: #18–#30 complete
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 attempt was rate-limited before analysis; post-fix attempts were rate-limited by service
 - PR URL: Pending
 
 ## Commands
@@ -57,8 +57,8 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #27 Claude Code Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Rust adapter, generic Sync, docs, matrix, executable detection, and unreadable-root findings applied | Library/adapter, Sync/replay, fmt/clippy gates |
 | #28 OpenCode Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Shared bounded subprocess policy, native parse evidence, docs, matrix, executable detection, redaction, and replay findings applied | Library/adapter, Sync/replay, timeout/overflow/malformed, fmt/clippy/workspace gates |
 | #29 Droid Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Default/override roots, recursive file discovery, sidecars, exact replay, mixed parsing, typed diagnostics, native evidence, and governed docs applied | Library Droid 6 + adapter 7; Codex/Claude/OpenCode/Sync suites; fmt/clippy; CodeRabbit rate-limited |
-| #30 Activity/operations diagnostics | AFK | Ready | — | — | No |
-| #31 Electron migration | AFK | Blocked by #20, #21, #23, #24, #25 | — | — | No |
+| #30 Activity/operations diagnostics | AFK | Complete | Grok xhigh standards + focused rereview | Nested payload redaction, operational diagnostic redaction, explicit cancellation, and cursor evidence applied; CodeRabbit attempt rate-limited | Rust/CLI/host/renderer gates; Grok PASS |
+| #31 Electron migration | AFK | Ready | — | — | No |
 | #32 Hostile-input/capability audit | AFK | Blocked by #19, #26–#29 | — | — | No |
 | #33 Accessibility/visual states | AFK | Blocked by #19, #22–#25, #30 | — | — | No |
 | #34 Scale/performance | AFK | Blocked by #22–#25 | — | — | No |
@@ -88,6 +88,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #27 | `b9f2913` | Grok 4.5 xhigh Claude Code adapter implementation + independent standards/spec rereview | `6c44bc4` | PASS after native evidence, provider coverage, unreadable-root Sync contract, and ingest-pipeline wording fix; CodeRabbit rate-limited before analysis | Library Claude 4 + adapter 9; Codex/Fixture/Sync suites; workspace/fmt/clippy |
 | #28 | `2ced5ef` | Grok 4.5 xhigh OpenCode adapter implementation + independent standards/spec rereview | `cd491d6` | PASS after shared-runner, native-evidence, governed-doc, matrix, ledger, and redaction/replay remediations; CodeRabbit rate-limited before analysis | Library OpenCode 5 + adapter 3; Codex/Claude/Sync suites; workspace/fmt/clippy |
 | #29 | `b426f23` | Grok 4.5 xhigh Droid adapter implementation + independent standards/spec rereview | `3f3205a`, `315db4e`, `1a09132` | PASS after native evidence, identity/discovery coverage, sidecar assertions, governed-doc, matrix, and ledger remediations; CodeRabbit rate-limited before analysis (23 minutes) | Library Droid 6 + adapter 7; Library all-features; workspace tests; fmt/clippy |
+| #30 | `d7cc576` | Grok 4.5 xhigh Activity/Operations implementation + independent standards/spec rereview | Pending implementation/docs commits | PASS after production-shaped nested payload redaction, diagnostic privacy, explicit renderer cancellation, and invalid-cursor evidence; CodeRabbit attempt rate-limited before analysis | Library Activity/Operations 8; CLI fixture 11; host Activity/Operations 2; renderer 23; desktop typecheck/lint/format |
 
 ## Open Questions
 

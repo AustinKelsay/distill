@@ -31,13 +31,13 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R003: Final Cutover Deferred
 
-- Status: open (Fixture/Codex/Claude/OpenCode/Droid Sync Runs, Curation, and export delivered in #22/#24/#25/#26/#27/#28/#29; final cutover remains)
+- Status: open (Fixture/Codex/Claude/OpenCode/Droid Sync Runs, Curation, export, and Activity/Operations diagnostics delivered in #22/#24/#25/#26/#27/#28/#29/#30; final cutover remains)
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, and the previewed crash-recoverable Export Artifact path are implemented for all five v1 Sources. Final packaging/cutover remains #37.
+- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, and separate cursor-paged Activity/Operations diagnostics are implemented for all five v1 Sources. Final packaging/cutover remains #37.
 - Impacted files/modules: Library ops, curation, export, provider adapters, and packaging/cutover surfaces.
 - Severity: medium — the Fixture loop is proven, but real provider coverage and final cutover are incomplete.
-- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, final cutover #37.
-- Acceptance criteria: async Sync Runs, transactional manual Curation, and previewed crash-recoverable JSONL export pass their public Library, CLI, host, and renderer contracts; provider adapters and packaging then pass the final cutover gate.
+- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, diagnostics #30, final cutover #37.
+- Acceptance criteria: async Sync Runs, transactional manual Curation, previewed crash-recoverable JSONL export, and Activity/Operations diagnostics pass their public Library, CLI, host, and renderer contracts; provider adapters and packaging then pass the final cutover gate.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
 
