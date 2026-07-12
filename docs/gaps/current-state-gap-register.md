@@ -12,7 +12,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open
 - Rule: the rebuild Library is the target product interface; Electron remains until cutover.
-- Current drift: Electron under `src/**` still serves the shipping baseline while the native Library, thin CLI, and first-run Tauri/React Fixture callers exist beside it. The macOS `.app` package and source-to-export smoke are complete; Linux packaging and final cutover remain incomplete.
+- Current drift: Electron under `src/**` still serves the shipping baseline while the native Library, thin CLI, and first-run Tauri/React Fixture callers exist beside it. macOS and Linux package/source-to-export smokes are complete; final cutover remains incomplete.
 - Impacted files/modules: legacy `src/**`; native `crates/distill-library`; `crates/distill-cli`; `apps/distill-desktop`.
 - Severity: high — the rebuild cannot replace the shipped runtime until provider Sources, Sync Runs, Curation, export, migration, and packaging paths are complete.
 - Target branch/ticket: `feature/distill-clean-rebuild`, final cutover gate #37.
@@ -33,7 +33,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 - Status: open (Fixture/Codex/Claude/OpenCode/Droid Sync Runs, Curation, export, and Activity/Operations diagnostics delivered in #22/#24/#25/#26/#27/#28/#29/#30; final cutover remains)
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
-- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, and separate cursor-paged Activity/Operations diagnostics are implemented for all five v1 Sources. macOS packaging is proven by #35; Linux packaging and final cutover remain #36/#37.
+- Current drift: durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, and separate cursor-paged Activity/Operations diagnostics are implemented for all five v1 Sources. macOS #35 and Linux #36 packaging are proven; final cutover remains #37.
 - Impacted files/modules: Library ops, curation, export, provider adapters, and packaging/cutover surfaces.
 - Severity: medium — the Fixture loop is proven, but real provider coverage and final cutover are incomplete.
 - Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, diagnostics #30, final cutover #37.
@@ -64,18 +64,18 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Rule: every SourceAdapter and thin caller must bound hostile input, preserve typed failure semantics, redact caller/Activity/Operations diagnostics, and deny ambient renderer authority.
 - Resolution: issue #32 adds the shared privacy policy, pre-snapshot Capture-size gate, bounded JSON document/line/depth parsing, symlink-safe discovery, secret/path/SQL/payload redaction, safe CLI/Tauri messages, typed Tauri path/enumeration validation, events-only capabilities, and hostile-input/bridge contracts. The v1 privacy boundary is explicit: `sensitive` is export-only; no application encryption, per-session delete, retention purge, or secure-forget.
 - Impacted files/modules: `crates/distill-library/src/privacy.rs`; SourceAdapters/ingest/query/migration; `crates/distill-cli`; Tauri host/error/capabilities; React bridge; `docs/specs/privacy-and-capabilities.md`.
-- Severity: resolved for the hostile-input/capability slice and the local macOS packaged capability gate; Linux packaged cutover remains open.
+- Severity: resolved for the hostile-input/capability slice and macOS/Linux packaged capability gates; final cutover remains open.
 - Target branch/ticket: `feature/distill-clean-rebuild`, #32.
 - Acceptance criteria: the shared hostile corpus and provider-bound suites pass; no false Captures or raw diagnostic payload leaks occur; Tauri capabilities remain events-only and bridge calls remain typed invoke/listen.
 
 ### GAP-R007: Packaged Accessibility Runtime Evidence
 
-- Status: partially resolved: macOS packaged smoke is complete in #35; Linux packaging and human screen-reader evidence remain open in #36.
+- Status: partially resolved: macOS #35 and Linux #36 packaged smokes are complete; human screen-reader/dialog-focus evidence remains open.
 - Rule: keyboard, focus, semantic status, visual-state, and reduced-motion behavior must be proven at the thin React seam, while packaged WebView and assistive-technology claims require runtime evidence.
 - Current implementation: `App.a11y.test.tsx`, `App.states.test.tsx`, and `styles.a11y.test.ts` cover keyboard activation, focus return, semantic names/live regions, dialog Tab fallback, contrast tokens, reduced motion, 200% text-size DOM presence, and deterministic major-state markers. `npm run a11y:smoke` builds the renderer and runs these suites.
-- Remaining drift: the local macOS smoke launches an ad-hoc/unsigned Tauri `.app`, not a Developer ID/notarized release artifact; Linux packaged smoke is still #36; CI does not automate VoiceOver or Narrator. Human validation is documented in `apps/distill-desktop/docs/a11y-human-checklist.md`.
+- Remaining drift: the local macOS smoke launches an ad-hoc/unsigned Tauri `.app`, not a Developer ID/notarized release artifact; Linux CI smoke uses AT-SPI to locate controls but does not automate VoiceOver or Narrator. Human validation is documented in `apps/distill-desktop/docs/a11y-human-checklist.md`.
 - Impacted files/modules: `apps/distill-desktop/src/App.tsx`, `apps/distill-desktop/src/a11y/confirm-dialog.tsx`, `apps/distill-desktop/src/styles.css`, packaging smoke harnesses.
-- Severity: medium — macOS packaged focus and the primary journey are covered, while Linux packaging and screen-reader output remain release gates.
+- Severity: medium — macOS/Linux packaged primary journeys are covered, while dialog-focus and screen-reader output remain human release gates.
 - Target branch/tickets: `feature/distill-clean-rebuild`, #33, #35, and #36.
 - Acceptance criteria: macOS and Linux packaged smoke proves launch, keyboard traversal,
   and one search/detail/curation/export path; where a platform harness supports it, the

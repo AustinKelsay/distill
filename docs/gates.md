@@ -47,9 +47,9 @@ DISTILL_SCALE_BENCH=1 cargo test -p distill-library --test library_scale_budgets
 ```
 
 The a11y smoke is a post-build renderer check. It does not claim signed packaged
-WebView or screen-reader coverage; Linux packaging remains #36 and the human
-checklist at `apps/distill-desktop/docs/a11y-human-checklist.md` records assistive
-technology observations. On macOS, `desktop:package:macos` builds an `.app` through
+WebView or screen-reader coverage; the human checklist at
+`apps/distill-desktop/docs/a11y-human-checklist.md` records assistive technology
+observations. On macOS, `desktop:package:macos` builds an `.app` through
 the workspace-installed Tauri CLI with `--no-sign`, and `desktop:smoke:macos` proves
 the local ad-hoc bundle metadata, restricted capability source, Fixture sync,
 search/detail/curation/export journey, quit/relaunch, artifact persistence, and

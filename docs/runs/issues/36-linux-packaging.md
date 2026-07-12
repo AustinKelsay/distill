@@ -4,8 +4,8 @@
 
 - Issue: [#36](https://github.com/AustinKelsay/distill/issues/36)
 - Fixed point before session: `dc40858`
-- Implementation commit: `1a73549`
-- Status: In progress — implementation complete; Ubuntu CI pending
+- Implementation commits: `1a73549`, `0d7989d`, `bffe87c`
+- Status: Complete
 - Review packet: `docs/runs/reviews/36-linux-packaging.md`
 
 ## Intended Contracts
@@ -48,6 +48,10 @@
 
 ## Remaining Scope
 
-The Linux gate remains pending until the Ubuntu workflow completes successfully. This
-slice does not add RPM, Windows, signing-store claims, VoiceOver/Narrator coverage, or
-application-level privacy/delete semantics.
+Ubuntu workflow `29210244139` passed on Ubuntu 24.04 x86_64, including package build,
+`.deb` install, emitted `Depends` verification, installed-host AT-SPI/Xvfb journey,
+restart, containment, and artifact upload:
+<https://github.com/AustinKelsay/distill/actions/runs/29210244139>.
+
+This slice does not add RPM, Windows, signing-store claims, VoiceOver/Narrator
+coverage, or application-level privacy/delete semantics.
