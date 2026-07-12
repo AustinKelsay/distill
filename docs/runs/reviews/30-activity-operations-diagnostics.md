@@ -5,7 +5,7 @@
 - Issue: [#30](https://github.com/AustinKelsay/distill/issues/30)
 - Slice type: AFK diagnostics/read-model tracer
 - Baseline: `d7cc576`
-- Implementation: pending
+- Implementation: `c73d412`; governed docs: `f0b069b`
 
 ## Review Instructions
 
@@ -36,5 +36,5 @@ PASS — nested payload context, diagnostic privacy, deterministic paging, CLI e
 desktop loading/empty/warning/error/cancelled states are covered and aligned with the issue.
 ```
 
-CodeRabbit status: review was attempted on the unstaged implementation and returned a service
-rate-limit response before analysis; no findings were produced.
+CodeRabbit status: local review completed with one minor documentation finding (the feature ledger
+review-packet range); it was fixed before the docs commit. No code findings were returned.

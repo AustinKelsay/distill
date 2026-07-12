@@ -5,7 +5,7 @@
 - Issue: [#30](https://github.com/AustinKelsay/distill/issues/30)
 - Fixed point before session: `d7cc576`
 - Status: Complete
-- Implementation commits: pending
+- Implementation commits: `c73d412`, `f0b069b`
 - Review packet: `docs/runs/reviews/30-activity-operations-diagnostics.md`
 
 ## Intended Contracts
