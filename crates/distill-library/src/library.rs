@@ -11,6 +11,7 @@ use crate::error::{LibraryError, LibraryResult};
 use crate::export;
 use crate::health::{self as health_ops};
 use crate::ingest;
+use crate::migrate;
 use crate::ops::{self, new_owner_id};
 use crate::query;
 use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection, DistillPaths};
@@ -18,11 +19,11 @@ use crate::types::{
     ActivityEventSummary, ActivityListPage, ActivityListRequest, AttemptSummary,
     CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
     ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, IngestReport,
-    OpenReconciliation, OperationsPage, OperationsRequest, RenormalizeReport, RepairOptions,
-    RepairReport, SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest,
-    SessionListPage, SessionListRequest, SourceDetectRequest, SourceDetectResult, SourcePreference,
-    SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
-    DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
+    LegacyImportReport, OpenReconciliation, OperationsPage, OperationsRequest, RenormalizeReport,
+    RepairOptions, RepairReport, SearchHit, SessionCurationRequest, SessionDetail,
+    SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
+    SourceDetectResult, SourcePreference, SourceSummary, SyncProgress, SyncRequest, SyncRunResult,
+    SyncRunSummary, DEFAULT_MAX_CAPTURE_BYTES, MAX_PAGE_SIZE,
 };
 
 /// Deep Distill Library over one Distill home.
@@ -452,6 +453,25 @@ impl Library {
             &options,
             &self.open_reconciliation,
         )
+    }
+
+    /**
+     * Import a legacy Electron Distill home into this native Library home read-only.
+     *
+     * Copies the legacy database and WAL sidecars into a private snapshot opened with
+     * rusqlite read-only flags, refuses unsafe path relationships, maps representative
+     * rows into the rebuild schema, and returns a redacted report. Identical source
+     * fingerprints reuse the prior report without duplicating destination rows. The
+     * legacy home is never mutated.
+     *
+     * Parameters:
+     * - `source_home`: path to the legacy Electron Distill home containing `distill.db`
+     */
+    pub fn import_legacy_electron_home(
+        &mut self,
+        source_home: impl AsRef<Path>,
+    ) -> LibraryResult<LegacyImportReport> {
+        migrate::import_legacy_electron_home(&mut self.conn, &self.paths, source_home.as_ref())
     }
 
     /**

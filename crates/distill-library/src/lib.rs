@@ -15,6 +15,7 @@ pub mod faults;
 mod health;
 mod ingest;
 mod library;
+mod migrate;
 mod ops;
 mod query;
 mod storage;
@@ -39,11 +40,13 @@ pub use types::{
     ActivityListPage, ActivityListRequest, AttemptSummary, CurationMutationResult, ExportDataset,
     ExportLifecycleSummary, ExportOmission, ExportOmissionReason, ExportPreview, ExportProgress,
     ExportProgressControl, ExportResult, ExportStatus, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthIssue, HealthReport, IngestReport, OpenReconciliation, OperationsPage, OperationsRequest,
-    ProjectedArtifact, ProjectedMessage, RenormalizeReport, RepairAction, RepairOptions,
-    RepairReport, SearchHit, SessionCurationRequest, SessionDetail, SessionDetailRequest,
-    SessionIdentity, SessionLabel, SessionListItem, SessionListPage, SessionListRequest,
-    SessionSummary, SessionTag, SourceDetectRequest, SourceDetectResult, SourcePreference,
-    SourceSummary, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, SyncSourceOutcome,
-    WorkflowLane, WorkflowState, EXPORT_FORMAT_ID, INLINE_CONTENT_THRESHOLD_BYTES, MAX_PAGE_SIZE,
+    HealthIssue, HealthReport, IngestReport, LegacyImportCounts, LegacyImportReport,
+    LegacyImportSkip, OpenReconciliation, OperationsPage, OperationsRequest, ProjectedArtifact,
+    ProjectedMessage, RenormalizeReport, RepairAction, RepairOptions, RepairReport, SearchHit,
+    SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionIdentity, SessionLabel,
+    SessionListItem, SessionListPage, SessionListRequest, SessionSummary, SessionTag,
+    SourceDetectRequest, SourceDetectResult, SourcePreference, SourceSummary, SyncProgress,
+    SyncRequest, SyncRunResult, SyncRunSummary, SyncSourceOutcome, WorkflowLane, WorkflowState,
+    EXPORT_FORMAT_ID, INLINE_CONTENT_THRESHOLD_BYTES, LEGACY_IMPORT_PARSER_ID,
+    LEGACY_IMPORT_PARSER_VERSION, MAX_PAGE_SIZE,
 };

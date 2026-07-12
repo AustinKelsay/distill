@@ -392,6 +392,47 @@ export type FixtureJourneyInput = {
   fixtureRoot: string;
 };
 
+/** Typed redacted skip/loss entry from a legacy Electron import. */
+export type LegacyImportSkip = {
+  category: string;
+  reason: string;
+  legacy_kind?: string | null;
+};
+
+/** Aggregate counters for a legacy Electron import. */
+export type LegacyImportCounts = {
+  sources: number;
+  captures: number;
+  captures_skipped: number;
+  attempts: number;
+  facts: number;
+  sessions: number;
+  messages: number;
+  artifacts: number;
+  tags: number;
+  tag_assignments: number;
+  labels: number;
+  label_assignments: number;
+  activity_events: number;
+  exports: number;
+  exports_skipped: number;
+};
+
+/** Typed redacted legacy Electron import report. */
+export type LegacyImportReport = {
+  ok: boolean;
+  reused_prior_import: boolean;
+  source_fingerprint: string;
+  source_db_sha256: string;
+  content_fingerprint: string;
+  counts: LegacyImportCounts;
+  skips: LegacyImportSkip[];
+};
+
+/** Explicit UI lifecycle for the first-run migration panel. */
+export type MigrationUiStatus =
+  "idle" | "loading" | "success" | "warning" | "error" | "cancelled";
+
 /**
  * Explicit Distill bridge. The renderer never reaches process, filesystem,
  * SQLite, or shell APIs directly.
@@ -407,6 +448,12 @@ export type DistillBridge = {
    * @param home - Distill home path
    */
   health(home: string): Promise<HealthReport>;
+  /**
+   * Import a legacy Electron Distill home into a native Distill home.
+   * @param home - destination native Distill home
+   * @param sourceHome - legacy Electron Distill home (read-only)
+   */
+  importLegacy(home: string, sourceHome: string): Promise<LegacyImportReport>;
   /**
    * Explicit Library repair after user confirmation.
    * @param home - Distill home path

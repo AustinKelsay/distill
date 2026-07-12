@@ -1037,6 +1037,79 @@ pub enum ExportProgressControl {
     Cancel,
 }
 
+/// Synthetic parser identity used for legacy Electron import Attempts.
+pub const LEGACY_IMPORT_PARSER_ID: &str = "legacy-electron-import";
+/// Synthetic parser version for legacy Electron import Attempts.
+pub const LEGACY_IMPORT_PARSER_VERSION: &str = "1.0.0";
+
+/// One safe, redacted skip/loss entry from a legacy Electron import.
+///
+/// Never includes raw source paths, SQL, or payload bodies.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LegacyImportSkip {
+    /// Stable skip category such as `capture_content`, `export`, or `activity`.
+    pub category: String,
+    /// Caller-safe reason code or short message without paths/SQL/payloads.
+    pub reason: String,
+    /// Optional legacy entity kind or event type for context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_kind: Option<String>,
+}
+
+/// Aggregate counters for a legacy Electron import.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LegacyImportCounts {
+    /// Sources created by this import; existing descriptors are reused without counting.
+    pub sources: u64,
+    /// Captures accepted into the destination home.
+    pub captures: u64,
+    /// Capture contents skipped (missing/unsafe).
+    pub captures_skipped: u64,
+    /// Normalization Attempts created.
+    pub attempts: u64,
+    /// Capture Facts imported.
+    pub facts: u64,
+    /// Sessions created by this import; existing identities are reused without counting.
+    pub sessions: u64,
+    /// Projection messages imported.
+    pub messages: u64,
+    /// Projection artifacts imported.
+    pub artifacts: u64,
+    /// Tag descriptors imported or reused.
+    pub tags: u64,
+    /// Tag assignments imported.
+    pub tag_assignments: u64,
+    /// Label descriptors imported or reused.
+    pub labels: u64,
+    /// Label assignments imported.
+    pub label_assignments: u64,
+    /// Activity Events imported.
+    pub activity_events: u64,
+    /// Export metadata rows imported.
+    pub exports: u64,
+    /// Export rows skipped (unsupported/missing/unsafe).
+    pub exports_skipped: u64,
+}
+
+/// Typed redacted report returned by [`crate::Library::import_legacy_electron_home`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LegacyImportReport {
+    /// True when the import completed without hard failure.
+    pub ok: bool,
+    /// True when a prior identical source fingerprint was reused (no new rows).
+    pub reused_prior_import: bool,
+    /// Combined source DB/content fingerprint (hex), never a filesystem path.
+    pub source_fingerprint: String,
+    /// SHA-256 of the legacy `distill.db` file bytes.
+    pub source_db_sha256: String,
+    /// Fingerprint over safe in-home content files (blobs/exports).
+    pub content_fingerprint: String,
+    /// Import counters.
+    pub counts: LegacyImportCounts,
+    /// Documented skips and mapping losses (redacted).
+    pub skips: Vec<LegacyImportSkip>,
+}
+
 /// Terminal result of [`crate::Library::publish_export`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExportResult {

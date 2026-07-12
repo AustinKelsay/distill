@@ -17,6 +17,7 @@ import type {
   FixtureJourneyResult,
   HealthReport,
   HostError,
+  LegacyImportReport,
   OperationsPage,
   RepairReport,
   SessionDetail,
@@ -123,6 +124,9 @@ function createFakeBridge(options?: {
   operationsPage?: OperationsPage;
   operationsError?: HostError;
   pendingOperations?: Promise<OperationsPage>;
+  migrationReport?: LegacyImportReport;
+  migrationError?: HostError;
+  pendingMigration?: Promise<LegacyImportReport>;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -143,6 +147,37 @@ function createFakeBridge(options?: {
     async health() {
       if (options?.error) throw options.error;
       return options?.health ?? sampleResult().health;
+    },
+    async importLegacy() {
+      if (options?.pendingMigration) return options.pendingMigration;
+      if (options?.migrationError) throw options.migrationError;
+      return (
+        options?.migrationReport ?? {
+          ok: true,
+          reused_prior_import: false,
+          source_fingerprint: "abc",
+          source_db_sha256: "def",
+          content_fingerprint: "ghi",
+          counts: {
+            sources: 1,
+            captures: 1,
+            captures_skipped: 0,
+            attempts: 1,
+            facts: 1,
+            sessions: 1,
+            messages: 1,
+            artifacts: 0,
+            tags: 1,
+            tag_assignments: 1,
+            labels: 1,
+            label_assignments: 1,
+            activity_events: 1,
+            exports: 0,
+            exports_skipped: 0,
+          },
+          skips: [],
+        }
+      );
     },
     async repair(_home, confirm) {
       if (!confirm) {
@@ -744,6 +779,9 @@ describe("first-run Fixture UI", () => {
     const bridge: DistillBridge = {
       runFixtureJourney: () => pending,
       health: async () => sampleResult().health,
+      importLegacy: async () => {
+        throw new Error("not used");
+      },
       repair: async () => ({
         actions: [],
         health_after: sampleResult().health,
@@ -1413,5 +1451,83 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("operations-status")).toHaveTextContent("empty");
     });
+  });
+
+  it("imports legacy homes through an explicit migration action", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      migrationReport: {
+        ok: true,
+        reused_prior_import: false,
+        source_fingerprint: "fp1",
+        source_db_sha256: "db1",
+        content_fingerprint: "c1",
+        counts: {
+          sources: 1,
+          captures: 1,
+          captures_skipped: 1,
+          attempts: 1,
+          facts: 1,
+          sessions: 1,
+          messages: 1,
+          artifacts: 1,
+          tags: 1,
+          tag_assignments: 1,
+          labels: 1,
+          label_assignments: 1,
+          activity_events: 1,
+          exports: 1,
+          exports_skipped: 0,
+        },
+        skips: [{ category: "capture_content", reason: "missing_or_unsafe_blob" }],
+      },
+    });
+    render(<App bridge={bridge} />);
+    expect(screen.getByTestId("migration-status")).toHaveTextContent("idle");
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.type(
+      screen.getByRole("textbox", { name: "Legacy Electron home" }),
+      "/tmp/legacy",
+    );
+    await user.click(screen.getByTestId("migration-run"));
+    await waitFor(() => {
+      expect(screen.getByTestId("migration-status")).toHaveTextContent("warning");
+    });
+    expect(screen.getByTestId("migration-report")).toHaveTextContent("fp1");
+    expect(screen.getByTestId("migration-report")).toHaveTextContent("skips: 1");
+  });
+
+  it("renders migration error state without ambient fetch", async () => {
+    const user = userEvent.setup();
+    const failing = createFakeBridge({
+      migrationError: { code: "invalid_argument", message: "paths must differ" },
+    });
+    render(<App bridge={failing} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.type(
+      screen.getByRole("textbox", { name: "Legacy Electron home" }),
+      "/tmp/legacy",
+    );
+    await user.click(screen.getByTestId("migration-run"));
+    await waitFor(() => {
+      expect(screen.getByTestId("migration-status")).toHaveTextContent("error");
+    });
+    expect(screen.getByTestId("migration-error")).toHaveTextContent("paths must differ");
+  });
+
+  it("cancels an in-flight migration panel request explicitly", async () => {
+    const user = userEvent.setup();
+    const pendingMigration = new Promise<LegacyImportReport>(() => {});
+    const pending = createFakeBridge({ pendingMigration });
+    render(<App bridge={pending} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.type(
+      screen.getByRole("textbox", { name: "Legacy Electron home" }),
+      "/tmp/legacy",
+    );
+    await user.click(screen.getByTestId("migration-run"));
+    expect(screen.getByTestId("migration-status")).toHaveTextContent("loading");
+    await user.click(screen.getByTestId("migration-cancel"));
+    expect(screen.getByTestId("migration-status")).toHaveTextContent("cancelled");
   });
 });

@@ -17,6 +17,7 @@ import type {
   FixtureJourneyPhase,
   FixtureJourneyResult,
   HealthReport,
+  LegacyImportReport,
   OperationsPage,
   OperationsRequest,
   RepairReport,
@@ -48,6 +49,12 @@ export function createTauriBridge(): DistillBridge {
     },
     async health(home: string): Promise<HealthReport> {
       return invoke<HealthReport>("health_command", { home });
+    },
+    async importLegacy(home: string, sourceHome: string): Promise<LegacyImportReport> {
+      return invoke<LegacyImportReport>("import_legacy_command", {
+        home,
+        sourceHome,
+      });
     },
     async repair(home: string, confirm: boolean): Promise<RepairReport> {
       return invoke<RepairReport>("repair_command", { home, confirm });

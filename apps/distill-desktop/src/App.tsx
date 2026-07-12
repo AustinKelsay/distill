@@ -16,6 +16,8 @@ import type {
   FixtureJourneyResult,
   HealthReport,
   HostError,
+  LegacyImportReport,
+  MigrationUiStatus,
   OperationsPage,
   RepairReport,
   SessionDetail,
@@ -56,7 +58,12 @@ const CURATABLE_LABELS = [
 export function App({ bridge }: AppProps) {
   const [home, setHome] = useState("");
   const [fixtureRoot, setFixtureRoot] = useState("");
+  const [legacySourceHome, setLegacySourceHome] = useState("");
   const [status, setStatus] = useState<UiStatus>("idle");
+  const [migrationStatus, setMigrationStatus] = useState<MigrationUiStatus>("idle");
+  const [migrationReport, setMigrationReport] = useState<LegacyImportReport | null>(null);
+  const [migrationError, setMigrationError] = useState<HostError | null>(null);
+  const migrationRequestRef = useRef(0);
   const [phase, setPhase] = useState<FixtureJourneyPhase | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [activeSyncRunId, setActiveSyncRunId] = useState<number | null>(null);
@@ -212,6 +219,35 @@ export function App({ bridge }: AppProps) {
     } catch (caught) {
       setError(normalizeError(caught));
     }
+  }
+
+  /**
+   * Explicitly import a legacy Electron home into the native Distill home.
+   */
+  async function onImportLegacy() {
+    const requestId = ++migrationRequestRef.current;
+    setMigrationStatus("loading");
+    setMigrationError(null);
+    setMigrationReport(null);
+    try {
+      const report = await bridge.importLegacy(home, legacySourceHome);
+      if (requestId !== migrationRequestRef.current) return;
+      setMigrationReport(report);
+      if (!report.ok || report.skips.length > 0) setMigrationStatus("warning");
+      else setMigrationStatus("success");
+    } catch (caught) {
+      if (requestId !== migrationRequestRef.current) return;
+      setMigrationError(normalizeError(caught));
+      setMigrationStatus("error");
+    }
+  }
+
+  /**
+   * Cancel an in-flight migration panel request without ambient retry.
+   */
+  function onCancelMigration() {
+    migrationRequestRef.current += 1;
+    setMigrationStatus("cancelled");
   }
 
   /** Load one bounded current-projection session page through the bridge. */
@@ -714,6 +750,57 @@ export function App({ bridge }: AppProps) {
         >
           Repair library
         </button>
+      </section>
+
+      <section
+        className="form"
+        aria-label="Legacy Electron migration"
+        data-testid="migration-panel"
+      >
+        <h2>Legacy migration</h2>
+        <label htmlFor="legacy-source-home">Legacy Electron home</label>
+        <input
+          id="legacy-source-home"
+          value={legacySourceHome}
+          onChange={(event) => setLegacySourceHome(event.target.value)}
+          placeholder="/path/to/.distill"
+        />
+        <button
+          type="button"
+          data-testid="migration-run"
+          onClick={() => void onImportLegacy()}
+          disabled={
+            !home.trim() || !legacySourceHome.trim() || migrationStatus === "loading"
+          }
+        >
+          {migrationStatus === "loading" ? "Importing…" : "Import legacy home"}
+        </button>
+        {migrationStatus === "loading" ? (
+          <button
+            type="button"
+            data-testid="migration-cancel"
+            onClick={onCancelMigration}
+          >
+            Cancel migration
+          </button>
+        ) : null}
+        <p data-testid="migration-status">Migration status: {migrationStatus}</p>
+        {migrationError ? (
+          <p role="alert" className="error" data-testid="migration-error">
+            {migrationError.code}: {migrationError.message}
+          </p>
+        ) : null}
+        {migrationReport ? (
+          <div data-testid="migration-report">
+            <p>ok: {String(migrationReport.ok)}</p>
+            <p>reused: {String(migrationReport.reused_prior_import)}</p>
+            <p>fingerprint: {migrationReport.source_fingerprint}</p>
+            <p>
+              captures: {migrationReport.counts.captures} · sessions:{" "}
+              {migrationReport.counts.sessions} · skips: {migrationReport.skips.length}
+            </p>
+          </div>
+        ) : null}
       </section>
 
       <section className="form" aria-label="Activity" data-testid="activity-panel">

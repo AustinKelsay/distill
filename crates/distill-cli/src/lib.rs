@@ -16,8 +16,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
     ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
     ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthReport, Library, LibraryError, OperationsPage, OperationsRequest, RepairOptions,
-    RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
+    HealthReport, LegacyImportReport, Library, LibraryError, OperationsPage, OperationsRequest,
+    RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
     SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
@@ -43,7 +43,7 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, export, activity, and operations",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, export, activity, operations, and legacy migration",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
@@ -145,6 +145,19 @@ pub enum Command {
         /// Opaque export continuation cursor.
         #[arg(long)]
         export_cursor: Option<String>,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Import a legacy Electron Distill home into a native Distill home (read-only source).
+    #[command(visible_alias = "import-legacy")]
+    Migrate {
+        /// Destination native Distill home (created/opened read-write).
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Legacy Electron Distill home containing `distill.db` (opened read-only).
+        #[arg(long, value_name = "PATH")]
+        source: PathBuf,
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -472,6 +485,11 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
             export_cursor,
             format,
         ),
+        Some(Command::Migrate {
+            home,
+            source,
+            format,
+        }) => execute_migrate(home, source, format),
         None => execute_journey(cli.home, cli.fixture, cli.format),
     }
 }
@@ -892,6 +910,80 @@ fn execute_operations(
         })
         .map_err(|err| CliFailure::runtime(format, err))?;
     Ok(render_operations_page(format, &page))
+}
+
+/**
+ * Import a legacy Electron home into a native Distill home through the Library seam.
+ */
+fn execute_migrate(
+    home: PathBuf,
+    source: PathBuf,
+    format: OutputFormat,
+) -> Result<String, CliFailure> {
+    if home.as_os_str().is_empty() {
+        return Err(CliFailure::usage(format, "home path must not be empty"));
+    }
+    if source.as_os_str().is_empty() {
+        return Err(CliFailure::usage(format, "source path must not be empty"));
+    }
+    let mut library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+    let report = library
+        .import_legacy_electron_home(&source)
+        .map_err(|err| CliFailure::runtime(format, err))?;
+    Ok(render_migrate(format, &report))
+}
+
+/**
+ * Render a redacted legacy import report for human or JSON callers.
+ */
+fn render_migrate(format: OutputFormat, report: &LegacyImportReport) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": report.ok,
+            "report": report,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                format!("ok: {}", report.ok),
+                format!("reused_prior_import: {}", report.reused_prior_import),
+                format!("source_fingerprint: {}", report.source_fingerprint),
+                format!("source_db_sha256: {}", report.source_db_sha256),
+                format!("content_fingerprint: {}", report.content_fingerprint),
+                format!("counts.sources: {}", report.counts.sources),
+                format!("counts.captures: {}", report.counts.captures),
+                format!(
+                    "counts.captures_skipped: {}",
+                    report.counts.captures_skipped
+                ),
+                format!("counts.attempts: {}", report.counts.attempts),
+                format!("counts.facts: {}", report.counts.facts),
+                format!("counts.sessions: {}", report.counts.sessions),
+                format!("counts.messages: {}", report.counts.messages),
+                format!("counts.artifacts: {}", report.counts.artifacts),
+                format!("counts.tags: {}", report.counts.tags),
+                format!("counts.tag_assignments: {}", report.counts.tag_assignments),
+                format!("counts.labels: {}", report.counts.labels),
+                format!(
+                    "counts.label_assignments: {}",
+                    report.counts.label_assignments
+                ),
+                format!("counts.activity_events: {}", report.counts.activity_events),
+                format!("counts.exports: {}", report.counts.exports),
+                format!("counts.exports_skipped: {}", report.counts.exports_skipped),
+                format!("skips: {}", report.skips.len()),
+            ];
+            for skip in &report.skips {
+                lines.push(format!(
+                    "skip: category={} reason={} kind={}",
+                    skip.category,
+                    skip.reason,
+                    skip.legacy_kind.as_deref().unwrap_or("-")
+                ));
+            }
+            lines.join("\n")
+        }
+    }
 }
 
 /**

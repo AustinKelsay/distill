@@ -2,20 +2,22 @@
 
 use distill_library::{
     ActivityListPage, ActivityListRequest, CurationMutationResult, ExportPreview, ExportProgress,
-    ExportResult, FixtureJourneyResult, HealthReport, OperationsPage, OperationsRequest,
-    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
-    SessionListRequest, SourcePreference, SyncProgress, SyncRunResult, SyncRunSummary,
+    ExportResult, FixtureJourneyResult, HealthReport, LegacyImportReport, OperationsPage,
+    OperationsRequest, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
+    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
+    SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_list_activity,
-    run_list_operations, run_list_sessions, run_list_sources, run_prepare_export_cancellation,
-    run_preview_export, run_publish_export_cancellable, run_remove_session_tag, run_repair,
-    run_session_detail, run_set_source_preference, run_sync_cancel, run_sync_start,
-    run_sync_status, run_toggle_session_label, validate_export_request,
-    validate_fixture_journey_request, validate_home_request, validate_session_curation_request,
+    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_import_legacy,
+    run_list_activity, run_list_operations, run_list_sessions, run_list_sources,
+    run_prepare_export_cancellation, run_preview_export, run_publish_export_cancellable,
+    run_remove_session_tag, run_repair, run_session_detail, run_set_source_preference,
+    run_sync_cancel, run_sync_start, run_sync_status, run_toggle_session_label,
+    validate_export_request, validate_fixture_journey_request, validate_home_request,
+    validate_legacy_import_request, validate_session_curation_request,
     validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
 };
 use crate::{EXPORT_PROGRESS_EVENT, FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
@@ -50,6 +52,23 @@ pub async fn run_fixture_journey_command(
 pub async fn health_command(home: String) -> Result<HealthReport, HostError> {
     let request = validate_home_request(&home)?;
     tauri::async_runtime::spawn_blocking(move || run_health(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: import a legacy Electron home into a native Distill home.
+ */
+#[tauri::command]
+pub async fn import_legacy_command(
+    home: String,
+    source_home: String,
+) -> Result<LegacyImportReport, HostError> {
+    let request = validate_legacy_import_request(&home, &source_home)?;
+    tauri::async_runtime::spawn_blocking(move || run_import_legacy(&request))
         .await
         .map_err(|err| HostError {
             code: "join".to_string(),

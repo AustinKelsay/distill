@@ -7,12 +7,21 @@ use std::sync::{Arc, Mutex, OnceLock};
 use distill_library::{
     ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
     ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthReport, Library, OperationsPage, OperationsRequest, RepairOptions, RepairReport,
-    SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
+    HealthReport, LegacyImportReport, Library, OperationsPage, OperationsRequest, RepairOptions,
+    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
     SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
+
+/// Validated legacy Electron import request.
+#[derive(Clone, Debug)]
+pub struct LegacyImportRequest {
+    /// Destination native Distill home.
+    pub home: PathBuf,
+    /// Legacy Electron Distill home (read-only).
+    pub source_home: PathBuf,
+}
 
 /// Validated Fixture journey request from the renderer or tests.
 #[derive(Clone, Debug)]
@@ -310,6 +319,29 @@ pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
 }
 
 /**
+ * Validate destination home and legacy Electron source home paths.
+ *
+ * Path relationship and read-only open checks remain Library authority.
+ */
+pub fn validate_legacy_import_request(
+    home: &str,
+    source_home: &str,
+) -> Result<LegacyImportRequest, HostError> {
+    let home = home.trim();
+    let source_home = source_home.trim();
+    if home.is_empty() {
+        return Err(HostError::validation("home path must not be empty"));
+    }
+    if source_home.is_empty() {
+        return Err(HostError::validation("source home path must not be empty"));
+    }
+    Ok(LegacyImportRequest {
+        home: PathBuf::from(home),
+        source_home: PathBuf::from(source_home),
+    })
+}
+
+/**
  * Validate a Sync start request.
  */
 pub fn validate_sync_start_request(
@@ -392,6 +424,16 @@ where
 pub fn run_health(request: &HomeRequest) -> Result<HealthReport, HostError> {
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
     library.health().map_err(HostError::from_library)
+}
+
+/**
+ * Import a legacy Electron Distill home into the destination native home.
+ */
+pub fn run_import_legacy(request: &LegacyImportRequest) -> Result<LegacyImportReport, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .import_legacy_electron_home(&request.source_home)
+        .map_err(HostError::from_library)
 }
 
 /**
