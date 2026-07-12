@@ -86,7 +86,7 @@ fn library_detects_codex_root_and_redacts_missing_root() {
                 configured_root: None,
             },
             SourceDetectRequest {
-                kind: "claude_code".into(),
+                kind: "opencode".into(),
                 configured_root: None,
             },
         ])

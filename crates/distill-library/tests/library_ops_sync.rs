@@ -286,7 +286,7 @@ fn detection_isolates_failures_across_independent_fixture_requests() {
                 configured_root: Some(good.display().to_string()),
             },
             SourceDetectRequest {
-                kind: "claude_code".into(),
+                kind: "opencode".into(),
                 configured_root: None,
             },
             SourceDetectRequest {

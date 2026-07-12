@@ -5,7 +5,8 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::adapter::{
-    CodexAdapter, FixtureAdapter, ParserIdentity, SourceAdapter, SourceKind, FIXTURE_PARSER_ID,
+    ClaudeAdapter, CodexAdapter, FixtureAdapter, ParserIdentity, SourceAdapter, SourceKind,
+    FIXTURE_PARSER_ID,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
@@ -104,18 +105,47 @@ where
                 aggregate,
             )
         }
-        SourceKind::ClaudeCode | SourceKind::OpenCode | SourceKind::Droid => {
-            Ok(SyncSourceOutcome {
-                source_kind: source_kind.as_str().into(),
-                status: "failed".into(),
-                accepted_captures: 0,
-                skipped_duplicates: 0,
-                successful_attempts: 0,
-                failed_attempts: 0,
-                error_class: Some("adapter_not_registered".into()),
-                error_message: Some("source adapter is not registered in this build".into()),
-            })
+        SourceKind::ClaudeCode => {
+            let root = match load_configured_root(conn, source_kind) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "configured_root_required",
+                        "source sync requires a configured root",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = ClaudeAdapter::new(root);
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
         }
+        SourceKind::OpenCode | SourceKind::Droid => Ok(SyncSourceOutcome {
+            source_kind: source_kind.as_str().into(),
+            status: "failed".into(),
+            accepted_captures: 0,
+            skipped_duplicates: 0,
+            successful_attempts: 0,
+            failed_attempts: 0,
+            error_class: Some("adapter_not_registered".into()),
+            error_message: Some("source adapter is not registered in this build".into()),
+        }),
     }
 }
 

@@ -1,8 +1,10 @@
-//! SourceAdapter seam shared by Fixture, Codex, and future provider adapters.
+//! SourceAdapter seam shared by Fixture, Codex, Claude Code, and future provider adapters.
 
+mod claude;
 mod codex;
 mod fixture;
 
+pub use claude::ClaudeAdapter;
 pub(crate) use codex::find_executable;
 pub use codex::CodexAdapter;
 pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
@@ -15,9 +17,9 @@ use thiserror::Error;
 
 /// Closed Source kind identifiers for v1.
 ///
-/// [`SourceKind::Fixture`] and [`SourceKind::Codex`] have concrete adapters.
-/// Remaining kinds stay registered for preference/detection surfaces and return
-/// typed unavailable results until their dedicated tickets.
+/// [`SourceKind::Fixture`], [`SourceKind::Codex`], and [`SourceKind::ClaudeCode`]
+/// have concrete adapters. Remaining kinds stay registered for preference/detection
+/// surfaces and return typed unavailable results until their dedicated tickets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -25,7 +27,7 @@ pub enum SourceKind {
     Fixture,
     /// Codex Source adapter (#26).
     Codex,
-    /// Claude Code Source (adapter deferred to #27).
+    /// Claude Code Source adapter (#27).
     ClaudeCode,
     /// OpenCode Source (adapter deferred to #28).
     OpenCode,
