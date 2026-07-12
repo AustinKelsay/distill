@@ -54,6 +54,10 @@ def find_control(name, contains, interactive, deadline):
                 component = application.get_component_iface()
                 if component is None:
                     continue
+                try:
+                    component.scroll_to(Atspi.ScrollType.ANYWHERE)
+                except Exception:
+                    pass
                 bounds = component.get_extents(Atspi.CoordType.SCREEN)
                 if bounds.width > 0 and bounds.height > 0:
                     return {
