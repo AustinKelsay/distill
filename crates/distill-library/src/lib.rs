@@ -17,6 +17,7 @@ mod ingest;
 mod library;
 mod migrate;
 mod ops;
+mod privacy;
 mod query;
 mod storage;
 mod types;
@@ -26,6 +27,7 @@ pub use library::Library;
 #[cfg(feature = "test-leases")]
 pub use ops::test_leases;
 pub use ops::SYNC_LEASE_STALE_AFTER;
+pub use privacy::safe_caller_message;
 
 /// Test-only access to the provider-process policy contracts.
 #[cfg(feature = "test-leases")]

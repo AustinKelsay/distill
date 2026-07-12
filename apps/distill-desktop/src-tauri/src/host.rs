@@ -1,7 +1,7 @@
 //! Testable Tauri host command runner over the public Library seam.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use distill_library::{
@@ -280,24 +280,22 @@ pub fn run_toggle_session_label(
 
 /**
  * Validate renderer-supplied home and Fixture paths.
+ *
+ * Rejects empty paths, NUL bytes, and parent-segment traversal (`..`). Fixture
+ * roots must already exist as directories. Capability policy remains least
+ * privilege: the renderer has no ambient filesystem/process/SQL/shell access.
  */
 pub fn validate_fixture_journey_request(
     home: &str,
     fixture_root: &str,
 ) -> Result<FixtureJourneyRequest, HostError> {
-    let home = home.trim();
-    let fixture_root = fixture_root.trim();
-    if home.is_empty() {
-        return Err(HostError::validation("home path must not be empty"));
-    }
-    if fixture_root.is_empty() {
-        return Err(HostError::validation("fixture root must not be empty"));
-    }
-    let fixture_path = PathBuf::from(fixture_root);
+    let home = validate_path_argument("home", home)?;
+    let fixture_root = validate_path_argument("fixture root", fixture_root)?;
+    let fixture_path = PathBuf::from(&fixture_root);
     if !fixture_path.is_dir() {
-        return Err(HostError::validation(format!(
-            "fixture root is not a directory: {fixture_root}"
-        )));
+        return Err(HostError::validation(
+            "fixture root is not an existing directory",
+        ));
     }
     Ok(FixtureJourneyRequest {
         home: PathBuf::from(home),
@@ -309,10 +307,7 @@ pub fn validate_fixture_journey_request(
  * Validate a Distill home path for health or repair commands.
  */
 pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
-    let home = home.trim();
-    if home.is_empty() {
-        return Err(HostError::validation("home path must not be empty"));
-    }
+    let home = validate_path_argument("home", home)?;
     Ok(HomeRequest {
         home: PathBuf::from(home),
     })
@@ -327,14 +322,8 @@ pub fn validate_legacy_import_request(
     home: &str,
     source_home: &str,
 ) -> Result<LegacyImportRequest, HostError> {
-    let home = home.trim();
-    let source_home = source_home.trim();
-    if home.is_empty() {
-        return Err(HostError::validation("home path must not be empty"));
-    }
-    if source_home.is_empty() {
-        return Err(HostError::validation("source home path must not be empty"));
-    }
+    let home = validate_path_argument("home", home)?;
+    let source_home = validate_path_argument("source home", source_home)?;
     Ok(LegacyImportRequest {
         home: PathBuf::from(home),
         source_home: PathBuf::from(source_home),
@@ -389,7 +378,10 @@ pub fn validate_source_preference_request(
                 "configured root must not be empty when provided",
             ));
         }
-        Some(root) => Some(PathBuf::from(root.trim())),
+        Some(root) => {
+            let root = validate_path_argument("configured root", root)?;
+            Some(PathBuf::from(root))
+        }
         None => None,
     };
     Ok(SourcePreferenceRequest {
@@ -644,4 +636,39 @@ pub fn run_export_cancel(request: &ExportRequest) -> Result<bool, HostError> {
         .token
         .store(true, std::sync::atomic::Ordering::Release);
     Ok(true)
+}
+
+/**
+ * Validate a renderer-supplied filesystem path argument.
+ *
+ * Rejects empty strings, embedded NUL bytes, and any `..` path segment so the
+ * host never treats traversal strings as ordinary Distill homes or Source roots.
+ * Raw path text is never echoed into the validation error message.
+ *
+ * Parameters:
+ * - `label`: Human-readable argument name used only in generic error text.
+ * - `raw`: Renderer-supplied path string.
+ */
+fn validate_path_argument(label: &str, raw: &str) -> Result<String, HostError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(HostError::validation(format!(
+            "{label} path must not be empty"
+        )));
+    }
+    if trimmed.contains('\0') {
+        return Err(HostError::validation(format!(
+            "{label} path must not contain NUL bytes"
+        )));
+    }
+    let path = Path::new(trimmed);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(HostError::validation(format!(
+            "{label} path must not contain parent traversal segments"
+        )));
+    }
+    Ok(trimmed.to_string())
 }

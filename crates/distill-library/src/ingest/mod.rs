@@ -11,6 +11,7 @@ use serde_json::json;
 
 use crate::adapter::SourceAdapter;
 use crate::error::{LibraryError, LibraryResult};
+use crate::privacy::reject_oversized_candidate_file;
 use crate::storage::{store_capture_bytes, DistillPaths};
 use crate::types::{IngestReport, SessionIdentity};
 
@@ -147,6 +148,7 @@ fn ingest_one_candidate(
     report: &mut IngestReport,
 ) -> LibraryResult<&'static str> {
     enforce_configured_root(&source.data_root, candidate)?;
+    reject_oversized_candidate_file(candidate, max_capture_bytes)?;
     let snapshot = adapter.snapshot(candidate)?;
     verify_snapshot_metadata(&snapshot)?;
     if find_duplicate(

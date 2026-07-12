@@ -339,7 +339,7 @@ fn parse_session_rows(stdout: &[u8]) -> Result<Vec<Map<String, Value>>, SourceSt
     if trimmed.is_empty() || trimmed == "null" {
         return Ok(Vec::new());
     }
-    let value: Value = serde_json::from_str(trimmed)
+    let value = crate::privacy::parse_json_document_bounded(trimmed)
         .map_err(|_| SourceStageError::Discover("invalid discovery output".into()))?;
     match value {
         Value::Null => Ok(Vec::new()),
@@ -375,7 +375,9 @@ fn parse_opencode_export(
     bytes: &[u8],
 ) -> Result<ParsedCapture, SourceStageError> {
     let json_bytes = extract_json_bytes(bytes)?;
-    let export: Value = serde_json::from_slice(json_bytes)
+    let export_text = std::str::from_utf8(json_bytes)
+        .map_err(|_| SourceStageError::Parse("malformed export payload".into()))?;
+    let export = crate::privacy::parse_json_document_bounded(export_text)
         .map_err(|_| SourceStageError::Parse("malformed export payload".into()))?;
     let session_info = export
         .get("info")

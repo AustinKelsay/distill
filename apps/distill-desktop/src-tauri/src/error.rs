@@ -1,6 +1,6 @@
 //! Typed host errors returned across the Tauri IPC boundary.
 
-use distill_library::LibraryError;
+use distill_library::{safe_caller_message, LibraryError};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -29,15 +29,15 @@ impl HostError {
     }
 
     /**
-     * Translate a Library error into a typed host error.
+     * Translate a Library error into a typed host error with redacted detail.
      *
      * Parameters:
-     * - `err`: Library failure from the Fixture journey.
+     * - `err`: Library failure from a host command.
      */
     pub fn from_library(err: LibraryError) -> Self {
         Self {
             code: err.code().to_string(),
-            message: err.to_string(),
+            message: safe_caller_message(&err),
         }
     }
 }

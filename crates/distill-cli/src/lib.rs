@@ -14,11 +14,12 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
-    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
-    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthReport, LegacyImportReport, Library, LibraryError, OperationsPage, OperationsRequest,
-    RepairOptions, RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
-    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
+    safe_caller_message, ActivityListPage, ActivityListRequest, CurationMutationResult,
+    ExportDataset, ExportPreview, ExportProgress, ExportProgressControl, ExportResult,
+    FixtureJourneyPhase, FixtureJourneyResult, HealthReport, LegacyImportReport, Library,
+    LibraryError, OperationsPage, OperationsRequest, RepairOptions, RepairReport,
+    SessionCurationRequest, SessionDetailRequest, SessionListRequest, SourcePreference,
+    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
 
@@ -438,7 +439,7 @@ impl CliFailure {
             format,
             body: CliErrorBody {
                 error: err.code().to_string(),
-                message: err.to_string(),
+                message: safe_caller_message(&err),
             },
         }
     }

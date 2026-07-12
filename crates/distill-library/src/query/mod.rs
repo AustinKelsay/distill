@@ -652,80 +652,11 @@ fn load_export_lifecycle_page(
  * Sanitize Activity payload JSON for caller-facing surfaces.
  *
  * Drops path-like keys, nested provider `payload` blobs that are non-objects of
- * scalars, SQL-looking strings, and absolute filesystem path string values.
+ * scalars, SQL-looking strings, secret-bearing keys/values, and absolute
+ * filesystem path string values.
  */
 fn redact_activity_payload(raw: &str) -> serde_json::Value {
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(value) => redact_json_value(value),
-        Err(_) => serde_json::json!({}),
-    }
-}
-
-fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (key, child) in map {
-                let lowered = key.to_ascii_lowercase();
-                if is_redacted_payload_key(&lowered) {
-                    continue;
-                }
-                out.insert(key, redact_json_value(child));
-            }
-            serde_json::Value::Object(out)
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(redact_json_value).collect())
-        }
-        serde_json::Value::String(text) => {
-            if looks_like_filesystem_path(&text) || looks_like_sql(&text) {
-                serde_json::Value::String("[redacted]".into())
-            } else {
-                serde_json::Value::String(text)
-            }
-        }
-        other => other,
-    }
-}
-
-fn is_redacted_payload_key(key: &str) -> bool {
-    matches!(
-        key,
-        "sql"
-            | "argv"
-            | "command"
-            | "stderr"
-            | "stdout"
-            | "provider_payload"
-            | "providerpayload"
-            | "raw_payload"
-            | "rawpayload"
-    ) || key.ends_with("path")
-}
-
-fn looks_like_filesystem_path(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    trimmed.starts_with('/')
-        || trimmed.starts_with("~/")
-        || (trimmed.len() >= 3
-            && trimmed.as_bytes()[0].is_ascii_alphabetic()
-            && trimmed.as_bytes()[1] == b':'
-            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/'))
-}
-
-fn looks_like_sql(text: &str) -> bool {
-    let lowered = text.trim().to_ascii_lowercase();
-    lowered.starts_with("select ")
-        || lowered.starts_with("insert ")
-        || lowered.starts_with("update ")
-        || lowered.starts_with("delete ")
-        || lowered.starts_with("pragma ")
-        || lowered.starts_with("create ")
-        || lowered.starts_with("alter ")
-        || lowered.starts_with("drop ")
+    crate::privacy::redact_payload_json(raw)
 }
 
 /**
@@ -733,34 +664,7 @@ fn looks_like_sql(text: &str) -> bool {
  * preserving stable diagnostic context such as an error class or reason.
  */
 fn redact_diagnostic(value: Option<String>) -> Option<String> {
-    value.map(|text| redact_diagnostic_text(&text))
-}
-
-fn redact_diagnostic_text(text: &str) -> String {
-    if looks_like_sql(text) {
-        return "[redacted]".into();
-    }
-
-    text.split_whitespace()
-        .map(|token| {
-            let trimmed = token.trim_matches(|character: char| {
-                matches!(
-                    character,
-                    '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
-                )
-            });
-            if looks_like_diagnostic_path(trimmed) {
-                "[redacted]"
-            } else {
-                token
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn looks_like_diagnostic_path(text: &str) -> bool {
-    looks_like_filesystem_path(text) || text.contains('/') || text.contains('\\')
+    value.map(|text| crate::privacy::redact_diagnostic_text(&text))
 }
 
 fn redact_sync_summary(mut summary: SyncRunSummary) -> SyncRunSummary {
@@ -768,7 +672,7 @@ fn redact_sync_summary(mut summary: SyncRunSummary) -> SyncRunSummary {
     summary.warning_details = summary
         .warning_details
         .iter()
-        .map(|detail| redact_diagnostic_text(detail))
+        .map(|detail| crate::privacy::redact_diagnostic_text(detail))
         .collect();
     for source in &mut summary.sources {
         source.error_message = redact_diagnostic(source.error_message.take());

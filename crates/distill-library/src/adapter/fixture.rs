@@ -111,7 +111,9 @@ impl SourceAdapter for FixtureAdapter {
         let manifest_path = source.data_root.join(FIXTURE_MANIFEST_NAME);
         let raw = fs::read_to_string(&manifest_path)
             .map_err(|err| SourceStageError::Discover(err.to_string()))?;
-        let manifest: FixtureManifest = serde_json::from_str(&raw)
+        let manifest_value = crate::privacy::parse_json_document_bounded(&raw)
+            .map_err(SourceStageError::Discover)?;
+        let manifest: FixtureManifest = serde_json::from_value(manifest_value)
             .map_err(|err| SourceStageError::Discover(err.to_string()))?;
         if manifest.version != 1 {
             return Err(SourceStageError::Discover(format!(
@@ -260,9 +262,8 @@ fn parse_fixture_jsonl(
         if trimmed.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(trimmed).map_err(|err| {
-            SourceStageError::Parse(format!("line {}: invalid json: {err}", line_no + 1))
-        })?;
+        let value: Value = crate::privacy::parse_json_line_bounded(trimmed, line_no + 1)
+            .map_err(SourceStageError::Parse)?;
         let record_type = value
             .get("record_type")
             .and_then(Value::as_str)

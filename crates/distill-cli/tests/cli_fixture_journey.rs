@@ -169,6 +169,11 @@ fn cli_invalid_fixture_manifest_exits_runtime() {
     assert_eq!(output.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json stderr");
     assert_eq!(value["error"], "source_adapter");
+    assert_eq!(value["message"], "source adapter failed");
+    assert!(!value["message"]
+        .as_str()
+        .expect("error message")
+        .contains("missing-fixture"));
 }
 
 #[test]

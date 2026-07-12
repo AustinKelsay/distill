@@ -240,9 +240,8 @@ fn parse_droid_jsonl(
         if trimmed.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(trimmed).map_err(|err| {
-            SourceStageError::Parse(format!("line {}: invalid json: {err}", line_no + 1))
-        })?;
+        let value: Value = crate::privacy::parse_json_line_bounded(trimmed, line_no + 1)
+            .map_err(SourceStageError::Parse)?;
 
         let record_type = value
             .get("type")
@@ -606,10 +605,17 @@ fn visit_files_impl(root: &Path, visited: &mut HashSet<PathBuf>) -> Result<Vec<P
     let entries = fs::read_dir(root).map_err(|_| "droid path is unreadable".to_string())?;
     for entry in entries {
         let entry = entry.map_err(|_| "droid path is unreadable".to_string())?;
+        let file_type = entry
+            .file_type()
+            .map_err(|_| "droid path is unreadable".to_string())?;
+        // Hostile corpus: never follow directory/file symlinks during discovery.
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             files.extend(visit_files_impl(&path, visited)?);
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             files.push(path);
         }
     }

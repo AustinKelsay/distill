@@ -1,5 +1,10 @@
 /**
  * Production Tauri bridge. Uses only the explicit invoke/event APIs.
+ *
+ * v1 privacy/capability boundary (issue #32): the renderer must never gain
+ * ambient filesystem, process, SQL, or shell access. Sensitive is an
+ * export-only policy label; Distill provides no application encryption,
+ * per-session delete, retention purge, or secure-forget in v1.
  */
 
 import { invoke } from "@tauri-apps/api/core";

@@ -191,4 +191,38 @@ describe("Tauri bridge", () => {
 
     expect(unlisten).toHaveBeenCalledOnce();
   });
+
+  it("uses only invoke/listen and never ambient filesystem/process/sql/shell APIs", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const bridgeSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "bridge.ts"),
+      "utf8",
+    );
+    expect(bridgeSource).toContain('from "@tauri-apps/api/core"');
+    expect(bridgeSource).toContain('from "@tauri-apps/api/event"');
+    for (const denied of [
+      "@tauri-apps/plugin-fs",
+      "@tauri-apps/plugin-shell",
+      "@tauri-apps/plugin-sql",
+      "@tauri-apps/plugin-process",
+      "@tauri-apps/plugin-dialog",
+      "node:child_process",
+      "dangerouslySetInnerHTML",
+    ]) {
+      expect(bridgeSource).not.toContain(denied);
+    }
+    expect(bridgeSource).toContain("no application encryption");
+    expect(bridgeSource).toContain("secure-forget");
+
+    tauri.invoke.mockResolvedValue({ items: [] });
+    const bridge = createTauriBridge();
+    await bridge.listActivity("/tmp/home", { limit: 10, cursor: null });
+    expect(tauri.invoke).toHaveBeenCalledWith("activity_list_command", {
+      home: "/tmp/home",
+      request: { limit: 10, cursor: null },
+    });
+    expect(tauri.listen).not.toHaveBeenCalled();
+  });
 });
