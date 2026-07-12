@@ -107,6 +107,15 @@ async function key(windowId, value) {
   await xdotool(["key", "--window", windowId, value]);
 }
 
+async function focusWindow(windowId) {
+  const focused = await xdotool(["windowfocus", "--sync", windowId], {
+    allowFailure: true,
+  });
+  if (focused.code !== 0) {
+    await xdotool(["windowactivate", "--sync", windowId], { allowFailure: true });
+  }
+}
+
 async function accessibleBounds(name, contains = false) {
   const script = path.join(appRoot, "scripts/linux-atspi-bounds.py");
   const args = [script, "--name", name, "--interactive", "--timeout", "20"];
@@ -116,7 +125,7 @@ async function accessibleBounds(name, contains = false) {
 
 async function clickAccessible(windowId, name, contains = false) {
   const bounds = await accessibleBounds(name, contains);
-  await xdotool(["windowactivate", "--sync", windowId]);
+  await focusWindow(windowId);
   await xdotool([
     "mousemove",
     "--sync",
@@ -148,7 +157,7 @@ async function waitForWindow(processHandle, label) {
     });
     const windowId = result.stdout.trim().split("\n").filter(Boolean).at(-1);
     if (windowId) {
-      await xdotool(["windowactivate", "--sync", windowId]);
+      await focusWindow(windowId);
       await xdotool(["windowsize", windowId, "880", "720"]);
       return windowId;
     }
