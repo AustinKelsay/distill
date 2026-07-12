@@ -34,7 +34,13 @@ cargo build -p distill-desktop
 # release host proof without packaging:
 cargo tauri build --no-bundle
 # or npm run desktop:build when configured
+npm --prefix apps/distill-desktop run test:a11y
+npm --prefix apps/distill-desktop run a11y:smoke
 ```
+
+The a11y smoke is a post-build renderer check. It does not claim signed packaged
+WebView or screen-reader coverage; those remain the #35/#36 packaging gates and the
+human checklist at `apps/distill-desktop/docs/a11y-human-checklist.md`.
 
 ## Legacy Electron baseline
 

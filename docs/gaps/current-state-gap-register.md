@@ -68,6 +68,17 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Target branch/ticket: `feature/distill-clean-rebuild`, #32.
 - Acceptance criteria: the shared hostile corpus and provider-bound suites pass; no false Captures or raw diagnostic payload leaks occur; Tauri capabilities remain events-only and bridge calls remain typed invoke/listen.
 
+### GAP-R007: Packaged Accessibility Runtime Evidence
+
+- Status: open until packaging tickets #35/#36; renderer contract resolved in #33.
+- Rule: keyboard, focus, semantic status, visual-state, and reduced-motion behavior must be proven at the thin React seam, while packaged WebView and assistive-technology claims require runtime evidence.
+- Current implementation: `App.a11y.test.tsx`, `App.states.test.tsx`, and `styles.a11y.test.ts` cover keyboard activation, focus return, semantic names/live regions, dialog Tab fallback, contrast tokens, reduced motion, 200% text-size DOM presence, and deterministic major-state markers. `npm run a11y:smoke` builds the renderer and runs these suites.
+- Remaining drift: the smoke does not launch a signed macOS/Linux Tauri bundle, and CI does not automate VoiceOver or Narrator. Human validation is documented in `apps/distill-desktop/docs/a11y-human-checklist.md`.
+- Impacted files/modules: `apps/distill-desktop/src/App.tsx`, `apps/distill-desktop/src/a11y/confirm-dialog.tsx`, `apps/distill-desktop/src/styles.css`, packaging smoke harnesses.
+- Severity: medium — the renderer seam is covered, but packaged focus behavior and screen-reader output remain release gates.
+- Target branch/tickets: `feature/distill-clean-rebuild`, #33, #35, and #36.
+- Acceptance criteria: macOS and Linux packaged smoke proves launch, keyboard traversal, dialog focus containment, cancellation focus return, and one search/detail/curation/export path; human checklist evidence records supported screen readers without converting manual observations into automated claims.
+
 ## Historical Electron Gaps
 
 ## GAP-001: Raw Capture Recoverability

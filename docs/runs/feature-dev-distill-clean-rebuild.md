@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#32 complete; #33 ready
+- Current status: #18–#33 complete; #34 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,9 +26,9 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#32 implemented and review packets recorded
+- Ticket sessions: #18–#33 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#32 complete
+- Review packets: #18–#33 complete
 - Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
@@ -60,7 +60,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #30 Activity/operations diagnostics | AFK | Complete | Grok xhigh standards + focused rereview | Nested payload redaction, operational diagnostic redaction, explicit cancellation, cursor evidence, and one minor CodeRabbit docs finding applied | Rust/CLI/host/renderer gates; Grok PASS |
 | #31 Electron migration | AFK | Complete | Grok xhigh implementation + two remediation rereviews | WAL snapshot, transactional file cleanup, atomic export writes, fidelity-loss reporting, and governed docs applied; CodeRabbit rate-limited | Library migration 8; CLI/host/renderer migration seams; Rust workspace/fault/desktop/Tauri gates |
 | #32 Hostile-input/capability audit | AFK | Complete | Grok xhigh implementation + independent rereview | Shared privacy policy, hostile corpus, CLI/Tauri redaction, capability deny boundary, governed privacy spec/matrix applied; CodeRabbit subject to rate limit | Library hostile 8; OpenCode/ops bound suites; host 4; bridge 5; workspace/desktop gates |
-| #33 Accessibility/visual states | AFK | Blocked by #19, #22–#25, #30 | — | — | No |
+| #33 Accessibility/visual states | AFK | Complete | Grok xhigh implementation + independent rereview; CodeRabbit minor findings fixed | Focus/keyboard coverage, semantic/live/busy/alerts, contrast/reduced-motion/200% evidence, deterministic snapshots, human SR checklist, honest packaged deferral applied | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release gates; CodeRabbit 2 minor findings fixed |
 | #34 Scale/performance | AFK | Blocked by #22–#25 | — | — | No |
 | #35 macOS packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
 | #36 Linux packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
@@ -90,7 +90,8 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #29 | `b426f23` | Grok 4.5 xhigh Droid adapter implementation + independent standards/spec rereview | `3f3205a`, `315db4e`, `1a09132` | PASS after native evidence, identity/discovery coverage, sidecar assertions, governed-doc, matrix, and ledger remediations; CodeRabbit rate-limited before analysis (23 minutes) | Library Droid 6 + adapter 7; Library all-features; workspace tests; fmt/clippy |
 | #30 | `d7cc576` | Grok 4.5 xhigh Activity/Operations implementation + independent standards/spec rereview | `c73d412`, `f0b069b` | PASS after production-shaped nested payload redaction, diagnostic privacy, explicit renderer cancellation, and invalid-cursor evidence; one minor CodeRabbit docs finding fixed | Library Activity/Operations 8; CLI fixture 11; host Activity/Operations 2; renderer 23; desktop typecheck/lint/format |
 | #31 | `2692cac` | Grok 4.5 xhigh legacy migration implementation + two independent remediation rereviews | `f420b37` | PASS after private WAL snapshot, import-owned cleanup, atomic export writes, fidelity-loss reporting, reuse/unsupported-source evidence, and governed docs; CodeRabbit rate-limited before analysis | Library Legacy Import 8; CLI/host/renderer migration seams; workspace/fault Rust; desktop/Tauri gates |
-| #32 | `f420b37` | Grok 4.5 xhigh hostile-input/capability implementation + independent rereview | pending | PASS after shared bounds/redaction, CLI safe errors, governed privacy spec, matrix/gap updates; CodeRabbit subject to prior service rate limit | Library hostile 8; OpenCode/ops bounds; host 4; bridge 5; workspace/desktop gates |
+| #32 | `f420b37` | Grok 4.5 xhigh hostile-input/capability implementation + independent rereview | `6a66947`, `bdeb5c6` | PASS after shared bounds/redaction, CLI safe errors, governed privacy spec, matrix/gap updates; CodeRabbit rate-limited before analysis | Library hostile 8; OpenCode/ops bounds; host 4; bridge 5; workspace/desktop gates |
+| #33 | `bdeb5c6` | Grok 4.5 xhigh implementation + independent rereview | `5e0e595` | PASS after keyboard/focus coverage, source-level interactive audit, dialog Tab loop, 200% evidence, human checklist, live-region and docs fixes; CodeRabbit returned two minor findings, both fixed | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release; Tauri CLI unavailable in environment |
 
 ## Open Questions
 
