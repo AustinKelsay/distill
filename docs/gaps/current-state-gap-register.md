@@ -79,6 +79,17 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Target branch/tickets: `feature/distill-clean-rebuild`, #33, #35, and #36.
 - Acceptance criteria: macOS and Linux packaged smoke proves launch, keyboard traversal, dialog focus containment, cancellation focus return, and one search/detail/curation/export path; human checklist evidence records supported screen readers without converting manual observations into automated claims.
 
+### GAP-R008: Scale And Latency Budget Evidence
+
+- Status: resolved for #34 on the recorded host; keep the full benchmark as a scheduled/manual regression gate for other hardware.
+- Rule: the rebuild must remain usable at 25,000 Sessions, 1,000,000 current-projection messages, and 10 GiB logical Distill-home content without exposing private histories or claiming UI performance from Library-only measurements.
+- Current drift: existing query, curation, Sync, and export contracts are correct at small fixtures, but no deterministic large-corpus generator, p95 report, 500 ms progress-gap evidence, or 1 s safe-checkpoint cancellation evidence existed before #34.
+- Resolution: `library_scale_budgets` seeds a fixed synthetic SQLite/FTS corpus and benchmark-owned sparse padding in a temporary home, measures public Library APIs with cold/warm separation, and reports actionable JSON. Migration `0006_sessions_list_page_index.sql` keeps current-session paging bounded at scale; full logical-size runs remain ignored/env-gated rather than a default PR cost.
+- Impacted files/modules: `crates/distill-library/tests/library_scale_budgets.rs`, Library query/curation/ops/export seams, `docs/specs/scale-and-latency.md`, and scheduled benchmark commands.
+- Severity: high for cutover confidence; the default smoke is bounded and cannot stand in for the full 25k/1M/10 GiB scheduled evidence.
+- Target branch/ticket: `feature/distill-clean-rebuild`, #34.
+- Acceptance evidence: deterministic targets, warm p95 budgets (150 ms page/search/detail; 100 ms curation), progress gaps ≤500 ms, cancellation acknowledgement ≤1 s at safe checkpoints, and reproducible hardware/cold/warm/actionable reports all pass without private or committed corpus data. Full run evidence is recorded in `docs/runs/issues/34-scale-latency.md`.
+
 ## Historical Electron Gaps
 
 ## GAP-001: Raw Capture Recoverability

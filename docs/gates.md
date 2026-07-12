@@ -36,11 +36,18 @@ cargo tauri build --no-bundle
 # or npm run desktop:build when configured
 npm --prefix apps/distill-desktop run test:a11y
 npm --prefix apps/distill-desktop run a11y:smoke
+cargo test -p distill-library --test library_scale_budgets
+# scheduled/manual full corpus (logical 10 GiB padding; never a default PR gate):
+DISTILL_SCALE_BENCH=1 cargo test -p distill-library --test library_scale_budgets -- --ignored --nocapture
 ```
 
 The a11y smoke is a post-build renderer check. It does not claim signed packaged
 WebView or screen-reader coverage; those remain the #35/#36 packaging gates and the
 human checklist at `apps/distill-desktop/docs/a11y-human-checklist.md`.
+
+Scale reports are Library-only JSON evidence. The default test is a bounded synthetic
+smoke; the 25k Session / 1M message / 10 GiB logical-home run is environment-gated and
+must record hardware, cold/warm samples, p50/p95, progress gaps, and cancel acknowledgement.
 
 ## Legacy Electron baseline
 

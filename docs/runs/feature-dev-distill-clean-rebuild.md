@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#33 complete; #34 ready
+- Current status: #18–#34 complete; #35 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,10 +26,10 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#33 implemented and review packets recorded
+- Ticket sessions: #18–#34 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#33 complete
-- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit
+- Review packets: #18–#34 complete
+- Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; #30 completed with one minor feature-ledger documentation finding that was fixed before commit; #34 attempt rate-limited with no findings
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
@@ -61,7 +61,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #31 Electron migration | AFK | Complete | Grok xhigh implementation + two remediation rereviews | WAL snapshot, transactional file cleanup, atomic export writes, fidelity-loss reporting, and governed docs applied; CodeRabbit rate-limited | Library migration 8; CLI/host/renderer migration seams; Rust workspace/fault/desktop/Tauri gates |
 | #32 Hostile-input/capability audit | AFK | Complete | Grok xhigh implementation + independent rereview | Shared privacy policy, hostile corpus, CLI/Tauri redaction, capability deny boundary, governed privacy spec/matrix applied; CodeRabbit subject to rate limit | Library hostile 8; OpenCode/ops bound suites; host 4; bridge 5; workspace/desktop gates |
 | #33 Accessibility/visual states | AFK | Complete | Grok xhigh implementation + independent rereview; CodeRabbit minor findings fixed | Focus/keyboard coverage, semantic/live/busy/alerts, contrast/reduced-motion/200% evidence, deterministic snapshots, human SR checklist, honest packaged deferral applied | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release gates; CodeRabbit 2 minor findings fixed |
-| #34 Scale/performance | AFK | Blocked by #22–#25 | — | — | No |
+| #34 Scale/performance | AFK | Complete | Grok xhigh performance review + final rereview PASS | Added bounded synthetic corpus, full target benchmark, session paging index, selective FTS probe, cadence/cancellation evidence, and governed docs | Full 25k/1M/10 GiB run; Rust scale suite; workspace gates; CodeRabbit |
 | #35 macOS packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
 | #36 Linux packaging | AFK | Blocked by #19, #22–#25 | — | — | No |
 | #37 Matrix/cutover | AFK | Blocked by #21, #26–#36 | — | — | No |
@@ -92,6 +92,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #31 | `2692cac` | Grok 4.5 xhigh legacy migration implementation + two independent remediation rereviews | `f420b37` | PASS after private WAL snapshot, import-owned cleanup, atomic export writes, fidelity-loss reporting, reuse/unsupported-source evidence, and governed docs; CodeRabbit rate-limited before analysis | Library Legacy Import 8; CLI/host/renderer migration seams; workspace/fault Rust; desktop/Tauri gates |
 | #32 | `f420b37` | Grok 4.5 xhigh hostile-input/capability implementation + independent rereview | `6a66947`, `bdeb5c6` | PASS after shared bounds/redaction, CLI safe errors, governed privacy spec, matrix/gap updates; CodeRabbit rate-limited before analysis | Library hostile 8; OpenCode/ops bounds; host 4; bridge 5; workspace/desktop gates |
 | #33 | `bdeb5c6` | Grok 4.5 xhigh implementation + independent rereview | `5e0e595` | PASS after keyboard/focus coverage, source-level interactive audit, dialog Tab loop, 200% evidence, human checklist, live-region and docs fixes; CodeRabbit returned two minor findings, both fixed | Renderer 39; a11y/state smoke 12; Rust workspace/fault/release; Tauri CLI unavailable in environment |
+| #34 | `1dc5519` | Grok 4.5 xhigh scale implementation + independent performance review | `90c8dbc` | PASS after full-corpus budget miss was fixed with migration 0006 and selective deterministic FTS probe; CodeRabbit rate-limited with no findings | Full 25k/1M/10 GiB JSON run; scale smoke; workspace clippy/tests/fault/release gates |
 
 ## Open Questions
 

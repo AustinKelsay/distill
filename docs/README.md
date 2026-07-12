@@ -17,10 +17,11 @@ Authoritative normative documents:
 7. `docs/specs/legacy-migration.md`
 8. `docs/specs/privacy-and-capabilities.md`
 9. `docs/specs/accessibility-and-visual-states.md`
-10. `docs/governance/spec-governance.md`
-11. `docs/testing/contract-test-matrix.md`
-12. `docs/gaps/current-state-gap-register.md`
-13. `docs/roadmap/spec-alignment-plan.md`
+10. `docs/specs/scale-and-latency.md`
+11. `docs/governance/spec-governance.md`
+12. `docs/testing/contract-test-matrix.md`
+13. `docs/gaps/current-state-gap-register.md`
+14. `docs/roadmap/spec-alignment-plan.md`
 
 Non-normative documents explain the current implementation, preserve research notes, or provide navigation:
 
@@ -46,10 +47,11 @@ Read the documents in this order:
 7. `docs/specs/legacy-migration.md`
 8. `docs/specs/privacy-and-capabilities.md`
 9. `docs/specs/accessibility-and-visual-states.md`
-10. `docs/gaps/current-state-gap-register.md`
-11. `docs/testing/contract-test-matrix.md`
-12. `docs/roadmap/spec-alignment-plan.md`
-13. `docs/governance/spec-governance.md`
+10. `docs/specs/scale-and-latency.md`
+11. `docs/gaps/current-state-gap-register.md`
+12. `docs/testing/contract-test-matrix.md`
+13. `docs/roadmap/spec-alignment-plan.md`
+14. `docs/governance/spec-governance.md`
 
 That order moves from system intent to entity semantics to pipeline behavior to current drift, tests, delivery order, and process.
 
@@ -64,6 +66,7 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Legacy Electron migration behavior: `docs/specs/legacy-migration.md`
 - Privacy, hostile-input, and desktop capability boundary: `docs/specs/privacy-and-capabilities.md`
 - Accessibility, keyboard, status, and visual-state contract: `docs/specs/accessibility-and-visual-states.md`
+- Scale, latency, progress, and cancellation budgets: `docs/specs/scale-and-latency.md`
 - Known implementation drift: `docs/gaps/current-state-gap-register.md`
 - Required contract tests: `docs/testing/contract-test-matrix.md`
 - Verification gates: `docs/gates.md`
