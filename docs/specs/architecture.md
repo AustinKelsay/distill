@@ -12,6 +12,11 @@ The current canonical product loop is:
 
 SQLite remains a retained architectural constraint for the local data layer.
 
+The v1 hostile-input and desktop capability boundary is normative in
+`docs/specs/privacy-and-capabilities.md`: `sensitive` is export-only, the
+renderer has no ambient storage/process authority, and v1 does not provide
+application encryption, per-session delete, retention purge, or secure-forget.
+
 ## Explicit Non-Goals
 
 These items are not part of the current normative architecture:

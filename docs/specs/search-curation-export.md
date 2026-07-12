@@ -158,6 +158,12 @@ Lane semantics:
 - `Favorites` contains sessions with label `favorite`
 - unlabeled sessions remain visible in `All` only in the current MVP branch
 
+The `sensitive` label is an export-only policy boundary. It does not encrypt
+content, delete a Session, purge retained history, or provide secure-forget;
+v1 intentionally provides none of those application-level controls. The
+hostile-input and capability rules that protect caller diagnostics and the
+renderer boundary are specified in `docs/specs/privacy-and-capabilities.md`.
+
 ## Export Contract
 
 Current canonical export behavior is approved dataset export from the current materialized projection.

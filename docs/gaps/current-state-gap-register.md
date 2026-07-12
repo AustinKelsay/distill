@@ -58,6 +58,16 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Severity: resolved for the import contract; final Electron retirement remains a cutover concern.
 - Acceptance criteria: WAL and rollback-journal homes remain byte-for-byte unchanged; repeated imports reuse markers; unsafe/missing content is skipped with stable redacted reasons; mapped sessions are searchable, curated, activity-visible, and export-metadata complete.
 
+### GAP-R006: Hostile Inputs And Desktop Capabilities
+
+- Status: resolved for the v1 Library, CLI, Tauri host, and renderer bridge boundary; final packaged cutover remains open in GAP-R001/GAP-R003.
+- Rule: every SourceAdapter and thin caller must bound hostile input, preserve typed failure semantics, redact caller/Activity/Operations diagnostics, and deny ambient renderer authority.
+- Resolution: issue #32 adds the shared privacy policy, pre-snapshot Capture-size gate, bounded JSON document/line/depth parsing, symlink-safe discovery, secret/path/SQL/payload redaction, safe CLI/Tauri messages, typed Tauri path/enumeration validation, events-only capabilities, and hostile-input/bridge contracts. The v1 privacy boundary is explicit: `sensitive` is export-only; no application encryption, per-session delete, retention purge, or secure-forget.
+- Impacted files/modules: `crates/distill-library/src/privacy.rs`; SourceAdapters/ingest/query/migration; `crates/distill-cli`; Tauri host/error/capabilities; React bridge; `docs/specs/privacy-and-capabilities.md`.
+- Severity: resolved for the hostile-input/capability slice; packaged runtime verification remains a cutover concern.
+- Target branch/ticket: `feature/distill-clean-rebuild`, #32.
+- Acceptance criteria: the shared hostile corpus and provider-bound suites pass; no false Captures or raw diagnostic payload leaks occur; Tauri capabilities remain events-only and bridge calls remain typed invoke/listen.
+
 ## Historical Electron Gaps
 
 ## GAP-001: Raw Capture Recoverability
