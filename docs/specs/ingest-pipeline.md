@@ -232,7 +232,7 @@ The ingest pipeline does not:
 
 The Rust Library ingest path preserves the Electron-era invariants above and adds explicit Attempt bookkeeping:
 
-1. SourceAdapter `detect` / `discover` / `snapshot` / `parse` run through the production seam (Fixture and Codex are implemented; remaining providers follow their dedicated tickets).
+1. SourceAdapter `detect` / `discover` / `snapshot` / `parse` run through the production seam (Fixture, Codex, and Claude Code are implemented; remaining providers follow their dedicated tickets).
 2. File-backed candidates are rejected with typed `PathOutsideConfiguredRoot` when their canonical path escapes the configured Source root.
 3. Capture size is bounded; exceeding the configured limit fails with typed `CaptureTooLarge` before acceptance.
 4. Capture acceptance requires Distill-owned recoverable content (inline or CAS blob) and checksum verification; the Capture row and its `capture_recorded` Activity Event commit together.

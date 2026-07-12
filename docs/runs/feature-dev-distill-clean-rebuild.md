@@ -9,7 +9,7 @@
 - Feature branch: `feature/distill-clean-rebuild`
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
-- Current status: #18–#26 complete; #27 ready
+- Current status: #18–#27 complete; #28 ready
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 
@@ -26,9 +26,9 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Prototype source branch, if any: None
 - Spec issue: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Tickets: [#18–#37](https://github.com/AustinKelsay/distill/issues/18)
-- Ticket sessions: #18–#26 implemented and review packets recorded
+- Ticket sessions: #18–#27 implemented and review packets recorded
 - Agent briefs: Pending
-- Review packets: #18–#26 complete
+- Review packets: #18–#27 complete
 - Local CodeRabbit report: #23 and #24 pre-commit attempts/findings recorded; post-fix attempts were rate-limited by service
 - PR URL: Pending
 
@@ -54,8 +54,8 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #24 Transactional Curation | AFK | Complete | Grok xhigh standards + spec rereview | Low evidence findings applied; CodeRabbit attempt rate-limited | Library/CLI/host/renderer/Rust/desktop/Tauri gates pass |
 | #25 Recoverable export | AFK | Complete | Grok xhigh standards + spec rereview; CodeRabbit local pass | Recovery, cancellation, omission-policy, and docs findings applied; unrelated baseline findings deferred | Library 8; CLI 10; host 11; renderer 19; Rust/desktop/Tauri release gates |
 | #26 Codex Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Docs, executable detection, metadata-id dedupe, noise filtering, and deterministic discovery findings applied | Library/adapter, Sync, replay, fmt/clippy gates |
-| #27 Claude Code Source | AFK | Ready | — | — | No |
-| #28 OpenCode Source | AFK | Blocked by #18, #22 | — | — | No |
+| #27 Claude Code Source | AFK | Complete | Grok xhigh implementation + standards/spec rereview | Rust adapter, generic Sync, docs, matrix, executable detection, and unreadable-root findings applied | Library/adapter, Sync/replay, fmt/clippy gates |
+| #28 OpenCode Source | AFK | Ready | — | — | No |
 | #29 Droid Source | AFK | Blocked by #18, #22 | — | — | No |
 | #30 Activity/operations diagnostics | AFK | Blocked by #22, #25 | — | — | No |
 | #31 Electron migration | AFK | Blocked by #20, #21, #23, #24, #25 | — | — | No |
@@ -85,6 +85,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 | #24 | `2921523` | Grok 4.5 xhigh implementation + independent rereview | `5f6fd09` | PASS; low evidence findings applied; CodeRabbit attempt rate-limited | Library curation 9; CLI/host 9 each; renderer/Vitest 16; fmt/clippy/workspace; frontend/Tauri release |
 | #25 | `5359dd6` | Grok 4.5 xhigh Library + caller implementation + independent rereview | `6e074f5` | PASS after cancellation race, omission-policy, data-model, gap-register, and post-rename error fixes; CodeRabbit local pass recorded | Library export 8 with `test-faults`; CLI 10; host 11; renderer 19; fmt/clippy/workspace; frontend/Tauri release |
 | #26 | `33f6f0a` | Grok 4.5 xhigh Codex adapter implementation + independent standards/spec rereview; CodeRabbit findings applied | `bb6ffa7` | PASS after executable detection, metadata-id dedupe, noise filtering, deterministic traversal, docs, and bounded-discovery fixes; CodeRabbit service timed out after actionable findings were applied | Library Codex 3 + adapter 10; workspace/CLI/host/Sync/Fixture suites; fmt/clippy |
+| #27 | `b9f2913` | Grok 4.5 xhigh Claude Code adapter implementation + independent standards/spec rereview | `6c44bc4` | PASS after native evidence, provider coverage, unreadable-root Sync contract, and ingest-pipeline wording fix; CodeRabbit rate-limited before analysis | Library Claude 4 + adapter 9; Codex/Fixture/Sync suites; workspace/fmt/clippy |
 
 ## Open Questions
 
