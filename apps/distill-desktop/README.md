@@ -68,6 +68,7 @@ launch the installed `/usr/bin/distill-desktop` under Xvfb/dbus with `xdotool`.
 Build/runtime dependencies and the supported baseline are documented in
 `apps/distill-desktop/docs/linux-runtime-deps.md`. Once #36 passes in Ubuntu CI, Linux package smoke will
 be the runtime evidence for install, Fixture sync, search, detail, train curation,
-export, restart, and chosen-home/Fixture containment; AT-SPI locates controls but does
-not claim screen-reader conformance, and the slice does not claim migration,
+export, restart, chosen-home/Fixture containment, and the repair-dialog focus/
+cancellation contract; AT-SPI focus state does not claim screen-reader conformance, and
+the slice does not claim migration,
 crash-recovery, privacy, scale, or export-atomicity behavior.

@@ -6,6 +6,7 @@
  * The CI wrapper installs the .deb before invoking this script. The script resolves
  * controls through AT-SPI and drives the real packaged window with xdotool, then verifies the same
  * chosen-home, export, restart, and Fixture-containment contracts as macOS.
+ * It also probes repair-dialog focus containment via AT-SPI (not screen-reader conformance).
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -123,6 +124,51 @@ async function accessibleBounds(name, contains = false) {
   return JSON.parse((await command("python3", args)).stdout);
 }
 
+/**
+ * Run the AT-SPI focus helper and parse its JSON stdout.
+ * @param {string[]} args - helper flags after the script path
+ * @param {string} failureLabel - typed failure prefix when the helper exits non-zero
+ */
+async function atspiFocus(args, failureLabel) {
+  const script = path.join(appRoot, "scripts/linux-atspi-focus.py");
+  const result = await command("python3", [script, ...args], { allowFailure: true });
+  if (result.code !== 0) {
+    const detail = String(result.stderr || result.stdout || "").trim();
+    fail(`${failureLabel}: ${detail || `exit ${result.code}`}`);
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    fail(`${failureLabel}: helper returned non-JSON stdout`);
+  }
+}
+
+/**
+ * Assert a named accessible is focused (polling inside the helper).
+ * @param {string} name - exact accessible name
+ */
+async function assertAccessibleFocused(name) {
+  return atspiFocus(
+    ["--assert-focused", "--name", name, "--timeout", "20"],
+    `dialog-focus: expected focused accessible "${name}"`,
+  );
+}
+
+/**
+ * Assert a named dialog has at least one focused descendant.
+ * @param {string} name - dialog accessible name
+ */
+async function assertDialogHasFocusedDescendant(name) {
+  const report = await atspiFocus(
+    ["--dialog-focus", "--name", name, "--timeout", "20"],
+    `dialog-focus: expected focused descendant inside "${name}"`,
+  );
+  if (!Array.isArray(report.focused) || report.focused.length === 0) {
+    fail(`dialog-focus: dialog "${name}" reported no focused descendants`);
+  }
+  return report;
+}
+
 async function clickAccessible(windowId, name, contains = false) {
   const bounds = await accessibleBounds(name, contains);
   await focusWindow(windowId);
@@ -211,6 +257,15 @@ async function runUiJourney(binary, home, fixtureRoot) {
     const windowId = await waitForWindow(processHandle, "initial");
     await typeIntoAccessible(windowId, "Distill home", home);
     await typeIntoAccessible(windowId, "Fixture root", fixtureRoot);
+
+    // Packaged repair-dialog focus containment (AT-SPI FOCUSED state only; not SR).
+    await clickAccessible(windowId, "Repair library");
+    await assertDialogHasFocusedDescendant("Confirm destructive repair");
+    await key(windowId, "Tab");
+    await assertDialogHasFocusedDescendant("Confirm destructive repair");
+    await key(windowId, "Escape");
+    await assertAccessibleFocused("Repair library");
+
     await clickAccessible(windowId, "Run Fixture journey");
     await waitForFile(path.join(home, "distill.db"));
 

@@ -1,9 +1,11 @@
 # Distill Desktop Accessibility Human Validation
 
-This checklist is intentionally not a CI claim. The automated renderer suite proves
-keyboard event wiring, semantic names, focus return, contrast tokens, reduced motion,
-and a 200% text-size DOM seam. A human must still verify assistive-technology behavior
-in the packaged desktop runtime when packaging work lands.
+This checklist is intentionally not a screen-reader CI claim. The automated renderer
+suite proves keyboard event wiring, semantic names, focus return, contrast tokens,
+reduced motion, and a 200% text-size DOM seam. The installed Ubuntu package smoke also
+proves AT-SPI focus containment and return for the repair dialog, without asserting
+screen-reader output. A human must still verify assistive-technology behavior in the
+packaged desktop runtime.
 
 ## VoiceOver on macOS
 
@@ -28,5 +30,6 @@ pass claim without a supported packaged test harness.
 ## Evidence
 
 Record OS version, screen reader version, app build, packaging mode, and any failures.
-This checklist remains a human gate until the macOS and Linux packaging tickets provide
-signed/runtime smoke coverage.
+The VoiceOver/Narrator steps and packaged macOS dialog-focus behavior remain human
+release gates. Linux AT-SPI focus assertions are recorded by the packaged smoke, but do
+not replace screen-reader validation or signed/notarized release evidence.
