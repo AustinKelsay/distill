@@ -61,8 +61,61 @@ const CURATABLE_LABELS = [
   "favorite",
 ] as const;
 
+/** Closed Source kinds the thin caller can select; Library owns provider policy. */
+const SOURCE_KIND_OPTIONS = [
+  "fixture",
+  "codex",
+  "claude_code",
+  "opencode",
+  "droid",
+] as const;
+
+/** Editable Source preference draft held only in the renderer. */
+type SourcePreferenceDraft = {
+  kind: (typeof SOURCE_KIND_OPTIONS)[number];
+  root: string;
+  enabled: boolean;
+};
+
 /**
- * Render the Distill first-run Fixture caller plus Source/Sync surfaces.
+ * Build the initial Source preference drafts.
+ * Fixture starts enabled; its root is filled from the Fixture journey field.
+ */
+function createInitialSourceDrafts(fixtureRoot = ""): SourcePreferenceDraft[] {
+  return SOURCE_KIND_OPTIONS.map((kind) => ({
+    kind,
+    root: kind === "fixture" ? fixtureRoot : "",
+    enabled: kind === "fixture",
+  }));
+}
+
+/**
+ * Update known draft enabled/root values from a listSources response.
+ * @param drafts - current editor state
+ * @param listed - preferences returned from the host
+ */
+function synchronizeSourceDrafts(
+  drafts: SourcePreferenceDraft[],
+  listed: SourcePreference[],
+  dirtyKinds: ReadonlySet<string> = new Set(),
+): SourcePreferenceDraft[] {
+  return drafts.map((draft) => {
+    const match = listed.find((source) => source.kind === draft.kind);
+    if (!match || dirtyKinds.has(draft.kind)) return draft;
+    return {
+      ...draft,
+      // Preserve the retained Fixture default while restoring previously
+      // enabled provider preferences from an existing home.
+      enabled: draft.enabled || match.enabled,
+      // A host may omit a configured root while a user is still editing it;
+      // retain that draft rather than destroying unsaved renderer state.
+      root: match.configured_root ?? (draft.root.trim() ? draft.root : ""),
+    };
+  });
+}
+
+/**
+ * Render the Distill multi-Source caller plus the retained Fixture journey.
  * @param props - injected Distill bridge (real Tauri or typed fake)
  */
 export function App({ bridge }: AppProps) {
@@ -80,6 +133,12 @@ export function App({ bridge }: AppProps) {
   const [result, setResult] = useState<FixtureJourneyResult | null>(null);
   const [syncResult, setSyncResult] = useState<SyncRunResult | null>(null);
   const [sources, setSources] = useState<SourcePreference[]>([]);
+  const [sourceDrafts, setSourceDrafts] = useState<SourcePreferenceDraft[]>(() =>
+    createInitialSourceDrafts(),
+  );
+  const [dirtySourceKinds, setDirtySourceKinds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
   const [repairDialogOpen, setRepairDialogOpen] = useState(false);
@@ -136,6 +195,34 @@ export function App({ bridge }: AppProps) {
     };
   }, [bridge]);
 
+  useEffect(() => {
+    setSourceDrafts((previous) =>
+      previous.map((draft) =>
+        draft.kind === "fixture" ? { ...draft, root: fixtureRoot } : draft,
+      ),
+    );
+  }, [fixtureRoot]);
+
+  /**
+   * Update one Source preference draft field.
+   * @param kind - Source kind to edit
+   * @param patch - partial draft fields
+   */
+  function updateSourceDraft(
+    kind: SourcePreferenceDraft["kind"],
+    patch: Partial<Pick<SourcePreferenceDraft, "root" | "enabled">>,
+  ) {
+    setDirtySourceKinds((previous) => {
+      const next = new Set(previous);
+      next.add(kind);
+      return next;
+    });
+    setSourceDrafts((previous) =>
+      previous.map((draft) => (draft.kind === kind ? { ...draft, ...patch } : draft)),
+    );
+    if (kind === "fixture" && patch.root !== undefined) setFixtureRoot(patch.root);
+  }
+
   /**
    * Submit the first-run form through the typed bridge only.
    * @param event - form submit event
@@ -160,7 +247,7 @@ export function App({ bridge }: AppProps) {
   }
 
   /**
-   * Enable Fixture Source with the chosen root and start a Sync Run.
+   * Persist selected Source preference drafts, then start Sync for enabled kinds.
    */
   async function onStartSync() {
     setStatus("running");
@@ -169,8 +256,36 @@ export function App({ bridge }: AppProps) {
     setSyncProgress(null);
     setActiveSyncRunId(null);
     try {
-      await bridge.setSourcePreference(home, "fixture", true, fixtureRoot || null);
-      const next = await bridge.startSync(home, ["fixture"]);
+      // Explicit Sync is the point at which an existing home is hydrated;
+      // untouched roots/enabled providers are retained without ambient fetches.
+      const listedBefore = await bridge.listSources(home);
+      const draftsToPersist = synchronizeSourceDrafts(
+        sourceDrafts,
+        listedBefore,
+        dirtySourceKinds,
+      );
+      setSourceDrafts(draftsToPersist);
+      const selected = draftsToPersist.filter((draft) => draft.enabled);
+      if (selected.length === 0) {
+        setError({
+          code: "validation",
+          message: "Enable at least one Source before starting a Sync Run",
+        });
+        setStatus("error");
+        return;
+      }
+      // Persist every draft so disabling a previously enabled Source is a
+      // durable preference change, not just a filter for this one run.
+      for (const draft of draftsToPersist) {
+        await bridge.setSourcePreference(
+          home,
+          draft.kind,
+          draft.enabled,
+          draft.root.trim() || null,
+        );
+      }
+      const selectedKinds = selected.map((draft) => draft.kind);
+      const next = await bridge.startSync(home, selectedKinds);
       setSyncResult(next);
       setActiveSyncRunId(null);
       if (next.run.status === "warning") {
@@ -186,6 +301,9 @@ export function App({ bridge }: AppProps) {
       }
       const listed = await bridge.listSources(home);
       setSources(listed);
+      setSourceDrafts((previous) =>
+        synchronizeSourceDrafts(previous, listed, dirtySourceKinds),
+      );
     } catch (caught) {
       setError(normalizeError(caught));
       setStatus("error");
@@ -713,10 +831,11 @@ export function App({ bridge }: AppProps) {
     <main className="app">
       <header className="hero">
         <p className="brand">Distill</p>
-        <h1>First-run Fixture sync</h1>
+        <h1>Native multi-Source sync</h1>
         <p className="lede">
-          Provide a home directory and Fixture root. The sandboxed UI asks the host to run
-          the Library journey; it has no filesystem or Node authority.
+          Provide a home directory and configure Source roots. The retained Fixture
+          journey remains available, while the sandboxed UI asks the host to run the
+          Library path; it has no filesystem or Node authority.
         </p>
       </header>
 
@@ -745,6 +864,41 @@ export function App({ bridge }: AppProps) {
       </form>
 
       <section className="form" aria-label="Source settings and Sync Run">
+        <fieldset data-testid="source-preference-drafts">
+          <legend>Source preferences</legend>
+          {sourceDrafts.map((draft) => {
+            const enabledId = `source-enabled-${draft.kind}`;
+            const rootId = `source-root-${draft.kind}`;
+            return (
+              <div key={draft.kind} data-testid={`source-draft-${draft.kind}`}>
+                <label htmlFor={enabledId}>
+                  <input
+                    id={enabledId}
+                    type="checkbox"
+                    checked={draft.enabled}
+                    data-testid={`source-enabled-${draft.kind}`}
+                    onChange={(event) =>
+                      updateSourceDraft(draft.kind, { enabled: event.target.checked })
+                    }
+                  />
+                  Enable {draft.kind}
+                </label>
+                <label htmlFor={rootId}>{draft.kind} source root</label>
+                <input
+                  id={rootId}
+                  name={`${draft.kind}Root`}
+                  value={draft.root}
+                  data-testid={`source-root-${draft.kind}`}
+                  onChange={(event) =>
+                    updateSourceDraft(draft.kind, { root: event.target.value })
+                  }
+                  placeholder={`/path/to/${draft.kind}`}
+                  disabled={!draft.enabled}
+                />
+              </div>
+            );
+          })}
+        </fieldset>
         <button
           ref={startSyncRef}
           type="button"

@@ -15,10 +15,10 @@ below.
 
 | #37 requirement                                                                                                                                            | Evidence                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Every scenario has the required evidence fields                                                                                                            | `docs/testing/contract-scenario-evidence.md` contains 130 stable IDs, each with spec clause, family/seam, fixture, executable symbol, expected-result reference, durable/Activity effect, platforms, status, and last evidence. The concise normative rows remain in `docs/testing/contract-test-matrix.md`.                                                    |
+| Every scenario has the required evidence fields                                                                                                            | `docs/testing/contract-scenario-evidence.md` contains all stable IDs, each with spec clause, family/seam, fixture, executable symbol, expected-result reference, durable/Activity effect, platforms, status, and last evidence. The three #44 desktop multi-Source rows extend the registry at the #43 fixed point; the concise normative rows remain in `docs/testing/contract-test-matrix.md`. |
 | Attempts, Droid, export lifecycle/crash, overlap/cancellation, migration, checksummed migrations, privacy, accessibility, scale, and packaging are covered | Matrix rows include `AR-*`, `LDR-*`, `EP-*`, `FIR-*`, `OSR-003/004/013/015`, `LMI-*`, `LFT-*`, `LPH-*`, `A11Y-*`, `SCALE-001..004`, `PKG-*`, and `LPKG-*`. Suite index includes Activity/Operations read models and Library export publication.                                                                                                                 |
 | Documented gates pass                                                                                                                                      | The gate results below are from the current branch after a clean Node 26 install. The one Node 22 legacy inspector run is recorded as an informational known baseline, not silently counted as a pass.                                                                                                                                                          |
-| Honest cutover decision                                                                                                                                    | Native CLI/Tauri/React and packaged macOS/Linux Fixture journeys complete sync → search/detail → curation → JSONL export → restart without Electron. Human assistive-technology speech, signed-release, and Windows limitations remain explicit. Rust advisory scanning is governed by the pinned #40 CI workflow with an explicit non-clean warning inventory. |
+| Honest cutover decision                                                                                                                                    | Native CLI multi-Source plus Tauri/React Fixture and hermetic multi-Source host/bridge journeys complete sync → search/detail → curation → JSONL export → restart without Electron. Packaged macOS/Linux smokes remain Fixture-only; human assistive-technology speech, signed-release, and Windows limitations remain explicit. Rust advisory scanning is governed by the pinned #40 CI workflow with an explicit non-clean warning inventory. |
 
 ## Gate results
 
@@ -48,9 +48,12 @@ commands on Darwin; the Ubuntu workflow is the authoritative Linux package gate.
 
 - The thin CLI and Tauri host call the Rust Library for source detection, Sync Runs,
   paging/search/detail, transactional Curation, export preview/publication, Activity,
-  Operations, health/repair, cancellation, and legacy-home migration.
-- The React renderer is bridge-only and has deterministic first-run, loading, empty,
-  populated, warning, error, cancelled, migration, and export states.
+  Operations, health/repair, cancellation, and legacy-home migration. Issue #44 adds
+  hermetic Codex/Claude/OpenCode/Droid host journeys and root-removal/mixed-warning
+  isolation; packaged provider roots are not claimed.
+- The React renderer is bridge-only and has deterministic first-run, multi-Source
+  preference, loading, empty, populated, warning, error, cancelled, migration, and
+  export states.
 - The macOS packaged smoke and the green Ubuntu installed-host smoke each complete a
   real Fixture source-to-export journey and verify restart persistence and source-root
   immutability.
