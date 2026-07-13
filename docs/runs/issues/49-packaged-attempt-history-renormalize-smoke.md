@@ -7,9 +7,10 @@
 - Fixed point before session: post-#48 on `feature/distill-clean-rebuild`
 - Worker session: Cursor Grok 4.5 High bounded audit; Codex integration
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
-- Status: Linux harness and contract documentation in progress; exact-head
-  Ubuntu package evidence is required before closeout. Darwin `PKG-006` may
-  remain manual-required when System Events cannot expose the packaged window.
+- Status: complete for the Linux packaged contract; exact-head `97c309b` Ubuntu
+  run `29245798595` passed package/build/install/smoke and the retained journey.
+  Darwin `PKG-006` remains manual-required when System Events cannot expose the
+  packaged window.
 - Review packet: `docs/runs/reviews/49-packaged-attempt-history-renormalize-smoke.md`
 
 ## Intended Contract
@@ -80,6 +81,20 @@ the window; this checklist does not claim VoiceOver speech.
 - `apps/distill-desktop/scripts/linux-package-smoke.mjs::runUiJourney`
 - `linux-package-smoke.mjs` evidence field `attempt_history_renormalize`
 - Matrix/evidence IDs: `PKG-006`, `LPKG-006`
+
+## Final exact-head evidence
+
+- Head: `97c309b630d85e60bf226f157a642797844e4764` (`97c309b`)
+- Ubuntu package/install/smoke: [run 29245798595](https://github.com/AustinKelsay/distill/actions/runs/29245798595)
+- Result: package build, install, AT-SPI journey, Rust gates, desktop gates,
+  and Rust advisory workflow passed.
+- `LPKG-006`: Activity-discovered Fixture `Capture 1`; initial `Attempt 1`
+  (`fixture/1.0.0`, `succeeded`); same-Capture renormalize report/list with
+  retry `Attempt 6` (`fixture/1.0.0`, `succeeded`); retained curation, JSONL
+  export, restart, artifact, and Fixture-root containment checks passed.
+- Darwin `PKG-006` remains manual-required; this evidence does not claim
+  screen-reader speech, signing/notarization, Windows packaging, or
+  host-installed provider coverage.
 
 ## Non-goals / residuals
 

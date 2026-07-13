@@ -9,8 +9,8 @@
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: independent Grok standards/spec review, followed by Codex
   remediation and exact-head CI
-- Review status: remediation in progress; final status is pending until the
-  packaged Ubuntu journey and advisory/rebuild checks complete.
+- Review status: PASS — remediation complete, Grok standards/spec rereview
+  passed, and exact-head packaged Ubuntu/rebuild/advisory evidence is green.
 
 ## Scope reviewed
 
@@ -61,7 +61,17 @@ semantics.
   findings. Grok's rereview returned `STANDARDS_STATUS: pass` and
   `SPEC_STATUS: pass`.
 - Exact-head Ubuntu package/install/smoke and Rust advisory/rebuild checks are
-  pending and required to promote `LPKG-006`.
+  green on `97c309b` in [run 29245798595](https://github.com/AustinKelsay/distill/actions/runs/29245798595), promoting `LPKG-006`.
+
+## Final review evidence
+
+- Head: `97c309b630d85e60bf226f157a642797844e4764`
+- Ubuntu package/install/smoke, Rust gates, desktop gates, and advisory:
+  [run 29245798595](https://github.com/AustinKelsay/distill/actions/runs/29245798595) — green.
+- Independent Grok rereview: `STANDARDS_STATUS: pass`,
+  `SPEC_STATUS: pass`, no blockers.
+- CodeRabbit: prior script-only review completed with 0 findings; later
+  bounded attempts were rate-limited and recorded as fallback evidence.
 
 ## Explicit residuals
 
