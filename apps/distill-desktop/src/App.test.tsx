@@ -450,7 +450,7 @@ function createFakeBridge(options?: {
               event_type: "capture_recorded",
               occurred_at: "2026-01-01T00:00:00Z",
               source_kind: "fixture",
-              session_id: 1,
+              session_id: null,
               capture_id: 1,
               attempt_id: null,
               payload_json: {},

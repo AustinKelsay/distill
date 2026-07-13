@@ -1519,7 +1519,11 @@ export function App({ bridge }: AppProps) {
                   ? "Loading Attempt history…"
                   : "Load Attempt history"}
               </button>
-              <p data-testid="attempt-history-status" aria-live="polite">
+              <p
+                data-testid="attempt-history-status"
+                aria-label={`Attempt history status: ${attemptStatus}`}
+                aria-live="polite"
+              >
                 Status: {attemptStatus}
                 {attemptCaptureId != null ? ` · Capture ${attemptCaptureId}` : ""}
               </p>

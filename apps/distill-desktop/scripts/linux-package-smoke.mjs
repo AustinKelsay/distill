@@ -189,6 +189,14 @@ async function clickAccessible(windowId, name, contains = false) {
   await xdotool(["click", "1"]);
 }
 
+async function activateAccessible(windowId, name, contains = false) {
+  await focusWindow(windowId);
+  const script = path.join(appRoot, "scripts/linux-atspi-action.py");
+  const args = [script, "--name", name, "--timeout", "20"];
+  if (contains) args.push("--contains");
+  await command("python3", args);
+}
+
 async function typeIntoAccessible(windowId, name, value, delay = 1) {
   await clickAccessible(windowId, name);
   await key(windowId, "ctrl+a");
@@ -368,13 +376,13 @@ async function runUiJourney(binary, home, roots) {
     // Attempt history and same-Capture renormalize stay bridge-only: the UI discovers
     // the Capture through Activity, then exposes immutable Attempt summaries and the
     // Distill-owned retry report without parser-version or provider-root controls.
-    await clickAccessible(windowId, "Load Attempt history");
-    await waitForAccessibleText("Status: ready", true);
+    await activateAccessible(windowId, "Load Attempt history");
+    await waitForAccessibleText("Attempt history status: ready", true);
     await waitForAccessibleText("Capture 1", true);
     await waitForAccessibleText("#1", true);
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
-    await clickAccessible(windowId, "Renormalize Capture");
+    await activateAccessible(windowId, "Renormalize Capture");
     await waitForAccessibleText("Renormalize: ready", true);
     await waitForAccessibleText("Capture 1", true);
     await waitForAccessibleText("attempt 2", true);
