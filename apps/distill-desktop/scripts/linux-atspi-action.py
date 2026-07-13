@@ -43,6 +43,7 @@ def activate(expected, contains, deadline):
                 if component is not None:
                     try:
                         component.scroll_to(Atspi.ScrollType.ANYWHERE)
+                        component.grab_focus()
                     except Exception:
                         pass
                 action = node.get_action_iface()
