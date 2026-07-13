@@ -408,6 +408,7 @@ export function App({ bridge }: AppProps) {
    * Explicitly import a legacy Electron home into the native Distill home.
    */
   async function onImportLegacy(sourceHome = legacySourceHome) {
+    if (!home.trim() || !sourceHome.trim() || migrationStatus === "loading") return;
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
     setMigrationError(null);
@@ -1190,9 +1191,7 @@ export function App({ bridge }: AppProps) {
             legacySourceHome.trim() ? "Import legacy home (ready)" : "Import legacy home"
           }
           onClick={() => void onImportLegacy()}
-          disabled={
-            !home.trim() || !legacySourceHome.trim() || migrationStatus === "loading"
-          }
+          disabled={migrationStatus === "loading"}
         >
           {migrationStatus === "loading" ? "Importing…" : "Import legacy home"}
         </button>
