@@ -63,8 +63,8 @@ explicit rather than implied by the hermetic suite.
 
 ## Final-head CI
 
-- Linux package/install/smoke: [run 29220735705](https://github.com/AustinKelsay/distill/actions/runs/29220735705) — passed on final docs head `a8a37b7`.
-- Rust advisory scan: [run 29220735664](https://github.com/AustinKelsay/distill/actions/runs/29220735664) — passed on final docs head `a8a37b7`.
+- Linux package/install/smoke: [run 29221031751](https://github.com/AustinKelsay/distill/actions/runs/29221031751) — passed on final docs head `fa8bf4c`.
+- Rust advisory scan: [run 29221031752](https://github.com/AustinKelsay/distill/actions/runs/29221031752) — passed on final docs head `fa8bf4c`.
 - PR #38 remains the non-draft staging handoff.
 
 ## Non-goals / residuals
