@@ -240,6 +240,10 @@ async function typeIntoAccessible(windowId, name, value, delay = 1) {
  */
 async function typeIntoFocusedAccessible(windowId, name, value, delay = 1) {
   await clickAccessible(windowId, name);
+  await atspiFocus(
+    ["--assert-focused", "--name", name, "--timeout", "5"],
+    `input-focus: expected focused accessible "${name}"`,
+  );
   await xdotool(["key", "ctrl+a"]);
   await xdotool(["type", "--clearmodifiers", "--delay", String(delay), value]);
 }
