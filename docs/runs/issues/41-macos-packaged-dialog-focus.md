@@ -5,7 +5,7 @@
 - Issue: [#41](https://github.com/AustinKelsay/distill/issues/41)
 - Fixed point before session: `6a35d60`
 - Worker session: Grok 4.5 xhigh bounded implementation pass
-- Commit: `aba8c85`
+- Commit: `aeb4ea8`
 - Status: Complete — implementation, fresh package rebuild, local gates, and two-axis review pass; PR/CI closeout remains
 - Review packet: `docs/runs/reviews/41-macos-packaged-dialog-focus.md`
 

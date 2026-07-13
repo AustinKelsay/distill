@@ -6,7 +6,7 @@
 - Slice type: AFK packaged-runtime accessibility evidence
 - Acceptance criteria: `docs/runs/issues/41-macos-packaged-dialog-focus.md`
 - Baseline: `6a35d60`
-- Current diff: commit `aba8c85`, implementation plus governed docs
+- Current diff: commit `aeb4ea8`, implementation plus governed docs
 
 ## Implementation Summary
 
