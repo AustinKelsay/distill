@@ -9,10 +9,10 @@
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Status: implementation complete locally, including a WebKitGTK `Return`-key
   compatibility path, native form fallback, and an opt-in package-native DOM
-  native DOM activation route for the installed Linux smoke; Linux `LPKG-007`
-  remains pending exact-head promotion until this route records the full
-  contract. Darwin `PKG-007` remains manual-required when System Events cannot
-  expose the packaged window.
+  activation route for the installed Linux smoke. Linux `LPKG-007` remains
+  pending exact-head promotion until the bounded renderer activation fallback
+  records the full contract. Darwin `PKG-007` remains manual-required when
+  System Events cannot expose the packaged window.
 - Review packet: `docs/runs/reviews/50-packaged-hermetic-legacy-migration-smoke.md`
 
 ## Intended Contract
@@ -121,12 +121,15 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   it after packaging. Tauri's `beforeBuildCommand` is explicitly rooted at the
   renderer workspace so that file is loaded by Vite. After the smoke scrolls
   the migration panel into view through the focused input helper, the renderer
-  exposes an accessible smoke-only marker in the existing migration live region,
-  waits for the real migration input value, and invokes the existing form
-  through native button activation with a bounded DOM submit-event fallback
-  inside the packaged WebView; normal builds never enable it and the shipped
-  CSP is unchanged. Exact-head CI must still prove the resulting report,
-  session, and source-hash contract before `LPKG-007` is promoted.
+  exposes an accessible smoke-only marker in the migration button name and
+  live region, waits for the real migration input value, and invokes the
+  existing form through native button activation and a bounded DOM submit-event
+  fallback inside the packaged WebView. If WebKitGTK still leaves the status
+  idle, the smoke-only route calls the existing renderer `onImportLegacy`
+  handler through a ref holding the current state; this remains bridge-only and
+  package-flagged. Normal builds never enable it and the shipped CSP is
+  unchanged. Exact-head CI must still prove the resulting report, session, and
+  source-hash contract before `LPKG-007` is promoted.
 - Exact-head run [29272756471](https://github.com/AustinKelsay/distill/actions/runs/29272756471)
   included the Vite-built renderer route but still stopped at
   `Migration status: idle`; the marker/native-click revision must be validated
@@ -134,7 +137,12 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
 - Exact-head run [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
   exercised the temporary env-file workflow but still stopped before marker
   exposure; the Tauri hook working directory was not yet rooted at the renderer
-  workspace. The next exact-head run must validate the rooted hook.
+  workspace. Exact-head run [29280938632](https://github.com/AustinKelsay/distill/actions/runs/29280938632)
+  then proved the rooted hook and button marker were packaged, but every
+  bounded native/AT-SPI activation transport still left `Migration status:
+  idle`; no migration report or source-home hash evidence was emitted. The
+  current follow-up adds the renderer-handler fallback described above and must
+  be promoted only after a fresh exact-head run records the full contract.
 
 ### Diagnosis boundary
 

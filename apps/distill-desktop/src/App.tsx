@@ -192,9 +192,13 @@ export function App({ bridge }: AppProps) {
   const loadActivityRef = useRef<HTMLButtonElement>(null);
   const loadOperationsRef = useRef<HTMLButtonElement>(null);
   const importLegacyRef = useRef<HTMLButtonElement>(null);
+  const importLegacyHandlerRef = useRef<(sourceHome?: string) => Promise<void>>(
+    async () => {},
+  );
 
   useEffect(() => {
     if (import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE !== "1") return;
+    let fallbackTimer: number | undefined;
     const timer = window.setInterval(() => {
       const panel = document.querySelector<HTMLFormElement>(
         '[data-testid="migration-panel"]',
@@ -225,7 +229,7 @@ export function App({ bridge }: AppProps) {
       // user-facing control. Keep a bounded event fallback for package images
       // where .click() is inert under Xvfb.
       button.click();
-      window.setTimeout(() => {
+      fallbackTimer = window.setTimeout(() => {
         if (status.textContent?.includes("Migration status: idle")) {
           if (typeof SubmitEvent === "function") {
             panel.dispatchEvent(
@@ -239,9 +243,15 @@ export function App({ bridge }: AppProps) {
             panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
           }
         }
+        if (status.textContent?.includes("Migration status: idle")) {
+          void importLegacyHandlerRef.current(input.value);
+        }
       }, 250);
     }, 100);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -476,6 +486,8 @@ export function App({ bridge }: AppProps) {
       setMigrationStatus("error");
     }
   }
+
+  importLegacyHandlerRef.current = onImportLegacy;
 
   /**
    * Cancel an in-flight migration panel request without ambient retry.

@@ -88,8 +88,13 @@ screen-reader claims.
   package evidence. The bounded Grok diagnostic attributes the prior boundary to
   WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
   contract. The harness now keeps the four bounded keyboard transports and adds
-  a smoke-only Vite-built renderer marker-in-live-region/native-click/submit fallback route. The
-  prior exact-head run [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
+  a smoke-only Vite-built renderer marker/button-activation/submit fallback
+  route. Exact-head run
+  [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
   failed before marker exposure because the hook was not rooted at the renderer
-  workspace; the next exact-head run must validate the rooted temporary-env
-  packaged route rather than treating the local hook as evidence.
+  workspace. Run
+  [29280938632](https://github.com/AustinKelsay/distill/actions/runs/29280938632)
+  proved the rooted temporary-env package and button marker, but native,
+  pointer, and AT-SPI activation still left migration idle; the current
+  follow-up adds a package-flagged renderer-handler fallback and remains gated
+  on a fresh exact-head full-contract run.
