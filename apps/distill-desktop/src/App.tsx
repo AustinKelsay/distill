@@ -1299,7 +1299,7 @@ export function App({ bridge }: AppProps) {
               : ""
           }${
             import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1" && migrationError
-              ? ` · Migration error: ${migrationError.code}`
+              ? ` · Migration error: ${migrationError.code} ${migrationError.message}`
               : ""
           }`}
           disabled={migrationStatus === "loading"}
