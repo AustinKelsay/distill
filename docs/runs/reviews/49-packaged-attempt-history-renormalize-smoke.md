@@ -42,9 +42,11 @@ The first exact-head Ubuntu package run then failed before the new slice at
 `invalid_configured_root`: the corrected Codex input had not settled before
 Sync. A follow-up experiment showed re-running Detect is not valid for this
 hermetic root because Detect correctly requires a host executable. The smoke
-now types the corrected Codex root with a slower AT-SPI/`xdotool` delay, blurs
-the input, and waits one second before Sync, making the draft-settling boundary
-explicit without changing Detect semantics.
+now types the corrected Codex root with a slower AT-SPI/`xdotool` delay, re-runs
+the read-only detector, and requires the expected `codex: unavailable`
+executable status before Sync. This proves the corrected root reached the
+bridge and refreshes the current React handler without changing Detect or Sync
+semantics.
 
 ## Verification evidence
 

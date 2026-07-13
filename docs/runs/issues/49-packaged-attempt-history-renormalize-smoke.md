@@ -58,10 +58,11 @@ pre-existing packaged caller race: after the redaction probe, Sync observed the
 stale missing-Codex root (`invalid_configured_root`). A follow-up experiment
 showed that re-running Detect is invalid for the hermetic Codex root because
 Detect correctly requires a host executable. The harness now types the
-corrected Codex root with a slower AT-SPI/`xdotool` delay, blurs the input, and
-waits one second before Sync, preserving the detection contract while closing
-the draft-settling race. Both failures remain recorded rather than counted as
-Attempt evidence.
+corrected Codex root with a slower AT-SPI/`xdotool` delay, re-runs the
+read-only detector, and requires the expected `codex: unavailable` executable
+status before Sync. This both proves the corrected root reached the bridge and
+refreshes the current React handler without changing Sync policy. Both failures
+remain recorded rather than counted as Attempt evidence.
 
 ## Darwin `PKG-006` manual checklist
 

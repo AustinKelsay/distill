@@ -341,10 +341,12 @@ async function runUiJourney(binary, home, roots) {
     // Detect result copy must stay redacted; clear the missing path before scanning names.
     await typeIntoAccessible(windowId, "codex source root", roots.codexRoot, 20);
     await assertAccessibleNameOmits(DETECT_SIBLING_SECRET);
-    // Blur and settle the corrected draft so a stale missing-root value cannot
-    // race the durable Source preference write at the start of Sync.
-    await key(windowId, "Tab");
-    await sleep(1000);
+    // Re-run the read-only detector after the corrected draft settles. Codex
+    // has no host executable in CI, so an unavailable executable is expected;
+    // this refreshes the current React handler without changing Sync policy.
+    await sleep(250);
+    await clickAccessible(windowId, "Detect Sources", true);
+    await waitForAccessibleText("codex: unavailable", true);
 
     // Sync Fixture + hermetic providers through Start Sync Run (not Run Fixture journey).
     await clickAccessible(windowId, "Start Sync Run");
