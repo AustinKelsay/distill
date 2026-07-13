@@ -115,6 +115,8 @@ async function runPackagedUiJourney(appPath, home, fixtureRoot, sessionTitle) {
 tell application "Distill" to activate
 tell application "System Events"
   tell process "distill-desktop"
+    set tabKeyCode to 48
+    set escapeKeyCode to 53
     repeat 30 times
       if (exists window 1) then exit repeat
       delay 0.25
@@ -168,6 +170,150 @@ tell application "System Events"
       end try
     end repeat
     if homeFound is false or fixtureFound is false then error "packaged renderer text fields are not accessible"
+    -- Packaged repair-dialog focus containment (AX focused/AXFocused only; not VoiceOver).
+    delay 0.5
+    set nodes to entire contents of window 1
+    set repairFound to false
+    repeat with node in nodes
+      try
+        if role of node is "AXButton" and name of node is "Repair library" then
+          click node
+          set repairFound to true
+          exit repeat
+        end if
+      end try
+    end repeat
+    if repairFound is false then error "Repair library button is not accessible"
+    set dialogFocusReady to false
+    repeat 40 times
+      set dialogNamed to false
+      set focusInside to false
+      set nodes to entire contents of window 1
+      repeat with node in nodes
+        try
+          if name of node is "Confirm destructive repair" then
+            set dialogNamed to true
+            try
+              if focused of node is true then set focusInside to true
+            end try
+            try
+              if (value of attribute "AXFocused" of node) is true then set focusInside to true
+            end try
+            try
+              set dialogKids to entire contents of node
+              repeat with kid in dialogKids
+                try
+                  if focused of kid is true then set focusInside to true
+                end try
+                try
+                  if (value of attribute "AXFocused" of kid) is true then set focusInside to true
+                end try
+                if focusInside then exit repeat
+              end repeat
+            end try
+          end if
+        end try
+      end repeat
+      if dialogNamed and focusInside then
+        set dialogFocusReady to true
+        exit repeat
+      end if
+      delay 0.25
+    end repeat
+    if dialogFocusReady is false then error "dialog-focus: expected focused accessible inside Confirm destructive repair"
+    key code tabKeyCode
+    delay 0.25
+    set dialogNamed to false
+    set focusInside to false
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if name of node is "Confirm destructive repair" then
+          set dialogNamed to true
+          try
+            if focused of node is true then set focusInside to true
+          end try
+          try
+            if (value of attribute "AXFocused" of node) is true then set focusInside to true
+          end try
+          try
+            set dialogKids to entire contents of node
+            repeat with kid in dialogKids
+              try
+                if focused of kid is true then set focusInside to true
+              end try
+              try
+                if (value of attribute "AXFocused" of kid) is true then set focusInside to true
+              end try
+              if focusInside then exit repeat
+            end repeat
+          end try
+        end if
+      end try
+    end repeat
+    if dialogNamed is false or focusInside is false then error "dialog-focus: Tab moved focus outside Confirm destructive repair"
+    key code escapeKeyCode
+    set escapeSettled to false
+    repeat 40 times
+      set dialogPresent to false
+      set dialogActionPresent to false
+      set dialogHasFocus to false
+      set repairFocused to false
+      set nodes to entire contents of window 1
+      repeat with node in nodes
+        try
+          if role of node is "AXButton" and (name of node is "Cancel repair" or name of node is "Confirm repair") then
+            set dialogActionPresent to true
+            try
+              if focused of node is true then set dialogHasFocus to true
+            end try
+            try
+              if (value of attribute "AXFocused" of node) is true then set dialogHasFocus to true
+            end try
+          end if
+        end try
+        try
+          if name of node is "Confirm destructive repair" then
+            set dialogPresent to true
+            try
+              if focused of node is true then set dialogHasFocus to true
+            end try
+            try
+              if (value of attribute "AXFocused" of node) is true then set dialogHasFocus to true
+            end try
+            try
+              set dialogKids to entire contents of node
+              repeat with kid in dialogKids
+                try
+                  if focused of kid is true then set dialogHasFocus to true
+                end try
+                try
+                  if (value of attribute "AXFocused" of kid) is true then set dialogHasFocus to true
+                end try
+                if dialogHasFocus then exit repeat
+              end repeat
+            end try
+          end if
+        end try
+        try
+          if role of node is "AXButton" and name of node is "Repair library" then
+            try
+              if focused of node is true then set repairFocused to true
+            end try
+            try
+              if (value of attribute "AXFocused" of node) is true then set repairFocused to true
+            end try
+          end if
+        end try
+      end repeat
+      -- Closed dialog: actions gone, no dialog focus containment, trigger focused again.
+      if dialogPresent is false and dialogHasFocus is false and dialogActionPresent is false and repairFocused then
+        set escapeSettled to true
+        exit repeat
+      end if
+      delay 0.25
+    end repeat
+    if escapeSettled is false then error "dialog-focus: expected Confirm destructive repair closed with Repair library focused"
     set nodes to entire contents of window 1
     set runFound to false
     repeat with node in nodes

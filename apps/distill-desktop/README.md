@@ -56,10 +56,13 @@ dialog, HTTP, or OS-plugin permission.
 The macOS smoke script inspects the built `.app`, records bundle/signing metadata, and
 can launch it for a short packaged UI journey when Accessibility automation is available.
 It never substitutes CLI/host tests for packaged-renderer evidence. The journey scope is
-Fixture sync, search, detail, one curation mutation, export, quit/relaunch, and artifact
-existence/write-containment checks. It does not claim migration, crash recovery, privacy,
-scale, export-atomicity, or VoiceOver proof; those remain their own contract gates and the
-human accessibility checklist.
+Fixture sync, search, detail, one curation mutation, export, quit/relaunch, artifact
+existence/write-containment checks, and packaged repair-dialog AX focus evidence: focus
+enters `Confirm destructive repair`, Tab remains contained, Escape closes, and focus
+returns to `Repair library`. Those checks are Accessibility focus state only. It does
+not claim migration, crash recovery, privacy, scale, export-atomicity, VoiceOver speech,
+or Developer ID/notarized signing; those remain their own contract gates and the human
+accessibility checklist.
 
 Linux packaging is intended to be built and smoke-tested on Ubuntu 24.04 in
 `.github/workflows/linux-package-smoke.yml`. It emits `.deb` and AppImage artifacts;

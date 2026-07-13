@@ -38,8 +38,11 @@
 
 ## Residuals
 
-VoiceOver/Narrator and packaged dialog-focus checks remain human release gates; the
-macOS artifact is unsigned/ad-hoc; Windows packaging is out of scope; the full scale
-benchmark is scheduled/manual on other hardware; and `cargo-audit` is unavailable in
-the pinned toolchain. Electron remains only as migration and legacy-baseline evidence,
-not as a routine native-loop dependency.
+VoiceOver/Narrator speech remains a human release gate; packaged macOS AX and Ubuntu
+AT-SPI dialog-focus containment/return are covered by the #41/#39 smokes. The macOS
+artifact is unsigned/ad-hoc; Windows packaging is out of scope; and the full scale
+benchmark is scheduled/manual on other hardware. `cargo tree --locked` proves Rust
+dependency reproducibility; advisory scanning is governed by the pinned #40 CI
+workflow, with its warning inventory and non-clean boundary recorded explicitly.
+Electron remains only as migration and legacy-baseline evidence, not as a routine
+native-loop dependency.

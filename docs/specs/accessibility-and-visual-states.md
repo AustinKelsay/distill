@@ -41,10 +41,13 @@ The checked-in `a11y:smoke` command builds the renderer and runs the determinist
 contracts. It is not a signed or packaged WebView test and does not claim screen-reader
 verification. The macOS package gate (`npm run desktop:package:macos` followed by
 `npm run desktop:smoke:macos`) launches the local ad-hoc `.app` through macOS
-Accessibility and proves the packaged search/detail/curation/export journey plus
-quit/relaunch artifact persistence. It does not convert Accessibility automation into
-VoiceOver coverage; the Linux packaged gate now has Ubuntu CI evidence in #36, and
-assistive-technology validation is recorded in
+Accessibility and proves the packaged search/detail/curation/export journey, quit/relaunch
+artifact persistence, and packaged repair-dialog focus state: AX focus enters
+`Confirm destructive repair`, Tab remains contained, Escape closes the dialog, and focus
+returns to `Repair library`. Those checks are Accessibility focus-state evidence only;
+they do not convert Accessibility automation into VoiceOver coverage. The Linux packaged
+gate has Ubuntu CI evidence in #36/#39 (AT-SPI dialog focus/cancellation alongside the
+install journey), and assistive-technology speech validation remains in
 `apps/distill-desktop/docs/a11y-human-checklist.md`.
 The Linux package gate mirrors the journey under Ubuntu/Xvfb/dbus, locating controls
 through the AT-SPI accessible tree and activating them with `xdotool`. It is an

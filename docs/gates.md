@@ -53,9 +53,11 @@ observations. On macOS, `desktop:package:macos` builds an `.app` through
 the workspace-installed Tauri CLI with `--no-sign`, and `desktop:smoke:macos` proves
 the local ad-hoc bundle metadata, restricted capability source, Fixture sync,
 search/detail/curation/export journey, quit/relaunch, artifact persistence, and
-write containment. It does not claim Developer ID signing, hardened runtime,
-notarization, migration, crash recovery, privacy, scale, export atomicity, or
-VoiceOver coverage. The Cargo `tauri` subcommand is not required for this package
+write containment. It also proves packaged AX focus enters `Confirm destructive repair`,
+Tab remains contained, Escape closes, and focus returns to `Repair library`; this is
+Accessibility focus-state evidence only. It does not claim Developer ID signing,
+hardened runtime, notarization, migration, crash recovery, privacy, scale, export
+atomicity, or VoiceOver coverage. The Cargo `tauri` subcommand is not required for this package
 gate and is unavailable in the recorded environment.
 
 Linux packaging is a Linux-only CI gate in `.github/workflows/linux-package-smoke.yml`.

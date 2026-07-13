@@ -35,8 +35,8 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 - Rule: full product loop includes Sync Runs, Curation, and Export Artifacts.
 - Current drift: none for the documented native routine loop. Durable Sync Runs, Source preferences, independent detection, CLI/Tauri/React Sync surfaces, Sync lease health with system-UTC stale repair and background heartbeat, warning/partial-success terminals, typed selection/lease-lost edges, transactional manual Curation, the previewed crash-recoverable Export Artifact path, separate cursor-paged Activity/Operations diagnostics, all five v1 Sources, and macOS #35/Linux #36 package smokes are implemented and recorded in the #37 matrix/cutover report.
 - Impacted files/modules: Library ops, curation, export, provider adapters, and packaging/cutover surfaces.
-- Severity: medium — routine native use is cut over, while screen-reader/dialog-focus human evidence, signed/notarized release packaging, Windows packaging, and a Rust advisory-database scan remain explicit residuals.
-- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, diagnostics #30, final cutover #37.
+- Severity: medium — routine native use is cut over, while screen-reader speech evidence, signed/notarized release packaging, and Windows packaging remain explicit residuals. Rust advisory scanning is governed by the pinned CI workflow from #40; the recorded warning inventory / non-clean boundary stays explicit rather than an unperformed gate.
+- Target branch/tickets: `feature/distill-clean-rebuild`, Sync #22, Curation #24, export #25, provider #26–#29, diagnostics #30, final cutover #37, Rust advisory #40, macOS dialog focus #41.
 - Acceptance criteria: async Sync Runs, transactional manual Curation, previewed crash-recoverable JSONL export, Activity/Operations diagnostics, provider adapters, callers, and macOS/Linux packaging pass the public contracts; the cutover report lists every remaining human or out-of-scope item without treating it as a native routine-loop failure.
 
 ### GAP-R004: Fault Injection And Crash-Point Repair Deferred
@@ -70,21 +70,21 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R007: Packaged Accessibility Runtime Evidence
 
-- Status: mostly resolved for agent-performable evidence: macOS #35 and Linux #36 packaged smokes are complete, and #39 adds installed-host AT-SPI dialog-focus/cancellation evidence; human screen-reader evidence remains open.
+- Status: mostly resolved for agent-performable evidence: macOS #35/#41 and Linux #36/#39 packaged smokes are complete, including packaged repair-dialog focus containment/return on both platforms; human screen-reader speech evidence remains open.
 - Rule: keyboard, focus, semantic status, visual-state, and reduced-motion behavior must be proven at the thin React seam, while packaged WebView and assistive-technology claims require runtime evidence.
-- Current implementation: `App.a11y.test.tsx`, `App.states.test.tsx`, and `styles.a11y.test.ts` cover keyboard activation, focus return, semantic names/live regions, dialog Tab fallback, contrast tokens, reduced motion, 200% text-size DOM presence, and deterministic major-state markers. `npm run a11y:smoke` builds the renderer and runs these suites. The installed Ubuntu smoke now uses `linux-atspi-focus.py` to assert focus enters the repair dialog, remains inside after Tab, closes on Escape, and returns to the trigger.
-- Remaining drift: the local macOS smoke launches an ad-hoc/unsigned Tauri `.app`, not a Developer ID/notarized release artifact; Linux AT-SPI assertions prove accessible focus state only and do not automate VoiceOver, Narrator, or screen-reader output. Human validation is documented in `apps/distill-desktop/docs/a11y-human-checklist.md`.
+- Current implementation: `App.a11y.test.tsx`, `App.states.test.tsx`, and `styles.a11y.test.ts` cover keyboard activation, focus return, semantic names/live regions, dialog Tab fallback, contrast tokens, reduced motion, 200% text-size DOM presence, and deterministic major-state markers. `npm run a11y:smoke` builds the renderer and runs these suites. The local macOS smoke asserts AX focus enters `Confirm destructive repair`, Tab remains contained, Escape closes, and focus returns to `Repair library`. The installed Ubuntu smoke uses `linux-atspi-focus.py` for the matching AT-SPI focus containment/return contract.
+- Remaining drift: the local macOS smoke launches an ad-hoc/unsigned Tauri `.app`, not a Developer ID/notarized release artifact; macOS AX and Linux AT-SPI assertions prove accessible focus state only and do not automate VoiceOver, Narrator, or screen-reader speech. Human validation is documented in `apps/distill-desktop/docs/a11y-human-checklist.md`.
 - Impacted files/modules: `apps/distill-desktop/src/App.tsx`, `apps/distill-desktop/src/a11y/confirm-dialog.tsx`, `apps/distill-desktop/src/styles.css`, packaging smoke harnesses.
-- Severity: medium — macOS/Linux packaged primary journeys and Linux dialog-focus state are covered, while macOS dialog-focus and screen-reader output remain human release gates.
-- Target branch/tickets: `feature/distill-clean-rebuild`, #33, #35, #36, and #39.
+- Severity: medium — macOS/Linux packaged primary journeys and dialog-focus state are covered on both platforms, while screen-reader speech and signed/notarized packaging remain human release gates.
+- Target branch/tickets: `feature/distill-clean-rebuild`, #33, #35, #36, #39, and #41.
 - Acceptance criteria: macOS and Linux packaged smoke proves launch, keyboard traversal,
   and one search/detail/curation/export path; where a platform harness supports it, the
   dialog focus and cancellation-focus contract is exercised; human checklist evidence
   records supported screen readers without converting manual observations into automated
   claims. #35 satisfies the macOS metadata, Accessibility journey, restart, and
-  containment half with explicit unsigned/notarization non-claims; #39 satisfies the
-  installed Linux dialog-focus/cancellation contract; macOS dialog-focus and all
-  screen-reader evidence remain open.
+  containment half with explicit unsigned/notarization non-claims; #41 adds the packaged
+  macOS AX dialog-focus/cancellation contract; #39 satisfies the installed Linux
+  dialog-focus/cancellation contract; VoiceOver/Narrator speech evidence remains open.
 
 ### GAP-R008: Scale And Latency Budget Evidence
 
