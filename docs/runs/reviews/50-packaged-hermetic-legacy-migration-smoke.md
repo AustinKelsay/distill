@@ -36,7 +36,10 @@ screen-reader claims.
   [29260415053](https://github.com/AustinKelsay/distill/actions/runs/29260415053)
   still leaves status idle; a direct-window click regression in
   [29259709770](https://github.com/AustinKelsay/distill/actions/runs/29259709770)
-  was reverted. `LPKG-007` is therefore blocked, not promoted.
+  was reverted. The post-closeout exact-head package run
+  [29261962986](https://github.com/AustinKelsay/distill/actions/runs/29261962986)
+  reproduced the same idle boundary after build/install. `LPKG-007` is
+  therefore blocked, not promoted.
 
 ## Files
 

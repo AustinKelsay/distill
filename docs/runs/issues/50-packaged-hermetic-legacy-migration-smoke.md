@@ -97,6 +97,10 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   still stopped at `Migration status: idle`. A direct-window click experiment in
   [29259709770](https://github.com/AustinKelsay/distill/actions/runs/29259709770)
   regressed the existing repair-dialog journey and was reverted.
+- The post-closeout exact-head package run
+  [29261962986](https://github.com/AustinKelsay/distill/actions/runs/29261962986)
+  reproduced the same `Migration status: idle` failure after package build and
+  install; no packaged migration report or source-home hash evidence was emitted.
 
 ### Diagnosis boundary
 
