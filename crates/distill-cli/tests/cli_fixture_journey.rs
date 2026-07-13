@@ -1135,3 +1135,498 @@ fn cli_migrate_legacy_json_and_human_and_alias() {
         .expect("same path");
     assert_eq!(same.status.code(), Some(1));
 }
+
+/**
+ * Run the real `distill` binary and parse JSON stdout on success.
+ */
+fn distill_ok_json(args: &[&str]) -> serde_json::Value {
+    let output = Command::new(distill_bin())
+        .args(args)
+        .output()
+        .expect("run distill");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "args={args:?} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("json stdout")
+}
+
+/**
+ * Run the real `distill` binary and parse JSON stderr on a non-zero exit.
+ */
+fn distill_err_json(args: &[&str], expected_code: i32) -> serde_json::Value {
+    let output = Command::new(distill_bin())
+        .args(args)
+        .output()
+        .expect("run distill");
+    assert_eq!(
+        output.status.code(),
+        Some(expected_code),
+        "args={args:?} stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stderr).expect("json stderr")
+}
+
+/**
+ * Assert CLI JSON text does not leak the supplied path or private tokens.
+ */
+fn assert_cli_json_redacted(value: &serde_json::Value, forbidden: &[&str]) {
+    let rendered = value.to_string();
+    for needle in forbidden {
+        assert!(
+            !rendered.contains(needle),
+            "CLI JSON leaked `{needle}`: {rendered}"
+        );
+    }
+}
+
+/**
+ * Write a minimal Codex live session under a synthetic Codex home.
+ */
+fn write_cli_codex_root(root: &Path) -> (String, String) {
+    let session_id = "abc12345-1111-2222-3333-abcdefabcdef";
+    let relative =
+        "sessions/2026/07/12/rollout-2026-07-12T12-00-00-abc12345-1111-2222-3333-abcdefabcdef.jsonl";
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().expect("parent")).expect("codex parent");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"timestamp":"2026-07-12T12:00:00.000Z","type":"session_meta","payload":{"id":"abc12345-1111-2222-3333-abcdefabcdef","timestamp":"2026-07-12T12:00:00.000Z","cwd":"/tmp/cli-codex"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-12T12:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello cli codex"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-12T12:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"codex cli reply"}]}}"#,
+            "\n",
+        ),
+    )
+    .expect("codex session");
+    fs::write(
+        root.join("session_index.jsonl"),
+        r#"{"id":"abc12345-1111-2222-3333-abcdefabcdef","thread_name":"CLI Codex","updated_at":"2026-07-12T12:01:00.000Z"}
+"#,
+    )
+    .expect("codex index");
+    (session_id.to_string(), "hello cli codex".to_string())
+}
+
+/**
+ * Write a minimal Claude Code project session under a synthetic Claude home.
+ */
+fn write_cli_claude_root(root: &Path) -> (String, String) {
+    let session_id = "123e4567-e89b-12d3-a456-426614174000";
+    let path = root
+        .join("projects")
+        .join("cli-demo")
+        .join(format!("{session_id}.jsonl"));
+    fs::create_dir_all(path.parent().expect("parent")).expect("claude parent");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"type":"user","uuid":"u1","sessionId":"123e4567-e89b-12d3-a456-426614174000","timestamp":"2026-07-12T12:10:00.000Z","cwd":"/tmp/cli-claude","message":{"role":"user","content":[{"type":"text","text":"hello cli claude"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"123e4567-e89b-12d3-a456-426614174000","timestamp":"2026-07-12T12:10:01.000Z","cwd":"/tmp/cli-claude","message":{"role":"assistant","content":[{"type":"text","text":"claude cli reply"}]}}"#,
+            "\n",
+        ),
+    )
+    .expect("claude session");
+    fs::write(
+        root.join("history.jsonl"),
+        r#"{"display":"CLI Claude","sessionId":"123e4567-e89b-12d3-a456-426614174000"}
+"#,
+    )
+    .expect("claude history");
+    (session_id.to_string(), "hello cli claude".to_string())
+}
+
+/**
+ * Write a minimal Droid session under a synthetic Factory sessions root.
+ */
+fn write_cli_droid_root(root: &Path) -> (String, String) {
+    let session_id = "123e4567-e89b-12d3-a456-426614174000";
+    let path = root.join("ws-cli").join(format!("{session_id}.jsonl"));
+    fs::create_dir_all(path.parent().expect("parent")).expect("droid parent");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session_start","id":"123e4567-e89b-12d3-a456-426614174000","title":"CLI Droid","owner":"cli","cwd":"/tmp/cli-droid"}"#,
+            "\n",
+            r#"{"type":"message","id":"u1","timestamp":"2026-07-12T12:20:00.000Z","message":{"role":"user","content":[{"type":"text","text":"hello cli droid"}]}}"#,
+            "\n",
+            r#"{"type":"message","id":"a1","timestamp":"2026-07-12T12:20:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"droid cli reply"}]}}"#,
+            "\n",
+        ),
+    )
+    .expect("droid session");
+    (session_id.to_string(), "hello cli droid".to_string())
+}
+
+/**
+ * Install a hermetic fake `opencode` under `{root}/bin` with one virtual session.
+ */
+fn install_cli_fake_opencode(root: &Path) -> (String, String) {
+    let bin_dir = root.join("bin");
+    let export_dir = root.join("exports");
+    fs::create_dir_all(&bin_dir).expect("opencode bin");
+    fs::create_dir_all(&export_dir).expect("opencode exports");
+    fs::write(
+        root.join("sessions.json"),
+        r#"[{"id":"ses_cli","title":"CLI OpenCode","directory":"/tmp/cli-opencode","version":"1.0.0","time_created":1774543194067,"time_updated":1774543475213,"time_archived":null}]
+"#,
+    )
+    .expect("sessions json");
+    let export_body = concat!(
+        "Exporting session: ses_cli\n",
+        r#"{"info":{"id":"ses_cli","slug":"cli-wizard","projectID":"global","directory":"/tmp/cli-opencode","title":"CLI OpenCode","version":"1.0.0","time":{"created":1774543194067,"updated":1774543475213}},"messages":[{"info":{"id":"msg_user","role":"user","time":{"created":1774543194080}},"parts":[{"id":"part_user","type":"text","text":"hello cli opencode"}]},{"info":{"id":"msg_assistant","role":"assistant","parentID":"msg_user","time":{"created":1774543194090}},"parts":[{"id":"part_text","type":"text","text":"opencode cli reply"}]}]}"#,
+        "\n",
+    );
+    fs::write(export_dir.join("ses_cli.json"), export_body).expect("export body");
+    let script = bin_dir.join("opencode");
+    let script_body = format!(
+        r#"#!/bin/sh
+set -eu
+ROOT="{root}"
+case "${{1:-}}" in
+  db)
+    if [ "${{2:-}}" = "path" ]; then
+      printf '%s\n' "$ROOT/opencode.db"
+      exit 0
+    fi
+    cat "$ROOT/sessions.json"
+    exit 0
+    ;;
+  export)
+    cat "$ROOT/exports/${{2:-}}.json"
+    exit 0
+    ;;
+esac
+printf 'unsupported fake opencode command\n' >&2
+exit 1
+"#,
+        root = root.display(),
+    );
+    fs::write(&script, script_body).expect("opencode script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script).expect("meta").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod");
+    }
+    ("ses_cli".to_string(), "hello cli opencode".to_string())
+}
+
+/**
+ * Configure one Source, Sync it, then exercise CLI JSON query/curation/export/ops.
+ */
+fn run_provider_cli_journey(kind: &str, home: &Path, root: &Path, session_id: &str, query: &str) {
+    let home_s = home.to_str().expect("home utf8");
+    let root_s = root.to_str().expect("root utf8");
+
+    let set = distill_ok_json(&[
+        "sources", "set", "--home", home_s, "--kind", kind, "--enable", "--root", root_s,
+        "--format", "json",
+    ]);
+    assert_eq!(set["ok"], true);
+    assert_eq!(set["source"]["kind"], kind);
+    assert_eq!(set["source"]["enabled"], true);
+
+    let sync = distill_ok_json(&["sync", "start", "--home", home_s, "--format", "json"]);
+    assert_eq!(sync["ok"], true);
+    assert_eq!(sync["run"]["status"], "completed");
+    assert_eq!(sync["run"]["accepted_captures"], 1);
+    assert_eq!(sync["run"]["sources"][0]["source_kind"], kind);
+    assert_eq!(sync["run"]["sources"][0]["status"], "completed");
+    assert_eq!(sync["session_identities"][0]["source_kind"], kind);
+    assert_eq!(
+        sync["session_identities"][0]["external_session_id"],
+        session_id
+    );
+    assert_cli_json_redacted(&sync, &[root_s]);
+
+    let list = distill_ok_json(&[
+        "sessions", "list", "--home", home_s, "--query", query, "--lane", "all", "--limit", "5",
+        "--format", "json",
+    ]);
+    assert_eq!(list["ok"], true);
+    assert_eq!(list["items"].as_array().expect("items").len(), 1);
+    assert_eq!(list["items"][0]["source_kind"], kind);
+    assert_eq!(list["items"][0]["external_session_id"], session_id);
+
+    let detail = distill_ok_json(&[
+        "sessions",
+        "detail",
+        "--home",
+        home_s,
+        "--source-kind",
+        kind,
+        "--external-session-id",
+        session_id,
+        "--message-limit",
+        "10",
+        "--artifact-limit",
+        "10",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(detail["ok"], true);
+    assert_eq!(detail["session"]["summary"]["source_kind"], kind);
+    assert_eq!(
+        detail["session"]["summary"]["external_session_id"],
+        session_id
+    );
+    let messages = detail["session"]["messages"].as_array().expect("messages");
+    assert!(
+        messages.iter().any(|message| message["text"]
+            .as_str()
+            .is_some_and(|text| text.contains(query))),
+        "detail missing query text {query}: {detail}"
+    );
+
+    let tag = distill_ok_json(&[
+        "sessions",
+        "tag-add",
+        "--home",
+        home_s,
+        "--source-kind",
+        kind,
+        "--external-session-id",
+        session_id,
+        "--name",
+        "cli-provider",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(tag["ok"], true);
+    assert_eq!(tag["curation"]["changed"], true);
+    assert_eq!(tag["curation"]["tags"][0]["name"], "cli-provider");
+
+    let label = distill_ok_json(&[
+        "sessions",
+        "label-toggle",
+        "--home",
+        home_s,
+        "--source-kind",
+        kind,
+        "--external-session-id",
+        session_id,
+        "--name",
+        "train",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(label["curation"]["changed"], true);
+    assert_eq!(label["curation"]["workflow_state"], "train_ready");
+
+    let preview = distill_ok_json(&[
+        "export",
+        "preview",
+        "--home",
+        home_s,
+        "--dataset",
+        "train",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(preview["ok"], true);
+    assert_eq!(preview["preview"]["dataset"], "train");
+    assert_eq!(preview["preview"]["format_id"], "distill-session-jsonl-v1");
+    assert_eq!(
+        preview["preview"]["eligible"][0]["external_session_id"],
+        session_id
+    );
+
+    let publish = distill_ok_json(&[
+        "export",
+        "publish",
+        "--home",
+        home_s,
+        "--dataset",
+        "train",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(publish["ok"], true);
+    assert_eq!(publish["export"]["status"], "published");
+    assert_eq!(publish["export"]["dataset"], "train");
+    assert_eq!(publish["export"]["record_count"], 1);
+    assert_eq!(publish["export"]["format_id"], "distill-session-jsonl-v1");
+
+    let activity = distill_ok_json(&[
+        "activity", "--home", home_s, "--limit", "20", "--format", "json",
+    ]);
+    assert_eq!(activity["ok"], true);
+    let events = activity["items"].as_array().expect("activity items");
+    assert!(!events.is_empty());
+    assert!(events
+        .iter()
+        .any(|event| event["event_type"] == "capture_recorded"
+            || event["event_type"] == "sync_completed"));
+    assert_cli_json_redacted(&activity, &[root_s]);
+
+    let operations = distill_ok_json(&[
+        "operations",
+        "--home",
+        home_s,
+        "--sync-limit",
+        "10",
+        "--export-limit",
+        "10",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(operations["ok"], true);
+    assert!(operations["operations"]["operations_status"].is_string());
+    assert!(!operations["operations"]["sync_runs"]
+        .as_array()
+        .expect("sync runs")
+        .is_empty());
+    assert!(!operations["operations"]["exports"]
+        .as_array()
+        .expect("exports")
+        .is_empty());
+    assert_cli_json_redacted(&operations, &[root_s]);
+}
+
+/**
+ * Prove Distill-owned Session Projection survives source-root deletion via CLI only.
+ */
+fn assert_cli_projection_survives_source_removal(
+    kind: &str,
+    home: &Path,
+    root: &Path,
+    session_id: &str,
+    query: &str,
+) {
+    fs::remove_dir_all(root).expect("remove provider root");
+    assert!(!root.exists(), "provider root should be gone");
+
+    let home_s = home.to_str().expect("home utf8");
+    let list = distill_ok_json(&[
+        "sessions", "list", "--home", home_s, "--query", query, "--lane", "all", "--format", "json",
+    ]);
+    assert_eq!(list["items"].as_array().expect("items").len(), 1);
+    assert_eq!(list["items"][0]["external_session_id"], session_id);
+
+    let detail = distill_ok_json(&[
+        "sessions",
+        "detail",
+        "--home",
+        home_s,
+        "--source-kind",
+        kind,
+        "--external-session-id",
+        session_id,
+        "--message-limit",
+        "10",
+        "--artifact-limit",
+        "10",
+        "--format",
+        "json",
+    ]);
+    let messages = detail["session"]["messages"].as_array().expect("messages");
+    assert!(messages.iter().any(|message| message["text"]
+        .as_str()
+        .is_some_and(|text| text.contains(query))));
+}
+
+#[test]
+fn cli_codex_provider_journey_json() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let root = temp.path().join("codex-home");
+    fs::create_dir_all(&root).expect("codex root");
+    let (session_id, query) = write_cli_codex_root(&root);
+    run_provider_cli_journey("codex", &home, &root, &session_id, &query);
+    assert_cli_projection_survives_source_removal("codex", &home, &root, &session_id, &query);
+}
+
+#[test]
+fn cli_claude_code_provider_journey_json() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let root = temp.path().join("claude-home");
+    fs::create_dir_all(&root).expect("claude root");
+    let (session_id, query) = write_cli_claude_root(&root);
+    run_provider_cli_journey("claude_code", &home, &root, &session_id, &query);
+}
+
+#[test]
+fn cli_opencode_provider_journey_json_and_projection_survival() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let root = temp.path().join("opencode-home");
+    fs::create_dir_all(&root).expect("opencode root");
+    let (session_id, query) = install_cli_fake_opencode(&root);
+    run_provider_cli_journey("opencode", &home, &root, &session_id, &query);
+    assert_cli_projection_survives_source_removal("opencode", &home, &root, &session_id, &query);
+}
+
+#[test]
+fn cli_droid_provider_journey_json() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let root = temp.path().join("factory-sessions");
+    fs::create_dir_all(&root).expect("droid root");
+    let (session_id, query) = write_cli_droid_root(&root);
+    run_provider_cli_journey("droid", &home, &root, &session_id, &query);
+}
+
+#[test]
+fn cli_provider_failure_isolation_redacts_diagnostics() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    let secret = "secret-token-cli-42";
+    let missing = temp.path().join(format!("{secret}-missing-root"));
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+
+    let home_s = home.to_str().expect("home utf8");
+    let fixture_s = fixture.to_str().expect("fixture utf8");
+    let missing_s = missing.to_str().expect("missing utf8");
+
+    distill_ok_json(&[
+        "sources", "set", "--home", home_s, "--kind", "fixture", "--enable", "--root", fixture_s,
+        "--format", "json",
+    ]);
+
+    let rejected = distill_err_json(
+        &[
+            "sources", "set", "--home", home_s, "--kind", "codex", "--enable", "--root", missing_s,
+            "--format", "json",
+        ],
+        1,
+    );
+    assert_eq!(rejected["error"], "invalid_configured_root");
+    assert_cli_json_redacted(&rejected, &[secret, missing_s]);
+
+    distill_ok_json(&[
+        "sources", "set", "--home", home_s, "--kind", "codex", "--enable", "--format", "json",
+    ]);
+
+    let sync = distill_ok_json(&["sync", "start", "--home", home_s, "--format", "json"]);
+    assert_eq!(sync["ok"], true);
+    assert_eq!(sync["run"]["status"], "warning");
+    assert!(sync["run"]["accepted_captures"].as_u64().unwrap_or(0) >= 1);
+    assert!(sync["run"]["warning_details"]
+        .as_array()
+        .is_some_and(|details| !details.is_empty()));
+    let sources = sync["run"]["sources"].as_array().expect("sources");
+    assert!(sources
+        .iter()
+        .any(|source| source["source_kind"] == "fixture" && source["status"] == "completed"));
+    assert!(sources
+        .iter()
+        .any(|source| source["source_kind"] == "codex" && source["status"] == "failed"));
+    assert_cli_json_redacted(&sync, &[secret, missing_s, fixture_s]);
+
+    let activity = distill_ok_json(&[
+        "activity", "--home", home_s, "--limit", "20", "--format", "json",
+    ]);
+    assert_cli_json_redacted(&activity, &[secret, missing_s]);
+}
