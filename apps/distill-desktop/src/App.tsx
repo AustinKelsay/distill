@@ -219,7 +219,17 @@ export function App({ bridge }: AppProps) {
         return;
       }
       window.clearInterval(timer);
-      panel.requestSubmit(button);
+      if (typeof SubmitEvent === "function") {
+        panel.dispatchEvent(
+          new SubmitEvent("submit", {
+            bubbles: true,
+            cancelable: true,
+            submitter: button,
+          }),
+        );
+      } else {
+        panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      }
     }, 100);
     return () => window.clearInterval(timer);
   }, []);
