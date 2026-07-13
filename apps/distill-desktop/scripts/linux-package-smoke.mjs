@@ -125,9 +125,9 @@ async function focusWindow(windowId) {
   }
 }
 
-async function accessibleBounds(name, contains = false) {
+async function accessibleBounds(name, contains = false, timeout = 20) {
   const script = path.join(appRoot, "scripts/linux-atspi-bounds.py");
-  const args = [script, "--name", name, "--interactive", "--timeout", "20"];
+  const args = [script, "--name", name, "--interactive", "--timeout", String(timeout)];
   if (contains) args.push("--contains");
   return JSON.parse((await command("python3", args)).stdout);
 }
@@ -195,6 +195,17 @@ async function activateAccessible(windowId, name, contains = false) {
   const args = [script, "--name", name, "--timeout", "20"];
   if (contains) args.push("--contains");
   await command("python3", args);
+}
+
+async function activateWithFallback(windowId, name, contains = false) {
+  await clickAccessible(windowId, name, contains);
+  await sleep(250);
+  try {
+    await accessibleBounds(name, contains, 1);
+    await activateAccessible(windowId, name, contains);
+  } catch {
+    // The coordinate click changed the button label; avoid a duplicate action.
+  }
 }
 
 async function typeIntoAccessible(windowId, name, value, delay = 1) {
@@ -386,7 +397,7 @@ async function runUiJourney(binary, home, roots) {
     }
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
-    await activateAccessible(windowId, "Renormalize Capture");
+    await activateWithFallback(windowId, "Renormalize Capture");
     await waitForAccessibleText("Renormalize: ready", true);
     const retryReport = await waitForAccessibleText("attempt ", true);
     if (
