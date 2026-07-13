@@ -1526,6 +1526,11 @@ export function App({ bridge }: AppProps) {
           <button
             ref={loadSessionsRef}
             type="submit"
+            aria-label={
+              import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
+                ? `Load sessions · Session status: ${sessionStatus}`
+                : undefined
+            }
             disabled={!home.trim() || sessionBusy}
           >
             {sessionBusy ? "Loading sessions…" : "Load sessions"}
