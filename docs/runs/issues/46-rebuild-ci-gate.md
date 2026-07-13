@@ -6,8 +6,8 @@
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: `2d80280`
 - Worker session: Cursor Grok 4.5 bounded CI/docs slice
-- Implementation commit: `REPLACE_AFTER_COMMIT` — placeholder until committed
-- Status: Implemented — workflow and docs added; first Ubuntu Actions run ID pending post-push (`REPLACE_AFTER_PUSH`)
+- Implementation commit: `38d3c7a` (`38d3c7aa49af551c5705aa5c3f4f9c4bbcf7742c`)
+- Status: Complete — workflow and docs added; implementation-head Ubuntu Actions green ([run 29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931))
 - Review packet: `docs/runs/reviews/46-rebuild-ci-gate.md`
 
 ## Intended Contract
@@ -50,11 +50,12 @@ workflows.
   while keeping package smoke and RustSec references intact.
 - [x] Gap register, contract evidence, and feature-dev ledger record the gate and leave
   explicit residuals.
-- [ ] First green Actions run ID recorded (placeholder `REPLACE_AFTER_PUSH`). The first
-  implementation run (`29223953816`) caught a pre-existing provider-CLI PATH sensitivity
-  in the Codex detection contract; the workflow now makes that test environment hermetic
-  with a no-op Codex shim plus retained Cargo/Rustup/system paths, without invoking a
-  host-installed provider CLI.
+- [x] First green Actions run recorded on implementation head `38d3c7a`: [run
+  29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931). The
+  first implementation run (`29223953816`) caught a pre-existing provider-CLI PATH
+  sensitivity in the Codex detection contract; the final workflow makes that test
+  environment hermetic with a no-op Codex shim plus retained Cargo/Rustup/system paths,
+  without invoking a host-installed provider CLI.
 
 ## Scope / Non-goals
 
@@ -93,7 +94,7 @@ node scripts/run-library-checks.mjs all   # optional combined launcher
 ```
 
 Authoritative CI: GitHub Actions workflow `Distill rebuild CI`
-(`.github/workflows/rebuild-ci.yml`). Run ID: `REPLACE_AFTER_PUSH`.
+(`.github/workflows/rebuild-ci.yml`). Implementation-head run: [29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931).
 
 ## Review note
 
@@ -104,6 +105,5 @@ as #40–#45.
 
 ## Remaining Scope
 
-Record the first green Ubuntu run, then update this packet, `docs/gates.md`, and the
-feature-dev ledger to replace `REPLACE_AFTER_PUSH`. Residuals listed under
-Non-goals remain open.
+Residuals listed under Non-goals remain open; this issue is complete for the continuous
+core-gate workflow and its evidence packet.

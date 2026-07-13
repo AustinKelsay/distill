@@ -9,8 +9,7 @@
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: local CodeRabbit must be attempted; bounded Grok review is the fallback
   if CodeRabbit is unavailable, rate-limited, or stalls (same policy as #40–#45)
-- Final review status: `PASS` — independent Grok standards/spec review passed; CI run ID
-  not yet recorded (`REPLACE_AFTER_PUSH`)
+- Final review status: `PASS` — independent Grok standards/spec review passed; implementation-head CI is green
 
 ## Scope reviewed
 
@@ -38,7 +37,7 @@ retirement, or merge/close of #17 / #38.
 - [x] Stable Node/Rust setup conventions reused
 - [x] No real providers, full-scale bench, signing, or Windows jobs in this workflow
 - [x] Package smoke and RustSec workflows remain separately authoritative
-- [ ] First green Actions run linked (`REPLACE_AFTER_PUSH`)
+- [x] First green Actions run linked: [29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931) on implementation head `38d3c7a`
 - [x] CodeRabbit local attempt bounded; it stalled in summarization, so the independent
   Grok review below is the recorded fallback
 
@@ -55,8 +54,8 @@ Initial independent Grok review found three low-severity documentation precision
    pending, instead of calling the gate resolved ahead of evidence.
 
 All three were remediated before this packet was recorded. No workflow or scope findings
-remain. Placeholders (`REPLACE_AFTER_*`) must be replaced after push; they are not
-invented run IDs.
+remain, and the implementation-head run is now recorded below; no invented run IDs are
+used.
 
 The first implementation-head Actions run (`29223953816`) also exposed a
 pre-existing environment-sensitive Codex detection test: the runner lacked a `codex`
@@ -77,7 +76,7 @@ with the Codex shim retained for the configured-root contract.
 - Windows packaging
 - Electron retirement
 - Root issue #17 / PR #38 merge or close
-- First authoritative rebuild-CI Actions run ID (`REPLACE_AFTER_PUSH`)
+- First authoritative rebuild-CI Actions run: [29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931) (green on `38d3c7a`)
 
 ## Verification record
 
@@ -86,8 +85,8 @@ Inspection targets:
 - Workflow commands match `docs/gates.md` continuous PR list and the
   `scripts/run-library-checks.mjs` `rebuild` + `faults` + `desktop` modes.
 - Gap register and contract evidence leave residuals explicit.
-- Feature-dev ledger status for #46 must not claim Complete with a green CI run until
-  `REPLACE_AFTER_PUSH` is replaced with a real Actions URL.
+- Feature-dev ledger status for #46 may claim Complete because the implementation-head
+  run above is green; docs-only follow-up commits do not change the workflow behavior.
 
 Independent review result: `STANDARDS_STATUS: pass`, `SPEC_STATUS: pass`, no remaining
 findings after the three documentation remediations above. Local CodeRabbit command was

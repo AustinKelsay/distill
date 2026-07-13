@@ -6,7 +6,7 @@ This registry closes issue #37’s evidence-schema gap. Each row is one stable I
 
 `.github/workflows/rebuild-ci.yml` is the authoritative continuous Ubuntu PR enforcement for the core Rust and desktop rebuild commands listed in `docs/gates.md` (fmt, clippy, workspace tests, `test-faults`, `test-leases` Sync suite, and desktop typecheck/lint/format/test/frontend build). It does **not** replace Linux package smoke (`linux-package-smoke.yml`), RustSec advisory scan (`rust-audit.yml`), macOS packaging, full-scale benchmarks, real packaged provider roots, human assistive-technology observation, signing/notarization, Windows, Electron retirement, or merge/close of #17 / #38.
 
-Authoritative Actions run ID: `REPLACE_AFTER_PUSH` — placeholder until the first green PR or `workflow_dispatch` run is linked after push. Scenario rows below keep their existing per-symbol evidence; this section only records the continuous gate surface.
+Authoritative implementation-head evidence: [Distill rebuild CI run 29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931) on `38d3c7a` (green Rust and desktop jobs). Scenario rows below keep their existing per-symbol evidence; this section only records the continuous gate surface.
 
 
 | Scenario ID | Owning spec clause | Contract family / seam | Fixture | Executable test symbol | Expected result | Durable + Activity effect | Supported platforms | Status | Last evidence |

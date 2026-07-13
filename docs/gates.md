@@ -41,9 +41,10 @@ human assistive-technology observation. Local Darwin runs of the same commands
 remain useful developer feedback; they are not a substitute for the Ubuntu
 Actions result once a run ID is recorded.
 
-Authoritative Actions run ID for this gate:
-`REPLACE_AFTER_PUSH` — placeholder until the first green PR or
-`workflow_dispatch` run is linked after push.
+Authoritative Actions evidence for the implementation head `38d3c7a`:
+[Distill rebuild CI run 29224511931](https://github.com/AustinKelsay/distill/actions/runs/29224511931)
+— green Rust and desktop jobs. Docs-only follow-up commits do not change the
+workflow behavior represented by this implementation-head run.
 
 ## Sync / Source settings gates (#22)
 
