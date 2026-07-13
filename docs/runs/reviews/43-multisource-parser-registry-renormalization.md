@@ -32,6 +32,7 @@ documents.
   `summarizing` phase for more than two minutes without a result and was
   terminated; the fresh Grok standards/spec rereview above is the recorded
   fallback.
+- Final pushed head `693cf5e`: [Linux package/install smoke run 29218631387](https://github.com/AustinKelsay/distill/actions/runs/29218631387) passed and [Rust advisory run 29218631413](https://github.com/AustinKelsay/distill/actions/runs/29218631413) passed; PR #38 is clean.
 
 ## Findings and remediation
 

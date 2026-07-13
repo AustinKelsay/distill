@@ -7,7 +7,7 @@
 - Fixed point before session: `e800706`
 - Worker session: Grok 4.5 xhigh bounded implementation pass; Codex integration
 - Commit: `02c6a61`
-- Status: Complete — implementation, full local gates, two-axis review, and CodeRabbit fallback complete; final-head CI and staging handoff remain
+- Status: Complete — implementation, full local gates, two-axis review, CodeRabbit fallback, and final-head CI complete; staging handoff remains
 - Review packet: `docs/runs/reviews/43-multisource-parser-registry-renormalization.md`
 
 ## Intended Contract
@@ -44,6 +44,12 @@ without mutating Attempts or Projection state.
   quality rules.
 - Local CodeRabbit attempt with fresh Grok fallback if the service stalls or is
   unavailable.
+
+## Final-head CI
+
+- Linux package/install smoke: [run 29218631387](https://github.com/AustinKelsay/distill/actions/runs/29218631387) — passed on `693cf5e`.
+- Rust advisory scan: [run 29218631413](https://github.com/AustinKelsay/distill/actions/runs/29218631413) — passed on `693cf5e`.
+- PR #38: [clean staging handoff](https://github.com/AustinKelsay/distill/pull/38) at `693cf5e`.
 
 ## Evidence Symbols
 
