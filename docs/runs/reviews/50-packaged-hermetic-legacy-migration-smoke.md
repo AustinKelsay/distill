@@ -86,4 +86,5 @@ screen-reader claims.
   package evidence. The bounded Grok diagnostic attributes the current boundary
   to WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
   contract. The key-name compatibility patch is a hypothesis-driven remediation,
-  not yet packaged evidence.
+  not yet packaged evidence. The harness follow-up is limited to four bounded
+  keyboard transports before existing pointer/AT-SPI fallbacks.

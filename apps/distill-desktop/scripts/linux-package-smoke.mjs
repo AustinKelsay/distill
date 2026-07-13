@@ -393,15 +393,57 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     );
     await sleep(750);
     await waitForAccessibleText("Import legacy home (ready)", false, 10);
-    // Stay on the input: App handles Enter/Return using the native value, and
-    // the migration form also provides a browser-native submit fallback.
-    await focusedKey("Return");
-    try {
-      await waitForAccessibleText("Migration status: success", true, 5);
-    } catch {
+    // Stay on the input first: App handles Enter/Return using the native value,
+    // and the migration form also provides a browser-native submit fallback.
+    // WebKitGTK/Xvfb has exposed several distinct XTEST transport paths across
+    // package images, so try each bounded keyboard route before pointer/AT-SPI
+    // fallbacks. A successful route stops the sequence immediately.
+    const migrationKeyboardRoutes = [
+      async () => {
+        await atspiFocus(
+          ["--assert-focused", "--name", "Legacy Electron home", "--timeout", "5"],
+          'input-focus: expected focused accessible "Legacy Electron home"',
+        );
+        await focusedKey("Return");
+      },
+      async () => {
+        await atspiFocus(
+          ["--assert-focused", "--name", "Legacy Electron home", "--timeout", "5"],
+          'input-focus: expected focused accessible "Legacy Electron home"',
+        );
+        await focusedKey("Enter");
+      },
+      async () => {
+        await atspiFocus(
+          ["--assert-focused", "--name", "Legacy Electron home", "--timeout", "5"],
+          'input-focus: expected focused accessible "Legacy Electron home"',
+        );
+        await key(windowId, "Return");
+      },
+      async () => {
+        await atspiFocus(
+          ["--assert-focused", "--name", "Legacy Electron home", "--timeout", "5"],
+          'input-focus: expected focused accessible "Legacy Electron home"',
+        );
+        await key(windowId, "Enter");
+      },
+    ];
+    let migrationSubmitted = false;
+    for (const route of migrationKeyboardRoutes) {
+      await route();
+      try {
+        await waitForAccessibleText("Migration status: success", true, 3);
+        migrationSubmitted = true;
+        break;
+      } catch {
+        // Try the next native keyboard transport while migration is still idle.
+      }
+    }
+    if (!migrationSubmitted) {
       await clickAccessible(windowId, "Import legacy home", true);
       try {
         await waitForAccessibleText("Migration status: success", true, 5);
+        migrationSubmitted = true;
       } catch {
         await activateAccessible(windowId, "Import legacy home", true);
       }

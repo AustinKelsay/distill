@@ -110,6 +110,10 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   fallback, with renderer regression coverage. The next exact-head package run
   must determine whether the key-name/event-delivery boundary was the cause;
   `LPKG-007` is not promoted by the local test alone.
+- The packaged harness now exercises four bounded keyboard transports—focused
+  and window-targeted `Return`/`Enter`—before the existing pointer and AT-SPI
+  fallbacks. This broadens only automation transport coverage; it does not add
+  a storage shortcut or change migration policy.
 
 ### Diagnosis boundary
 
