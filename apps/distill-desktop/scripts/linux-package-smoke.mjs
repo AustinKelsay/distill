@@ -6,7 +6,10 @@
  * The CI wrapper installs the .deb before invoking this script. The script resolves
  * controls through AT-SPI and drives the real packaged window with xdotool, then verifies the same
  * chosen-home, export, restart, and Fixture-containment contracts as macOS.
- * It also probes repair-dialog focus containment via AT-SPI (not screen-reader conformance).
+ * It also probes repair-dialog focus containment via AT-SPI (not screen-reader conformance)
+ * and drives hermetic multi-Source Detect Sources + Start Sync Run before the Fixture
+ * search/detail/curation/export journey. Attempt-history/renormalize remains a bounded
+ * non-goal for this packaged harness.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -15,6 +18,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+
+import {
+  DETECT_SIBLING_SECRET,
+  hermeticSourceRoots,
+  seedHermeticMultisourceRoots,
+} from "./packaged-hermetic-multisource.mjs";
 
 const execFileAsync = promisify(execFile);
 const appRoot = path.resolve(import.meta.dirname, "..");
@@ -195,6 +204,54 @@ async function typeIntoAccessible(windowId, name, value) {
   ]);
 }
 
+/**
+ * Wait for any AT-SPI accessible name (including static status text).
+ * @param {string} name - exact or substring match
+ * @param {boolean} contains - substring match when true
+ */
+async function waitForAccessibleText(name, contains = false) {
+  const script = path.join(appRoot, "scripts/linux-atspi-find.py");
+  const args = [script, "--name", name, "--timeout", "30"];
+  if (contains) args.push("--contains");
+  const result = await command("python3", args, { allowFailure: true });
+  if (result.code !== 0) {
+    const detail = String(result.stderr || result.stdout || "").trim();
+    fail(`accessible-text: ${detail || `exit ${result.code}`}`);
+  }
+  return JSON.parse(result.stdout);
+}
+
+/**
+ * Fail if any AT-SPI accessible name contains a forbidden fragment.
+ * @param {string} fragment
+ */
+async function assertAccessibleNameOmits(fragment) {
+  const script = path.join(appRoot, "scripts/linux-atspi-find.py");
+  const result = await command(
+    "python3",
+    [script, "--name", fragment, "--contains", "--timeout", "2"],
+    { allowFailure: true },
+  );
+  if (result.code === 0) {
+    fail(`accessible-text: leaked forbidden fragment "${fragment}"`);
+  }
+  const detail = String(result.stderr || result.stdout || "").trim();
+  if (result.code !== 1 || !detail.startsWith("AT-SPI accessible not found:")) {
+    fail(`accessible-text: redaction probe failed: ${detail || `exit ${result.code}`}`);
+  }
+}
+
+/**
+ * Enable one Source preference draft and type its configured root.
+ * @param {string} windowId
+ * @param {string} kind - Source kind label used in accessible names
+ * @param {string} root
+ */
+async function configureSourceDraft(windowId, kind, root) {
+  await clickAccessible(windowId, `Enable ${kind}`);
+  await typeIntoAccessible(windowId, `${kind} source root`, root);
+}
+
 async function waitForWindow(processHandle, label) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     if (processHandle.launchError) throw processHandle.launchError;
@@ -204,7 +261,7 @@ async function waitForWindow(processHandle, label) {
     const windowId = result.stdout.trim().split("\n").filter(Boolean).at(-1);
     if (windowId) {
       await focusWindow(windowId);
-      await xdotool(["windowsize", windowId, "880", "720"]);
+      await xdotool(["windowsize", windowId, "1000", "900"]);
       return windowId;
     }
     await sleep(250);
@@ -240,7 +297,7 @@ async function stopProcess(processHandle) {
 }
 
 async function waitForFile(filePath) {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       await fs.access(filePath);
       return;
@@ -251,12 +308,12 @@ async function waitForFile(filePath) {
   fail(`expected packaged artifact did not appear: ${path.basename(filePath)}`);
 }
 
-async function runUiJourney(binary, home, fixtureRoot) {
+async function runUiJourney(binary, home, roots) {
   const processHandle = launch(binary, "initial");
   try {
     const windowId = await waitForWindow(processHandle, "initial");
     await typeIntoAccessible(windowId, "Distill home", home);
-    await typeIntoAccessible(windowId, "Fixture root", fixtureRoot);
+    await typeIntoAccessible(windowId, "Fixture root", roots.fixtureRoot);
 
     // Packaged repair-dialog focus containment (AT-SPI FOCUSED state only; not SR).
     await clickAccessible(windowId, "Repair library");
@@ -266,13 +323,38 @@ async function runUiJourney(binary, home, fixtureRoot) {
     await key(windowId, "Escape");
     await assertAccessibleFocused("Repair library");
 
-    await clickAccessible(windowId, "Run Fixture journey");
+    // Hermetic multi-Source Detect: missing Codex sibling must warn without leaking the secret.
+    await configureSourceDraft(windowId, "codex", roots.missingSiblingRoot);
+    await configureSourceDraft(windowId, "claude_code", roots.claudeRoot);
+    await configureSourceDraft(windowId, "opencode", roots.opencodeRoot);
+    await configureSourceDraft(windowId, "droid", roots.droidRoot);
+    await clickAccessible(windowId, "Detect Sources");
+    await waitForAccessibleText("Status: warning", true);
+    await waitForAccessibleText("codex: unhealthy", true);
+    for (const expected of [
+      "fixture: ok",
+      "claude_code: unavailable",
+      "opencode: ok",
+      "droid: ok",
+    ]) {
+      await waitForAccessibleText(expected, true);
+    }
+    // Detect result copy must stay redacted; clear the missing path before scanning names.
+    await typeIntoAccessible(windowId, "codex source root", roots.codexRoot);
+    await assertAccessibleNameOmits(DETECT_SIBLING_SECRET);
+
+    // Sync Fixture + hermetic providers through Start Sync Run (not Run Fixture journey).
+    await clickAccessible(windowId, "Start Sync Run");
     await waitForFile(path.join(home, "distill.db"));
+    await waitForAccessibleText("Status: success", true);
+    for (const kind of ["fixture", "codex", "claude_code", "opencode", "droid"]) {
+      await waitForAccessibleText(`${kind}: completed`, true);
+    }
 
     await clickAccessible(windowId, "Load sessions");
     await typeIntoAccessible(windowId, "Search sessions", "smoke");
     await key(windowId, "Enter");
-    await clickAccessible(windowId, "Linux Package Smoke", true);
+    await clickAccessible(windowId, roots.fixtureSessionTitle, true);
     await clickAccessible(windowId, "train");
     await clickAccessible(windowId, "Preview export");
     await clickAccessible(windowId, "Publish export");
@@ -330,41 +412,22 @@ if (JSON.stringify(capability.permissions) !== JSON.stringify(["core:event:defau
 
 const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-linux-smoke-"));
 const home = path.join(base, "home");
-const fixtureRoot = path.join(base, "fixture");
-await fs.mkdir(path.join(fixtureRoot, "captures"), { recursive: true });
 const sessionTitle = "Linux Package Smoke";
-await fs.writeFile(
-  path.join(fixtureRoot, "distill.fixture.json"),
-  JSON.stringify({
-    version: 1,
-    captures: [
-      {
-        id: "linux-smoke",
-        kind: "file",
-        relative_path: "captures/linux-smoke.jsonl",
-        external_session_id: "linux-package-smoke",
-        title: sessionTitle,
-      },
-    ],
-  }),
-);
-await fs.writeFile(
-  path.join(fixtureRoot, "captures/linux-smoke.jsonl"),
-  [
-    JSON.stringify({
-      record_type: "session_meta",
-      title: sessionTitle,
-      summary: "packaged smoke",
-    }),
-    JSON.stringify({ record_type: "message", role: "user", text: "smoke search" }),
-    JSON.stringify({ record_type: "message", role: "assistant", text: "smoke response" }),
-  ].join("\n") + "\n",
-);
+const roots = await seedHermeticMultisourceRoots(base, {
+  fixtureSessionTitle: sessionTitle,
+  fixtureExternalSessionId: "linux-package-smoke",
+});
+const sourceRoots = hermeticSourceRoots(roots);
 
-const beforeFixture = await collectFiles(fixtureRoot);
-const beforeFixtureHashes = await collectFileHashes(fixtureRoot);
+const beforeSourceSnapshots = {};
+for (const root of sourceRoots) {
+  beforeSourceSnapshots[root] = {
+    files: await collectFiles(root),
+    hashes: await collectFileHashes(root),
+  };
+}
 const beforeBase = await collectFiles(base);
-await runUiJourney(binary, home, fixtureRoot);
+await runUiJourney(binary, home, roots);
 const beforeRestart = await collectFiles(home);
 const restartProcess = launch(binary, "restart");
 try {
@@ -403,19 +466,24 @@ if (
 ) {
   fail("Linux packaged export did not contain the curated Fixture session in train");
 }
-const afterFixture = await collectFiles(fixtureRoot);
-const afterFixtureHashes = await collectFileHashes(fixtureRoot);
-if (
-  JSON.stringify(beforeFixture) !== JSON.stringify(afterFixture) ||
-  JSON.stringify(beforeFixtureHashes) !== JSON.stringify(afterFixtureHashes)
-) {
-  fail("Linux packaged smoke changed Fixture source files");
+for (const root of sourceRoots) {
+  const afterFiles = await collectFiles(root);
+  const afterHashes = await collectFileHashes(root);
+  if (
+    JSON.stringify(beforeSourceSnapshots[root].files) !== JSON.stringify(afterFiles) ||
+    JSON.stringify(beforeSourceSnapshots[root].hashes) !== JSON.stringify(afterHashes)
+  ) {
+    fail(
+      `Linux packaged smoke changed hermetic source files under ${path.basename(root)}`,
+    );
+  }
 }
 const afterBase = await collectFiles(base);
 for (const file of afterBase.filter((entry) => !beforeBase.includes(entry))) {
   const absolute = path.join(base, file);
-  if (!isWithin(absolute, home) && !isWithin(absolute, fixtureRoot)) {
-    fail(`Linux packaged write escaped chosen home/Fixture roots: ${file}`);
+  const allowed = [home, ...sourceRoots].some((root) => isWithin(absolute, root));
+  if (!allowed) {
+    fail(`Linux packaged write escaped chosen home/hermetic source roots: ${file}`);
   }
 }
 
@@ -430,12 +498,22 @@ console.log(
       capabilities: capability.permissions,
       ui: "passed",
       restart: "passed",
+      hermetic_multisource: "passed",
+      detect_sibling_isolation: "passed",
       home,
-      fixture_root: fixtureRoot,
+      fixture_root: roots.fixtureRoot,
+      hermetic_roots: {
+        codex: roots.codexRoot,
+        claude_code: roots.claudeRoot,
+        opencode: roots.opencodeRoot,
+        droid: roots.droidRoot,
+      },
       home_files: homeFiles,
       export_files: exportFiles,
       non_claims: [
-        "installed Ubuntu smoke only; no migration, crash-recovery, privacy, scale, export-atomicity, or screen-reader claim",
+        "installed Ubuntu smoke only; hermetic temp roots only — no host-installed provider claim",
+        "no Attempt-history/renormalize packaged journey (bounded non-goal; covered by host/renderer contracts)",
+        "no migration, crash-recovery, privacy, scale, export-atomicity, or screen-reader claim",
       ],
     },
     null,

@@ -7,6 +7,9 @@
  * Accessibility via System Events; set DISTILL_MACOS_ALLOW_MANUAL=1 only when
  * the runner has no Accessibility permission and a human will complete the
  * same checklist. That mode is explicit and never claims a packaged journey.
+ * The journey seeds hermetic multi-Source roots, drives Detect Sources + Start
+ * Sync Run, then retains the Fixture search/detail/curation/export/restart path.
+ * Attempt-history/renormalize remains a bounded non-goal for this harness.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -15,6 +18,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+
+import {
+  DETECT_SIBLING_SECRET,
+  hermeticSourceRoots,
+  seedHermeticMultisourceRoots,
+} from "./packaged-hermetic-multisource.mjs";
 
 const execFileAsync = promisify(execFile);
 const appRoot = path.resolve(import.meta.dirname, "..");
@@ -110,7 +119,7 @@ function isWithin(candidate, root) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
-async function runPackagedUiJourney(appPath, home, fixtureRoot, sessionTitle) {
+async function runPackagedUiJourney(home, roots) {
   const script = `
 tell application "Distill" to activate
 tell application "System Events"
@@ -160,7 +169,7 @@ tell application "System Events"
     repeat with node in nodes
       try
         if role of node is "AXTextField" and name of node is "Fixture root" then
-          set the clipboard to ${JSON.stringify(fixtureRoot)}
+          set the clipboard to ${JSON.stringify(roots.fixtureRoot)}
           click node
           keystroke "a" using {command down}
           keystroke "v" using {command down}
@@ -314,19 +323,202 @@ tell application "System Events"
       delay 0.25
     end repeat
     if escapeSettled is false then error "dialog-focus: expected Confirm destructive repair closed with Repair library focused"
+    -- Hermetic multi-Source Detect Sources (sibling failure) then Start Sync Run.
     set nodes to entire contents of window 1
-    set runFound to false
     repeat with node in nodes
       try
-        if role of node is "AXButton" and name of node is "Run Fixture journey" then
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node is "Enable codex" then
           click node
-          set runFound to true
           exit repeat
         end if
       end try
     end repeat
-    if runFound is false then error "Run Fixture journey button is not accessible"
-    delay 3
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if role of node is "AXTextField" and name of node is "codex source root" then
+          set the clipboard to ${JSON.stringify(roots.missingSiblingRoot)}
+          click node
+          keystroke "a" using {command down}
+          keystroke "v" using {command down}
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node is "Enable claude_code" then
+          click node
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if role of node is "AXTextField" and name of node is "claude_code source root" then
+          set the clipboard to ${JSON.stringify(roots.claudeRoot)}
+          click node
+          keystroke "a" using {command down}
+          keystroke "v" using {command down}
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node is "Enable opencode" then
+          click node
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if role of node is "AXTextField" and name of node is "opencode source root" then
+          set the clipboard to ${JSON.stringify(roots.opencodeRoot)}
+          click node
+          keystroke "a" using {command down}
+          keystroke "v" using {command down}
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node is "Enable droid" then
+          click node
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if role of node is "AXTextField" and name of node is "droid source root" then
+          set the clipboard to ${JSON.stringify(roots.droidRoot)}
+          click node
+          keystroke "a" using {command down}
+          keystroke "v" using {command down}
+          exit repeat
+        end if
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    set detectFound to false
+    repeat with node in nodes
+      try
+        if role of node is "AXButton" and name of node is "Detect Sources" then
+          click node
+          set detectFound to true
+          exit repeat
+        end if
+      end try
+    end repeat
+    if detectFound is false then error "Detect Sources button is not accessible"
+    set detectWarned to false
+    repeat 40 times
+      set sawWarning to false
+      set sawUnhealthy to false
+      set nodes to entire contents of window 1
+      repeat with node in nodes
+        try
+          set nodeName to name of node
+          if nodeName contains "Status: warning" then set sawWarning to true
+          if nodeName contains "codex: unhealthy" then set sawUnhealthy to true
+        end try
+      end repeat
+      if sawWarning and sawUnhealthy then
+        set detectWarned to true
+        exit repeat
+      end if
+      delay 0.25
+    end repeat
+    if detectWarned is false then error "Detect Sources did not surface sibling-failure warning status"
+    repeat with expectedStatus in {"fixture: ok", "claude_code: unavailable", "opencode: ok", "droid: ok"}
+      set statusFound to false
+      repeat 40 times
+        set nodes to entire contents of window 1
+        repeat with node in nodes
+          try
+            if name of node contains expectedStatus then
+              set statusFound to true
+              exit repeat
+            end if
+          end try
+        end repeat
+        if statusFound then exit repeat
+        delay 0.25
+      end repeat
+      if statusFound is false then error "Detect Sources did not preserve sibling status " & expectedStatus
+    end repeat
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if role of node is "AXTextField" and name of node is "codex source root" then
+          set the clipboard to ${JSON.stringify(roots.codexRoot)}
+          click node
+          keystroke "a" using {command down}
+          keystroke "v" using {command down}
+          exit repeat
+        end if
+      end try
+    end repeat
+    delay 0.25
+    set nodes to entire contents of window 1
+    repeat with node in nodes
+      try
+        if name of node contains ${JSON.stringify(DETECT_SIBLING_SECRET)} then error "detect diagnostics leaked sibling secret token"
+      end try
+    end repeat
+    set nodes to entire contents of window 1
+    set syncFound to false
+    repeat with node in nodes
+      try
+        if role of node is "AXButton" and name of node is "Start Sync Run" then
+          click node
+          set syncFound to true
+          exit repeat
+        end if
+      end try
+    end repeat
+    if syncFound is false then error "Start Sync Run button is not accessible"
+    set syncReady to false
+    repeat 80 times
+      set nodes to entire contents of window 1
+      repeat with node in nodes
+        try
+          if name of node contains "Status: success" then
+            set syncReady to true
+            exit repeat
+          end if
+        end try
+      end repeat
+      if syncReady then exit repeat
+      delay 0.25
+    end repeat
+    if syncReady is false then error "Start Sync Run did not reach success status"
+    repeat with expectedKind in {"fixture", "codex", "claude_code", "opencode", "droid"}
+      set sourceReady to false
+      repeat 40 times
+        set nodes to entire contents of window 1
+        repeat with node in nodes
+          try
+            if name of node contains (expectedKind & ": completed") then
+              set sourceReady to true
+              exit repeat
+            end if
+          end try
+        end repeat
+        if sourceReady then exit repeat
+        delay 0.25
+      end repeat
+      if sourceReady is false then error "Start Sync Run did not complete source " & expectedKind
+    end repeat
     set nodes to entire contents of window 1
     set loadFound to false
     repeat with node in nodes
@@ -345,7 +537,7 @@ tell application "System Events"
     repeat with node in nodes
       try
         -- WebKit maps aria-pressed session rows to AXCheckBox controls.
-        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node contains ${JSON.stringify(sessionTitle)} then
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node contains ${JSON.stringify(roots.fixtureSessionTitle)} then
           click node
           set sessionFound to true
           exit repeat
@@ -414,7 +606,7 @@ tell application "System Events"
     set searchResultFound to false
     repeat with node in nodes
       try
-        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node contains ${JSON.stringify(sessionTitle)} then
+        if (role of node is "AXCheckBox" or role of node is "AXButton") and name of node contains ${JSON.stringify(roots.fixtureSessionTitle)} then
           set searchResultFound to true
           exit repeat
         end if
@@ -487,39 +679,20 @@ if (!["adhoc", "unsigned"].includes(signing)) {
 }
 const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-macos-smoke-"));
 const home = path.join(base, "home");
-const fixtureRoot = path.join(base, "fixture");
 const sessionTitle = "macOS Package Smoke";
-await fs.mkdir(path.join(fixtureRoot, "captures"), { recursive: true });
-await fs.writeFile(
-  path.join(fixtureRoot, "distill.fixture.json"),
-  JSON.stringify({
-    version: 1,
-    captures: [
-      {
-        id: "macos-smoke",
-        kind: "file",
-        relative_path: "captures/macos-smoke.jsonl",
-        external_session_id: "macos-package-smoke",
-        title: sessionTitle,
-      },
-    ],
-  }),
-);
-await fs.writeFile(
-  path.join(fixtureRoot, "captures/macos-smoke.jsonl"),
-  [
-    JSON.stringify({
-      record_type: "session_meta",
-      title: sessionTitle,
-      summary: "packaged smoke",
-    }),
-    JSON.stringify({ record_type: "message", role: "user", text: "smoke search" }),
-    JSON.stringify({ record_type: "message", role: "assistant", text: "smoke response" }),
-  ].join("\n") + "\n",
-);
+const roots = await seedHermeticMultisourceRoots(base, {
+  fixtureSessionTitle: sessionTitle,
+  fixtureExternalSessionId: "macos-package-smoke",
+});
+const sourceRoots = hermeticSourceRoots(roots);
 
-const beforeFixture = await collectFiles(fixtureRoot);
-const beforeFixtureHashes = await collectFileHashes(fixtureRoot);
+const beforeSourceSnapshots = {};
+for (const root of sourceRoots) {
+  beforeSourceSnapshots[root] = {
+    files: await collectFiles(root),
+    hashes: await collectFileHashes(root),
+  };
+}
 const beforeBase = await collectFiles(base);
 const evidence = {
   machine: `${os.platform()} ${os.arch()}`,
@@ -532,8 +705,16 @@ const evidence = {
   signing,
   notarization: "not assessed as notarized by the local unsigned gate",
   ui: "pending",
+  hermetic_multisource: "pending",
+  detect_sibling_isolation: "pending",
   home,
-  fixture_root: fixtureRoot,
+  fixture_root: roots.fixtureRoot,
+  hermetic_roots: {
+    codex: roots.codexRoot,
+    claude_code: roots.claudeRoot,
+    opencode: roots.opencodeRoot,
+    droid: roots.droidRoot,
+  },
 };
 
 let uiError = null;
@@ -541,8 +722,10 @@ let restartError = null;
 const appProcess = spawn("open", ["-n", appPath], { stdio: "ignore" });
 try {
   try {
-    await runPackagedUiJourney(appPath, home, fixtureRoot, sessionTitle);
+    await runPackagedUiJourney(home, roots);
     evidence.ui = "passed";
+    evidence.hermetic_multisource = "passed";
+    evidence.detect_sibling_isolation = "passed";
   } catch (error) {
     uiError = error;
     evidence.ui = "manual_required";
@@ -624,20 +807,23 @@ if (evidence.ui === "passed") {
     fail("packaged export did not contain the curated Fixture session in train");
   }
 }
-const afterFixture = await collectFiles(fixtureRoot);
-if (JSON.stringify(beforeFixture) !== JSON.stringify(afterFixture)) {
-  fail("packaged smoke modified the Fixture source root");
-}
-const afterFixtureHashes = await collectFileHashes(fixtureRoot);
-if (JSON.stringify(beforeFixtureHashes) !== JSON.stringify(afterFixtureHashes)) {
-  fail("packaged smoke changed Fixture source contents");
+for (const root of sourceRoots) {
+  const afterFiles = await collectFiles(root);
+  const afterHashes = await collectFileHashes(root);
+  if (
+    JSON.stringify(beforeSourceSnapshots[root].files) !== JSON.stringify(afterFiles) ||
+    JSON.stringify(beforeSourceSnapshots[root].hashes) !== JSON.stringify(afterHashes)
+  ) {
+    fail(`packaged smoke changed hermetic source files under ${path.basename(root)}`);
+  }
 }
 const afterBase = await collectFiles(base);
 const newBaseFiles = afterBase.filter((file) => !beforeBase.includes(file));
 for (const file of newBaseFiles) {
   const absolute = path.join(base, file);
-  if (!isWithin(absolute, home) && !isWithin(absolute, fixtureRoot)) {
-    fail(`packaged write escaped chosen home/Fixture roots: ${file}`);
+  const allowed = [home, ...sourceRoots].some((root) => isWithin(absolute, root));
+  if (!allowed) {
+    fail(`packaged write escaped chosen home/hermetic source roots: ${file}`);
   }
 }
 for (const file of homeFiles) {
@@ -649,6 +835,8 @@ evidence.home_files = homeFiles;
 evidence.export_files = exportFiles;
 evidence.non_claims = [
   "unsigned local .app only; no Developer ID or notarization claim",
+  "hermetic temp roots only — no host-installed provider claim",
+  "no Attempt-history/renormalize packaged journey (bounded non-goal; covered by host/renderer contracts)",
   "no migration, crash-recovery, privacy, scale, export-atomicity, or VoiceOver claim",
 ];
 console.log(JSON.stringify(evidence, null, 2));
