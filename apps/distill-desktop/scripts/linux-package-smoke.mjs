@@ -232,6 +232,20 @@ async function typeIntoAccessible(windowId, name, value, delay = 1) {
 }
 
 /**
+ * Type through the focused X window rather than targeting a window id. Some
+ * WebKitGTK text controls drop synthetic --window events after scroll_to().
+ */
+async function typeIntoFocusedAccessible(windowId, name, value, delay = 1) {
+  await clickAccessible(windowId, name);
+  await xdotool(["key", "ctrl+a"]);
+  await xdotool(["type", "--clearmodifiers", "--delay", String(delay), value]);
+}
+
+async function focusedKey(value) {
+  await xdotool(["key", value]);
+}
+
+/**
  * Wait for any AT-SPI accessible name (including static status text).
  * @param {string} name - exact or substring match
  * @param {boolean} contains - substring match when true
@@ -364,9 +378,14 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     // WebKitGTK can deliver xdotool input after the React controlled value
     // update. Type slowly, then submit from the focused field so the browser
     // dispatches the migration handler without relying on AT-SPI button action.
-    await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 80);
+    await typeIntoFocusedAccessible(
+      windowId,
+      "Legacy Electron home",
+      legacy.legacyHome,
+      80,
+    );
     await sleep(750);
-    await key(windowId, "Return");
+    await focusedKey("Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
     } catch {
