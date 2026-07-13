@@ -130,6 +130,7 @@ export function App({ bridge }: AppProps) {
   const [migrationReport, setMigrationReport] = useState<LegacyImportReport | null>(null);
   const [migrationError, setMigrationError] = useState<HostError | null>(null);
   const migrationRequestRef = useRef(0);
+  const migrationInFlightRef = useRef(false);
   const [phase, setPhase] = useState<FixtureJourneyPhase | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [activeSyncRunId, setActiveSyncRunId] = useState<number | null>(null);
@@ -408,7 +409,14 @@ export function App({ bridge }: AppProps) {
    * Explicitly import a legacy Electron home into the native Distill home.
    */
   async function onImportLegacy(sourceHome = legacySourceHome) {
-    if (!home.trim() || !sourceHome.trim() || migrationStatus === "loading") return;
+    if (
+      !home.trim() ||
+      !sourceHome.trim() ||
+      migrationStatus === "loading" ||
+      migrationInFlightRef.current
+    )
+      return;
+    migrationInFlightRef.current = true;
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
     setMigrationError(null);
@@ -423,6 +431,8 @@ export function App({ bridge }: AppProps) {
       if (requestId !== migrationRequestRef.current) return;
       setMigrationError(normalizeError(caught));
       setMigrationStatus("error");
+    } finally {
+      migrationInFlightRef.current = false;
     }
   }
 
@@ -431,6 +441,7 @@ export function App({ bridge }: AppProps) {
    */
   function onCancelMigration() {
     migrationRequestRef.current += 1;
+    migrationInFlightRef.current = false;
     setMigrationStatus("cancelled");
     returnFocus(importLegacyRef.current);
   }
@@ -1191,6 +1202,7 @@ export function App({ bridge }: AppProps) {
             legacySourceHome.trim() ? "Import legacy home (ready)" : "Import legacy home"
           }
           onClick={() => void onImportLegacy()}
+          onMouseUp={() => void onImportLegacy()}
           disabled={migrationStatus === "loading"}
         >
           {migrationStatus === "loading" ? "Importing…" : "Import legacy home"}
