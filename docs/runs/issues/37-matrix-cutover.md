@@ -50,7 +50,7 @@ commands on Darwin; the Ubuntu workflow is the authoritative Linux package gate.
   paging/search/detail, transactional Curation, export preview/publication, Activity,
   Operations, health/repair, cancellation, and legacy-home migration. Issue #44 adds
   hermetic Codex/Claude/OpenCode/Droid host journeys and root-removal/mixed-warning
-  isolation; final-head Linux package smoke 29220447308 and Rust advisory 29220447313
+  isolation; final-head Linux package smoke 29220735705 and Rust advisory 29220735664
   are green; packaged provider roots are not claimed.
 - The React renderer is bridge-only and has deterministic first-run, multi-Source
   preference, loading, empty, populated, warning, error, cancelled, migration, and

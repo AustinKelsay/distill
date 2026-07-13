@@ -60,7 +60,7 @@ FINDINGS: none
 
 ## Explicit residuals
 
-- Final pushed-head Linux package/install/smoke [run 29220447308](https://github.com/AustinKelsay/distill/actions/runs/29220447308) and Rust advisory [run 29220447313](https://github.com/AustinKelsay/distill/actions/runs/29220447313) passed on docs closeout head `fa5bf99`; local workspace/fault/fmt/clippy/tree/diff gates are green.
+- Final pushed-head Linux package/install/smoke [run 29220735705](https://github.com/AustinKelsay/distill/actions/runs/29220735705) and Rust advisory [run 29220735664](https://github.com/AustinKelsay/distill/actions/runs/29220735664) passed on docs closeout head `a8a37b7`; local workspace/fault/fmt/clippy/tree/diff gates are green.
 - Packaged real-provider machine roots are not claimed; the host suite is
   hermetic and uses synthetic roots plus a local OpenCode fake.
 - Renormalize UI/Attempt history, VoiceOver/Narrator speech, Developer ID
