@@ -9,11 +9,11 @@ mod host;
 pub use error::HostError;
 pub use host::{
     run_add_session_tag as execute_add_session_tag,
-    run_capture_attempts as execute_capture_attempts, run_export_cancel as execute_export_cancel,
-    run_fixture_journey as execute_fixture_journey, run_health as execute_health,
-    run_import_legacy as execute_import_legacy, run_list_activity as execute_list_activity,
-    run_list_operations as execute_list_operations, run_list_sessions as execute_list_sessions,
-    run_list_sources as execute_list_sources,
+    run_capture_attempts as execute_capture_attempts, run_detect_sources as execute_detect_sources,
+    run_export_cancel as execute_export_cancel, run_fixture_journey as execute_fixture_journey,
+    run_health as execute_health, run_import_legacy as execute_import_legacy,
+    run_list_activity as execute_list_activity, run_list_operations as execute_list_operations,
+    run_list_sessions as execute_list_sessions, run_list_sources as execute_list_sources,
     run_prepare_export_cancellation as execute_prepare_export_cancellation,
     run_preview_export as execute_preview_export, run_publish_export as execute_publish_export,
     run_publish_export_cancellable as execute_publish_export_cancellable,
@@ -27,9 +27,10 @@ pub use host::{
     run_toggle_session_label as execute_toggle_session_label, validate_capture_id_request,
     validate_export_request, validate_fixture_journey_request, validate_home_request,
     validate_legacy_import_request, validate_session_curation_request,
-    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
-    CaptureIdRequest, ExportRequest, FixtureJourneyRequest, HomeRequest, LegacyImportRequest,
-    SourcePreferenceRequest, SyncIdRequest, SyncStartRequest,
+    validate_source_detect_request, validate_source_preference_request, validate_sync_id_request,
+    validate_sync_start_request, CaptureIdRequest, ExportRequest, FixtureJourneyRequest,
+    HomeRequest, LegacyImportRequest, SourceDetectBatchRequest, SourcePreferenceRequest,
+    SyncIdRequest, SyncStartRequest,
 };
 
 use distill_library::{ExportProgress, FixtureJourneyPhase, SyncProgress};
@@ -53,6 +54,7 @@ pub fn run() {
             commands::import_legacy_command,
             commands::repair_command,
             commands::list_sources_command,
+            commands::detect_sources_command,
             commands::set_source_preference_command,
             commands::sync_start_command,
             commands::sync_status_command,

@@ -28,6 +28,7 @@ import type {
   SessionListItem,
   SessionListPage,
   WorkflowLane,
+  SourceDetectResult,
   SourcePreference,
   SyncProgress,
   SyncRunResult,
@@ -139,6 +140,10 @@ export function App({ bridge }: AppProps) {
     createInitialSourceDrafts(),
   );
   const [dirtySourceKinds, setDirtySourceKinds] = useState<Set<string>>(() => new Set());
+  const [detectStatus, setDetectStatus] = useState<DiagnosticsPanelStatus>("idle");
+  const [detectResults, setDetectResults] = useState<SourceDetectResult[] | null>(null);
+  const [detectError, setDetectError] = useState<HostError | null>(null);
+  const detectRequestRef = useRef(0);
   const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
   const [repairDialogOpen, setRepairDialogOpen] = useState(false);
@@ -254,6 +259,36 @@ export function App({ bridge }: AppProps) {
     } catch (caught) {
       setError(normalizeError(caught));
       setStatus("error");
+    }
+  }
+
+  /**
+   * Detect Sources from current preference drafts through the typed bridge only.
+   * Read-only: never mutates Sync Runs, Captures, or Activity.
+   */
+  async function onDetectSources() {
+    if (!home.trim()) return;
+    const requestId = ++detectRequestRef.current;
+    setDetectStatus("loading");
+    setDetectError(null);
+    setDetectResults(null);
+    setError(null);
+    try {
+      const requests = sourceDrafts.map((draft) => ({
+        kind: draft.kind,
+        configured_root: draft.root.trim() ? draft.root.trim() : null,
+      }));
+      const next = await bridge.detectSources(home, requests);
+      if (requestId !== detectRequestRef.current) return;
+      setDetectResults(next);
+      const hasWarning = next.some((result) => result.status !== "ok");
+      setDetectStatus(next.length === 0 ? "empty" : hasWarning ? "warning" : "ready");
+    } catch (caught) {
+      if (requestId !== detectRequestRef.current) return;
+      const nextError = normalizeError(caught);
+      setDetectError(nextError);
+      setDetectStatus("error");
+      setError(nextError);
     }
   }
 
@@ -1016,6 +1051,14 @@ export function App({ bridge }: AppProps) {
           })}
         </fieldset>
         <button
+          type="button"
+          onClick={() => void onDetectSources()}
+          disabled={!home.trim() || detectStatus === "loading"}
+          data-testid="detect-sources"
+        >
+          {detectStatus === "loading" ? "Detecting Sources…" : "Detect Sources"}
+        </button>
+        <button
           ref={startSyncRef}
           type="button"
           onClick={onStartSync}
@@ -1039,6 +1082,32 @@ export function App({ bridge }: AppProps) {
             ))}
           </ul>
         ) : null}
+        <div
+          aria-label="Source detection"
+          aria-busy={detectStatus === "loading"}
+          data-testid="source-detection-panel"
+        >
+          <p data-testid="detect-status">Status: {detectStatus}</p>
+          {detectError ? (
+            <p role="alert" data-testid="detect-error">
+              {detectError.code}: {detectError.message}
+            </p>
+          ) : null}
+          {detectResults && detectResults.length > 0 ? (
+            <ul data-testid="detect-results">
+              {detectResults.map((result, index) => (
+                <li
+                  key={`${result.kind}-${index}`}
+                  data-testid={`detect-result-${result.kind}`}
+                >
+                  {result.kind}: {result.status}
+                  {result.error_class ? ` (${result.error_class})` : ""}
+                  {result.error_message ? ` — ${result.error_message}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </section>
 
       <section className="form" aria-label="Library health and repair">

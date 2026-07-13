@@ -142,6 +142,9 @@ function createBridge(options?: {
     async listSources() {
       return [];
     },
+    async detectSources() {
+      return [];
+    },
     async setSourcePreference(_home, kind, enabled, configuredRoot) {
       return {
         kind,

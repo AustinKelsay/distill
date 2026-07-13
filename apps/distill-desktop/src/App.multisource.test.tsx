@@ -74,6 +74,17 @@ function createMultisourceBridge(options?: {
       if (options?.listSources) return options.listSources;
       return [...persisted.values()];
     },
+    async detectSources(_home, requests) {
+      return requests.map((request) => ({
+        kind: request.kind,
+        status: "ok",
+        executable: null,
+        effective_data_root: request.configured_root,
+        display_name: request.kind,
+        error_class: null,
+        error_message: null,
+      }));
+    },
     async setSourcePreference(home, kind, enabled, configuredRoot) {
       const preference: SourcePreference = {
         kind,

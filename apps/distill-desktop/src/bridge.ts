@@ -33,6 +33,8 @@ import type {
   SessionDetailRequest,
   SessionListPage,
   SessionListRequest,
+  SourceDetectRequest,
+  SourceDetectResult,
   SourcePreference,
   SyncProgress,
   SyncRunResult,
@@ -68,6 +70,15 @@ export function createTauriBridge(): DistillBridge {
     },
     async listSources(home: string): Promise<SourcePreference[]> {
       return invoke<SourcePreference[]>("list_sources_command", { home });
+    },
+    async detectSources(
+      home: string,
+      requests: SourceDetectRequest[],
+    ): Promise<SourceDetectResult[]> {
+      return invoke<SourceDetectResult[]>("detect_sources_command", {
+        home,
+        requests,
+      });
     },
     async setSourcePreference(
       home: string,

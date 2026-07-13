@@ -250,6 +250,23 @@ export type SourcePreference = {
   data_root: string | null;
 };
 
+/** One independent Source detection request. */
+export type SourceDetectRequest = {
+  kind: string;
+  configured_root: string | null;
+};
+
+/** Independent typed detection outcome for one requested Source. */
+export type SourceDetectResult = {
+  kind: string;
+  status: string;
+  executable: string | null;
+  effective_data_root: string | null;
+  display_name: string | null;
+  error_class: string | null;
+  error_message: string | null;
+};
+
 /** Typed Sync Run progress event. */
 export type SyncProgress =
   | { type: "run_queued"; sync_run_id: number }
@@ -487,6 +504,15 @@ export type DistillBridge = {
    * @param home - Distill home path
    */
   listSources(home: string): Promise<SourcePreference[]>;
+  /**
+   * Detect Sources independently through the host (read-only).
+   * @param home - Distill home path
+   * @param requests - one typed request per Source
+   */
+  detectSources(
+    home: string,
+    requests: SourceDetectRequest[],
+  ): Promise<SourceDetectResult[]>;
   /**
    * Upsert Source preference.
    */

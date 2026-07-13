@@ -1,7 +1,7 @@
 //! Thin Distill CLI over the public Library Fixture journey, health, repair,
-//! Source preferences, Sync Runs, session curation, export preview/publish,
-//! Capture Attempt history, Distill-owned Capture renormalize, Activity, and
-//! Operations diagnostics.
+//! Source preferences, independent Source detection, Sync Runs, session
+//! curation, export preview/publish, Capture Attempt history, Distill-owned
+//! Capture renormalize, Activity, and Operations diagnostics.
 //!
 //! Exit codes:
 //! - `0` — command succeeded
@@ -19,8 +19,9 @@ use distill_library::{
     CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
     ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, LegacyImportReport,
     Library, LibraryError, OperationsPage, OperationsRequest, RenormalizeReport, RepairOptions,
-    RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest, SourceKind,
-    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
+    RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest,
+    SourceDetectRequest, SourceDetectResult, SourceKind, SourcePreference, SyncProgress,
+    SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
 
@@ -45,7 +46,7 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, captures, export, activity, operations, and legacy migration",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources (list/set/detect), sync, sessions, captures, export, activity, operations, and legacy migration",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
@@ -346,7 +347,7 @@ pub enum SessionCommand {
     },
 }
 
-/// Source preference subcommands.
+/// Source preference and detection subcommands.
 #[derive(Debug, Subcommand)]
 pub enum SourcesCommand {
     /// List per-Source preferences.
@@ -378,6 +379,18 @@ pub enum SourcesCommand {
         /// Clear any configured-root override.
         #[arg(long)]
         clear_root: bool,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Detect Sources independently through `Library::detect_sources` (read-only).
+    Detect {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// One Source request as `KIND` or `KIND=ROOT` (repeatable).
+        #[arg(long = "request", required = true, value_name = "KIND[=ROOT]")]
+        requests: Vec<String>,
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -657,7 +670,89 @@ fn execute_sources(action: SourcesCommand) -> Result<String, CliFailure> {
                 .map_err(|err| CliFailure::runtime(format, err))?;
             Ok(render_source(format, &pref))
         }
+        SourcesCommand::Detect {
+            home,
+            requests,
+            format,
+        } => execute_sources_detect(home, requests, format),
     }
+}
+
+/**
+ * Parse one `KIND` or `KIND=ROOT` detect request token.
+ *
+ * Parameters:
+ * - `format`: output format used for usage errors
+ * - `raw`: caller-supplied request token
+ */
+fn parse_detect_request(
+    format: OutputFormat,
+    raw: &str,
+) -> Result<SourceDetectRequest, CliFailure> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(CliFailure::usage(
+            format,
+            "sources detect --request must not be empty",
+        ));
+    }
+    match trimmed.split_once('=') {
+        Some((kind, root)) => {
+            let kind = kind.trim();
+            let root = root.trim();
+            if kind.is_empty() {
+                return Err(CliFailure::usage(format, "source kind must not be empty"));
+            }
+            if root.is_empty() {
+                return Err(CliFailure::usage(
+                    format,
+                    "configured root must not be empty when provided",
+                ));
+            }
+            Ok(SourceDetectRequest {
+                kind: kind.to_string(),
+                configured_root: Some(root.to_string()),
+            })
+        }
+        None => Ok(SourceDetectRequest {
+            kind: trimmed.to_string(),
+            configured_root: None,
+        }),
+    }
+}
+
+/**
+ * Run independent Source detection through the public Library seam.
+ *
+ * Parameters:
+ * - `home`: Distill home to open
+ * - `raw_requests`: `KIND` or `KIND=ROOT` tokens in caller order
+ * - `format`: stable human or JSON output
+ */
+fn execute_sources_detect(
+    home: PathBuf,
+    raw_requests: Vec<String>,
+    format: OutputFormat,
+) -> Result<String, CliFailure> {
+    if home.as_os_str().is_empty() {
+        return Err(CliFailure::usage(format, "home path must not be empty"));
+    }
+    if raw_requests.is_empty() {
+        return Err(CliFailure::usage(
+            format,
+            "sources detect requires at least one --request",
+        ));
+    }
+    let mut requests = Vec::with_capacity(raw_requests.len());
+    for raw in &raw_requests {
+        requests.push(parse_detect_request(format, raw)?);
+    }
+
+    let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+    let results = library
+        .detect_sources(&requests)
+        .map_err(|err| CliFailure::runtime(format, err))?;
+    Ok(render_detect_results(format, &results))
 }
 
 fn execute_sync(action: SyncCommand) -> Result<String, CliFailure> {
@@ -1509,6 +1604,53 @@ fn render_source(format: OutputFormat, pref: &SourcePreference) -> String {
             pref.enabled,
             pref.configured_root.as_deref().unwrap_or("")
         ),
+    }
+}
+
+/**
+ * Render independent Source detection results for human or JSON callers.
+ *
+ * Parameters:
+ * - `format`: human multi-line summary or stable JSON document
+ * - `results`: typed per-Source detection outcomes from the Library
+ */
+fn render_detect_results(format: OutputFormat, results: &[SourceDetectResult]) -> String {
+    match format {
+        OutputFormat::Json => {
+            // The Library result retains roots/executable metadata for privileged callers,
+            // but the CLI contract publishes only caller-safe status and diagnostics.
+            let safe_results = results
+                .iter()
+                .map(|result| {
+                    serde_json::json!({
+                        "kind": result.kind,
+                        "status": result.status,
+                        "display_name": result.display_name,
+                        "error_class": result.error_class,
+                        "error_message": result.error_message,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "results": safe_results,
+            }))
+            .expect("json")
+        }
+        OutputFormat::Human => {
+            let mut lines = vec![format!("detect.count: {}", results.len())];
+            for result in results {
+                lines.push(format!(
+                    "detect.{} status={} display_name={} error_class={} error_message={}",
+                    result.kind,
+                    result.status,
+                    result.display_name.as_deref().unwrap_or("-"),
+                    result.error_class.as_deref().unwrap_or("-"),
+                    result.error_message.as_deref().unwrap_or("-"),
+                ));
+            }
+            lines.join("\n")
+        }
     }
 }
 

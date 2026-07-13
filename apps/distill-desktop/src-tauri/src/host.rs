@@ -9,8 +9,9 @@ use distill_library::{
     ExportPreview, ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase,
     FixtureJourneyResult, HealthReport, LegacyImportReport, Library, OperationsPage,
     OperationsRequest, RenormalizeReport, RepairOptions, RepairReport, SessionCurationRequest,
-    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceKind,
-    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
+    SourceDetectResult, SourceKind, SourcePreference, SyncProgress, SyncRequest, SyncRunResult,
+    SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -78,6 +79,15 @@ pub struct SourcePreferenceRequest {
     pub enabled: bool,
     /// Optional configured root.
     pub configured_root: Option<PathBuf>,
+}
+
+/// Validated independent Source detection batch.
+#[derive(Clone, Debug)]
+pub struct SourceDetectBatchRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// One typed detection request per Source, in caller order.
+    pub requests: Vec<SourceDetectRequest>,
 }
 
 /// Validated export preview/publish request.
@@ -473,6 +483,52 @@ pub fn validate_source_preference_request(
 }
 
 /**
+ * Validate an independent Source detection batch.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer
+ * - `requests`: typed SourceDetectRequest values (kind + optional configured root)
+ */
+pub fn validate_source_detect_request(
+    home: &str,
+    requests: Vec<SourceDetectRequest>,
+) -> Result<SourceDetectBatchRequest, HostError> {
+    let home_request = validate_home_request(home)?;
+    if requests.is_empty() {
+        return Err(HostError::validation(
+            "detect_sources requires at least one request",
+        ));
+    }
+    let mut validated = Vec::with_capacity(requests.len());
+    for request in requests {
+        let kind = request.kind.trim();
+        if kind.is_empty() {
+            return Err(HostError::validation("source kind must not be empty"));
+        }
+        let configured_root = match request.configured_root.as_deref() {
+            Some(root) if root.trim().is_empty() => {
+                return Err(HostError::validation(
+                    "configured root must not be empty when provided",
+                ));
+            }
+            Some(root) => {
+                let root = validate_path_argument("configured root", root)?;
+                Some(root)
+            }
+            None => None,
+        };
+        validated.push(SourceDetectRequest {
+            kind: kind.to_string(),
+            configured_root,
+        });
+    }
+    Ok(SourceDetectBatchRequest {
+        home: home_request.home,
+        requests: validated,
+    })
+}
+
+/**
  * Run the Library Fixture journey and report typed progress phases.
  */
 pub fn run_fixture_journey<F>(
@@ -529,6 +585,21 @@ pub fn run_repair(request: &HomeRequest, confirm: bool) -> Result<RepairReport, 
 pub fn run_list_sources(request: &HomeRequest) -> Result<Vec<SourcePreference>, HostError> {
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
     library.list_sources().map_err(HostError::from_library)
+}
+
+/**
+ * Detect Sources independently through the public Library seam (read-only).
+ *
+ * Parameters:
+ * - `request`: validated home plus per-Source detection requests
+ */
+pub fn run_detect_sources(
+    request: &SourceDetectBatchRequest,
+) -> Result<Vec<SourceDetectResult>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .detect_sources(&request.requests)
+        .map_err(HostError::from_library)
 }
 
 /**
@@ -751,4 +822,133 @@ fn validate_path_argument(label: &str, raw: &str) -> Result<String, HostError> {
         )));
     }
     Ok(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    use distill_library::ActivityListRequest;
+    use tempfile::TempDir;
+
+    /**
+     * Write a minimal Fixture root for host detection tests.
+     */
+    fn write_basic_fixture(root: &Path) {
+        let captures = root.join("captures");
+        fs::create_dir_all(&captures).expect("captures");
+        fs::write(
+            captures.join("hello.jsonl"),
+            concat!(
+                r#"{"record_type":"session_meta","title":"Host Detect","summary":"detect"}"#,
+                "\n",
+                r#"{"record_type":"message","role":"user","text":"Hello from host detect"}"#,
+                "\n",
+                r#"{"record_type":"message","role":"assistant","text":"Host detect greeting"}"#,
+                "\n",
+            ),
+        )
+        .expect("capture");
+        fs::write(
+            root.join("distill.fixture.json"),
+            r#"{
+  "version": 1,
+  "captures": [
+    {
+      "id": "hello",
+      "kind": "file",
+      "relative_path": "captures/hello.jsonl",
+      "external_session_id": "fixture-session-host-detect",
+      "title": "Host Detect"
+    }
+  ]
+}"#,
+        )
+        .expect("manifest");
+    }
+
+    /**
+     * THC-007: validated detect_sources isolates siblings, redacts diagnostics,
+     * and performs no Activity mutation.
+     */
+    #[test]
+    fn host_detect_sources_isolates_siblings_without_mutation() {
+        let temp = TempDir::new().expect("temp");
+        let home = temp.path().join("home");
+        let good = temp.path().join("good root");
+        let bad = temp.path().join("bad root with spaces and secret token");
+        fs::create_dir_all(&good).expect("good");
+        fs::create_dir_all(&bad).expect("bad");
+        write_basic_fixture(&good);
+
+        let empty = validate_source_detect_request(home.to_str().unwrap(), vec![]);
+        assert_eq!(empty.expect_err("empty").code, "validation");
+
+        let blank_kind = validate_source_detect_request(
+            home.to_str().unwrap(),
+            vec![SourceDetectRequest {
+                kind: "  ".into(),
+                configured_root: None,
+            }],
+        );
+        assert_eq!(blank_kind.expect_err("blank").code, "validation");
+
+        let request = validate_source_detect_request(
+            home.to_str().unwrap(),
+            vec![
+                SourceDetectRequest {
+                    kind: "fixture".into(),
+                    configured_root: Some(bad.display().to_string()),
+                },
+                SourceDetectRequest {
+                    kind: "fixture".into(),
+                    configured_root: Some(good.display().to_string()),
+                },
+                SourceDetectRequest {
+                    kind: "droid".into(),
+                    configured_root: None,
+                },
+                SourceDetectRequest {
+                    kind: "codex".into(),
+                    configured_root: Some(
+                        temp.path()
+                            .join("missing root with secret token")
+                            .display()
+                            .to_string(),
+                    ),
+                },
+            ],
+        )
+        .expect("validate");
+
+        let results = run_detect_sources(&request).expect("detect");
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].status, "unhealthy");
+        assert_eq!(results[1].status, "ok");
+        assert_eq!(results[2].status, "disabled");
+        assert_eq!(results[3].status, "unhealthy");
+        assert_eq!(
+            results[3].error_class.as_deref(),
+            Some("invalid_configured_root")
+        );
+        let bad_message = results[0].error_message.as_deref().unwrap_or("");
+        assert!(!bad_message.contains("secret"));
+        assert!(!bad_message.contains("spaces"));
+        assert!(!bad_message.contains('/'));
+        assert!(!results[3]
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("secret"));
+
+        let library = Library::open(&home).expect("reopen");
+        let activity = library
+            .list_activity(ActivityListRequest {
+                limit: 50,
+                cursor: None,
+            })
+            .expect("activity");
+        assert!(activity.items.is_empty(), "detect must not append Activity");
+    }
 }

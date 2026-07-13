@@ -77,6 +77,18 @@ describe("Tauri bridge", () => {
       home: "/tmp/home",
     });
 
+    await bridge.detectSources("/tmp/home", [
+      { kind: "fixture", configured_root: "/tmp/fixture" },
+      { kind: "droid", configured_root: null },
+    ]);
+    expect(tauri.invoke).toHaveBeenCalledWith("detect_sources_command", {
+      home: "/tmp/home",
+      requests: [
+        { kind: "fixture", configured_root: "/tmp/fixture" },
+        { kind: "droid", configured_root: null },
+      ],
+    });
+
     await bridge.syncStatus("/tmp/home", 7);
     expect(tauri.invoke).toHaveBeenCalledWith("sync_status_command", {
       home: "/tmp/home",

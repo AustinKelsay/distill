@@ -23,6 +23,7 @@ import type {
   SessionDetail,
   SessionListItem,
   SessionListPage,
+  SourceDetectResult,
   SyncRunResult,
   SyncRunSummary,
 } from "./types";
@@ -133,6 +134,9 @@ function createFakeBridge(options?: {
   renormalizeReport?: import("./types").RenormalizeReport;
   renormalizeError?: HostError;
   pendingRenormalize?: Promise<import("./types").RenormalizeReport>;
+  detectResults?: SourceDetectResult[];
+  detectError?: HostError;
+  pendingDetect?: Promise<SourceDetectResult[]>;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -205,6 +209,22 @@ function createFakeBridge(options?: {
           configured_root: "/tmp/fixture",
           display_name: "Fixture",
           data_root: null,
+        },
+      ];
+    },
+    async detectSources() {
+      if (options?.pendingDetect) return options.pendingDetect;
+      if (options?.detectError) throw options.detectError;
+      if (options?.detectResults) return options.detectResults;
+      return [
+        {
+          kind: "fixture",
+          status: "ok",
+          executable: null,
+          effective_data_root: "/tmp/fixture",
+          display_name: "Fixture",
+          error_class: null,
+          error_message: null,
         },
       ];
     },
@@ -572,6 +592,126 @@ describe("first-run Fixture UI", () => {
     expect(screen.getByTestId("health-panel")).toHaveTextContent("true");
   });
 
+  it("detects Sources through the bridge and renders per-Source status", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge();
+    render(<App bridge={bridge} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByTestId("detect-sources"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("detect-status")).toHaveTextContent("ready");
+    });
+    expect(screen.getByTestId("detect-result-fixture")).toHaveTextContent("fixture: ok");
+    expect(screen.getByTestId("source-detection-panel")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("keeps detection visibly loading until the bridge resolves", async () => {
+    const user = userEvent.setup();
+    let resolveDetect!: (results: SourceDetectResult[]) => void;
+    const pendingDetect = new Promise<SourceDetectResult[]>((resolve) => {
+      resolveDetect = resolve;
+    });
+    render(<App bridge={createFakeBridge({ pendingDetect })} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByTestId("detect-sources"));
+    expect(screen.getByTestId("detect-status")).toHaveTextContent("loading");
+    expect(screen.getByTestId("source-detection-panel")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+
+    resolveDetect([
+      {
+        kind: "fixture",
+        status: "ok",
+        executable: null,
+        effective_data_root: "/tmp/fixture",
+        display_name: "Fixture",
+        error_class: null,
+        error_message: null,
+      },
+    ]);
+    await waitFor(() => {
+      expect(screen.getByTestId("detect-status")).toHaveTextContent("ready");
+    });
+  });
+
+  it("renders empty, warning, and error detection states", async () => {
+    const user = userEvent.setup();
+    const fillHome = async () => {
+      await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+      await user.click(screen.getByTestId("detect-sources"));
+    };
+
+    const { unmount: unmountEmpty } = render(
+      <App bridge={createFakeBridge({ detectResults: [] })} />,
+    );
+    await fillHome();
+    await waitFor(() => {
+      expect(screen.getByTestId("detect-status")).toHaveTextContent("empty");
+    });
+    unmountEmpty();
+
+    const { unmount: unmountWarning } = render(
+      <App
+        bridge={createFakeBridge({
+          detectResults: [
+            {
+              kind: "fixture",
+              status: "ok",
+              executable: null,
+              effective_data_root: "/tmp/fixture",
+              display_name: "Fixture",
+              error_class: null,
+              error_message: null,
+            },
+            {
+              kind: "codex",
+              status: "unavailable",
+              executable: "/private/provider/codex",
+              effective_data_root: "/private/provider/root",
+              display_name: "Codex",
+              error_class: "executable_not_found",
+              error_message: "source executable is unavailable",
+            },
+          ],
+        })}
+      />,
+    );
+    await fillHome();
+    await waitFor(() => {
+      expect(screen.getByTestId("detect-status")).toHaveTextContent("warning");
+    });
+    expect(screen.getByTestId("detect-results")).toHaveTextContent(
+      "codex: unavailable (executable_not_found)",
+    );
+    expect(screen.getByTestId("detect-results")).not.toHaveTextContent(
+      "/private/provider",
+    );
+    unmountWarning();
+
+    render(
+      <App
+        bridge={createFakeBridge({
+          detectError: { code: "runtime", message: "source detection failed" },
+        })}
+      />,
+    );
+    await fillHome();
+    await waitFor(() => {
+      expect(screen.getByTestId("detect-status")).toHaveTextContent("error");
+    });
+    expect(screen.getByTestId("detect-error")).toHaveTextContent(
+      "runtime: source detection failed",
+    );
+  });
+
   it("loads paged sessions, detail slices, and preserves selection on refresh", async () => {
     const user = userEvent.setup();
     const sessionPage: SessionListPage = {
@@ -825,6 +965,7 @@ describe("first-run Fixture UI", () => {
         health_after: sampleResult().health,
       }),
       listSources: async () => [],
+      detectSources: async () => [],
       setSourcePreference: async (_home, kind, enabled, configuredRoot) => ({
         kind,
         enabled,
