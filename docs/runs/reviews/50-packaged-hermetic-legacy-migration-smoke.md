@@ -65,7 +65,9 @@ screen-reader claims.
 - Reuses existing bridge-only migration panel and Library import seam.
 - Destination/source homes are siblings under the smoke temp base.
 - `LPKG-007` is `blocked` pending exact-head proof from the new opt-in
-  Vite-built renderer DOM activation path; `PKG-007` is `manual_required`.
+  Vite-built renderer DOM activation path. The package workflow now creates a
+  temporary `.env.production.local` so Tauri's frontend build receives the
+  smoke flag; `PKG-007` is `manual_required`.
 - Packaged Linux “no migration claim” wording retired only after promotion;
   cutover/gap text state that honestly.
 - Empty planted `distill.db-wal`/`distill.db-shm` companions cover sidecar hash
@@ -86,6 +88,8 @@ screen-reader claims.
   package evidence. The bounded Grok diagnostic attributes the prior boundary to
   WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
   contract. The harness now keeps the four bounded keyboard transports and adds
-  a smoke-only Vite-built renderer native-click/submit fallback route; the exact-head run
-  must validate that packaged route rather than treating the local hook as
-  evidence.
+  a smoke-only Vite-built renderer native-click/submit fallback route. The
+  prior exact-head run [29274155740](https://github.com/AustinKelsay/distill/actions/runs/29274155740)
+  failed before marker exposure because the workflow env did not reach Vite;
+  the next exact-head run must validate the temporary-env packaged route rather
+  than treating the local hook as evidence.

@@ -115,13 +115,15 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   and window-targeted `Return`/`Enter`—before the existing pointer and AT-SPI
   fallbacks. This broadens only automation transport coverage; it does not add
   a storage shortcut or change migration policy.
-- The Linux smoke package is built with `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1`
-  only in the package workflow. The renderer exposes an accessible smoke-only
-  marker, waits for the real migration input value, and invokes the existing
-  form through native button activation with a bounded DOM submit-event
-  fallback inside the packaged WebView; normal builds never enable it and the
-  shipped CSP is unchanged. Exact-head CI must still prove the resulting
-  report, session, and source-hash contract before `LPKG-007` is promoted.
+- The Linux smoke package writes a temporary
+  `apps/distill-desktop/.env.production.local` containing
+  `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1` only in the package workflow, then removes
+  it after packaging. The renderer exposes an accessible smoke-only marker,
+  waits for the real migration input value, and invokes the existing form
+  through native button activation with a bounded DOM submit-event fallback
+  inside the packaged WebView; normal builds never enable it and the shipped
+  CSP is unchanged. Exact-head CI must still prove the resulting report,
+  session, and source-hash contract before `LPKG-007` is promoted.
 - Exact-head run [29272756471](https://github.com/AustinKelsay/distill/actions/runs/29272756471)
   included the Vite-built renderer route but still stopped at
   `Migration status: idle`; the marker/native-click revision must be validated

@@ -54,10 +54,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Enable smoke-only renderer route
+        run: printf 'VITE_DISTILL_SMOKE_DOM_ACTIVATE=1\n' > apps/distill-desktop/.env.production.local
+
       - name: Build Debian and AppImage packages
-        env:
-          VITE_DISTILL_SMOKE_DOM_ACTIVATE: "1"
         run: npm run desktop:package:linux
+
+      - name: Remove smoke-only renderer route
+        if: always()
+        run: rm -f apps/distill-desktop/.env.production.local
 
       - name: Install the Debian package under test
         run: sudo apt-get install --yes ./target/release/bundle/deb/*.deb
