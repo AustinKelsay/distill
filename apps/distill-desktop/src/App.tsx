@@ -213,12 +213,19 @@ export function App({ bridge }: AppProps) {
         '[data-testid="migration-status"]',
       );
       const ready = button?.getAttribute("aria-label")?.includes("(ready)");
+      // The packaged smoke types an absolute path through XTEST. React can
+      // expose the first `/` as a non-empty controlled value before the rest
+      // of the path arrives, so only activate once the seeded source-home
+      // basename is present. This is intentionally smoke-only; normal users
+      // still submit through the visible form control.
+      const completeSmokeSource = input?.value.trim().endsWith("/legacy-home");
       if (
         !panel ||
         !input ||
         !button ||
         !status ||
         !ready ||
+        !completeSmokeSource ||
         button.disabled ||
         !status.textContent?.includes("Migration status: idle")
       ) {
