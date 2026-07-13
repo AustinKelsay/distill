@@ -115,12 +115,12 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   and window-targeted `Return`/`Enter`—before the existing pointer and AT-SPI
   fallbacks. This broadens only automation transport coverage; it does not add
   a storage shortcut or change migration policy.
-- The installed Linux binary receives `DISTILL_SMOKE_DOM_ACTIVATE=1` only from
-  the smoke launcher. The Tauri setup hook waits for the real migration input
+- The Linux smoke package is built with `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1`
+  only in the package workflow. The renderer waits for the real migration input
   value and invokes the existing form's DOM `requestSubmit` path inside the
-  packaged WebView; normal launches never enable it. Exact-head CI must still
-  prove the resulting report, session, and source-hash contract before
-  `LPKG-007` is promoted.
+  packaged WebView; normal builds never enable it and the shipped CSP is
+  unchanged. Exact-head CI must still prove the resulting report, session, and
+  source-hash contract before `LPKG-007` is promoted.
 
 ### Diagnosis boundary
 

@@ -194,6 +194,37 @@ export function App({ bridge }: AppProps) {
   const importLegacyRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    if (import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE !== "1") return;
+    const timer = window.setInterval(() => {
+      const panel = document.querySelector<HTMLFormElement>(
+        '[data-testid="migration-panel"]',
+      );
+      const input = panel?.querySelector<HTMLInputElement>("#legacy-source-home");
+      const button = panel?.querySelector<HTMLButtonElement>(
+        '[data-testid="migration-run"]',
+      );
+      const status = panel?.querySelector<HTMLElement>(
+        '[data-testid="migration-status"]',
+      );
+      const ready = button?.getAttribute("aria-label")?.includes("(ready)");
+      if (
+        !panel ||
+        !input ||
+        !button ||
+        !status ||
+        !ready ||
+        button.disabled ||
+        !status.textContent?.includes("Migration status: idle")
+      ) {
+        return;
+      }
+      window.clearInterval(timer);
+      panel.requestSubmit(button);
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const stopJourney = bridge.onProgress((nextPhase) => {
       setPhase(nextPhase);
     });
