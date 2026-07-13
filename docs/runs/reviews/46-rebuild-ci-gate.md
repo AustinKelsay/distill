@@ -58,6 +58,13 @@ All three were remediated before this packet was recorded. No workflow or scope 
 remain. Placeholders (`REPLACE_AFTER_*`) must be replaced after push; they are not
 invented run IDs.
 
+The first implementation-head Actions run (`29223953816`) also exposed a
+pre-existing environment-sensitive Codex detection test: the runner lacked a `codex`
+executable, so a configured-root result was reported `unavailable` instead of `ok`.
+The workflow now writes a deterministic Rust-test `PATH` to `GITHUB_ENV`, keeping Cargo
+and system tools while excluding host-installed provider CLI directories. This is a CI
+hermeticity fix; it does not change product detection behavior or provider claims.
+
 ## Explicit residuals
 
 - Packaged real-provider machine roots

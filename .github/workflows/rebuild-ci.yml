@@ -46,6 +46,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Make provider detection tests hermetic
+        run: |
+          # The detection contract is about the configured data root. Keep
+          # host-installed provider CLIs out of PATH so the expected status is
+          # stable on runners that happen to ship one of them.
+          echo "PATH=$(dirname \"$(command -v cargo)\"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> "$GITHUB_ENV"
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 

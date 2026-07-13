@@ -50,7 +50,10 @@ workflows.
   while keeping package smoke and RustSec references intact.
 - [x] Gap register, contract evidence, and feature-dev ledger record the gate and leave
   explicit residuals.
-- [ ] First green Actions run ID recorded (placeholder `REPLACE_AFTER_PUSH`).
+- [ ] First green Actions run ID recorded (placeholder `REPLACE_AFTER_PUSH`). The first
+  implementation run (`29223953816`) caught a pre-existing provider-CLI PATH sensitivity
+  in the Codex detection contract; the workflow now makes that test environment hermetic
+  by retaining Cargo/system paths while excluding host-installed provider CLIs.
 
 ## Scope / Non-goals
 
