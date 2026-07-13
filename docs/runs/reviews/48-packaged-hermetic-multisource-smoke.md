@@ -4,7 +4,7 @@
 
 - Issue: [#48](https://github.com/AustinKelsay/distill/issues/48)
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
-- Implementation commits: `dbfe7b0`, `8d84209`, `53c3372`, `cec7876`, `b84bde4`
+- Implementation commits: `dbfe7b0`, `8d84209`, `53c3372`, `cec7876`, `b84bde4`, `56b613b`, `0abed5a`
 - Worker: Cursor Grok 4.5 bounded implementation sidecar for Codex
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: implementation packet for Codex standards/spec review before commit
@@ -39,8 +39,11 @@ Detect asserts healthy-sibling statuses, and Sync asserts each source reaches
 The packaged status indicators were then made explicitly observable to AT-SPI;
 the main Sync status retained its existing section-owned live region after a
 CodeRabbit duplicate-announcement finding. Those changes did not make the
-installed-host Linux status assertion green, so the package rows remain
-blocked rather than overstated.
+installed-host Linux package row green. Exact-head run `29231637753` observed
+the warning and all sibling statuses, then reached the redaction probe; its
+fail-closed miss was misclassified because PyGObject prefixed the expected
+sentinel with a deprecation warning. Commit `0abed5a` suppresses only that
+known warning so the next run can evaluate the actual redaction contract.
 
 ## Verification evidence
 
@@ -53,10 +56,10 @@ blocked rather than overstated.
   blocked in the current runner with `Distill window did not appear`; explicit
   manual mode records `ui: manual_required` and does not claim hermetic
   coverage.
-- Exact-head Ubuntu package build/install passed, but installed-host smoke
-  failed at `AT-SPI accessible not found: Status: warning` on
-  `29229103417`, `29229486473`, and `29229940050`; diagnostic run
-  `29230286887` also failed. The packaged Linux hermetic rows remain blocked.
+- Exact-head Ubuntu package build/install passed. Run `29231637753` observed
+  `Status: warning` and all sibling statuses, then failed at the redaction
+  sentinel because of the PyGObject warning prefix; the packaged Linux
+  hermetic rows remain pending the post-`0abed5a` run.
 
 ## Explicit residuals
 
