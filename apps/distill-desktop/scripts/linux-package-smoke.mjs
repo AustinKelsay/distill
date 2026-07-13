@@ -369,7 +369,6 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
   const processHandle = launch(binary, "initial");
   try {
     const windowId = await waitForWindow(processHandle, "initial");
-    await waitForAccessibleText("Migration automation: enabled", true, 10);
     await typeIntoAccessible(windowId, "Distill home", home);
     await typeIntoAccessible(windowId, "Fixture root", roots.fixtureRoot);
 
@@ -393,6 +392,9 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       80,
     );
     await sleep(750);
+    // The migration panel is below the initial viewport; its AT-SPI text is
+    // reliably exposed after the focused-input helper scrolls it into view.
+    await waitForAccessibleText("Migration automation: enabled", true, 10);
     await waitForAccessibleText("Import legacy home (ready)", false, 10);
     // Stay on the input first: App handles Enter/Return using the native value,
     // and the migration form also provides a browser-native submit fallback.
