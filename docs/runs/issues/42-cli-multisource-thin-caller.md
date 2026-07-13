@@ -6,8 +6,8 @@
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: `aea5810`
 - Worker session: Grok 4.5 xhigh bounded implementation pass; Codex integration
-- Commit: pending
-- Status: In progress
+- Commit: `736a388`
+- Status: Complete — implementation, full local gates, two-axis review, and CodeRabbit fallback complete; parent staging handoff remains
 - Review packet: `docs/runs/reviews/42-cli-multisource-thin-caller.md`
 
 ## Intended Contract

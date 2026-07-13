@@ -6,7 +6,7 @@
 - Slice type: AFK public CLI caller contract
 - Acceptance criteria: `docs/runs/issues/42-cli-multisource-thin-caller.md`
 - Baseline: `aea5810`
-- Current diff: working tree; commit pending
+- Current diff: commit `736a388`
 
 ## Implementation Summary
 
@@ -32,27 +32,25 @@ replay command.
 ## Reviewer Output
 
 ```text
-STANDARDS_STATUS: pending final remediation
+STANDARDS_STATUS: pass
 STANDARDS_FINDINGS:
-- Fixed the TCC-005 executable-symbol path to use path::symbol.
-- Held TCC-004/TCC-005 and GAP-R003 at in-progress until this packet and final
-  verification close; removed a dead happy-path secret-token assertion.
-- The only remaining standards note is a judgement call: the single CLI test
-  file grew by ~495 lines, which is acceptable for this bounded public seam.
+- None. Final Grok rereview confirmed the path::symbol citation, suite-index
+  wiring, evidence statuses, redaction assertions, and CLI/projection boundary.
+- Judgement only: the single CLI test file grew by ~495 lines, acceptable for
+  this bounded public seam.
 
-SPEC_STATUS: pending final remediation
+SPEC_STATUS: pass
 SPEC_FINDINGS:
-- The CLI has no raw Capture replay command; the contract is explicitly scoped to
-  post-removal projection queryability, while existing Library suites retain
-  byte-exact replay evidence.
-- Added the missing thin_cli_multisource_caller suite index entry.
-- Held evidence statuses until final verification; non-goals remain explicit.
+- None. Final Grok rereview confirmed all #42 acceptance criteria and explicit
+  non-goals. CLI post-removal projection queryability is distinguished from the
+  existing Library byte-exact replay contracts.
 ```
 
 ## CodeRabbit
 
-- Pending local CodeRabbit attempt. If the service stalls or rate-limits, record
-  the fallback and complete a fresh Grok standards/spec rereview.
+- Local CodeRabbit attempt: stalled in summarization for about three minutes and
+  was terminated without a report. Fresh Grok standards/spec rereview passed;
+  this is the recorded fallback.
 
 ## Residuals
 
