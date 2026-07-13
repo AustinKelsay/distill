@@ -485,7 +485,7 @@ export function App({ bridge }: AppProps) {
     if (!home.trim() || !sourceHome.trim() || migrationStatus === "loading") return;
     if (smokeRoute) {
       smokeMigrationInvokedRef.current = true;
-      setSmokeMigrationActivation("invoked");
+      setSmokeMigrationActivation("bridge-started");
     }
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
@@ -495,12 +495,18 @@ export function App({ bridge }: AppProps) {
       const report = await bridge.importLegacy(home, sourceHome);
       if (requestId !== migrationRequestRef.current) return;
       setMigrationReport(report);
-      if (!report.ok || report.skips.length > 0) setMigrationStatus("warning");
-      else setMigrationStatus("success");
+      if (!report.ok || report.skips.length > 0) {
+        setMigrationStatus("warning");
+        if (smokeRoute) setSmokeMigrationActivation("bridge-warning");
+      } else {
+        setMigrationStatus("success");
+        if (smokeRoute) setSmokeMigrationActivation("bridge-success");
+      }
     } catch (caught) {
       if (requestId !== migrationRequestRef.current) return;
       setMigrationError(normalizeError(caught));
       setMigrationStatus("error");
+      if (smokeRoute) setSmokeMigrationActivation("bridge-error");
     }
   }
 
