@@ -54,7 +54,9 @@ pub fn run() {
             if smoke_dom_activation {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    for _ in 0..120 {
+                    // Keep the hook alive through the bounded AT-SPI focus and
+                    // keyboard probes that precede migration in the smoke.
+                    for _ in 0..600 {
                         let next_handle = handle.clone();
                         let _ = handle.run_on_main_thread(move || {
                             if let Some(window) = next_handle.get_webview_window("main") {
