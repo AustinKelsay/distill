@@ -80,6 +80,12 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   discoverability, sidecar-inclusive source-home immutability, and the retained
   Fixture journey.
 
+The first exact-head Ubuntu attempt [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597)
+failed at `Migration status: idle`: the coordinate-only Import activation was
+inert under AT-SPI even though the control was discoverable. The harness now
+uses the semantic AT-SPI action helper for `Import legacy home`; this failure is
+recorded rather than counted as `LPKG-007` evidence.
+
 ## Non-goals / residuals
 
 - Darwin AX automation when the packaged window is not exposed; human

@@ -362,7 +362,7 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     // Hermetic legacy Electron-home import through the existing bridge-only panel.
     // Destination and source are siblings under the smoke base (not ancestor/alias).
     await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 20);
-    await clickAccessible(windowId, "Import legacy home");
+    await activateAccessible(windowId, "Import legacy home");
     await waitForAccessibleText("Migration status: success", true);
     await waitForAccessibleText("ok: true", true);
     await waitForAccessibleText("reused: false", true);

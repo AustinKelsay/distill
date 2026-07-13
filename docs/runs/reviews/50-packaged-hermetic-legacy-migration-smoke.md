@@ -22,6 +22,11 @@ screen-reader claims.
 - CodeRabbit reached summarization but hung in the bounded attempt; prior
   completed zero-finding review history and this independent Grok review are
   the recorded fallback.
+- Exact-head Ubuntu attempt [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597)
+  failed before migration report assertions because coordinate-only Import
+  activation left `Migration status: idle`; the remediation switches that
+  control to semantic AT-SPI activation. `LPKG-007` remains pending until the
+  corrected head passes.
 
 ## Files
 
