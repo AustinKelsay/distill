@@ -7,9 +7,10 @@
 - Fixed point before session: post-#49 on `feature/distill-clean-rebuild`
 - Worker session: Cursor Grok 4.5 bounded Feature Dev slice
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
-- Status: implementation in worktree; Linux `LPKG-007` pending exact-head Ubuntu
-  package/install/smoke promotion. Darwin `PKG-007` is manual-required when
-  System Events cannot expose the packaged window.
+- Status: implementation complete locally; Linux `LPKG-007` is blocked before
+  exact-head promotion by packaged WebKitGTK/Xvfb synthetic-input dispatch.
+  Darwin `PKG-007` remains manual-required when System Events cannot expose the
+  packaged window.
 - Review packet: `docs/runs/reviews/50-packaged-hermetic-legacy-migration-smoke.md`
 
 ## Intended Contract
@@ -74,17 +75,38 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
 
 ## Exact-head evidence
 
-- Not yet promoted. Local hermetic seeder `node --test` and script syntax checks
-  pass in the worktree. Promote `LPKG-007` only after exact-head Ubuntu
-  package/install/smoke records the migration report, migrated-session
-  discoverability, sidecar-inclusive source-home immutability, and the retained
-  Fixture journey.
+- Not promoted. Local hermetic seeder `node --test`, script syntax checks, and
+  the Library/CLI/host/renderer migration contracts pass. No Ubuntu run has
+  produced the packaged migration report, migrated-session discoverability, or
+  sidecar-inclusive source-home hash evidence required for `LPKG-007`.
+- Runs [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597),
+  [29248740562](https://github.com/AustinKelsay/distill/actions/runs/29248740562),
+  and [29249235142](https://github.com/AustinKelsay/distill/actions/runs/29249235142)
+  all stopped at `Migration status: idle` after the packaged Import control was
+  discoverable but did not enter the bridge action.
+- Run [29249994169](https://github.com/AustinKelsay/distill/actions/runs/29249994169)
+  showed that AT-SPI does not expose the HTML input value as accessible text.
+  Run [29253668633](https://github.com/AustinKelsay/distill/actions/runs/29253668633)
+  then proved the migration input could receive focus, and
+  [29254323223](https://github.com/AustinKelsay/distill/actions/runs/29254323223)
+  proved the React `Import legacy home (ready)` state. Button focus also passed
+  in [29255028326](https://github.com/AustinKelsay/distill/actions/runs/29255028326),
+  but keyboard activation still left status idle.
+- The latest focused-input Return plus `--clearmodifiers` attempt,
+  [29260415053](https://github.com/AustinKelsay/distill/actions/runs/29260415053),
+  still stopped at `Migration status: idle`. A direct-window click experiment in
+  [29259709770](https://github.com/AustinKelsay/distill/actions/runs/29259709770)
+  regressed the existing repair-dialog journey and was reverted.
 
-The first exact-head Ubuntu attempt [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597)
-failed at `Migration status: idle`: the coordinate-only Import activation was
-inert under AT-SPI even though the control was discoverable. The harness now
-uses the semantic AT-SPI action helper for `Import legacy home`; this failure is
-recorded rather than counted as `LPKG-007` evidence.
+### Diagnosis boundary
+
+The failure is isolated to synthetic activation of the installed WebKitGTK
+renderer under Xvfb/AT-SPI: shell/package setup, the seeder, Rust Library and
+CLI migration, Tauri host, React handler/state tests, and the retained package
+journey all pass. This is not evidence that product migration is broken. Do not
+promote `LPKG-007` or retire the packaged Linux migration residual until a real
+desktop/AT-SPI instrumentation path or package-native browser automation records
+the full migration contract.
 
 ## Non-goals / residuals
 

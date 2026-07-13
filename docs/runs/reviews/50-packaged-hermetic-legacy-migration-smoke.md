@@ -11,10 +11,10 @@ screen-reader claims.
 
 ## Review outcome
 
-- Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; no blocker for
-  the in-worktree harness. Promotion remains gated on exact-head Ubuntu proof
-  of migration report/session/hash contracts and Fixture Attempt identities
-  `Capture 2` / `Attempt 2` / retry `Attempt 7`.
+- Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; no product-code
+  blocker for the in-worktree harness. The packaged promotion gate is blocked
+  on exact-head Ubuntu proof of migration report/session/hash contracts and
+  Fixture Attempt identities `Capture 2` / `Attempt 2` / retry `Attempt 7`.
 - PKG-007 evidence now names only the Darwin smoke/manual checklist; the Linux
   row names the hermetic seeder because Linux actually invokes it.
 - `docs/specs/legacy-migration.md` points at packaged `PKG-007`/`LPKG-007`
@@ -22,11 +22,21 @@ screen-reader claims.
 - CodeRabbit reached summarization but hung in the bounded attempt; prior
   completed zero-finding review history and this independent Grok review are
   the recorded fallback.
-- Exact-head Ubuntu attempt [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597)
-  failed before migration report assertions because coordinate-only Import
-  activation left `Migration status: idle`; the remediation switches that
-  control to semantic AT-SPI activation. `LPKG-007` remains pending until the
-  corrected head passes.
+- Exact-head attempts [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597),
+  [29248740562](https://github.com/AustinKelsay/distill/actions/runs/29248740562),
+  and [29249235142](https://github.com/AustinKelsay/distill/actions/runs/29249235142)
+  failed before migration report assertions with `Migration status: idle`.
+  Follow-up probes established that AT-SPI cannot expose the HTML input value,
+  while input focus, React readiness, and button focus do pass in
+  [29249994169](https://github.com/AustinKelsay/distill/actions/runs/29249994169),
+  [29253668633](https://github.com/AustinKelsay/distill/actions/runs/29253668633),
+  [29254323223](https://github.com/AustinKelsay/distill/actions/runs/29254323223),
+  and [29255028326](https://github.com/AustinKelsay/distill/actions/runs/29255028326).
+  The latest focused-input Return/clearmodifiers attempt
+  [29260415053](https://github.com/AustinKelsay/distill/actions/runs/29260415053)
+  still leaves status idle; a direct-window click regression in
+  [29259709770](https://github.com/AustinKelsay/distill/actions/runs/29259709770)
+  was reverted. `LPKG-007` is therefore blocked, not promoted.
 
 ## Files
 
@@ -47,8 +57,8 @@ screen-reader claims.
 
 - Reuses existing bridge-only migration panel and Library import seam.
 - Destination/source homes are siblings under the smoke temp base.
-- `LPKG-007` left `pending` until exact-head Ubuntu green; `PKG-007` is
-  `manual_required`.
+- `LPKG-007` is `blocked` pending a viable packaged synthetic-activation path;
+  `PKG-007` is `manual_required`.
 - Packaged Linux “no migration claim” wording retired only after promotion;
   cutover/gap text state that honestly.
 - Empty planted `distill.db-wal`/`distill.db-shm` companions cover sidecar hash
@@ -66,4 +76,6 @@ screen-reader claims.
 - Fixture Capture/Attempt IDs shift to 2 / 2 / 7 after migration-first sequencing;
   Ubuntu must confirm those identities.
 - Do not promote `LPKG-007` or retire cutover residual language without exact-head
-  package evidence.
+  package evidence. The bounded Grok diagnostic attributes the current boundary
+  to WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
+  contract.
