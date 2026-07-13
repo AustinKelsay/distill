@@ -401,7 +401,14 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       true,
       10,
     );
-    await waitForAccessibleText("Migration activation: bridge-success", true, 10);
+    const migrationActivation = await waitForAccessibleText(
+      "Migration activation: bridge-",
+      true,
+      10,
+    );
+    if (!migrationActivation.name.includes("Migration activation: bridge-success")) {
+      fail(`packaged migration bridge did not succeed: ${migrationActivation.name}`);
+    }
     // Stay on the input first: App handles Enter/Return using the native value,
     // and the migration form also provides a browser-native submit fallback.
     // WebKitGTK/Xvfb has exposed several distinct XTEST transport paths across
