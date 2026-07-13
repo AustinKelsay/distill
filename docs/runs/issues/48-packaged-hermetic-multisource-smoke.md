@@ -9,8 +9,9 @@
 - Worker session: Cursor Grok 4.5 bounded implementation sidecar for Codex
 - Status: Implementation complete locally; Codex review passed. The unsigned
   Darwin package built, but its AX journey is blocked in this runner because
-  System Events reports no accessible window; exact-head Ubuntu package
-  evidence remains pending.
+  System Events reports no accessible window. Exact-head Ubuntu package runs
+  built and installed successfully but failed at the packaged AT-SPI status
+  assertion (`Status: warning` not found); the Linux rows remain blocked.
 - Review packet: `docs/runs/reviews/48-packaged-hermetic-multisource-smoke.md`
 
 ## Intended Contract
@@ -44,7 +45,9 @@ bounded non-goal for this packaged harness.
 - Local Darwin `desktop:package:macos` + `desktop:smoke:macos` (unsigned);
   package metadata passed, while the AX journey remains a manual gate when
   this runner cannot expose the packaged window
-- Exact-head Ubuntu `linux-package-smoke` workflow after push
+- Exact-head Ubuntu `linux-package-smoke` workflow after push; the first three
+  exact-head runs are recorded as failed at the packaged status assertion and
+  the latest diagnostic run is also non-green
 - Matrix/evidence `PKG-004`/`PKG-005`/`LPKG-004`/`LPKG-005`; Fixture-only
   `PKG-001..003` / `LPKG-001..003` retain their historical evidence while the
   combined harness remains pending package runs
@@ -65,7 +68,10 @@ bounded non-goal for this packaged harness.
   `Distill window did not appear` even though the packaged app window was
   visible to Core Graphics; rerunning with `DISTILL_MACOS_ALLOW_MANUAL=1`
   correctly records `ui: manual_required` and leaves the hermetic rows pending.
-- Exact-head Ubuntu package evidence: pending after commit/push.
+- Exact-head Ubuntu package build/install: passed. Installed-host UI journey:
+  failed at `AT-SPI accessible not found: Status: warning` on runs
+  `29229103417`, `29229486473`, and `29229940050`; the later diagnostic run
+  `29230286887` also failed. No Linux hermetic coverage is claimed.
 
 ## Non-goals / residuals
 

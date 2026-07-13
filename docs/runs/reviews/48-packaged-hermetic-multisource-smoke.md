@@ -4,13 +4,14 @@
 
 - Issue: [#48](https://github.com/AustinKelsay/distill/issues/48)
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
-- Implementation commit: pending commit (Codex review complete)
+- Implementation commits: `dbfe7b0`, `8d84209`, `53c3372`, `cec7876`, `b84bde4`
 - Worker: Cursor Grok 4.5 bounded implementation sidecar for Codex
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: implementation packet for Codex standards/spec review before commit
 - Final review status: PASS — fresh Grok standards/spec rereview; no hard
-  findings. Local CodeRabbit attempt stalled in `reviewing` and produced no
-  findings; bounded Grok fallback is the recorded review.
+  findings. CodeRabbit first remediation pass found 0 issues; a later minor
+  status-region finding was fixed. A bounded diagnostic CodeRabbit attempt
+  stalled in `reviewing` without findings; no unresolved review finding remains.
 
 ## Scope reviewed
 
@@ -35,6 +36,12 @@ helper test is excluded from Vitest discovery, Linux redaction is fail-closed,
 Detect asserts healthy-sibling statuses, and Sync asserts each source reaches
 `completed` rather than relying on aggregate success alone.
 
+The packaged status indicators were then made explicitly observable to AT-SPI;
+the main Sync status retained its existing section-owned live region after a
+CodeRabbit duplicate-announcement finding. Those changes did not make the
+installed-host Linux status assertion green, so the package rows remain
+blocked rather than overstated.
+
 ## Verification evidence
 
 - `npm --prefix apps/distill-desktop run test:hermetic-fixtures` — passed.
@@ -46,7 +53,10 @@ Detect asserts healthy-sibling statuses, and Sync asserts each source reaches
   blocked in the current runner with `Distill window did not appear`; explicit
   manual mode records `ui: manual_required` and does not claim hermetic
   coverage.
-- Exact-head Ubuntu package CI — pending after Codex commit.
+- Exact-head Ubuntu package build/install passed, but installed-host smoke
+  failed at `AT-SPI accessible not found: Status: warning` on
+  `29229103417`, `29229486473`, and `29229940050`; diagnostic run
+  `29230286887` also failed. The packaged Linux hermetic rows remain blocked.
 
 ## Explicit residuals
 
