@@ -189,7 +189,7 @@ async function clickAccessible(windowId, name, contains = false) {
   await xdotool(["click", "1"]);
 }
 
-async function typeIntoAccessible(windowId, name, value) {
+async function typeIntoAccessible(windowId, name, value, delay = 1) {
   await clickAccessible(windowId, name);
   await key(windowId, "ctrl+a");
   await xdotool([
@@ -198,7 +198,7 @@ async function typeIntoAccessible(windowId, name, value) {
     windowId,
     "--clearmodifiers",
     "--delay",
-    "1",
+    String(delay),
     value,
   ]);
 }
@@ -339,7 +339,7 @@ async function runUiJourney(binary, home, roots) {
       await waitForAccessibleText(expected, true);
     }
     // Detect result copy must stay redacted; clear the missing path before scanning names.
-    await typeIntoAccessible(windowId, "codex source root", roots.codexRoot);
+    await typeIntoAccessible(windowId, "codex source root", roots.codexRoot, 20);
     await assertAccessibleNameOmits(DETECT_SIBLING_SECRET);
     // Blur and settle the corrected draft so a stale missing-root value cannot
     // race the durable Source preference write at the start of Sync.
