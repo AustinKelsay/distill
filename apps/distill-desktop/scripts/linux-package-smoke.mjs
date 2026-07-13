@@ -519,10 +519,9 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     await clickAccessible(windowId, "Load sessions");
     await typeIntoAccessible(windowId, "Search sessions", "smoke");
     await key(windowId, "Enter");
-    await activateAccessible(windowId, roots.fixtureSessionTitle, true);
-    // WebKitGTK exposes the list-row action but can drop the dispatch under
-    // Xvfb; the AT-SPI lookup has already scrolled this exact button into view,
-    // so a coordinate fallback is now deterministic rather than blind.
+    // The session title also appears in the detail heading. Use the
+    // interactive AT-SPI coordinate lookup so it selects the row button rather
+    // than timing out on that non-actionable heading node.
     await clickAccessible(windowId, roots.fixtureSessionTitle, true);
     // Attempt history and same-Capture renormalize stay bridge-only: the UI discovers
     // the Capture through Activity, then exposes immutable Attempt summaries and the
