@@ -118,8 +118,8 @@ lockfile is unchanged.
 Local Darwin hosts may not have `cargo-audit` on `PATH`. That availability limitation
 is explicit: this environment does **not** treat a local Darwin `cargo audit` as
 authoritative evidence. CI is the authoritative Rust advisory-database evidence for
-this gate. Final-head run `29213826861` passed on Ubuntu 24.04 x86_64 and emitted the
-same 17 allowed warnings; it is not an advisory-clean claim:
+this gate. Recorded implementation run `29213826861` passed on Ubuntu 24.04 x86_64 and
+emitted the same 17 allowed warnings; it is not an advisory-clean claim:
 <https://github.com/AustinKelsay/distill/actions/runs/29213826861>.
 
 A non-authoritative advisory inventory observed against the current lockfile

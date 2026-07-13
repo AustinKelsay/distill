@@ -5,7 +5,7 @@
 - Issue: [#40](https://github.com/AustinKelsay/distill/issues/40)
 - Fixed point before session: `05d9294`
 - Implementation commit: `f678801`
-- Status: Complete — final-head Rust advisory workflow passed; 17 allowed warnings remain explicit
+- Status: Complete — authoritative Rust advisory workflow passed; 17 allowed warnings remain explicit
 - Review packet: `docs/runs/reviews/40-rust-advisory-scan.md`
 
 ## Intended Contract
@@ -70,7 +70,7 @@ CI must still confirm the live advisory-database result.
 
 ## Verification
 
-- Docs/packets for #40 updated to Complete only after the final-head CI run.
+- Docs/packets for #40 updated to Complete only after authoritative CI evidence was recorded.
 - `PATH=/opt/homebrew/Cellar/node/26.0.0/bin:$PATH npm test` — passed; 104 tests.
 - `cargo tree --workspace --locked` — passed.
 - `npm audit --audit-level=moderate --ignore-scripts` — passed; 0 vulnerabilities.
