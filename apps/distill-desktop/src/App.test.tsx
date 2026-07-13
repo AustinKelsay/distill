@@ -1089,6 +1089,9 @@ describe("first-run Fixture UI", () => {
       expect(screen.getByTestId("sync-run-panel")).toHaveTextContent("completed");
     });
     expect(screen.getByTestId("status")).toHaveTextContent("success");
+    expect(screen.getByRole("button", { name: /Start Sync Run/ })).toHaveAccessibleName(
+      "Start Sync Run — Status: success; fixture: completed",
+    );
     expect(screen.getByTestId("sources-list")).toHaveTextContent("fixture: enabled");
   });
 

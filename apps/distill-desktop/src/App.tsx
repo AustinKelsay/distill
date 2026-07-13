@@ -1069,7 +1069,15 @@ export function App({ bridge }: AppProps) {
           onClick={onStartSync}
           disabled={!home.trim() || status === "running"}
           aria-label={
-            status === "idle" ? "Start Sync Run" : `Start Sync Run — Status: ${status}`
+            status === "idle"
+              ? "Start Sync Run"
+              : `Start Sync Run — Status: ${status}${
+                  syncResult?.run.sources.length
+                    ? `; ${syncResult.run.sources
+                        .map((source) => `${source.source_kind}: ${source.status}`)
+                        .join(", ")}`
+                    : ""
+                }`
           }
         >
           Start Sync Run
