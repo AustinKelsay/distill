@@ -53,7 +53,8 @@ workflows.
 - [ ] First green Actions run ID recorded (placeholder `REPLACE_AFTER_PUSH`). The first
   implementation run (`29223953816`) caught a pre-existing provider-CLI PATH sensitivity
   in the Codex detection contract; the workflow now makes that test environment hermetic
-  by retaining Cargo/system paths while excluding host-installed provider CLIs.
+  with a no-op Codex shim plus retained Cargo/Rustup/system paths, without invoking a
+  host-installed provider CLI.
 
 ## Scope / Non-goals
 

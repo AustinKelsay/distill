@@ -61,12 +61,13 @@ invented run IDs.
 The first implementation-head Actions run (`29223953816`) also exposed a
 pre-existing environment-sensitive Codex detection test: the runner lacked a `codex`
 executable, so a configured-root result was reported `unavailable` instead of `ok`.
-The workflow now writes a deterministic Rust-test `PATH` to `GITHUB_ENV`, keeping Cargo
-and system tools while excluding host-installed provider CLI directories. This is a CI
-hermeticity fix; it does not change product detection behavior or provider claims.
+The workflow now writes a deterministic Rust-test `PATH` to `GITHUB_ENV`, placing a
+no-op Codex shim before Cargo, Rustup, and system tools. This is a CI hermeticity fix; it
+does not change product detection behavior or provider claims.
 The follow-up run (`29224211256`) confirmed the provider fix but caught that the first
 PATH form also omitted Rustup's toolchain bin (and therefore `rustfmt`); the workflow now
-retains both the Cargo bin and `dirname "$(rustup which rustfmt)"` before the next run.
+retains both the Cargo bin and `dirname "$(rustup which rustfmt)"` before the next run,
+with the Codex shim retained for the configured-root contract.
 
 ## Explicit residuals
 
