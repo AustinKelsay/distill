@@ -4,14 +4,14 @@
 
 - Issue: [#48](https://github.com/AustinKelsay/distill/issues/48)
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
-- Implementation commits: `dbfe7b0`, `8d84209`, `53c3372`, `cec7876`, `b84bde4`, `56b613b`, `0abed5a`
+- Implementation commits: `dbfe7b0`, `8d84209`, `53c3372`, `cec7876`, `b84bde4`, `56b613b`, `0abed5a`, `3b07134`, `0e0ca51`, `7dca071`
 - Worker: Cursor Grok 4.5 bounded implementation sidecar for Codex
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
-- Review mode: implementation packet for Codex standards/spec review before commit
+- Review mode: post-implementation Codex standards/spec review and closeout
 - Final review status: PASS — fresh Grok standards/spec rereview; no hard
-  findings. CodeRabbit first remediation pass found 0 issues; a later minor
-  status-region finding was fixed. A bounded diagnostic CodeRabbit attempt
-  stalled in `reviewing` without findings; no unresolved review finding remains.
+  findings. CodeRabbit returned 0 issues on the code remediations; one minor
+  ledger wording finding was fixed, and the follow-up docs review was
+  temporarily rate-limited. No unresolved review finding remains.
 
 ## Scope reviewed
 
@@ -38,12 +38,16 @@ Detect asserts healthy-sibling statuses, and Sync asserts each source reaches
 
 The packaged status indicators were then made explicitly observable to AT-SPI;
 the main Sync status retained its existing section-owned live region after a
-CodeRabbit duplicate-announcement finding. Those changes did not make the
-installed-host Linux package row green. Exact-head run `29231637753` observed
-the warning and all sibling statuses, then reached the redaction probe; its
+CodeRabbit duplicate-announcement finding. Earlier exact-head run
+`29231637753` observed the warning and all sibling statuses, then reached the redaction probe; its
 fail-closed miss was misclassified because PyGObject prefixed the expected
 sentinel with a deprecation warning. Commit `0abed5a` suppresses only that
-known warning so the next run can evaluate the actual redaction contract.
+  known warning so the next run can evaluate the actual redaction contract.
+
+The subsequent Sync-status and per-Source outcome accessibility remediations
+were reviewed with the same scope. Exact-head Ubuntu run `29233489395` is green
+through the complete installed-host hermetic journey, so `LPKG-004` and
+`LPKG-005` are now promotable; Darwin AX remains a separate manual gate.
 
 ## Verification evidence
 
@@ -56,10 +60,9 @@ known warning so the next run can evaluate the actual redaction contract.
   blocked in the current runner with `Distill window did not appear`; explicit
   manual mode records `ui: manual_required` and does not claim hermetic
   coverage.
-- Exact-head Ubuntu package build/install passed. Run `29231637753` observed
-  `Status: warning` and all sibling statuses, then failed at the redaction
-  sentinel because of the PyGObject warning prefix; the packaged Linux
-  hermetic rows remain pending the post-`0abed5a` run.
+- Exact-head Ubuntu package build/install and installed-host smoke passed on
+  `29233489395` after the status, redaction, Sync-status, and per-Source
+  outcome remediations; the packaged Linux hermetic rows are green.
 
 ## Explicit residuals
 
