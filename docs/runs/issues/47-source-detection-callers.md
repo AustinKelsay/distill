@@ -7,7 +7,7 @@
 - Fixed point before session: post-#46 on `feature/distill-clean-rebuild`
 - Implementation commit: `c6b9a3c`
 - Worker session: Grok 4.5 High bounded implementation sidecar for Codex
-- Status: Complete — local implementation and focused verification; staging handoff / exact-head CI remain residuals
+- Status: Complete — implementation, focused verification, and exact-head CI green; staging handoff remains the broader PR residual
 - Review packet: `docs/runs/reviews/47-source-detection-callers.md`
 
 ## Intended Contract
@@ -39,8 +39,9 @@ renderer exposes the smallest bridge-only detection control/status surface.
 - Focused CLI detect suite, host unit test in `host.rs`, and bridge Vitest.
 - Desktop typecheck/lint/format and focused bridge test.
 - Canonical architecture/matrix/evidence/gap and issue/review/ledger packets.
-- Exact implementation-head Linux package/smoke and Rust advisory CI remain
-  residual until closeout.
+- Exact-head rebuild CI: [29226422580](https://github.com/AustinKelsay/distill/actions/runs/29226422580).
+- Exact-head Linux package smoke: [29226422562](https://github.com/AustinKelsay/distill/actions/runs/29226422562).
+- Exact-head Rust advisory scan: [29226422558](https://github.com/AustinKelsay/distill/actions/runs/29226422558).
 
 ## Evidence Symbols
 
@@ -63,7 +64,6 @@ renderer exposes the smallest bridge-only detection control/status surface.
 
 ## Non-goals / residuals
 
-Exact-head package/smoke and Rust advisory CI remain residuals for this slice.
 Packaged real-provider roots, VoiceOver/Narrator speech,
 Developer ID signing/notarization/stapling, Windows packaging, Electron
 retirement, and #38 staging merge policy remain release or human residuals.

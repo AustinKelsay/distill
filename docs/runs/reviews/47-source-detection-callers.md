@@ -9,7 +9,7 @@
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: implementation packet with focused local verification and final
   independent standards/spec rereview
-- Final review status: PASS; exact-head package/smoke and advisory CI remain residual
+- Final review status: PASS; exact-head rebuild/package/advisory CI green
 
 ## Scope reviewed
 
@@ -25,8 +25,7 @@ files were edited. Companion DistillBridge fake stubs in App test files were
 updated only so `detectSources` remains type-complete under desktop typecheck.
 
 TRC-006 is evidenced by bridge invoke coverage plus App detection state tests
-covering ready, loading, empty, warning, and error outcomes. Exact-head
-package/smoke and advisory workflows remain separate residual gates.
+covering ready, loading, empty, warning, and error outcomes.
 
 ## Verification evidence
 
@@ -38,15 +37,16 @@ package/smoke and advisory workflows remain separate residual gates.
 - `npm run desktop:lint` — passed.
 - `npm run desktop:format` — passed.
 
-Exact implementation-head Linux package/smoke and Rust advisory CI are not claimed
-as passed for this slice yet. Independent final Grok standards/spec rereview:
+Exact-head rebuild CI [29226422580](https://github.com/AustinKelsay/distill/actions/runs/29226422580),
+Linux package smoke [29226422562](https://github.com/AustinKelsay/distill/actions/runs/29226422562),
+and Rust advisory scan [29226422558](https://github.com/AustinKelsay/distill/actions/runs/29226422558)
+are green. Independent final Grok standards/spec rereview:
 PASS on both axes; no required remediations. CodeRabbit's initial attempt was
 rate-limited; a bounded retry stalled in summarization and was terminated, so
 Grok is the recorded fallback.
 
 ## Explicit residuals
 
-- Exact implementation-head Linux package/install/smoke and Rust advisory CI.
 - Packaged real-provider machine roots, VoiceOver/Narrator speech, Developer ID
   signing/notarization/stapling, Windows packaging, Electron retirement, and #38
   staging merge policy.
