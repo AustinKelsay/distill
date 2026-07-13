@@ -6,8 +6,8 @@
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: `68e1133`
 - Worker session: Grok 4.5 xhigh bounded implementation pass; Codex integration
-- Commit: pending
-- Status: Implementation complete locally; final-head CI and review closeout pending
+- Commit: `947d576`
+- Status: Complete — implementation, local gates, two-axis review, CodeRabbit fallback, and final-head CI complete; staging handoff remains
 - Review packet: `docs/runs/reviews/44-tauri-multisource-thin-caller.md` (pending)
 
 ## Intended Contract
@@ -57,9 +57,15 @@ restart/operations behavior remains unchanged.
 - `App.multisource.test.tsx::hydrates an existing enabled provider root before persisting untouched drafts`
 - Matrix/evidence IDs: `THC-003`, `THC-004`, `TRC-004`
 
-Local host/renderer evidence is green. Keep these rows pending until the final
-head has the relevant CI/package checks and the independent two-axis review is
-recorded.
+Local host/renderer evidence is green. Final-head package/advisory checks are
+recorded below; packaged real-provider and human release residuals remain
+explicit rather than implied by the hermetic suite.
+
+## Final-head CI
+
+- Linux package/install/smoke: [run 29220142820](https://github.com/AustinKelsay/distill/actions/runs/29220142820) — passed on `947d576`.
+- Rust advisory scan: [run 29220142815](https://github.com/AustinKelsay/distill/actions/runs/29220142815) — passed on `947d576`.
+- PR #38 remains the non-draft staging handoff.
 
 ## Non-goals / residuals
 

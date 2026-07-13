@@ -60,8 +60,7 @@ FINDINGS: none
 
 ## Explicit residuals
 
-- Final pushed-head workspace/fault/fmt/clippy/tree/diff and Linux package
-  smoke evidence remain pending until the final commit is on the branch.
+- Final pushed-head Linux package/install/smoke [run 29220142820](https://github.com/AustinKelsay/distill/actions/runs/29220142820) and Rust advisory [run 29220142815](https://github.com/AustinKelsay/distill/actions/runs/29220142815) passed on `947d576`; local workspace/fault/fmt/clippy/tree/diff gates are green.
 - Packaged real-provider machine roots are not claimed; the host suite is
   hermetic and uses synthetic roots plus a local OpenCode fake.
 - Renormalize UI/Attempt history, VoiceOver/Narrator speech, Developer ID
