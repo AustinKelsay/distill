@@ -460,12 +460,11 @@ if (JSON.stringify(capability.permissions) !== JSON.stringify(["core:event:defau
 const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-linux-smoke-"));
 const home = path.join(base, "home");
 const sessionTitle = "Linux Package Smoke";
-// Enabled Source preferences are returned in stable lexical order, so the
-// hermetic Fixture is the fourth accepted Capture/Attempt and renormalize
-// appends the sixth Attempt after the five-source Sync Run.
-const fixtureCaptureId = 4;
-const fixtureInitialAttemptId = 4;
-const fixtureRetryAttemptId = 6;
+// The renderer's closed Source draft order is Fixture-first, so the retained
+// hermetic Fixture is Capture/Attempt 1 and renormalize appends Attempt 2.
+const fixtureCaptureId = 1;
+const fixtureInitialAttemptId = 1;
+const fixtureRetryAttemptId = 2;
 const roots = await seedHermeticMultisourceRoots(base, {
   fixtureSessionTitle: sessionTitle,
   fixtureExternalSessionId: "linux-package-smoke",
