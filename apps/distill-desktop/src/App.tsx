@@ -1279,6 +1279,10 @@ export function App({ bridge }: AppProps) {
             import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
               ? " · Migration automation: enabled"
               : ""
+          }${
+            import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
+              ? ` · Migration status: ${migrationStatus}`
+              : ""
           }`}
           disabled={migrationStatus === "loading"}
         >
