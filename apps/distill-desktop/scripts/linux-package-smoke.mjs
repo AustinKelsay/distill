@@ -376,16 +376,29 @@ async function runUiJourney(binary, home, roots) {
     // the Capture through Activity, then exposes immutable Attempt summaries and the
     // Distill-owned retry report without parser-version or provider-root controls.
     await activateAccessible(windowId, "Load Attempt history");
-    await waitForAccessibleText("Attempt history status: ready", true);
-    await waitForAccessibleText(`Capture ${fixtureCaptureId}`, true);
-    await waitForAccessibleText(`#${fixtureInitialAttemptId}`, true);
+    const attemptStatus = await waitForAccessibleText("Attempt history status: ready", true);
+    if (!attemptStatus.name.includes(`Capture ${fixtureCaptureId}`)) {
+      fail(`attempt-history: unexpected status identity ${attemptStatus.name}`);
+    }
+    const initialAttempt = await waitForAccessibleText("Attempt #", true);
+    if (!initialAttempt.name.includes(`#${fixtureInitialAttemptId}`)) {
+      fail(`attempt-history: unexpected initial attempt ${initialAttempt.name}`);
+    }
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
     await activateAccessible(windowId, "Renormalize Capture");
     await waitForAccessibleText("Renormalize: ready", true);
-    await waitForAccessibleText(`Capture ${fixtureCaptureId}`, true);
-    await waitForAccessibleText(`attempt ${fixtureRetryAttemptId}`, true);
-    await waitForAccessibleText(`#${fixtureRetryAttemptId}`, true);
+    const retryReport = await waitForAccessibleText("attempt ", true);
+    if (
+      !retryReport.name.includes(`Capture ${fixtureCaptureId}`) ||
+      !retryReport.name.includes(`attempt ${fixtureRetryAttemptId}`)
+    ) {
+      fail(`attempt-history: unexpected retry report ${retryReport.name}`);
+    }
+    const retryAttempt = await waitForAccessibleText("Attempt #", true);
+    if (!retryAttempt.name.includes(`#${fixtureRetryAttemptId}`)) {
+      fail(`attempt-history: unexpected retry attempt ${retryAttempt.name}`);
+    }
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
 
