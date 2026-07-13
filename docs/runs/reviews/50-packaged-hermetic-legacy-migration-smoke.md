@@ -38,8 +38,9 @@ screen-reader claims.
   [29259709770](https://github.com/AustinKelsay/distill/actions/runs/29259709770)
   was reverted. The post-closeout exact-head package run
   [29261962986](https://github.com/AustinKelsay/distill/actions/runs/29261962986)
-  reproduced the same idle boundary after build/install. `LPKG-007` is
-  therefore blocked, not promoted.
+  reproduced the same idle boundary after build/install. The later docs-only
+  rerun [29262524827](https://github.com/AustinKelsay/distill/actions/runs/29262524827)
+  reproduced it again. `LPKG-007` is therefore blocked, not promoted.
 
 ## Files
 

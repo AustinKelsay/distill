@@ -101,6 +101,9 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   [29261962986](https://github.com/AustinKelsay/distill/actions/runs/29261962986)
   reproduced the same `Migration status: idle` failure after package build and
   install; no packaged migration report or source-home hash evidence was emitted.
+- The later docs-only rerun
+  [29262524827](https://github.com/AustinKelsay/distill/actions/runs/29262524827)
+  reproduced that same boundary after build and install.
 
 ### Diagnosis boundary
 
