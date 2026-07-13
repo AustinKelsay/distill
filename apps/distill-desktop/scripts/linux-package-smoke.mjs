@@ -401,8 +401,8 @@ async function runUiJourney(binary, home, roots) {
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
     await activateWithFallback(windowId, "Renormalize Capture");
-    const renormalizeStatus = await waitForAccessibleText("Renormalize:", true);
-    if (!renormalizeStatus.name.includes("Renormalize: ready")) {
+    const renormalizeStatus = await waitForAccessibleText("Renormalize status:", true);
+    if (!renormalizeStatus.name.includes("Renormalize status: ready")) {
       fail(`attempt-history: unexpected renormalize status ${renormalizeStatus.name}`);
     }
     const retryReport = await waitForAccessibleText("attempt ", true);

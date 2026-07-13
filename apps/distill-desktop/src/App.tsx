@@ -1568,7 +1568,11 @@ export function App({ bridge }: AppProps) {
                   ? "Renormalizing…"
                   : "Renormalize Capture"}
               </button>
-              <p data-testid="renormalize-status" aria-live="polite">
+              <p
+                data-testid="renormalize-status"
+                aria-label={`Renormalize status: ${renormalizeStatus}`}
+                aria-live="polite"
+              >
                 Renormalize: {renormalizeStatus}
               </p>
               {renormalizeError ? (
