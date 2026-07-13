@@ -9,11 +9,18 @@ import argparse
 import json
 import sys
 import time
+import warnings
 
 import gi
 
 gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi
+
+# PyGObject currently emits this deprecation warning for the text interface
+# method while the helper is intentionally using that interface for WebKitGTK
+# text discovery. Its stderr is a machine-readable smoke protocol, so suppress
+# only this known warning rather than allowing it to corrupt the sentinel.
+warnings.filterwarnings("ignore", message="Atspi.Accessible.get_text is deprecated")
 
 Atspi.init()
 
