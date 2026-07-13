@@ -201,11 +201,17 @@ async function activateWithFallback(windowId, name, contains = false) {
   await clickAccessible(windowId, name, contains);
   await sleep(250);
   try {
-    await accessibleBounds(name, contains, 1);
-    await activateAccessible(windowId, name, contains);
+    const status = await waitForAccessibleText("Renormalize status:", true, 2);
+    if (
+      status.name.includes("Renormalize status: loading") ||
+      status.name.includes("Renormalize status: ready")
+    ) {
+      return;
+    }
   } catch {
-    // The coordinate click changed the button label; avoid a duplicate action.
+    // Fall through to the semantic action when the coordinate click was inert.
   }
+  await activateAccessible(windowId, name, contains);
 }
 
 async function typeIntoAccessible(windowId, name, value, delay = 1) {
@@ -227,9 +233,9 @@ async function typeIntoAccessible(windowId, name, value, delay = 1) {
  * @param {string} name - exact or substring match
  * @param {boolean} contains - substring match when true
  */
-async function waitForAccessibleText(name, contains = false) {
+async function waitForAccessibleText(name, contains = false, timeout = 30) {
   const script = path.join(appRoot, "scripts/linux-atspi-find.py");
-  const args = [script, "--name", name, "--timeout", "30"];
+  const args = [script, "--name", name, "--timeout", String(timeout)];
   if (contains) args.push("--contains");
   const result = await command("python3", args, { allowFailure: true });
   if (result.code !== 0) {
@@ -478,10 +484,11 @@ const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-linux-smoke-"));
 const home = path.join(base, "home");
 const sessionTitle = "Linux Package Smoke";
 // The renderer's closed Source draft order is Fixture-first, so the retained
-// hermetic Fixture is Capture/Attempt 1 and renormalize appends Attempt 2.
+// hermetic Fixture is Capture/Attempt 1 and one retry appends Attempt 6 after
+// the five initial Source Attempts.
 const fixtureCaptureId = 1;
 const fixtureInitialAttemptId = 1;
-const fixtureRetryAttemptId = 2;
+const fixtureRetryAttemptId = 6;
 const roots = await seedHermeticMultisourceRoots(base, {
   fixtureSessionTitle: sessionTitle,
   fixtureExternalSessionId: "linux-package-smoke",

@@ -34,8 +34,8 @@ The independent Grok review initially returned `STANDARDS_STATUS: fail` and
    head Ubuntu evidence.
 
 Codex remediation adds AT-SPI waits for the deterministic Fixture `Capture 1`,
-`#1`, `succeeded`, the same Capture id on the retry report, `attempt 2`, and
-`#2`; adds the explicit
+`#1`, `succeeded`, the same Capture id on the retry report, `attempt 6`, and
+`#6`; adds the explicit
 Darwin manual checklist; retires macOS non-goal wording; and softens the
 cutover language until exact-head evidence is green.
 
