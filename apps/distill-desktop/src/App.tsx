@@ -1521,7 +1521,9 @@ export function App({ bridge }: AppProps) {
               </button>
               <p
                 data-testid="attempt-history-status"
-                aria-label={`Attempt history status: ${attemptStatus}`}
+                aria-label={`Attempt history status: ${attemptStatus}${
+                  attemptCaptureId != null ? ` · Capture ${attemptCaptureId}` : ""
+                }`}
                 aria-live="polite"
               >
                 Status: {attemptStatus}
@@ -1538,7 +1540,10 @@ export function App({ bridge }: AppProps) {
               {attemptHistory?.length ? (
                 <ul data-testid="attempt-history-list">
                   {attemptHistory.map((attempt) => (
-                    <li key={attempt.id}>
+                    <li
+                      key={attempt.id}
+                      aria-label={`Attempt #${attempt.id} · ${attempt.parser_id}/${attempt.parser_version} · ${attempt.outcome}`}
+                    >
                       #{attempt.id} · {attempt.parser_id}/{attempt.parser_version} ·{" "}
                       {attempt.outcome} · facts {attempt.fact_count}
                       {attempt.projection_generation != null
@@ -1572,7 +1577,10 @@ export function App({ bridge }: AppProps) {
                 </p>
               ) : null}
               {renormalizeReport ? (
-                <p data-testid="renormalize-report">
+                <p
+                  data-testid="renormalize-report"
+                  aria-label={`Capture ${renormalizeReport.capture_id} · attempt ${renormalizeReport.attempt_id} · ${renormalizeReport.outcome} · ${renormalizeReport.parser_id}/${renormalizeReport.parser_version}`}
+                >
                   Capture {renormalizeReport.capture_id} · attempt{" "}
                   {renormalizeReport.attempt_id} · {renormalizeReport.outcome} ·{" "}
                   {renormalizeReport.parser_id}/{renormalizeReport.parser_version}
