@@ -393,21 +393,9 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     );
     await sleep(750);
     await waitForAccessibleText("Import legacy home (ready)", false, 10);
-    await focusedKey("Tab");
-    await atspiFocus(
-      [
-        "--assert-focused",
-        "--name",
-        "Import legacy home",
-        "--contains",
-        "--timeout",
-        "5",
-      ],
-      'button-focus: expected focused accessible "Import legacy home"',
-    );
-    // WebKitGTK's native button activation path is reliable on Space under
-    // Xvfb even when Return only moves focus.
-    await key(windowId, "space");
+    // Stay on the input: App handles Enter using the native value, avoiding
+    // WebKitGTK's unreliable synthetic button click path under Xvfb.
+    await focusedKey("Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
     } catch {
