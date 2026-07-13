@@ -393,6 +393,18 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     );
     await sleep(750);
     await waitForAccessibleText("Import legacy home (ready)", false, 10);
+    await focusedKey("Tab");
+    await atspiFocus(
+      [
+        "--assert-focused",
+        "--name",
+        "Import legacy home",
+        "--contains",
+        "--timeout",
+        "5",
+      ],
+      'button-focus: expected focused accessible "Import legacy home"',
+    );
     await focusedKey("Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
