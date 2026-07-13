@@ -1186,6 +1186,9 @@ export function App({ bridge }: AppProps) {
           ref={importLegacyRef}
           type="button"
           data-testid="migration-run"
+          aria-label={
+            legacySourceHome.trim() ? "Import legacy home (ready)" : "Import legacy home"
+          }
           onClick={() => void onImportLegacy()}
           disabled={
             !home.trim() || !legacySourceHome.trim() || migrationStatus === "loading"

@@ -392,15 +392,16 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       80,
     );
     await sleep(750);
+    await waitForAccessibleText("Import legacy home (ready)", false, 10);
     await focusedKey("Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
     } catch {
-      await clickAccessible(windowId, "Import legacy home");
+      await clickAccessible(windowId, "Import legacy home", true);
       try {
         await waitForAccessibleText("Migration status: success", true, 5);
       } catch {
-        await activateAccessible(windowId, "Import legacy home");
+        await activateAccessible(windowId, "Import legacy home", true);
       }
     }
     await waitForAccessibleText("Migration status: success", true);
