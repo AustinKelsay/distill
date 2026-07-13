@@ -4,6 +4,7 @@
 
 - Issue: [#47](https://github.com/AustinKelsay/distill/issues/47)
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
+- Implementation commit: `c6b9a3c`
 - Worker: Grok 4.5 High bounded implementation sidecar for Codex
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Review mode: implementation packet with focused local verification and final
@@ -39,8 +40,9 @@ package/smoke and advisory workflows remain separate residual gates.
 
 Exact implementation-head Linux package/smoke and Rust advisory CI are not claimed
 as passed for this slice yet. Independent final Grok standards/spec rereview:
-PASS on both axes; no required remediations. CodeRabbit CLI was attempted and
-rate-limited before analysis, so Grok is the bounded fallback.
+PASS on both axes; no required remediations. CodeRabbit's initial attempt was
+rate-limited; a bounded retry stalled in summarization and was terminated, so
+Grok is the recorded fallback.
 
 ## Explicit residuals
 

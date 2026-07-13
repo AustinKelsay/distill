@@ -5,6 +5,7 @@
 - Issue: [#47](https://github.com/AustinKelsay/distill/issues/47)
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: post-#46 on `feature/distill-clean-rebuild`
+- Implementation commit: `c6b9a3c`
 - Worker session: Grok 4.5 High bounded implementation sidecar for Codex
 - Status: Complete — local implementation and focused verification; staging handoff / exact-head CI remain residuals
 - Review packet: `docs/runs/reviews/47-source-detection-callers.md`
@@ -58,7 +59,7 @@ renderer exposes the smallest bridge-only detection control/status surface.
 - App detection Vitest: `App.test.tsx` 28 passed.
 - `npm run desktop:typecheck`, `desktop:lint`, and `desktop:format`: passed.
 - Independent final Grok standards/spec rereview: PASS on both axes; no required remediations.
-- CodeRabbit CLI: rate-limited before analysis; bounded Grok review used as fallback.
+- CodeRabbit CLI: initial attempt rate-limited; bounded retry stalled in summarization and was terminated; final Grok review used as fallback.
 
 ## Non-goals / residuals
 
