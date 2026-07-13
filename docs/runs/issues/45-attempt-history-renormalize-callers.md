@@ -6,7 +6,7 @@
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: `d93eb66`
 - Worker session: Grok 4.5 High bounded implementation; Codex integration and remediation
-- Commit: pending final commit
+- Commit: `a58449c`
 - Status: Local implementation and review complete; final-head CI pending
 - Review packet: `docs/runs/reviews/45-attempt-history-renormalize-callers.md`
 
