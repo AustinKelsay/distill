@@ -1222,11 +1222,6 @@ export function App({ bridge }: AppProps) {
         }}
       >
         <h2>Legacy migration</h2>
-        {import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1" ? (
-          <p data-testid="migration-automation-status" aria-live="polite">
-            Migration automation: enabled
-          </p>
-        ) : null}
         <label htmlFor="legacy-source-home">Legacy Electron home</label>
         <input
           id="legacy-source-home"
@@ -1269,6 +1264,9 @@ export function App({ bridge }: AppProps) {
         ) : null}
         <p data-testid="migration-status" aria-live="polite">
           Migration status: {migrationStatus}
+          {import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
+            ? " · Migration automation: enabled"
+            : ""}
         </p>
         {migrationError ? (
           <p role="alert" className="error" data-testid="migration-error">

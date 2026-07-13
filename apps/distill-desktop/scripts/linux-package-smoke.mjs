@@ -369,7 +369,7 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
   const processHandle = launch(binary, "initial");
   try {
     const windowId = await waitForWindow(processHandle, "initial");
-    await waitForAccessibleText("Migration automation: enabled", false, 10);
+    await waitForAccessibleText("Migration automation: enabled", true, 10);
     await typeIntoAccessible(windowId, "Distill home", home);
     await typeIntoAccessible(windowId, "Fixture root", roots.fixtureRoot);
 

@@ -119,8 +119,8 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   `apps/distill-desktop/.env.production.local` containing
   `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1` only in the package workflow, then removes
   it after packaging. Tauri's `beforeBuildCommand` is explicitly rooted at the
-  renderer workspace so that file is loaded by Vite. The renderer exposes an
-  accessible smoke-only marker,
+  renderer workspace so that file is loaded by Vite. The renderer appends an
+  accessible smoke-only marker to the existing migration live region,
   waits for the real migration input value, and invokes the existing form
   through native button activation with a bounded DOM submit-event fallback
   inside the packaged WebView; normal builds never enable it and the shipped
