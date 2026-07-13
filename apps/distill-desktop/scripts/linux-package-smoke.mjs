@@ -401,6 +401,7 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       true,
       10,
     );
+    await waitForAccessibleText("Migration activation: invoked", true, 10);
     // Stay on the input first: App handles Enter/Return using the native value,
     // and the migration form also provides a browser-native submit fallback.
     // WebKitGTK/Xvfb has exposed several distinct XTEST transport paths across

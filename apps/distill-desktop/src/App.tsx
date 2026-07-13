@@ -125,6 +125,7 @@ export function App({ bridge }: AppProps) {
   const [home, setHome] = useState("");
   const [fixtureRoot, setFixtureRoot] = useState("");
   const [legacySourceHome, setLegacySourceHome] = useState("");
+  const [smokeMigrationActivation, setSmokeMigrationActivation] = useState("pending");
   const [status, setStatus] = useState<UiStatus>("idle");
   const [migrationStatus, setMigrationStatus] = useState<MigrationUiStatus>("idle");
   const [migrationReport, setMigrationReport] = useState<LegacyImportReport | null>(null);
@@ -482,7 +483,10 @@ export function App({ bridge }: AppProps) {
     const smokeRoute = import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1";
     if (smokeRoute && smokeMigrationInvokedRef.current) return;
     if (!home.trim() || !sourceHome.trim() || migrationStatus === "loading") return;
-    if (smokeRoute) smokeMigrationInvokedRef.current = true;
+    if (smokeRoute) {
+      smokeMigrationInvokedRef.current = true;
+      setSmokeMigrationActivation("invoked");
+    }
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
     setMigrationError(null);
@@ -1282,6 +1286,10 @@ export function App({ bridge }: AppProps) {
           }${
             import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
               ? ` · Migration status: ${migrationStatus}`
+              : ""
+          }${
+            import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
+              ? ` · Migration activation: ${smokeMigrationActivation}`
               : ""
           }`}
           disabled={migrationStatus === "loading"}
