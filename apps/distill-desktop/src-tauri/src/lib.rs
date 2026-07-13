@@ -55,19 +55,22 @@ pub fn run() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     for _ in 0..120 {
-                        if let Some(window) = handle.get_webview_window("main") {
-                            let _ = window.eval(
-                                r#"(() => {
-                                  const panel = document.querySelector('[data-testid="migration-panel"]');
-                                  const button = document.querySelector('[data-testid="migration-run"]');
-                                  const status = document.querySelector('[data-testid="migration-status"]');
-                                  if (!panel || !button || !status || !button.getAttribute('aria-label')?.includes('(ready)') || button.disabled) return;
-                                  if (!status.textContent?.includes('Migration status: idle')) return;
-                                  if (typeof panel.requestSubmit === 'function') panel.requestSubmit(button);
-                                  else button.click();
-                                })();"#,
-                            );
-                        }
+                        let next_handle = handle.clone();
+                        let _ = handle.run_on_main_thread(move || {
+                            if let Some(window) = next_handle.get_webview_window("main") {
+                                let _ = window.eval(
+                                    r#"(() => {
+                                      const panel = document.querySelector('[data-testid="migration-panel"]');
+                                      const button = document.querySelector('[data-testid="migration-run"]');
+                                      const status = document.querySelector('[data-testid="migration-status"]');
+                                      if (!panel || !button || !status || !button.getAttribute('aria-label')?.includes('(ready)') || button.disabled) return;
+                                      if (!status.textContent?.includes('Migration status: idle')) return;
+                                      if (typeof panel.requestSubmit === 'function') panel.requestSubmit(button);
+                                      else button.click();
+                                    })();"#,
+                                );
+                            }
+                        });
                         std::thread::sleep(std::time::Duration::from_millis(250));
                     }
                 });

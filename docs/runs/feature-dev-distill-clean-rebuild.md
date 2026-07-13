@@ -38,6 +38,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Package-native DOM-route CodeRabbit attempt (`coderabbit review --type uncommitted --light`) reached “Summarizing changes… 1m 00s elapsed — still working” and was terminated with no findings; the bounded Grok recommendation and local Rust/desktop gates remain the review fallback.
 - Package-native DOM page-load-hook CodeRabbit retry reached “Writing review comments… 1m 00s elapsed — still working” and was terminated with no findings; local `cargo check`, format, typecheck, and smoke syntax checks remain the review fallback.
 - Package-native DOM polling-hook CodeRabbit retry was rate-limited before analysis; local `cargo check`, format, typecheck, and smoke syntax checks remain the review fallback.
+- Package-native DOM main-thread dispatch follow-up was not re-reviewed because CodeRabbit remained rate-limited; the accepted change is limited to routing the existing opt-in eval through Tauri's main-thread executor, with `cargo fmt` and `cargo check -p distill-desktop` passing.
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
