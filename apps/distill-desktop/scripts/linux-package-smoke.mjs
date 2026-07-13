@@ -368,6 +368,10 @@ async function runUiJourney(binary, home, roots) {
     await typeIntoAccessible(windowId, "Search sessions", "smoke");
     await key(windowId, "Enter");
     await activateAccessible(windowId, roots.fixtureSessionTitle, true);
+    // WebKitGTK exposes the list-row action but can drop the dispatch under
+    // Xvfb; the AT-SPI lookup has already scrolled this exact button into view,
+    // so a coordinate fallback is now deterministic rather than blind.
+    await clickAccessible(windowId, roots.fixtureSessionTitle, true);
     // The Session detail request is asynchronous; wait for the selected Fixture
     // projection before invoking the Activity-backed Attempt lookup.
     await waitForAccessibleText("Raw captures:", true);
