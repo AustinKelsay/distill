@@ -195,6 +195,7 @@ export function App({ bridge }: AppProps) {
   const importLegacyHandlerRef = useRef<(sourceHome?: string) => Promise<void>>(
     async () => {},
   );
+  const smokeMigrationInvokedRef = useRef(false);
 
   useEffect(() => {
     if (import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE !== "1") return;
@@ -231,20 +232,29 @@ export function App({ bridge }: AppProps) {
       button.click();
       fallbackTimer = window.setTimeout(() => {
         if (status.textContent?.includes("Migration status: idle")) {
-          if (typeof SubmitEvent === "function") {
-            panel.dispatchEvent(
-              new SubmitEvent("submit", {
-                bubbles: true,
-                cancelable: true,
-                submitter: button,
-              }),
-            );
-          } else {
-            panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          try {
+            if (typeof SubmitEvent === "function") {
+              panel.dispatchEvent(
+                new SubmitEvent("submit", {
+                  bubbles: true,
+                  cancelable: true,
+                  submitter: button,
+                }),
+              );
+            } else {
+              panel.dispatchEvent(
+                new Event("submit", { bubbles: true, cancelable: true }),
+              );
+            }
+          } catch {
+            // WebKitGTK may reject a synthetic SubmitEvent; keep the handler
+            // fallback below as the bounded package route.
           }
         }
         if (status.textContent?.includes("Migration status: idle")) {
-          void importLegacyHandlerRef.current(input.value);
+          if (!smokeMigrationInvokedRef.current) {
+            void importLegacyHandlerRef.current(input.value);
+          }
         }
       }, 250);
     }, 100);
@@ -469,7 +479,10 @@ export function App({ bridge }: AppProps) {
    * Explicitly import a legacy Electron home into the native Distill home.
    */
   async function onImportLegacy(sourceHome = legacySourceHome) {
+    const smokeRoute = import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1";
+    if (smokeRoute && smokeMigrationInvokedRef.current) return;
     if (!home.trim() || !sourceHome.trim() || migrationStatus === "loading") return;
+    if (smokeRoute) smokeMigrationInvokedRef.current = true;
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
     setMigrationError(null);
