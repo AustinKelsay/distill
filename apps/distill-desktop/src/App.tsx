@@ -407,13 +407,13 @@ export function App({ bridge }: AppProps) {
   /**
    * Explicitly import a legacy Electron home into the native Distill home.
    */
-  async function onImportLegacy() {
+  async function onImportLegacy(sourceHome = legacySourceHome) {
     const requestId = ++migrationRequestRef.current;
     setMigrationStatus("loading");
     setMigrationError(null);
     setMigrationReport(null);
     try {
-      const report = await bridge.importLegacy(home, legacySourceHome);
+      const report = await bridge.importLegacy(home, sourceHome);
       if (requestId !== migrationRequestRef.current) return;
       setMigrationReport(report);
       if (!report.ok || report.skips.length > 0) setMigrationStatus("warning");
@@ -1169,14 +1169,15 @@ export function App({ bridge }: AppProps) {
           value={legacySourceHome}
           onChange={(event) => setLegacySourceHome(event.target.value)}
           onKeyDown={(event) => {
+            const sourceHome = event.currentTarget.value;
             if (
               event.key === "Enter" &&
               home.trim() &&
-              legacySourceHome.trim() &&
+              sourceHome.trim() &&
               migrationStatus !== "loading"
             ) {
               event.preventDefault();
-              void onImportLegacy();
+              void onImportLegacy(sourceHome);
             }
           }}
           placeholder="/path/to/.distill"
