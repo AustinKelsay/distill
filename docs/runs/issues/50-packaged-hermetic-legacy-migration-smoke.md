@@ -8,10 +8,11 @@
 - Worker session: Cursor Grok 4.5 bounded Feature Dev slice
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Status: implementation complete locally, including a WebKitGTK `Return`-key
-  compatibility path and renderer coverage; Linux `LPKG-007` remains pending
-  exact-head promotion because the compatibility patch has not yet run in
-  Ubuntu package CI. Darwin `PKG-007` remains manual-required when System
-  Events cannot expose the packaged window.
+  compatibility path, native form fallback, and an opt-in package-native DOM
+  `requestSubmit` route for the installed Linux smoke; Linux `LPKG-007`
+  remains pending exact-head promotion until this route records the full
+  contract. Darwin `PKG-007` remains manual-required when System Events cannot
+  expose the packaged window.
 - Review packet: `docs/runs/reviews/50-packaged-hermetic-legacy-migration-smoke.md`
 
 ## Intended Contract
@@ -114,6 +115,12 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   and window-targeted `Return`/`Enter`—before the existing pointer and AT-SPI
   fallbacks. This broadens only automation transport coverage; it does not add
   a storage shortcut or change migration policy.
+- The installed Linux binary receives `DISTILL_SMOKE_DOM_ACTIVATE=1` only from
+  the smoke launcher. The Tauri setup hook waits for the real migration input
+  value and invokes the existing form's DOM `requestSubmit` path inside the
+  packaged WebView; normal launches never enable it. Exact-head CI must still
+  prove the resulting report, session, and source-hash contract before
+  `LPKG-007` is promoted.
 
 ### Diagnosis boundary
 

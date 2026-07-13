@@ -324,6 +324,11 @@ function launch(binary, label) {
     env: {
       ...process.env,
       WEBKIT_DISABLE_COMPOSITING_MODE: "1",
+      // The packaged WebKitGTK/Xvfb runner cannot reliably dispatch this one
+      // form through XTEST/AT-SPI. The opt-in host hook performs the same DOM
+      // requestSubmit path inside the installed renderer; it is never enabled
+      // for normal launches.
+      DISTILL_SMOKE_DOM_ACTIVATE: "1",
       GDK_BACKEND: process.env.GDK_BACKEND ?? "x11",
     },
     stdio: "ignore",

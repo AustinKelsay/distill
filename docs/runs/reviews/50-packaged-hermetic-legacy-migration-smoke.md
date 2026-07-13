@@ -64,8 +64,8 @@ screen-reader claims.
 
 - Reuses existing bridge-only migration panel and Library import seam.
 - Destination/source homes are siblings under the smoke temp base.
-- `LPKG-007` is `blocked` pending a viable packaged synthetic-activation path;
-  `PKG-007` is `manual_required`.
+- `LPKG-007` is `blocked` pending exact-head proof from the new opt-in
+  package-native DOM activation path; `PKG-007` is `manual_required`.
 - Packaged Linux “no migration claim” wording retired only after promotion;
   cutover/gap text state that honestly.
 - Empty planted `distill.db-wal`/`distill.db-shm` companions cover sidecar hash
@@ -83,8 +83,8 @@ screen-reader claims.
 - Fixture Capture/Attempt IDs shift to 2 / 2 / 7 after migration-first sequencing;
   Ubuntu must confirm those identities.
 - Do not promote `LPKG-007` or retire cutover residual language without exact-head
-  package evidence. The bounded Grok diagnostic attributes the current boundary
-  to WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
-  contract. The key-name compatibility patch is a hypothesis-driven remediation,
-  not yet packaged evidence. The harness follow-up is limited to four bounded
-  keyboard transports before existing pointer/AT-SPI fallbacks.
+  package evidence. The bounded Grok diagnostic attributes the prior boundary to
+  WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
+  contract. The harness now keeps the four bounded keyboard transports and adds
+  a smoke-only Tauri DOM `requestSubmit` route; the exact-head run must validate
+  that packaged route rather than treating the local hook as evidence.
