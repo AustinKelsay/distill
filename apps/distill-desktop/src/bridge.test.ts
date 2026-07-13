@@ -224,5 +224,19 @@ describe("Tauri bridge", () => {
       request: { limit: 10, cursor: null },
     });
     expect(tauri.listen).not.toHaveBeenCalled();
+
+    await bridge.captureAttempts("/tmp/home", 42);
+    expect(tauri.invoke).toHaveBeenCalledWith("capture_attempts_command", {
+      home: "/tmp/home",
+      captureId: 42,
+    });
+
+    await bridge.renormalizeCapture("/tmp/home", 42, "fixture", "2.0.0");
+    expect(tauri.invoke).toHaveBeenCalledWith("renormalize_capture_command", {
+      home: "/tmp/home",
+      captureId: 42,
+      advanceKind: "fixture",
+      advanceVersion: "2.0.0",
+    });
   });
 });

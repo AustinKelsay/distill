@@ -215,6 +215,12 @@ function createBridge(options?: {
         next_export_cursor: null,
       };
     },
+    async captureAttempts() {
+      return [];
+    },
+    async renormalizeCapture() {
+      throw { code: "unused", message: "unused in state suite" };
+    },
     onProgress(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -534,5 +540,76 @@ describe("renderer major visual states", () => {
         },
       ]
     `);
+  });
+
+  it("renders Attempt history and failed renormalize warning states", async () => {
+    const user = userEvent.setup();
+    const bridge = createBridge({
+      sessionPage: populatedPage,
+    });
+    bridge.sessionDetail = async () => ({
+      summary: {
+        id: 4,
+        source_kind: "fixture",
+        external_session_id: "populated",
+        title: "Populated session",
+        accepted_capture_count: 1,
+        normalization_attempt_count: 1,
+        successful_projection_generation: 1,
+      },
+      messages: [],
+      artifacts: [],
+      metadata_json: "{}",
+    });
+    bridge.listActivity = async () => ({
+      items: [
+        {
+          id: 1,
+          event_type: "capture_recorded",
+          occurred_at: "2026-01-01T00:00:00Z",
+          source_kind: "fixture",
+          session_id: 4,
+          capture_id: 9,
+          attempt_id: null,
+          payload_json: {},
+        },
+      ],
+      next_cursor: null,
+    });
+    bridge.captureAttempts = async () => [
+      {
+        id: 1,
+        capture_id: 9,
+        parser_id: "fixture",
+        parser_version: "1.0.0",
+        outcome: "succeeded",
+        error_class: null,
+        error_message: null,
+        projection_generation: 1,
+        fact_count: 1,
+      },
+    ];
+    bridge.renormalizeCapture = async () => ({
+      capture_id: 9,
+      attempt_id: 2,
+      outcome: "failed",
+      parser_id: "fixture",
+      parser_version: "1.0.0",
+    });
+
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /Populated session/ }));
+    expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("idle");
+    await user.click(screen.getByTestId("load-attempt-history"));
+    await waitFor(() =>
+      expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("ready"),
+    );
+    await user.click(screen.getByTestId("renormalize-capture"));
+    await waitFor(() =>
+      expect(screen.getByTestId("renormalize-status")).toHaveTextContent("warning"),
+    );
+    expect(screen.getByTestId("renormalize-report")).toHaveTextContent("failed");
   });
 });

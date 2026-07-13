@@ -12,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ActivityListPage,
   ActivityListRequest,
+  AttemptSummary,
   CurationMutationResult,
   DistillBridge,
   ExportDataset,
@@ -25,6 +26,7 @@ import type {
   LegacyImportReport,
   OperationsPage,
   OperationsRequest,
+  RenormalizeReport,
   RepairReport,
   SessionCurationRequest,
   SessionDetail,
@@ -151,6 +153,25 @@ export function createTauriBridge(): DistillBridge {
       request: OperationsRequest,
     ): Promise<OperationsPage> {
       return invoke<OperationsPage>("operations_list_command", { home, request });
+    },
+    async captureAttempts(home: string, captureId: number): Promise<AttemptSummary[]> {
+      return invoke<AttemptSummary[]>("capture_attempts_command", {
+        home,
+        captureId,
+      });
+    },
+    async renormalizeCapture(
+      home: string,
+      captureId: number,
+      advanceKind?: string | null,
+      advanceVersion?: string | null,
+    ): Promise<RenormalizeReport> {
+      return invoke<RenormalizeReport>("renormalize_capture_command", {
+        home,
+        captureId,
+        advanceKind: advanceKind ?? null,
+        advanceVersion: advanceVersion ?? null,
+      });
     },
     onProgress(listener: (phase: FixtureJourneyPhase) => void) {
       return subscribe(PROGRESS_EVENT, listener);

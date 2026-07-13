@@ -127,6 +127,12 @@ function createFakeBridge(options?: {
   migrationReport?: LegacyImportReport;
   migrationError?: HostError;
   pendingMigration?: Promise<LegacyImportReport>;
+  attempts?: import("./types").AttemptSummary[];
+  attemptError?: HostError;
+  pendingAttempts?: Promise<import("./types").AttemptSummary[]>;
+  renormalizeReport?: import("./types").RenormalizeReport;
+  renormalizeError?: HostError;
+  pendingRenormalize?: Promise<import("./types").RenormalizeReport>;
 }): DistillBridge {
   const listeners = new Set<(phase: FixtureJourneyPhase) => void>();
   const syncListeners = new Set<(progress: import("./types").SyncProgress) => void>();
@@ -472,6 +478,38 @@ function createFakeBridge(options?: {
             },
           ],
           next_export_cursor: null,
+        }
+      );
+    },
+    async captureAttempts() {
+      if (options?.pendingAttempts) return options.pendingAttempts;
+      if (options?.attemptError) throw options.attemptError;
+      return (
+        options?.attempts ?? [
+          {
+            id: 1,
+            capture_id: 1,
+            parser_id: "fixture",
+            parser_version: "1.0.0",
+            outcome: "succeeded",
+            error_class: null,
+            error_message: null,
+            projection_generation: 1,
+            fact_count: 2,
+          },
+        ]
+      );
+    },
+    async renormalizeCapture() {
+      if (options?.pendingRenormalize) return options.pendingRenormalize;
+      if (options?.renormalizeError) throw options.renormalizeError;
+      return (
+        options?.renormalizeReport ?? {
+          capture_id: 1,
+          attempt_id: 2,
+          outcome: "succeeded",
+          parser_id: "fixture",
+          parser_version: "1.0.0",
         }
       );
     },
@@ -831,6 +869,10 @@ describe("first-run Fixture UI", () => {
         exports: [],
         next_export_cursor: null,
       }),
+      captureAttempts: async () => [],
+      renormalizeCapture: async () => {
+        throw new Error("not used");
+      },
       onProgress: () => () => undefined,
       onSyncProgress: () => () => undefined,
       onExportProgress: () => () => undefined,
@@ -1533,5 +1575,262 @@ describe("first-run Fixture UI", () => {
     expect(screen.getByTestId("migration-status")).toHaveTextContent("loading");
     await user.click(screen.getByTestId("migration-cancel"));
     expect(screen.getByTestId("migration-status")).toHaveTextContent("cancelled");
+  });
+
+  it("loads Attempt history and renormalize states through the bridge only (TRC-005)", async () => {
+    const user = userEvent.setup();
+    const attemptsAfter = [
+      {
+        id: 1,
+        capture_id: 1,
+        parser_id: "fixture",
+        parser_version: "1.0.0",
+        outcome: "succeeded",
+        error_class: null,
+        error_message: null,
+        projection_generation: 1,
+        fact_count: 2,
+      },
+      {
+        id: 2,
+        capture_id: 1,
+        parser_id: "fixture",
+        parser_version: "1.0.0",
+        outcome: "succeeded",
+        error_class: null,
+        error_message: null,
+        projection_generation: 2,
+        fact_count: 2,
+      },
+    ];
+    let attemptCalls = 0;
+    const bridge = createFakeBridge({
+      sessionPage: {
+        items: [
+          {
+            id: 1,
+            source_kind: "fixture",
+            external_session_id: "fixture-session-ui",
+            title: "UI Fixture",
+            project_path: null,
+            updated_at: null,
+            preview: "hello",
+            message_count: 1,
+            accepted_capture_count: 1,
+            normalization_attempt_count: 1,
+            successful_projection_generation: 1,
+            labels: [],
+            tags: [],
+            workflow_state: "neutral",
+          },
+        ],
+        next_cursor: null,
+      },
+      sessionDetail: {
+        summary: {
+          id: 1,
+          source_kind: "fixture",
+          external_session_id: "fixture-session-ui",
+          title: "UI Fixture",
+          accepted_capture_count: 1,
+          normalization_attempt_count: 1,
+          successful_projection_generation: 1,
+        },
+        messages: [
+          { id: 1, ordinal: 0, role: "user", message_kind: "text", text: "hello" },
+        ],
+        artifacts: [],
+        metadata_json: "{}",
+      },
+      attempts: [
+        {
+          id: 1,
+          capture_id: 1,
+          parser_id: "fixture",
+          parser_version: "1.0.0",
+          outcome: "succeeded",
+          error_class: null,
+          error_message: null,
+          projection_generation: 1,
+          fact_count: 2,
+        },
+      ],
+      renormalizeReport: {
+        capture_id: 1,
+        attempt_id: 2,
+        outcome: "succeeded",
+        parser_id: "fixture",
+        parser_version: "1.0.0",
+      },
+    });
+    const originalAttempts = bridge.captureAttempts.bind(bridge);
+    bridge.captureAttempts = async (home, captureId) => {
+      attemptCalls += 1;
+      if (attemptCalls === 1) return originalAttempts(home, captureId);
+      return attemptsAfter;
+    };
+
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /UI Fixture/ }));
+    expect(screen.getByTestId("attempt-history-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("idle");
+
+    await user.click(screen.getByTestId("load-attempt-history"));
+    await waitFor(() =>
+      expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("ready"),
+    );
+    expect(screen.getByTestId("attempt-history-list")).toHaveTextContent("fixture/1.0.0");
+    expect(screen.getByTestId("renormalize-capture")).not.toBeDisabled();
+
+    await user.click(screen.getByTestId("renormalize-capture"));
+    await waitFor(() =>
+      expect(screen.getByTestId("renormalize-status")).toHaveTextContent("ready"),
+    );
+    expect(screen.getByTestId("renormalize-report")).toHaveTextContent("attempt 2");
+    expect(screen.getByTestId("attempt-history-list")).toHaveTextContent("#2");
+  });
+
+  it("renders Attempt history error without ambient authority", async () => {
+    const user = userEvent.setup();
+    const failing = createFakeBridge({
+      sessionPage: {
+        items: [
+          {
+            id: 1,
+            source_kind: "fixture",
+            external_session_id: "fixture-session-ui",
+            title: "UI Fixture",
+            project_path: null,
+            updated_at: null,
+            preview: "hello",
+            message_count: 1,
+            accepted_capture_count: 1,
+            normalization_attempt_count: 1,
+            successful_projection_generation: 1,
+            labels: [],
+            tags: [],
+            workflow_state: "neutral",
+          },
+        ],
+        next_cursor: null,
+      },
+      sessionDetail: {
+        summary: {
+          id: 1,
+          source_kind: "fixture",
+          external_session_id: "fixture-session-ui",
+          title: "UI Fixture",
+          accepted_capture_count: 1,
+          normalization_attempt_count: 1,
+          successful_projection_generation: 1,
+        },
+        messages: [],
+        artifacts: [],
+        metadata_json: "{}",
+      },
+      attemptError: { code: "not_found", message: "capture missing" },
+    });
+    render(<App bridge={failing} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /UI Fixture/ }));
+    await user.click(screen.getByTestId("load-attempt-history"));
+    await waitFor(() =>
+      expect(screen.getByTestId("attempt-history-error")).toHaveTextContent("not_found"),
+    );
+    expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("error");
+  });
+
+  it("ignores Attempt results when the selected Session changes mid-flight", async () => {
+    const user = userEvent.setup();
+    let resolveAttempts!: (value: import("./types").AttemptSummary[]) => void;
+    const pendingAttempts = new Promise<import("./types").AttemptSummary[]>((resolve) => {
+      resolveAttempts = resolve;
+    });
+    const bridge = createFakeBridge({
+      sessionPage: {
+        items: [
+          {
+            id: 1,
+            source_kind: "fixture",
+            external_session_id: "fixture-session-a",
+            title: "Session A",
+            project_path: null,
+            updated_at: null,
+            preview: "a",
+            message_count: 1,
+            accepted_capture_count: 1,
+            normalization_attempt_count: 1,
+            successful_projection_generation: 1,
+            labels: [],
+            tags: [],
+            workflow_state: "neutral",
+          },
+          {
+            id: 2,
+            source_kind: "fixture",
+            external_session_id: "fixture-session-b",
+            title: "Session B",
+            project_path: null,
+            updated_at: null,
+            preview: "b",
+            message_count: 1,
+            accepted_capture_count: 1,
+            normalization_attempt_count: 1,
+            successful_projection_generation: 1,
+            labels: [],
+            tags: [],
+            workflow_state: "neutral",
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+    bridge.sessionDetail = async (_home, request) => ({
+      summary: {
+        id: request.external_session_id.endsWith("a") ? 1 : 2,
+        source_kind: request.source_kind,
+        external_session_id: request.external_session_id,
+        title: request.external_session_id.endsWith("a") ? "Session A" : "Session B",
+        accepted_capture_count: 1,
+        normalization_attempt_count: 1,
+        successful_projection_generation: 1,
+      },
+      messages: [],
+      artifacts: [],
+      metadata_json: "{}",
+    });
+    bridge.captureAttempts = async () => pendingAttempts;
+
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    await user.click(screen.getByRole("button", { name: "Load sessions" }));
+    await user.click(screen.getByRole("button", { name: /Session A/ }));
+    await user.click(screen.getByTestId("load-attempt-history"));
+    await waitFor(() =>
+      expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("loading"),
+    );
+
+    await user.click(screen.getByRole("button", { name: /Session B/ }));
+    await waitFor(() => expect(screen.getByText("Session B")).toBeInTheDocument());
+    resolveAttempts([
+      {
+        id: 1,
+        capture_id: 1,
+        parser_id: "fixture",
+        parser_version: "1.0.0",
+        outcome: "succeeded",
+        error_class: null,
+        error_message: null,
+        projection_generation: 1,
+        fact_count: 1,
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("attempt-history-status")).toHaveTextContent("idle"),
+    );
+    expect(screen.getByTestId("renormalize-capture")).toBeDisabled();
   });
 });

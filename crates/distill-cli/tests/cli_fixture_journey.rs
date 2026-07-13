@@ -1630,3 +1630,254 @@ fn cli_provider_failure_isolation_redacts_diagnostics() {
     ]);
     assert_cli_json_redacted(&activity, &[secret, missing_s]);
 }
+
+/**
+ * Discover a Capture id from Activity without storage authority.
+ */
+fn capture_id_from_activity(home: &str) -> i64 {
+    let activity = distill_ok_json(&[
+        "activity", "--home", home, "--limit", "50", "--format", "json",
+    ]);
+    activity["items"]
+        .as_array()
+        .expect("activity items")
+        .iter()
+        .find_map(|event| {
+            if event["event_type"] == "capture_recorded" {
+                event["capture_id"].as_i64()
+            } else {
+                None
+            }
+        })
+        .expect("capture_recorded event with capture_id")
+}
+
+/**
+ * TCC-006: CLI Fixture Sync → Activity Capture discovery → attempts →
+ * version-advance renormalize → detail/search/Activity evidence.
+ */
+#[test]
+fn cli_fixture_capture_attempts_and_renormalize_json_journey() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let home_s = home.to_str().expect("home utf8");
+    let fixture_s = fixture.to_str().expect("fixture utf8");
+
+    distill_ok_json(&[
+        "sources", "set", "--home", home_s, "--kind", "fixture", "--enable", "--root", fixture_s,
+        "--format", "json",
+    ]);
+    let sync = distill_ok_json(&["sync", "start", "--home", home_s, "--format", "json"]);
+    assert_eq!(sync["ok"], true);
+    assert_eq!(sync["run"]["status"], "completed");
+    assert_eq!(sync["run"]["accepted_captures"], 1);
+
+    let capture_id = capture_id_from_activity(home_s);
+    let capture_id_s = capture_id.to_string();
+
+    let attempts = distill_ok_json(&[
+        "captures",
+        "attempts",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--format",
+        "json",
+    ]);
+    assert_eq!(attempts["ok"], true);
+    let before = attempts["attempts"].as_array().expect("attempts");
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0]["outcome"], "succeeded");
+    assert_eq!(before[0]["parser_id"], "fixture");
+    assert_eq!(before[0]["parser_version"], "1.0.0");
+    assert!(before[0]["fact_count"].as_i64().unwrap_or(0) >= 1);
+    assert_eq!(before[0]["projection_generation"], 1);
+
+    let renormalize = distill_ok_json(&[
+        "captures",
+        "renormalize",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--advance-kind",
+        "fixture",
+        "--advance-version",
+        "2.0.0",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(renormalize["ok"], true);
+    assert_eq!(renormalize["report"]["capture_id"], capture_id);
+    assert_eq!(renormalize["report"]["outcome"], "succeeded");
+    assert_eq!(renormalize["report"]["parser_id"], "fixture");
+    assert_eq!(renormalize["report"]["parser_version"], "2.0.0");
+
+    let after = distill_ok_json(&[
+        "captures",
+        "attempts",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--format",
+        "json",
+    ]);
+    let after_attempts = after["attempts"].as_array().expect("after attempts");
+    assert_eq!(after_attempts.len(), 2);
+    assert_eq!(after_attempts[0]["id"], before[0]["id"]);
+    assert_eq!(after_attempts[0]["parser_version"], "1.0.0");
+    assert_eq!(after_attempts[1]["parser_version"], "2.0.0");
+    assert_eq!(after_attempts[1]["outcome"], "succeeded");
+
+    let detail = distill_ok_json(&[
+        "sessions",
+        "detail",
+        "--home",
+        home_s,
+        "--source-kind",
+        "fixture",
+        "--external-session-id",
+        "fixture-session-cli",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(detail["ok"], true);
+    assert_eq!(detail["session"]["summary"]["accepted_capture_count"], 1);
+    assert_eq!(
+        detail["session"]["summary"]["normalization_attempt_count"],
+        2
+    );
+    assert_eq!(
+        detail["session"]["summary"]["successful_projection_generation"],
+        2
+    );
+
+    let list = distill_ok_json(&[
+        "sessions",
+        "list",
+        "--home",
+        home_s,
+        "--query",
+        "Hello from CLI fixture",
+        "--lane",
+        "all",
+        "--limit",
+        "5",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(list["items"].as_array().expect("items").len(), 1);
+
+    let activity = distill_ok_json(&[
+        "activity", "--home", home_s, "--limit", "20", "--format", "json",
+    ]);
+    assert!(activity["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .any(|event| event["event_type"] == "projection_replaced"
+            || event["event_type"] == "capture_recorded"));
+}
+
+/**
+ * TCC-007: CLI Codex Capture renormalize survives file-backed Source-root removal.
+ */
+#[test]
+fn cli_codex_renormalize_after_source_removal_json_journey() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let root = temp.path().join("codex-home");
+    fs::create_dir_all(&root).expect("codex root");
+    let (session_id, query) = write_cli_codex_root(&root);
+    let home_s = home.to_str().expect("home utf8");
+    let root_s = root.to_str().expect("root utf8");
+
+    distill_ok_json(&[
+        "sources", "set", "--home", home_s, "--kind", "codex", "--enable", "--root", root_s,
+        "--format", "json",
+    ]);
+    let sync = distill_ok_json(&["sync", "start", "--home", home_s, "--format", "json"]);
+    assert_eq!(sync["run"]["status"], "completed");
+    assert_eq!(sync["run"]["accepted_captures"], 1);
+
+    let capture_id = capture_id_from_activity(home_s);
+    let capture_id_s = capture_id.to_string();
+    let before = distill_ok_json(&[
+        "captures",
+        "attempts",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--format",
+        "json",
+    ]);
+    assert_eq!(before["attempts"].as_array().expect("before").len(), 1);
+
+    fs::remove_dir_all(&root).expect("remove codex root");
+
+    let renormalize = distill_ok_json(&[
+        "captures",
+        "renormalize",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--advance-kind",
+        "codex",
+        "--advance-version",
+        "2.0.0",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(renormalize["report"]["outcome"], "succeeded");
+    assert_eq!(renormalize["report"]["parser_version"], "2.0.0");
+    assert_cli_json_redacted(&renormalize, &[root_s]);
+
+    let after = distill_ok_json(&[
+        "captures",
+        "attempts",
+        "--home",
+        home_s,
+        "--capture-id",
+        &capture_id_s,
+        "--format",
+        "json",
+    ]);
+    assert_eq!(after["attempts"].as_array().expect("after").len(), 2);
+    assert_eq!(after["attempts"][1]["parser_version"], "2.0.0");
+
+    let detail = distill_ok_json(&[
+        "sessions",
+        "detail",
+        "--home",
+        home_s,
+        "--source-kind",
+        "codex",
+        "--external-session-id",
+        &session_id,
+        "--format",
+        "json",
+    ]);
+    assert_eq!(detail["session"]["summary"]["accepted_capture_count"], 1);
+    assert_eq!(
+        detail["session"]["summary"]["normalization_attempt_count"],
+        2
+    );
+    assert_eq!(
+        detail["session"]["summary"]["successful_projection_generation"],
+        2
+    );
+
+    let list = distill_ok_json(&[
+        "sessions", "list", "--home", home_s, "--query", &query, "--lane", "all", "--limit", "5",
+        "--format", "json",
+    ]);
+    assert_eq!(list["items"].as_array().expect("items").len(), 1);
+    assert_cli_json_redacted(&list, &[root_s]);
+}

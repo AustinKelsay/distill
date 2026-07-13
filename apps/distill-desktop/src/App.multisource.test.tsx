@@ -191,6 +191,12 @@ function createMultisourceBridge(options?: {
         next_export_cursor: null,
       };
     },
+    async captureAttempts() {
+      return [];
+    },
+    async renormalizeCapture() {
+      throw { code: "unused", message: "unused" };
+    },
     onProgress(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

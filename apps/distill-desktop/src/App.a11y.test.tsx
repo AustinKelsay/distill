@@ -295,6 +295,12 @@ function createBridge(options?: {
         next_export_cursor: null,
       };
     },
+    async captureAttempts() {
+      return [];
+    },
+    async renormalizeCapture() {
+      throw { code: "unused", message: "unused in a11y suite" };
+    },
     onProgress(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

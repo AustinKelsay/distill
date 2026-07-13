@@ -8,7 +8,8 @@ mod host;
 
 pub use error::HostError;
 pub use host::{
-    run_add_session_tag as execute_add_session_tag, run_export_cancel as execute_export_cancel,
+    run_add_session_tag as execute_add_session_tag,
+    run_capture_attempts as execute_capture_attempts, run_export_cancel as execute_export_cancel,
     run_fixture_journey as execute_fixture_journey, run_health as execute_health,
     run_import_legacy as execute_import_legacy, run_list_activity as execute_list_activity,
     run_list_operations as execute_list_operations, run_list_sessions as execute_list_sessions,
@@ -17,16 +18,18 @@ pub use host::{
     run_preview_export as execute_preview_export, run_publish_export as execute_publish_export,
     run_publish_export_cancellable as execute_publish_export_cancellable,
     run_publish_export_with_control as execute_publish_export_with_control,
-    run_remove_session_tag as execute_remove_session_tag, run_repair as execute_repair,
+    run_remove_session_tag as execute_remove_session_tag,
+    run_renormalize_capture as execute_renormalize_capture, run_repair as execute_repair,
     run_session_detail as execute_session_detail,
     run_set_source_preference as execute_set_source_preference,
     run_sync_cancel as execute_sync_cancel, run_sync_start as execute_sync_start,
     run_sync_status as execute_sync_status,
-    run_toggle_session_label as execute_toggle_session_label, validate_export_request,
-    validate_fixture_journey_request, validate_home_request, validate_legacy_import_request,
-    validate_session_curation_request, validate_source_preference_request,
-    validate_sync_id_request, validate_sync_start_request, ExportRequest, FixtureJourneyRequest,
-    HomeRequest, LegacyImportRequest, SourcePreferenceRequest, SyncIdRequest, SyncStartRequest,
+    run_toggle_session_label as execute_toggle_session_label, validate_capture_id_request,
+    validate_export_request, validate_fixture_journey_request, validate_home_request,
+    validate_legacy_import_request, validate_session_curation_request,
+    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
+    CaptureIdRequest, ExportRequest, FixtureJourneyRequest, HomeRequest, LegacyImportRequest,
+    SourcePreferenceRequest, SyncIdRequest, SyncStartRequest,
 };
 
 use distill_library::{ExportProgress, FixtureJourneyPhase, SyncProgress};
@@ -63,7 +66,9 @@ pub fn run() {
             commands::export_publish_command,
             commands::export_cancel_command,
             commands::activity_list_command,
-            commands::operations_list_command
+            commands::operations_list_command,
+            commands::capture_attempts_command,
+            commands::renormalize_capture_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running Distill desktop");

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "./a11y/confirm-dialog";
 import { returnFocus } from "./a11y/focus-return";
 import type {
   ActivityListPage,
+  AttemptSummary,
   CurationMutationResult,
   DistillBridge,
   ExportDataset,
@@ -21,6 +22,7 @@ import type {
   LegacyImportReport,
   MigrationUiStatus,
   OperationsPage,
+  RenormalizeReport,
   RepairReport,
   SessionDetail,
   SessionListItem,
@@ -136,9 +138,7 @@ export function App({ bridge }: AppProps) {
   const [sourceDrafts, setSourceDrafts] = useState<SourcePreferenceDraft[]>(() =>
     createInitialSourceDrafts(),
   );
-  const [dirtySourceKinds, setDirtySourceKinds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [dirtySourceKinds, setDirtySourceKinds] = useState<Set<string>>(() => new Set());
   const [standaloneHealth, setStandaloneHealth] = useState<HealthReport | null>(null);
   const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
   const [repairDialogOpen, setRepairDialogOpen] = useState(false);
@@ -166,9 +166,20 @@ export function App({ bridge }: AppProps) {
   const [operationsStatus, setOperationsStatus] =
     useState<DiagnosticsPanelStatus>("idle");
   const [operationsError, setOperationsError] = useState<HostError | null>(null);
+  const [attemptCaptureId, setAttemptCaptureId] = useState<number | null>(null);
+  const [attemptHistory, setAttemptHistory] = useState<AttemptSummary[] | null>(null);
+  const [attemptStatus, setAttemptStatus] = useState<DiagnosticsPanelStatus>("idle");
+  const [attemptError, setAttemptError] = useState<HostError | null>(null);
+  const [renormalizeReport, setRenormalizeReport] = useState<RenormalizeReport | null>(
+    null,
+  );
+  const [renormalizeStatus, setRenormalizeStatus] =
+    useState<DiagnosticsPanelStatus>("idle");
+  const [renormalizeError, setRenormalizeError] = useState<HostError | null>(null);
   const sessionRequestRef = useRef(0);
   const activityRequestRef = useRef(0);
   const operationsRequestRef = useRef(0);
+  const attemptRequestRef = useRef(0);
   const repairTriggerRef = useRef<HTMLButtonElement>(null);
   const startSyncRef = useRef<HTMLButtonElement>(null);
   const publishExportRef = useRef<HTMLButtonElement>(null);
@@ -543,6 +554,93 @@ export function App({ bridge }: AppProps) {
     returnFocus(loadOperationsRef.current);
   }
 
+  /**
+   * Discover a Capture id for the selected Session via Activity, then load Attempt history.
+   */
+  async function onLoadAttemptHistory() {
+    if (!sessionDetail) return;
+    const requestId = ++attemptRequestRef.current;
+    setAttemptStatus("loading");
+    setAttemptError(null);
+    setRenormalizeError(null);
+    try {
+      const sessionId = sessionDetail.summary.id;
+      let cursor: string | null = null;
+      let captureId: number | null = null;
+      for (let pageCount = 0; pageCount < 20 && captureId == null; pageCount += 1) {
+        const page = await bridge.listActivity(home, { limit: 50, cursor });
+        if (requestId !== attemptRequestRef.current) return;
+        captureId =
+          page.items.find(
+            (event) =>
+              event.session_id === sessionId && typeof event.capture_id === "number",
+          )?.capture_id ?? null;
+        if (
+          captureId != null ||
+          page.next_cursor == null ||
+          page.next_cursor === cursor
+        ) {
+          break;
+        }
+        cursor = page.next_cursor;
+      }
+      if (captureId == null) {
+        setAttemptCaptureId(null);
+        setAttemptHistory([]);
+        setAttemptStatus("empty");
+        return;
+      }
+      const attempts = await bridge.captureAttempts(home, captureId);
+      if (requestId !== attemptRequestRef.current) return;
+      setAttemptCaptureId(captureId);
+      setAttemptHistory(attempts);
+      setAttemptStatus(attempts.length === 0 ? "empty" : "ready");
+    } catch (err) {
+      if (requestId !== attemptRequestRef.current) return;
+      setAttemptError(err as HostError);
+      setAttemptStatus("error");
+    }
+  }
+
+  /** Re-normalize the discovered Capture and refresh Attempt history plus Session detail. */
+  async function onRenormalizeCapture() {
+    if (attemptCaptureId == null || !sessionDetail) return;
+    const requestId = ++attemptRequestRef.current;
+    setRenormalizeStatus("loading");
+    setRenormalizeError(null);
+    setRenormalizeReport(null);
+    try {
+      const report = await bridge.renormalizeCapture(home, attemptCaptureId);
+      if (requestId !== attemptRequestRef.current) return;
+      setRenormalizeReport(report);
+      setRenormalizeStatus(
+        report.outcome === "succeeded"
+          ? "ready"
+          : report.outcome === "failed"
+            ? "warning"
+            : "ready",
+      );
+      const attempts = await bridge.captureAttempts(home, attemptCaptureId);
+      if (requestId !== attemptRequestRef.current) return;
+      setAttemptHistory(attempts);
+      setAttemptStatus(attempts.length === 0 ? "empty" : "ready");
+      const detail = await bridge.sessionDetail(home, {
+        source_kind: sessionDetail.summary.source_kind,
+        external_session_id: sessionDetail.summary.external_session_id,
+        message_limit: 50,
+        artifact_limit: 50,
+        message_cursor: null,
+        artifact_cursor: null,
+      });
+      if (requestId !== attemptRequestRef.current) return;
+      if (detail) setSessionDetail(detail);
+    } catch (err) {
+      if (requestId !== attemptRequestRef.current) return;
+      setRenormalizeError(err as HostError);
+      setRenormalizeStatus("error");
+    }
+  }
+
   /** Load a bounded detail page for a selected Session. */
   async function onSelectSession(
     item: SessionListItem,
@@ -556,7 +654,17 @@ export function App({ bridge }: AppProps) {
     setSessionStatus(continuation ? "refreshing" : "loading");
     setSessionError(null);
     setCurationError(null);
-    if (!continuation) setSessionDetail(null);
+    if (!continuation) {
+      attemptRequestRef.current += 1;
+      setSessionDetail(null);
+      setAttemptCaptureId(null);
+      setAttemptHistory(null);
+      setAttemptStatus("idle");
+      setAttemptError(null);
+      setRenormalizeReport(null);
+      setRenormalizeStatus("idle");
+      setRenormalizeError(null);
+    }
     try {
       const detail = await bridge.sessionDetail(home, {
         source_kind: item.source_kind,
@@ -618,9 +726,17 @@ export function App({ bridge }: AppProps) {
 
   /** Clear stale explorer rows after a completed sync changes the projection. */
   function resetSessionExplorer() {
+    attemptRequestRef.current += 1;
     setSessionPage(null);
     setSelectedSessionKey(null);
     setSessionDetail(null);
+    setAttemptCaptureId(null);
+    setAttemptHistory(null);
+    setAttemptStatus("idle");
+    setAttemptError(null);
+    setRenormalizeReport(null);
+    setRenormalizeStatus("idle");
+    setRenormalizeError(null);
     setTagDraft("");
     setCurationError(null);
     setSessionStatus("idle");
@@ -1295,6 +1411,79 @@ export function App({ bridge }: AppProps) {
                 {curationError.code}: {curationError.message}
               </p>
             ) : null}
+            <section
+              className="form"
+              aria-label="Capture Attempt history"
+              aria-busy={attemptStatus === "loading" || renormalizeStatus === "loading"}
+              data-testid="attempt-history-panel"
+            >
+              <h4>Attempt history</h4>
+              <button
+                type="button"
+                data-testid="load-attempt-history"
+                onClick={() => void onLoadAttemptHistory()}
+                disabled={attemptStatus === "loading" || renormalizeStatus === "loading"}
+              >
+                {attemptStatus === "loading"
+                  ? "Loading Attempt history…"
+                  : "Load Attempt history"}
+              </button>
+              <p data-testid="attempt-history-status" aria-live="polite">
+                Status: {attemptStatus}
+                {attemptCaptureId != null ? ` · Capture ${attemptCaptureId}` : ""}
+              </p>
+              {attemptError ? (
+                <p role="alert" data-testid="attempt-history-error">
+                  {attemptError.code}: {attemptError.message}
+                </p>
+              ) : null}
+              {attemptStatus === "empty" ? (
+                <p>No Capture Attempts for this Session.</p>
+              ) : null}
+              {attemptHistory?.length ? (
+                <ul data-testid="attempt-history-list">
+                  {attemptHistory.map((attempt) => (
+                    <li key={attempt.id}>
+                      #{attempt.id} · {attempt.parser_id}/{attempt.parser_version} ·{" "}
+                      {attempt.outcome} · facts {attempt.fact_count}
+                      {attempt.projection_generation != null
+                        ? ` · generation ${attempt.projection_generation}`
+                        : ""}
+                      {attempt.error_class ? ` · ${attempt.error_class}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <button
+                type="button"
+                data-testid="renormalize-capture"
+                onClick={() => void onRenormalizeCapture()}
+                disabled={
+                  attemptCaptureId == null ||
+                  attemptStatus === "loading" ||
+                  renormalizeStatus === "loading"
+                }
+              >
+                {renormalizeStatus === "loading"
+                  ? "Renormalizing…"
+                  : "Renormalize Capture"}
+              </button>
+              <p data-testid="renormalize-status" aria-live="polite">
+                Renormalize: {renormalizeStatus}
+              </p>
+              {renormalizeError ? (
+                <p role="alert" data-testid="renormalize-error">
+                  {renormalizeError.code}: {renormalizeError.message}
+                </p>
+              ) : null}
+              {renormalizeReport ? (
+                <p data-testid="renormalize-report">
+                  Capture {renormalizeReport.capture_id} · attempt{" "}
+                  {renormalizeReport.attempt_id} · {renormalizeReport.outcome} ·{" "}
+                  {renormalizeReport.parser_id}/{renormalizeReport.parser_version}
+                </p>
+              ) : null}
+            </section>
             <pre>{sessionDetail.metadata_json}</pre>
             <ol>
               {sessionDetail.messages.map((message) => (

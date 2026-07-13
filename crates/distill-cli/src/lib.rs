@@ -1,6 +1,7 @@
 //! Thin Distill CLI over the public Library Fixture journey, health, repair,
 //! Source preferences, Sync Runs, session curation, export preview/publish,
-//! Activity, and Operations diagnostics.
+//! Capture Attempt history, Distill-owned Capture renormalize, Activity, and
+//! Operations diagnostics.
 //!
 //! Exit codes:
 //! - `0` — command succeeded
@@ -14,12 +15,12 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use distill_library::{
-    safe_caller_message, ActivityListPage, ActivityListRequest, CurationMutationResult,
-    ExportDataset, ExportPreview, ExportProgress, ExportProgressControl, ExportResult,
-    FixtureJourneyPhase, FixtureJourneyResult, HealthReport, LegacyImportReport, Library,
-    LibraryError, OperationsPage, OperationsRequest, RepairOptions, RepairReport,
-    SessionCurationRequest, SessionDetailRequest, SessionListRequest, SourcePreference,
-    SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
+    safe_caller_message, ActivityListPage, ActivityListRequest, AttemptSummary,
+    CurationMutationResult, ExportDataset, ExportPreview, ExportProgress, ExportProgressControl,
+    ExportResult, FixtureJourneyPhase, FixtureJourneyResult, HealthReport, LegacyImportReport,
+    Library, LibraryError, OperationsPage, OperationsRequest, RenormalizeReport, RepairOptions,
+    RepairReport, SessionCurationRequest, SessionDetailRequest, SessionListRequest, SourceKind,
+    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary, WorkflowLane,
 };
 use serde::Serialize;
 
@@ -44,7 +45,7 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 #[command(
     name = "distill",
-    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, export, activity, operations, and legacy migration",
+    about = "Thin Distill CLI for Library Fixture journey, health, repair, sources, sync, sessions, captures, export, activity, operations, and legacy migration",
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true
 )]
@@ -114,6 +115,12 @@ pub enum Command {
         #[command(subcommand)]
         action: ExportCommand,
     },
+    /// Capture Attempt history and Distill-owned renormalize commands.
+    Captures {
+        /// Nested Capture attempts/renormalize action.
+        #[command(subcommand)]
+        action: CapturesCommand,
+    },
     /// Append-only Activity Event page.
     Activity {
         /// Distill home directory.
@@ -159,6 +166,41 @@ pub enum Command {
         /// Legacy Electron Distill home containing `distill.db` (opened read-only).
         #[arg(long, value_name = "PATH")]
         source: PathBuf,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+}
+
+/// Capture Attempt history and renormalize subcommands.
+#[derive(Debug, Subcommand)]
+pub enum CapturesCommand {
+    /// List immutable Attempt summaries for one Capture.
+    Attempts {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Accepted Capture row id discovered via Activity or Sync evidence.
+        #[arg(long)]
+        capture_id: i64,
+        /// Result output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Re-normalize one Capture from Distill-owned bytes.
+    Renormalize {
+        /// Distill home directory.
+        #[arg(long, value_name = "PATH")]
+        home: PathBuf,
+        /// Accepted Capture row id.
+        #[arg(long)]
+        capture_id: i64,
+        /// Optional Source kind whose registered parser version advances in this process.
+        #[arg(long)]
+        advance_kind: Option<String>,
+        /// Optional strictly newer semantic parser version paired with `--advance-kind`.
+        #[arg(long)]
+        advance_version: Option<String>,
         /// Result output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -465,6 +507,7 @@ fn execute(cli: Cli) -> Result<String, CliFailure> {
         Some(Command::Sync { action }) => execute_sync(action),
         Some(Command::Sessions { action }) => execute_sessions(action),
         Some(Command::Export { action }) => execute_export(action),
+        Some(Command::Captures { action }) => execute_captures(action),
         Some(Command::Activity {
             home,
             cursor,
@@ -806,6 +849,148 @@ fn validate_curation_identity(
  */
 fn parse_export_dataset(format: OutputFormat, raw: &str) -> Result<ExportDataset, CliFailure> {
     ExportDataset::parse(raw).map_err(|message| CliFailure::usage(format, message))
+}
+
+/**
+ * Execute Capture Attempt history or Distill-owned renormalize through public Library seams.
+ *
+ * Optional `--advance-kind`/`--advance-version` advance the in-memory parser registry in the
+ * same process before renormalize. Callers never supply parser ids.
+ *
+ * Parameters:
+ * - `action`: nested attempts/renormalize command
+ */
+fn execute_captures(action: CapturesCommand) -> Result<String, CliFailure> {
+    match action {
+        CapturesCommand::Attempts {
+            home,
+            capture_id,
+            format,
+        } => {
+            if home.as_os_str().is_empty() {
+                return Err(CliFailure::usage(format, "home path must not be empty"));
+            }
+            if capture_id <= 0 {
+                return Err(CliFailure::usage(
+                    format,
+                    "capture-id must be a positive Capture row id",
+                ));
+            }
+            let library = Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            let attempts = library
+                .capture_attempts(capture_id)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_capture_attempts(format, capture_id, &attempts))
+        }
+        CapturesCommand::Renormalize {
+            home,
+            capture_id,
+            advance_kind,
+            advance_version,
+            format,
+        } => {
+            if home.as_os_str().is_empty() {
+                return Err(CliFailure::usage(format, "home path must not be empty"));
+            }
+            if capture_id <= 0 {
+                return Err(CliFailure::usage(
+                    format,
+                    "capture-id must be a positive Capture row id",
+                ));
+            }
+            match (&advance_kind, &advance_version) {
+                (None, None) | (Some(_), Some(_)) => {}
+                _ => {
+                    return Err(CliFailure::usage(
+                        format,
+                        "captures renormalize requires both --advance-kind and --advance-version, or neither",
+                    ));
+                }
+            }
+            let mut library =
+                Library::open(&home).map_err(|err| CliFailure::runtime(format, err))?;
+            if let (Some(kind_raw), Some(version)) = (advance_kind, advance_version) {
+                let kind = SourceKind::parse(&kind_raw).ok_or_else(|| {
+                    CliFailure::usage(format, "unknown Source kind for parser advance")
+                })?;
+                library
+                    .set_registered_parser_version(kind, version)
+                    .map_err(|err| CliFailure::runtime(format, err))?;
+            }
+            let report = library
+                .renormalize_capture(capture_id)
+                .map_err(|err| CliFailure::runtime(format, err))?;
+            Ok(render_renormalize_report(format, &report))
+        }
+    }
+}
+
+/**
+ * Render immutable Attempt summaries for one Capture.
+ */
+fn render_capture_attempts(
+    format: OutputFormat,
+    capture_id: i64,
+    attempts: &[AttemptSummary],
+) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "capture_id": capture_id,
+            "attempts": attempts,
+        }))
+        .expect("json"),
+        OutputFormat::Human => {
+            let mut lines = vec![
+                "ok: true".to_string(),
+                format!("capture.id: {capture_id}"),
+                format!("attempts.count: {}", attempts.len()),
+            ];
+            for attempt in attempts {
+                lines.push(format!(
+                    "attempt: id={} parser={}/{} outcome={} facts={} generation={}",
+                    attempt.id,
+                    attempt.parser_id,
+                    attempt.parser_version,
+                    attempt.outcome,
+                    attempt.fact_count,
+                    attempt
+                        .projection_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "-".into()),
+                ));
+                if let Some(error_class) = &attempt.error_class {
+                    lines.push(format!("attempt.error_class: {error_class}"));
+                }
+                if let Some(error_message) = &attempt.error_message {
+                    lines.push(format!("attempt.error_message: {error_message}"));
+                }
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+/**
+ * Render a Distill-owned Capture renormalize report.
+ */
+fn render_renormalize_report(format: OutputFormat, report: &RenormalizeReport) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "report": report,
+        }))
+        .expect("json"),
+        OutputFormat::Human => [
+            "ok: true".to_string(),
+            format!("renormalize.capture_id: {}", report.capture_id),
+            format!("renormalize.attempt_id: {}", report.attempt_id),
+            format!("renormalize.outcome: {}", report.outcome),
+            format!("renormalize.parser_id: {}", report.parser_id),
+            format!("renormalize.parser_version: {}", report.parser_version),
+        ]
+        .join("\n"),
+    }
 }
 
 /**

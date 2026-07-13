@@ -5,11 +5,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use distill_library::{
-    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportDataset, ExportPreview,
-    ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase, FixtureJourneyResult,
-    HealthReport, LegacyImportReport, Library, OperationsPage, OperationsRequest, RepairOptions,
-    RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest, SessionListPage,
-    SessionListRequest, SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
+    ActivityListPage, ActivityListRequest, AttemptSummary, CurationMutationResult, ExportDataset,
+    ExportPreview, ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase,
+    FixtureJourneyResult, HealthReport, LegacyImportReport, Library, OperationsPage,
+    OperationsRequest, RenormalizeReport, RepairOptions, RepairReport, SessionCurationRequest,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceKind,
+    SourcePreference, SyncProgress, SyncRequest, SyncRunResult, SyncRunSummary,
 };
 
 use crate::error::HostError;
@@ -30,6 +31,15 @@ pub struct FixtureJourneyRequest {
     pub home: PathBuf,
     /// Fixture root containing `distill.fixture.json`.
     pub fixture_root: PathBuf,
+}
+
+/// Validated Capture id request for Attempt history and renormalize.
+#[derive(Clone, Debug)]
+pub struct CaptureIdRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Accepted Capture row id.
+    pub capture_id: i64,
 }
 
 /// Validated Distill-home-only request for health and repair.
@@ -208,6 +218,76 @@ pub fn run_session_detail(
     let library = Library::open(&request.home).map_err(HostError::from_library)?;
     library
         .session_detail(detail)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus a positive Capture row id.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer.
+ * - `capture_id`: Accepted Capture row id discovered via Activity or Sync evidence.
+ */
+pub fn validate_capture_id_request(
+    home: &str,
+    capture_id: i64,
+) -> Result<CaptureIdRequest, HostError> {
+    let home_request = validate_home_request(home)?;
+    if capture_id <= 0 {
+        return Err(HostError::validation(
+            "capture id must be a positive Capture row id",
+        ));
+    }
+    Ok(CaptureIdRequest {
+        home: home_request.home,
+        capture_id,
+    })
+}
+
+/**
+ * List immutable Attempt summaries for one Capture through the public Library seam.
+ */
+pub fn run_capture_attempts(request: &CaptureIdRequest) -> Result<Vec<AttemptSummary>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .capture_attempts(request.capture_id)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Re-normalize one Capture from Distill-owned bytes through the public Library seam.
+ *
+ * Optional `advance_kind`/`advance_version` advance the in-memory parser registry in the
+ * same Library open before renormalize. The renderer never supplies parser ids.
+ *
+ * Parameters:
+ * - `request`: validated home and Capture id
+ * - `advance_kind`: optional closed Source kind string
+ * - `advance_version`: optional strictly newer semantic version
+ */
+pub fn run_renormalize_capture(
+    request: &CaptureIdRequest,
+    advance_kind: Option<String>,
+    advance_version: Option<String>,
+) -> Result<RenormalizeReport, HostError> {
+    match (&advance_kind, &advance_version) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(HostError::validation(
+                "renormalize requires both advance kind and version, or neither",
+            ));
+        }
+    }
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    if let (Some(kind_raw), Some(version)) = (advance_kind, advance_version) {
+        let kind = SourceKind::parse(&kind_raw)
+            .ok_or_else(|| HostError::validation("unknown Source kind for parser advance"))?;
+        library
+            .set_registered_parser_version(kind, version)
+            .map_err(HostError::from_library)?;
+    }
+    library
+        .renormalize_capture(request.capture_id)
         .map_err(HostError::from_library)
 }
 

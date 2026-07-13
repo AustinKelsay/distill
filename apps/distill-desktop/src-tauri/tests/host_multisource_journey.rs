@@ -496,3 +496,236 @@ fn host_provider_failure_isolation_redacts_diagnostics() {
     let activity_json = serde_json::to_string(&activity).expect("activity json");
     assert_host_text_redacted(&activity_json, &[secret, missing_s]);
 }
+
+/**
+ * Discover a Capture id from Activity without storage authority.
+ */
+fn capture_id_from_host_activity(home: &str) -> i64 {
+    let home_request = validate_home_request(home).expect("home");
+    let activity = execute_list_activity(
+        &home_request,
+        ActivityListRequest {
+            limit: 50,
+            cursor: None,
+        },
+    )
+    .expect("activity");
+    activity
+        .items
+        .iter()
+        .find_map(|event| {
+            if event.event_type == "capture_recorded" {
+                event.capture_id
+            } else {
+                None
+            }
+        })
+        .expect("capture_recorded with capture_id")
+}
+
+/**
+ * THC-005: Host Fixture/Codex Capture attempts + renormalize after root removal.
+ */
+#[test]
+fn host_capture_attempts_and_renormalize_after_source_removal() {
+    use distill_desktop_lib::{
+        execute_capture_attempts, execute_renormalize_capture, validate_capture_id_request,
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    let codex = temp.path().join("codex-home");
+    fs::create_dir_all(&fixture).expect("fixture");
+    fs::create_dir_all(&codex).expect("codex");
+    write_basic_fixture(&fixture);
+    let (session_id, query) = write_host_codex_root(&codex);
+
+    let home_s = home.to_str().expect("home utf8");
+    let fixture_s = fixture.to_str().expect("fixture utf8");
+    let codex_s = codex.to_str().expect("codex utf8");
+
+    let fixture_pref = validate_source_preference_request(home_s, "fixture", true, Some(fixture_s))
+        .expect("fixture pref");
+    execute_set_source_preference(&fixture_pref).expect("set fixture");
+    let codex_pref =
+        validate_source_preference_request(home_s, "codex", true, Some(codex_s)).expect("codex");
+    execute_set_source_preference(&codex_pref).expect("set codex");
+
+    let sync_request =
+        validate_sync_start_request(home_s, vec!["fixture".into(), "codex".into()]).expect("sync");
+    let sync = execute_sync_start(&sync_request, |_| {}).expect("sync");
+    assert_eq!(sync.run.status, "completed");
+    assert_eq!(sync.run.accepted_captures, 2);
+
+    let fixture_capture = {
+        let home_request = validate_home_request(home_s).expect("home");
+        let activity = execute_list_activity(
+            &home_request,
+            ActivityListRequest {
+                limit: 50,
+                cursor: None,
+            },
+        )
+        .expect("activity");
+        activity
+            .items
+            .iter()
+            .find_map(|event| {
+                if event.event_type == "capture_recorded"
+                    && event.source_kind.as_deref() == Some("fixture")
+                {
+                    event.capture_id
+                } else {
+                    None
+                }
+            })
+            .expect("fixture capture")
+    };
+    let codex_capture = {
+        let home_request = validate_home_request(home_s).expect("home");
+        let activity = execute_list_activity(
+            &home_request,
+            ActivityListRequest {
+                limit: 50,
+                cursor: None,
+            },
+        )
+        .expect("activity");
+        activity
+            .items
+            .iter()
+            .find_map(|event| {
+                if event.event_type == "capture_recorded"
+                    && event.source_kind.as_deref() == Some("codex")
+                {
+                    event.capture_id
+                } else {
+                    None
+                }
+            })
+            .expect("codex capture")
+    };
+
+    let fixture_req =
+        validate_capture_id_request(home_s, fixture_capture).expect("fixture capture req");
+    let before = execute_capture_attempts(&fixture_req).expect("fixture attempts");
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].outcome, "succeeded");
+    assert_eq!(before[0].parser_version, "1.0.0");
+
+    fs::remove_dir_all(&codex).expect("remove codex root");
+
+    let codex_req = validate_capture_id_request(home_s, codex_capture).expect("codex capture req");
+    let report =
+        execute_renormalize_capture(&codex_req, Some("codex".into()), Some("2.0.0".into()))
+            .expect("renormalize after root removal");
+    assert_eq!(report.capture_id, codex_capture);
+    assert_eq!(report.outcome, "succeeded");
+    assert_eq!(report.parser_version, "2.0.0");
+    let report_json = serde_json::to_string(&report).expect("report json");
+    assert_host_text_redacted(&report_json, &[codex_s]);
+
+    let after = execute_capture_attempts(&codex_req).expect("after attempts");
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0].parser_version, "1.0.0");
+    assert_eq!(after[1].parser_version, "2.0.0");
+
+    let home_request = validate_home_request(home_s).expect("home");
+    let detail = execute_session_detail(
+        &home_request,
+        SessionDetailRequest {
+            source_kind: "codex".into(),
+            external_session_id: session_id.clone(),
+            message_limit: 20,
+            artifact_limit: 20,
+            message_cursor: None,
+            artifact_cursor: None,
+        },
+    )
+    .expect("detail")
+    .expect("present");
+    assert_eq!(detail.summary.accepted_capture_count, 1);
+    assert_eq!(detail.summary.normalization_attempt_count, 2);
+    assert_eq!(detail.summary.successful_projection_generation, 2);
+
+    let list = execute_list_sessions(
+        &home_request,
+        SessionListRequest {
+            query: Some(query),
+            lane: WorkflowLane::All,
+            limit: 5,
+            cursor: None,
+        },
+    )
+    .expect("list");
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].external_session_id, session_id);
+}
+
+/**
+ * THC-006: Unknown persisted Source kind rejects host renormalize without mutation.
+ */
+#[test]
+fn host_unknown_source_kind_renormalize_isolates_without_mutation() {
+    use distill_desktop_lib::{
+        execute_capture_attempts, execute_renormalize_capture, validate_capture_id_request,
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let fixture = temp.path().join("fixture");
+    fs::create_dir_all(&fixture).expect("fixture");
+    write_basic_fixture(&fixture);
+    let home_s = home.to_str().expect("home utf8");
+    let fixture_s = fixture.to_str().expect("fixture utf8");
+
+    let fixture_pref = validate_source_preference_request(home_s, "fixture", true, Some(fixture_s))
+        .expect("fixture pref");
+    execute_set_source_preference(&fixture_pref).expect("set fixture");
+    let sync_request =
+        validate_sync_start_request(home_s, vec!["fixture".into()]).expect("sync req");
+    let sync = execute_sync_start(&sync_request, |_| {}).expect("sync");
+    assert_eq!(sync.run.accepted_captures, 1);
+
+    let capture_id = capture_id_from_host_activity(home_s);
+    let request = validate_capture_id_request(home_s, capture_id).expect("capture req");
+    let before = execute_capture_attempts(&request).expect("before");
+    assert_eq!(before.len(), 1);
+
+    let db_path = home.join("distill.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).expect("db");
+        conn.execute(
+            "UPDATE captures SET source_kind = 'not_a_source' WHERE id = ?1",
+            [capture_id],
+        )
+        .expect("plant unknown kind");
+    }
+
+    let err = execute_renormalize_capture(&request, None, None).expect_err("unknown kind");
+    assert_eq!(err.code, "unknown_source_kind");
+    assert!(!err.message.contains('/'));
+    assert!(!format!("{err}").contains(home_s));
+
+    let after = execute_capture_attempts(&request).expect("after");
+    assert_eq!(after, before);
+
+    let home_request = validate_home_request(home_s).expect("home");
+    let detail = execute_session_detail(
+        &home_request,
+        SessionDetailRequest {
+            source_kind: "fixture".into(),
+            external_session_id: "fixture-session-host".into(),
+            message_limit: 20,
+            artifact_limit: 20,
+            message_cursor: None,
+            artifact_cursor: None,
+        },
+    )
+    .expect("detail");
+    // Unknown kind may leave projection unreadable by fixture identity; history must stay intact.
+    let _ = detail;
+    assert_eq!(after[0].outcome, "succeeded");
+    assert_eq!(after[0].projection_generation, Some(1));
+}

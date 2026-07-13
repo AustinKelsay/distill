@@ -1,24 +1,25 @@
 //! Tauri IPC command adapters for Distill desktop.
 
 use distill_library::{
-    ActivityListPage, ActivityListRequest, CurationMutationResult, ExportPreview, ExportProgress,
-    ExportResult, FixtureJourneyResult, HealthReport, LegacyImportReport, OperationsPage,
-    OperationsRequest, RepairReport, SessionCurationRequest, SessionDetail, SessionDetailRequest,
-    SessionListPage, SessionListRequest, SourcePreference, SyncProgress, SyncRunResult,
-    SyncRunSummary,
+    ActivityListPage, ActivityListRequest, AttemptSummary, CurationMutationResult, ExportPreview,
+    ExportProgress, ExportResult, FixtureJourneyResult, HealthReport, LegacyImportReport,
+    OperationsPage, OperationsRequest, RenormalizeReport, RepairReport, SessionCurationRequest,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourcePreference,
+    SyncProgress, SyncRunResult, SyncRunSummary,
 };
 use tauri::{AppHandle, Emitter};
 
 use crate::error::HostError;
 use crate::host::{
-    run_add_session_tag, run_export_cancel, run_fixture_journey, run_health, run_import_legacy,
-    run_list_activity, run_list_operations, run_list_sessions, run_list_sources,
+    run_add_session_tag, run_capture_attempts, run_export_cancel, run_fixture_journey, run_health,
+    run_import_legacy, run_list_activity, run_list_operations, run_list_sessions, run_list_sources,
     run_prepare_export_cancellation, run_preview_export, run_publish_export_cancellable,
-    run_remove_session_tag, run_repair, run_session_detail, run_set_source_preference,
-    run_sync_cancel, run_sync_start, run_sync_status, run_toggle_session_label,
-    validate_export_request, validate_fixture_journey_request, validate_home_request,
-    validate_legacy_import_request, validate_session_curation_request,
-    validate_source_preference_request, validate_sync_id_request, validate_sync_start_request,
+    run_remove_session_tag, run_renormalize_capture, run_repair, run_session_detail,
+    run_set_source_preference, run_sync_cancel, run_sync_start, run_sync_status,
+    run_toggle_session_label, validate_capture_id_request, validate_export_request,
+    validate_fixture_journey_request, validate_home_request, validate_legacy_import_request,
+    validate_session_curation_request, validate_source_preference_request,
+    validate_sync_id_request, validate_sync_start_request,
 };
 use crate::{EXPORT_PROGRESS_EVENT, FIXTURE_JOURNEY_PROGRESS_EVENT, SYNC_PROGRESS_EVENT};
 
@@ -356,4 +357,45 @@ pub async fn operations_list_command(
             code: "join".to_string(),
             message: err.to_string(),
         })?
+}
+
+/**
+ * Tauri command: list immutable Capture Attempt summaries off the UI thread.
+ */
+#[tauri::command]
+pub async fn capture_attempts_command(
+    home: String,
+    capture_id: i64,
+) -> Result<Vec<AttemptSummary>, HostError> {
+    let request = validate_capture_id_request(&home, capture_id)?;
+    tauri::async_runtime::spawn_blocking(move || run_capture_attempts(&request))
+        .await
+        .map_err(|err| HostError {
+            code: "join".to_string(),
+            message: err.to_string(),
+        })?
+}
+
+/**
+ * Tauri command: Distill-owned Capture renormalize off the UI thread.
+ *
+ * Optional advance fields bump the in-memory parser registry in the same open.
+ * The renderer preference UI does not expose parser-version administration.
+ */
+#[tauri::command]
+pub async fn renormalize_capture_command(
+    home: String,
+    capture_id: i64,
+    advance_kind: Option<String>,
+    advance_version: Option<String>,
+) -> Result<RenormalizeReport, HostError> {
+    let request = validate_capture_id_request(&home, capture_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_renormalize_capture(&request, advance_kind, advance_version)
+    })
+    .await
+    .map_err(|err| HostError {
+        code: "join".to_string(),
+        message: err.to_string(),
+    })?
 }

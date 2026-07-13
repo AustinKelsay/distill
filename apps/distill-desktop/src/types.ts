@@ -318,6 +318,28 @@ export type ActivityEvent = {
   payload_json: unknown;
 };
 
+/** Caller-safe Normalization Attempt summary. */
+export type AttemptSummary = {
+  id: number;
+  capture_id: number;
+  parser_id: string;
+  parser_version: string;
+  outcome: string;
+  error_class: string | null;
+  error_message: string | null;
+  projection_generation: number | null;
+  fact_count: number;
+};
+
+/** Result of Distill-owned Capture renormalize. */
+export type RenormalizeReport = {
+  capture_id: number;
+  attempt_id: number;
+  outcome: string;
+  parser_id: string;
+  parser_version: string;
+};
+
 /** Page of Activity Events. */
 export type ActivityListPage = {
   items: ActivityEvent[];
@@ -526,6 +548,26 @@ export type DistillBridge = {
   listActivity(home: string, request: ActivityListRequest): Promise<ActivityListPage>;
   /** List operational Sync Run and export lifecycle summaries. */
   listOperations(home: string, request: OperationsRequest): Promise<OperationsPage>;
+  /**
+   * List immutable Attempt summaries for one Capture.
+   * @param home - Distill home path
+   * @param captureId - accepted Capture row id
+   */
+  captureAttempts(home: string, captureId: number): Promise<AttemptSummary[]>;
+  /**
+   * Re-normalize one Capture from Distill-owned bytes.
+   * Optional advance fields bump the in-memory parser registry in the same host open.
+   * @param home - Distill home path
+   * @param captureId - accepted Capture row id
+   * @param advanceKind - optional closed Source kind
+   * @param advanceVersion - optional strictly newer semantic version
+   */
+  renormalizeCapture(
+    home: string,
+    captureId: number,
+    advanceKind?: string | null,
+    advanceVersion?: string | null,
+  ): Promise<RenormalizeReport>;
   /**
    * Subscribe to typed Fixture journey progress phases.
    * @param listener - progress callback
