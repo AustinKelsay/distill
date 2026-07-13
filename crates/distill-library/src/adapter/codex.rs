@@ -36,6 +36,7 @@ pub struct CodexAdapter {
 
 impl CodexAdapter {
     /// Create an adapter that detects only the supplied Codex home root.
+    #[allow(dead_code)]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self::with_parser(
             root,
@@ -136,8 +137,22 @@ impl SourceAdapter for CodexAdapter {
         candidate: &CaptureCandidate,
         snapshot: &CaptureSnapshot,
     ) -> Result<ParsedCapture, SourceStageError> {
-        parse_codex_jsonl(candidate, &snapshot.bytes, &self.root)
+        parse_codex_jsonl(candidate, &snapshot.bytes, Some(self.root.as_path()))
     }
+}
+
+/**
+ * Parse Distill-owned Codex Capture bytes without rereading the Codex home.
+ *
+ * Parameters:
+ * - `candidate`: Replay Candidate rebuilt from persisted Capture identity.
+ * - `bytes`: Checksum-verified Distill-owned Capture bytes.
+ */
+pub(crate) fn parse_codex_bytes(
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+) -> Result<ParsedCapture, SourceStageError> {
+    parse_codex_jsonl(candidate, bytes, None)
 }
 
 /**
@@ -146,17 +161,18 @@ impl SourceAdapter for CodexAdapter {
  * Parameters:
  * - `candidate`: Capture Candidate providing identity and path hints.
  * - `bytes`: Exact snapshot bytes preserved by Distill.
- * - `codex_root`: Configured Codex home used to read auxiliary session index metadata.
+ * - `codex_root`: Optional Codex home for auxiliary session index metadata. Replay
+ *   passes `None` so renormalization never rereads the original root.
  */
 fn parse_codex_jsonl(
     candidate: &CaptureCandidate,
     bytes: &[u8],
-    codex_root: &Path,
+    codex_root: Option<&Path>,
 ) -> Result<ParsedCapture, SourceStageError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|err| SourceStageError::Parse(format!("codex bytes are not utf-8: {err}")))?;
 
-    let session_index = read_session_index(codex_root);
+    let session_index = codex_root.map(read_session_index).unwrap_or_default();
     let mut facts = Vec::new();
     let mut messages = Vec::new();
     let mut artifacts = Vec::new();

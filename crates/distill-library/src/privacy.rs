@@ -249,6 +249,9 @@ pub fn safe_caller_message(err: &LibraryError) -> String {
         LibraryError::InvalidArgument(detail) => {
             format!("invalid argument: {}", redact_diagnostic_text(detail))
         }
+        LibraryError::UnknownSourceKind { kind } => {
+            format!("unknown source kind: {}", redact_diagnostic_text(kind))
+        }
         LibraryError::SyncAlreadyRunning => "sync already running".into(),
         LibraryError::SyncNoEnabledSources => "sync selection has no enabled sources".into(),
         LibraryError::SyncLeaseLost => "sync lease lost".into(),

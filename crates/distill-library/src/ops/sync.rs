@@ -4,7 +4,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 
-use crate::adapter::{ParserIdentity, SourceKind};
+use crate::adapter::{ParserRegistry, SourceKind};
 use crate::error::{LibraryError, LibraryResult};
 use crate::ops::sync_execute::sync_one_source;
 use crate::ops::sync_lease::{fail_stale_active_runs_inner, refresh_lease, LeaseHeartbeat};
@@ -230,7 +230,7 @@ pub fn start_sync<F>(
     conn: &mut Connection,
     paths: &DistillPaths,
     owner_id: &str,
-    fixture_parser: &ParserIdentity,
+    parsers: &ParserRegistry,
     max_capture_bytes: u64,
     request: &SyncRequest,
     mut on_progress: F,
@@ -285,7 +285,7 @@ where
         conn,
         paths,
         owner_id,
-        fixture_parser,
+        parsers,
         max_capture_bytes,
         sync_run_id,
         sources,
@@ -313,7 +313,7 @@ fn execute_queued_run<F>(
     conn: &mut Connection,
     paths: &DistillPaths,
     owner_id: &str,
-    fixture_parser: &ParserIdentity,
+    parsers: &ParserRegistry,
     max_capture_bytes: u64,
     sync_run_id: i64,
     sources: Vec<SourceKind>,
@@ -374,7 +374,7 @@ where
             sync_run_id,
             owner_id,
             source_kind,
-            fixture_parser,
+            parsers,
             max_capture_bytes,
             on_progress,
             &mut aggregate,

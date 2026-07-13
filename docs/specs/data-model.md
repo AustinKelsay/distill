@@ -374,7 +374,8 @@ Safe open reconciliation may remove only canonical `{64 lowercase hex}.partial` 
 Public Library read/write extensions for Attempt history and retry:
 
 - `capture_attempts(capture_id)` returns immutable Attempt summaries with parser identity/version, outcome, typed error class/message, optional projection generation, and Fact count
-- `renormalize_capture(capture_id)` re-runs the Library-registered Fixture parser against Distill-owned Capture bytes without accepting a new Capture or accepting caller-supplied arbitrary parser ids
+- `renormalize_capture(capture_id)` re-runs the Library-registered parser for the Capture's persisted Source kind against Distill-owned Capture bytes without accepting a new Capture, rereading a Source root, invoking OpenCode, or accepting caller-supplied arbitrary parser ids; unknown/unregistered persisted kinds return typed `LibraryError::UnknownSourceKind` with no Attempt or Projection mutation
 - `list_sessions(request)` returns deterministic current-projection search/list pages with Unicode-safe FTS normalization, workflow-lane intersection, and keyset cursors; `session_detail(request)` returns bounded message/artifact slices with continuation cursors and manual curation read models
-- `set_registered_fixture_parser_version(version)` accepts only a strictly newer semantic version and advances only the registered Fixture parser used by ingest and renormalize
+- `set_registered_parser_version(kind, version)` accepts only a closed `SourceKind` and a strictly newer semantic version; parser ids remain adapter-owned constants
+- `set_registered_fixture_parser_version(version)` remains as a Fixture-only compatibility shim over `set_registered_parser_version`
 - `health()` / `repair(options)` own integrity classification and documented recovery; see architecture and ingest-pipeline rebuild notes

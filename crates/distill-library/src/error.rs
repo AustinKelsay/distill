@@ -77,6 +77,16 @@ pub enum LibraryError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// Persisted Capture Source kind is unknown or has no registered parser.
+    ///
+    /// Renormalize returns this without mutating Attempts or Projection state.
+    /// The kind string is a closed identifier, never a filesystem path.
+    #[error("unknown source kind: {kind}")]
+    UnknownSourceKind {
+        /// Persisted Source kind string (already caller-safe).
+        kind: String,
+    },
+
     /// A Sync Run is already queued or running for this Distill home.
     ///
     /// Starting again creates no Sync Run row and no Activity side effects.
@@ -134,6 +144,7 @@ impl LibraryError {
             Self::StagedContentIntegrity { .. } => "staged_content_integrity",
             Self::NotFound(_) => "not_found",
             Self::InvalidArgument(_) => "invalid_argument",
+            Self::UnknownSourceKind { .. } => "unknown_source_kind",
             Self::SyncAlreadyRunning => "sync_already_running",
             Self::SyncNoEnabledSources => "sync_no_enabled_sources",
             Self::SyncLeaseLost => "sync_lease_lost",

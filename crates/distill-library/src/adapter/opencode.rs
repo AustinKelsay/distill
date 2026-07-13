@@ -80,6 +80,7 @@ pub struct OpenCodeAdapter {
 
 impl OpenCodeAdapter {
     /// Create an adapter that detects only the supplied OpenCode data root.
+    #[allow(dead_code)]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self::with_parser(
             root,
@@ -244,6 +245,20 @@ impl SourceAdapter for OpenCodeAdapter {
     ) -> Result<ParsedCapture, SourceStageError> {
         parse_opencode_export(candidate, &snapshot.bytes)
     }
+}
+
+/**
+ * Parse Distill-owned OpenCode Capture bytes without invoking the provider executable.
+ *
+ * Parameters:
+ * - `candidate`: Replay Candidate rebuilt from persisted Capture identity.
+ * - `bytes`: Checksum-verified Distill-owned Capture bytes (complete export stdout).
+ */
+pub(crate) fn parse_opencode_bytes(
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+) -> Result<ParsedCapture, SourceStageError> {
+    parse_opencode_export(candidate, bytes)
 }
 
 /**

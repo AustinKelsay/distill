@@ -39,6 +39,7 @@ pub struct ClaudeAdapter {
 
 impl ClaudeAdapter {
     /// Create an adapter that detects only the supplied Claude home root.
+    #[allow(dead_code)]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self::with_parser(
             root,
@@ -136,8 +137,22 @@ impl SourceAdapter for ClaudeAdapter {
         candidate: &CaptureCandidate,
         snapshot: &CaptureSnapshot,
     ) -> Result<ParsedCapture, SourceStageError> {
-        parse_claude_jsonl(candidate, &snapshot.bytes, &self.root)
+        parse_claude_jsonl(candidate, &snapshot.bytes, Some(self.root.as_path()))
     }
+}
+
+/**
+ * Parse Distill-owned Claude Code Capture bytes without rereading the Claude home.
+ *
+ * Parameters:
+ * - `candidate`: Replay Candidate rebuilt from persisted Capture identity.
+ * - `bytes`: Checksum-verified Distill-owned Capture bytes.
+ */
+pub(crate) fn parse_claude_bytes(
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+) -> Result<ParsedCapture, SourceStageError> {
+    parse_claude_jsonl(candidate, bytes, None)
 }
 
 /**
@@ -146,17 +161,18 @@ impl SourceAdapter for ClaudeAdapter {
  * Parameters:
  * - `candidate`: Capture Candidate providing identity and path hints.
  * - `bytes`: Exact snapshot bytes preserved by Distill.
- * - `claude_root`: Configured Claude home used to read auxiliary history metadata.
+ * - `claude_root`: Optional Claude home for auxiliary history metadata. Replay
+ *   passes `None` so renormalization never rereads the original root.
  */
 fn parse_claude_jsonl(
     candidate: &CaptureCandidate,
     bytes: &[u8],
-    claude_root: &Path,
+    claude_root: Option<&Path>,
 ) -> Result<ParsedCapture, SourceStageError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|err| SourceStageError::Parse(format!("claude bytes are not utf-8: {err}")))?;
 
-    let history_index = read_history_index(claude_root);
+    let history_index = claude_root.map(read_history_index).unwrap_or_default();
     let mut facts = Vec::new();
     let mut messages = Vec::new();
     let mut artifacts = Vec::new();

@@ -5,13 +5,15 @@ mod codex;
 mod droid;
 mod fixture;
 mod opencode;
+mod registry;
 
-pub use claude::ClaudeAdapter;
+pub use claude::{ClaudeAdapter, CLAUDE_PARSER_ID, CLAUDE_PARSER_VERSION};
 pub(crate) use codex::find_executable;
-pub use codex::CodexAdapter;
-pub use droid::{default_droid_sessions_root, DroidAdapter};
+pub use codex::{CodexAdapter, CODEX_PARSER_ID, CODEX_PARSER_VERSION};
+pub use droid::{default_droid_sessions_root, DroidAdapter, DROID_PARSER_ID, DROID_PARSER_VERSION};
 pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
-pub use opencode::OpenCodeAdapter;
+pub use opencode::{OpenCodeAdapter, OPENCODE_PARSER_ID, OPENCODE_PARSER_VERSION};
+pub use registry::ParserRegistry;
 
 use std::path::PathBuf;
 
@@ -257,4 +259,31 @@ pub trait SourceAdapter {
         candidate: &CaptureCandidate,
         snapshot: &CaptureSnapshot,
     ) -> Result<ParsedCapture, SourceStageError>;
+}
+
+/**
+ * Parse Distill-owned Capture bytes for renormalization without rereading a Source root.
+ *
+ * OpenCode replay never invokes the provider executable. File-backed Sources never
+ * reopen original paths; auxiliary root indexes are omitted during replay.
+ *
+ * Parameters:
+ * - `kind`: Persisted Capture Source kind.
+ * - `candidate`: Replay Candidate rebuilt from Capture identity (no absolute path).
+ * - `bytes`: Checksum-verified Distill-owned Capture bytes.
+ * - `parser_version`: Registered parser version executing this Attempt.
+ */
+pub(crate) fn parse_replay_bytes(
+    kind: SourceKind,
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+    parser_version: &str,
+) -> Result<ParsedCapture, SourceStageError> {
+    match kind {
+        SourceKind::Fixture => parse_fixture_bytes(candidate, bytes, parser_version),
+        SourceKind::Codex => codex::parse_codex_bytes(candidate, bytes),
+        SourceKind::ClaudeCode => claude::parse_claude_bytes(candidate, bytes),
+        SourceKind::OpenCode => opencode::parse_opencode_bytes(candidate, bytes),
+        SourceKind::Droid => droid::parse_droid_bytes(candidate, bytes),
+    }
 }

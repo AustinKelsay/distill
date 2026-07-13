@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::adapter::{
     default_droid_sessions_root, find_executable, ClaudeAdapter, CodexAdapter, DroidAdapter,
-    FixtureAdapter, OpenCodeAdapter, SourceAdapter, SourceKind,
+    FixtureAdapter, OpenCodeAdapter, ParserRegistry, SourceAdapter, SourceKind,
 };
 use crate::error::LibraryResult;
 use crate::ops::paths::canonicalize_configured_root;
@@ -17,17 +17,18 @@ use crate::types::{SourceDetectRequest, SourceDetectResult};
  * Detect each requested Source independently.
  *
  * A failing Source never aborts sibling results. Fixture, Codex, Claude Code,
- * OpenCode, and Droid use concrete adapters.
+ * OpenCode, and Droid use concrete adapters with Library-registered parser
+ * identities.
  */
 pub fn detect_sources(
     conn: &Connection,
     requests: &[SourceDetectRequest],
-    fixture_parser_version: &str,
+    parsers: &ParserRegistry,
 ) -> LibraryResult<Vec<SourceDetectResult>> {
     let prefs = list_source_preferences(conn)?;
     let mut results = Vec::with_capacity(requests.len());
     for request in requests {
-        results.push(detect_one(conn, request, &prefs, fixture_parser_version));
+        results.push(detect_one(conn, request, &prefs, parsers));
     }
     Ok(results)
 }
@@ -36,7 +37,7 @@ fn detect_one(
     _conn: &Connection,
     request: &SourceDetectRequest,
     prefs: &[crate::types::SourcePreference],
-    fixture_parser_version: &str,
+    parsers: &ParserRegistry,
 ) -> SourceDetectResult {
     let Some(kind) = SourceKind::parse(&request.kind) else {
         return SourceDetectResult {
@@ -65,7 +66,7 @@ fn detect_one(
                     error_message: None,
                 };
             }
-            detect_fixture(request, pref, fixture_parser_version)
+            detect_fixture(request, pref, parsers.get(SourceKind::Fixture))
         }
         SourceKind::Codex => {
             if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
@@ -79,7 +80,7 @@ fn detect_one(
                     error_message: None,
                 };
             }
-            detect_codex(request, pref)
+            detect_codex(request, pref, parsers.get(SourceKind::Codex))
         }
         SourceKind::ClaudeCode => {
             if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
@@ -93,7 +94,7 @@ fn detect_one(
                     error_message: None,
                 };
             }
-            detect_claude(request, pref)
+            detect_claude(request, pref, parsers.get(SourceKind::ClaudeCode))
         }
         SourceKind::OpenCode => {
             if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
@@ -107,7 +108,7 @@ fn detect_one(
                     error_message: None,
                 };
             }
-            detect_opencode(request, pref)
+            detect_opencode(request, pref, parsers.get(SourceKind::OpenCode))
         }
         SourceKind::Droid => {
             if pref.is_some_and(|pref| !pref.enabled) && request.configured_root.is_none() {
@@ -121,7 +122,7 @@ fn detect_one(
                     error_message: None,
                 };
             }
-            detect_droid(request, pref)
+            detect_droid(request, pref, parsers.get(SourceKind::Droid))
         }
     }
 }
@@ -129,7 +130,7 @@ fn detect_one(
 fn detect_fixture(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
-    fixture_parser_version: &str,
+    parser: &crate::adapter::ParserIdentity,
 ) -> SourceDetectResult {
     let root = match resolve_root_path(request, pref) {
         Ok(Some(root)) => root,
@@ -157,13 +158,7 @@ fn detect_fixture(
         }
     };
 
-    let adapter = FixtureAdapter::with_parser(
-        root.clone(),
-        crate::adapter::ParserIdentity {
-            id: crate::adapter::FIXTURE_PARSER_ID.to_string(),
-            version: fixture_parser_version.to_string(),
-        },
-    );
+    let adapter = FixtureAdapter::with_parser(root.clone(), parser.clone());
     match adapter.detect() {
         Ok(discovered) => SourceDetectResult {
             kind: SourceKind::Fixture.as_str().into(),
@@ -189,10 +184,12 @@ fn detect_fixture(
 fn detect_codex(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
 ) -> SourceDetectResult {
     detect_codex_with_executable(
         request,
         pref,
+        parser,
         find_executable("codex").map(|path| path.display().to_string()),
     )
 }
@@ -200,10 +197,12 @@ fn detect_codex(
 fn detect_claude(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
 ) -> SourceDetectResult {
     detect_claude_with_executable(
         request,
         pref,
+        parser,
         find_executable("claude").map(|path| path.display().to_string()),
     )
 }
@@ -211,10 +210,12 @@ fn detect_claude(
 fn detect_opencode(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
 ) -> SourceDetectResult {
     detect_opencode_with_executable(
         request,
         pref,
+        parser,
         find_executable("opencode").map(|path| path.display().to_string()),
     )
 }
@@ -222,6 +223,7 @@ fn detect_opencode(
 fn detect_codex_with_executable(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
     executable: Option<String>,
 ) -> SourceDetectResult {
     let root = match resolve_root_path(request, pref) {
@@ -250,7 +252,7 @@ fn detect_codex_with_executable(
         }
     };
 
-    let adapter = CodexAdapter::new(root);
+    let adapter = CodexAdapter::with_parser(root, parser.clone());
     match adapter.detect() {
         Ok(discovered) if executable.is_some() => SourceDetectResult {
             kind: SourceKind::Codex.as_str().into(),
@@ -285,6 +287,7 @@ fn detect_codex_with_executable(
 fn detect_claude_with_executable(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
     executable: Option<String>,
 ) -> SourceDetectResult {
     let root = match resolve_root_path(request, pref) {
@@ -313,7 +316,7 @@ fn detect_claude_with_executable(
         }
     };
 
-    let adapter = ClaudeAdapter::new(root);
+    let adapter = ClaudeAdapter::with_parser(root, parser.clone());
     match adapter.detect() {
         Ok(discovered) if executable.is_some() => SourceDetectResult {
             kind: SourceKind::ClaudeCode.as_str().into(),
@@ -348,6 +351,7 @@ fn detect_claude_with_executable(
 fn detect_opencode_with_executable(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
     executable: Option<String>,
 ) -> SourceDetectResult {
     let root = match resolve_root_path(request, pref) {
@@ -383,7 +387,7 @@ fn detect_opencode_with_executable(
         executable
     };
 
-    let adapter = OpenCodeAdapter::new(root);
+    let adapter = OpenCodeAdapter::with_parser(root, parser.clone());
     match adapter.detect() {
         Ok(discovered) if executable.is_some() => SourceDetectResult {
             kind: SourceKind::OpenCode.as_str().into(),
@@ -418,6 +422,7 @@ fn detect_opencode_with_executable(
 fn detect_droid(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
+    parser: &crate::adapter::ParserIdentity,
 ) -> SourceDetectResult {
     let root = match resolve_droid_root(request, pref) {
         Ok(Some(root)) => root,
@@ -445,7 +450,7 @@ fn detect_droid(
         }
     };
 
-    let adapter = DroidAdapter::new(root);
+    let adapter = DroidAdapter::with_parser(root, parser.clone());
     match adapter.detect() {
         Ok(discovered) => SourceDetectResult {
             kind: SourceKind::Droid.as_str().into(),
@@ -538,6 +543,10 @@ mod tests {
                 configured_root: Some(root.display().to_string()),
             },
             None,
+            &crate::adapter::ParserIdentity {
+                id: crate::adapter::CODEX_PARSER_ID.to_string(),
+                version: crate::adapter::CODEX_PARSER_VERSION.to_string(),
+            },
             None,
         );
         assert_eq!(result.status, "unavailable");
@@ -558,6 +567,10 @@ mod tests {
                 configured_root: Some(root.display().to_string()),
             },
             None,
+            &crate::adapter::ParserIdentity {
+                id: crate::adapter::CLAUDE_PARSER_ID.to_string(),
+                version: crate::adapter::CLAUDE_PARSER_VERSION.to_string(),
+            },
             None,
         );
         assert_eq!(result.status, "unavailable");
@@ -578,6 +591,10 @@ mod tests {
                 configured_root: Some(root.display().to_string()),
             },
             None,
+            &crate::adapter::ParserIdentity {
+                id: crate::adapter::OPENCODE_PARSER_ID.to_string(),
+                version: crate::adapter::OPENCODE_PARSER_VERSION.to_string(),
+            },
             None,
         );
         assert_eq!(result.status, "unavailable");

@@ -4,8 +4,7 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::adapter::{
-    parse_fixture_bytes, CaptureCandidate, CaptureSnapshot, ParserIdentity, SourceKind,
-    FIXTURE_PARSER_ID,
+    parse_replay_bytes, CaptureCandidate, CaptureSnapshot, ParserRegistry, SourceKind,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::storage::{read_capture_bytes, ContentRef, DistillPaths};
@@ -29,44 +28,40 @@ struct CaptureRetryRow {
 /**
  * Re-normalize an accepted Capture from Distill-owned bytes with a registered parser.
  *
- * Does not create a new Capture. Caller supplies only the Capture id; parser identity
- * comes from the Library-registered Fixture parser, never an arbitrary caller string.
+ * Does not create a new Capture. Parser identity comes from the Library-owned
+ * registry for the Capture's persisted Source kind. Replay never rereads a Source
+ * root and never reruns an OpenCode subprocess.
  *
  * Parameters:
  * - `conn`: Library SQLite connection.
  * - `paths`: Distill home paths for content replay.
  * - `capture_id`: Accepted Capture to retry.
- * - `parser`: Registered Fixture parser identity/version.
+ * - `registry`: Library-owned parser registry for closed v1 Source kinds.
  */
 pub fn renormalize_capture(
     conn: &mut Connection,
     paths: &DistillPaths,
     capture_id: i64,
-    parser: &ParserIdentity,
+    registry: &ParserRegistry,
 ) -> LibraryResult<RenormalizeReport> {
-    if parser.id != FIXTURE_PARSER_ID {
-        return Err(LibraryError::InvalidArgument(
-            "only the registered fixture parser may renormalize captures".into(),
-        ));
-    }
-
     let capture = load_capture_for_retry(conn, capture_id)?;
-    if capture.source_kind != SourceKind::Fixture.as_str() {
-        return Err(LibraryError::InvalidArgument(format!(
-            "renormalize is not implemented for source kind {}",
-            capture.source_kind
-        )));
-    }
+    let Some(source_kind) = SourceKind::parse(&capture.source_kind) else {
+        return Err(LibraryError::UnknownSourceKind {
+            kind: capture.source_kind,
+        });
+    };
+    let parser = registry.get(source_kind).clone();
 
     let bytes = read_capture_bytes(paths.home.as_path(), &capture.content, capture_id)?;
     let candidate = CaptureCandidate {
-        source_kind: SourceKind::Fixture,
+        source_kind,
         source_path: capture.source_path.clone(),
         absolute_path: None,
         external_session_id: capture.external_session_id.clone(),
         title: None,
         is_virtual: true,
-        virtual_bytes: Some(bytes.clone()),
+        // Replay must not treat Capture bytes as OpenCode discovery metadata.
+        virtual_bytes: None,
         media_type: capture.media_type.clone(),
     };
     let snapshot = CaptureSnapshot {
@@ -77,7 +72,7 @@ pub fn renormalize_capture(
         source_modified_at: None,
     };
 
-    match parse_fixture_bytes(&candidate, &snapshot.bytes, &parser.version) {
+    match parse_replay_bytes(source_kind, &candidate, &snapshot.bytes, &parser.version) {
         Ok(parsed) => {
             let attempt_id = insert_attempt(
                 conn,
@@ -217,4 +212,80 @@ fn load_capture_for_retry(conn: &Connection, capture_id: i64) -> LibraryResult<C
         media_type,
         content,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{FixtureAdapter, ParserRegistry};
+    use crate::ingest::ingest_adapter;
+    use crate::storage::{ensure_home_layout, migrate_to_latest, open_connection};
+    use std::fs;
+    use tempfile::TempDir;
+
+    /**
+     * Unknown persisted Source kinds reject renormalize without Attempt mutation.
+     */
+    #[test]
+    fn unknown_persisted_source_kind_rejects_without_mutation() {
+        let temp = TempDir::new().expect("temp");
+        let home = temp.path().join("home");
+        let fixture = temp.path().join("fixture");
+        fs::create_dir_all(&fixture).expect("fixture");
+        fs::write(
+            fixture.join("distill.fixture.json"),
+            r#"{
+  "version": 1,
+  "captures": [
+    {
+      "id": "hello",
+      "kind": "virtual",
+      "virtual_text": "{\"record_type\":\"message\",\"role\":\"user\",\"text\":\"hi\"}\n",
+      "external_session_id": "fixture-unknown-kind",
+      "title": "Unknown Kind"
+    }
+  ]
+}"#,
+        )
+        .expect("manifest");
+
+        let paths = ensure_home_layout(&home).expect("paths");
+        let mut conn = open_connection(&paths).expect("open");
+        migrate_to_latest(&mut conn).expect("migrate");
+        let adapter = FixtureAdapter::new(&fixture);
+        let report = ingest_adapter(&mut conn, &paths, &adapter, 16 * 1024 * 1024).expect("ingest");
+        let capture_id = report.capture_ids[0];
+        let attempt_count_before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM normalization_attempts WHERE capture_id = ?1",
+                [capture_id],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(attempt_count_before, 1);
+
+        conn.execute(
+            "UPDATE captures SET source_kind = 'not_a_source' WHERE id = ?1",
+            [capture_id],
+        )
+        .expect("plant unknown kind");
+
+        let registry = ParserRegistry::default_v1();
+        let err = renormalize_capture(&mut conn, &paths, capture_id, &registry)
+            .expect_err("unknown kind");
+        assert!(matches!(
+            err,
+            LibraryError::UnknownSourceKind { ref kind } if kind == "not_a_source"
+        ));
+        assert_eq!(err.code(), "unknown_source_kind");
+
+        let attempt_count_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM normalization_attempts WHERE capture_id = ?1",
+                [capture_id],
+                |row| row.get(0),
+            )
+            .expect("count after");
+        assert_eq!(attempt_count_after, attempt_count_before);
+    }
 }

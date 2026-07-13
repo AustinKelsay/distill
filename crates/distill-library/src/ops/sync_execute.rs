@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::adapter::{
     default_droid_sessions_root, ClaudeAdapter, CodexAdapter, DroidAdapter, FixtureAdapter,
-    OpenCodeAdapter, ParserIdentity, SourceAdapter, SourceKind, FIXTURE_PARSER_ID,
+    OpenCodeAdapter, ParserRegistry, SourceAdapter, SourceKind,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
@@ -28,7 +28,7 @@ pub(crate) fn sync_one_source<F>(
     sync_run_id: i64,
     owner_id: &str,
     source_kind: SourceKind,
-    fixture_parser: &ParserIdentity,
+    parsers: &ParserRegistry,
     max_capture_bytes: u64,
     on_progress: &mut F,
     aggregate: &mut IngestReport,
@@ -55,13 +55,8 @@ where
                     ));
                 }
             };
-            let adapter = FixtureAdapter::with_parser(
-                root,
-                ParserIdentity {
-                    id: FIXTURE_PARSER_ID.to_string(),
-                    version: fixture_parser.version.clone(),
-                },
-            );
+            let adapter =
+                FixtureAdapter::with_parser(root, parsers.get(SourceKind::Fixture).clone());
             sync_adapter_source(
                 conn,
                 paths,
@@ -92,7 +87,7 @@ where
                     ));
                 }
             };
-            let adapter = CodexAdapter::new(root);
+            let adapter = CodexAdapter::with_parser(root, parsers.get(SourceKind::Codex).clone());
             sync_adapter_source(
                 conn,
                 paths,
@@ -123,7 +118,8 @@ where
                     ));
                 }
             };
-            let adapter = ClaudeAdapter::new(root);
+            let adapter =
+                ClaudeAdapter::with_parser(root, parsers.get(SourceKind::ClaudeCode).clone());
             sync_adapter_source(
                 conn,
                 paths,
@@ -154,7 +150,8 @@ where
                     ));
                 }
             };
-            let adapter = OpenCodeAdapter::new(root);
+            let adapter =
+                OpenCodeAdapter::with_parser(root, parsers.get(SourceKind::OpenCode).clone());
             sync_adapter_source(
                 conn,
                 paths,
@@ -185,7 +182,7 @@ where
                     ));
                 }
             };
-            let adapter = DroidAdapter::new(root);
+            let adapter = DroidAdapter::with_parser(root, parsers.get(SourceKind::Droid).clone());
             sync_adapter_source(
                 conn,
                 paths,

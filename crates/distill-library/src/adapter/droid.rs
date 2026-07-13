@@ -49,6 +49,7 @@ pub struct DroidAdapter {
 
 impl DroidAdapter {
     /// Create an adapter that detects only the supplied Droid sessions root.
+    #[allow(dead_code)]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self::with_parser(
             root,
@@ -149,6 +150,20 @@ impl SourceAdapter for DroidAdapter {
     ) -> Result<ParsedCapture, SourceStageError> {
         parse_droid_jsonl(candidate, &snapshot.bytes)
     }
+}
+
+/**
+ * Parse Distill-owned Droid Capture bytes without rereading session files or sidecars.
+ *
+ * Parameters:
+ * - `candidate`: Replay Candidate rebuilt from persisted Capture identity.
+ * - `bytes`: Checksum-verified Distill-owned Capture bytes.
+ */
+pub(crate) fn parse_droid_bytes(
+    candidate: &CaptureCandidate,
+    bytes: &[u8],
+) -> Result<ParsedCapture, SourceStageError> {
+    parse_droid_jsonl(candidate, bytes)
 }
 
 /**

@@ -22,6 +22,7 @@ mod query;
 mod storage;
 mod types;
 
+pub use adapter::SourceKind;
 pub use error::{LibraryError, LibraryResult};
 pub use library::Library;
 #[cfg(feature = "test-leases")]
