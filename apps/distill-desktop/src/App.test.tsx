@@ -603,6 +603,9 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("detect-status")).toHaveTextContent("ready");
     });
+    expect(screen.getByTestId("detect-sources")).toHaveAccessibleName(
+      "Detect Sources — Status: ready",
+    );
     expect(screen.getByTestId("detect-result-fixture")).toHaveTextContent("fixture: ok");
     expect(screen.getByTestId("source-detection-panel")).toHaveAttribute(
       "aria-busy",
@@ -688,6 +691,9 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("detect-status")).toHaveTextContent("warning");
     });
+    expect(screen.getByTestId("detect-sources")).toHaveAccessibleName(
+      "Detect Sources — Status: warning",
+    );
     expect(screen.getByTestId("detect-results")).toHaveTextContent(
       "codex: unavailable (executable_not_found)",
     );

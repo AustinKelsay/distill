@@ -1054,6 +1054,11 @@ export function App({ bridge }: AppProps) {
           type="button"
           onClick={() => void onDetectSources()}
           disabled={!home.trim() || detectStatus === "loading"}
+          aria-label={
+            detectStatus === "idle"
+              ? "Detect Sources"
+              : `Detect Sources — Status: ${detectStatus}`
+          }
           data-testid="detect-sources"
         >
           {detectStatus === "loading" ? "Detecting Sources…" : "Detect Sources"}
