@@ -89,7 +89,7 @@ screen-reader claims.
   WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
   contract. The harness now keeps the four bounded keyboard transports and adds
   a smoke-only Vite-built renderer native-click/submit fallback route. The
-  prior exact-head run [29274155740](https://github.com/AustinKelsay/distill/actions/runs/29274155740)
-  failed before marker exposure because the workflow env did not reach Vite;
-  the next exact-head run must validate the temporary-env packaged route rather
-  than treating the local hook as evidence.
+  prior exact-head run [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
+  failed before marker exposure because the hook was not rooted at the renderer
+  workspace; the next exact-head run must validate the rooted temporary-env
+  packaged route rather than treating the local hook as evidence.

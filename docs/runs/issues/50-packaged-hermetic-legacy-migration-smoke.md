@@ -118,7 +118,9 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
 - The Linux smoke package writes a temporary
   `apps/distill-desktop/.env.production.local` containing
   `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1` only in the package workflow, then removes
-  it after packaging. The renderer exposes an accessible smoke-only marker,
+  it after packaging. Tauri's `beforeBuildCommand` is explicitly rooted at the
+  renderer workspace so that file is loaded by Vite. The renderer exposes an
+  accessible smoke-only marker,
   waits for the real migration input value, and invokes the existing form
   through native button activation with a bounded DOM submit-event fallback
   inside the packaged WebView; normal builds never enable it and the shipped
@@ -128,6 +130,10 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   included the Vite-built renderer route but still stopped at
   `Migration status: idle`; the marker/native-click revision must be validated
   by the next exact-head run.
+- Exact-head run [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
+  exercised the temporary env-file workflow but still stopped before marker
+  exposure; the Tauri hook working directory was not yet rooted at the renderer
+  workspace. The next exact-head run must validate the rooted hook.
 
 ### Diagnosis boundary
 
