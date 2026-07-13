@@ -405,7 +405,9 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       ],
       'button-focus: expected focused accessible "Import legacy home"',
     );
-    await focusedKey("Return");
+    // WebKitGTK's native button activation path is reliable on Space under
+    // Xvfb even when Return only moves focus.
+    await focusedKey("space");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
     } catch {
