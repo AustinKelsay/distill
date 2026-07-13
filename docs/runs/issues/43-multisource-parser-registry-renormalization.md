@@ -6,8 +6,8 @@
 - Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
 - Fixed point before session: `e800706`
 - Worker session: Grok 4.5 xhigh bounded implementation pass; Codex integration
-- Commit: pending
-- Status: Implementation complete; awaiting verification + review
+- Commit: `02c6a61`
+- Status: Complete — implementation, full local gates, two-axis review, and CodeRabbit fallback complete; final-head CI and staging handoff remain
 - Review packet: `docs/runs/reviews/43-multisource-parser-registry-renormalization.md`
 
 ## Intended Contract
