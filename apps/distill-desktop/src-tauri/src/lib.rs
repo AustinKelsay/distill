@@ -34,7 +34,7 @@ pub use host::{
 };
 
 use distill_library::{ExportProgress, FixtureJourneyPhase, SyncProgress};
-use tauri::Manager;
+use tauri::webview::PageLoadEvent;
 
 /// Event name for typed Fixture journey progress.
 pub const FIXTURE_JOURNEY_PROGRESS_EVENT: &str = "fixture-journey-progress";
@@ -50,29 +50,26 @@ pub const EXPORT_PROGRESS_EVENT: &str = "export-progress";
 pub fn run() {
     let smoke_dom_activation = std::env::var_os("DISTILL_SMOKE_DOM_ACTIVATE").is_some();
     tauri::Builder::default()
-        .setup(move |app| {
-            if smoke_dom_activation {
-                if let Some(window) = app.get_webview_window("main") {
-                    window.eval(
-                        r#"(() => {
-                          const activateMigration = () => {
-                            const panel = document.querySelector('[data-testid="migration-panel"]');
-                            const input = document.querySelector('#legacy-source-home');
-                            const button = document.querySelector('[data-testid="migration-run"]');
-                            const status = document.querySelector('[data-testid="migration-status"]');
-                            if (!panel || !input || !button || !status || !input.value.trim() || button.disabled) return;
-                            if (!status.textContent?.includes('Migration status: idle')) return;
-                            clearInterval(timer);
-                            if (typeof panel.requestSubmit === 'function') panel.requestSubmit(button);
-                            else button.click();
-                          };
-                          const timer = setInterval(activateMigration, 100);
-                          activateMigration();
-                        })();"#,
-                    )?;
-                }
+        .on_page_load(move |webview, payload| {
+            if smoke_dom_activation && payload.event() == PageLoadEvent::Finished {
+                let _ = webview.eval(
+                    r#"(() => {
+                      const activateMigration = () => {
+                        const panel = document.querySelector('[data-testid="migration-panel"]');
+                        const input = document.querySelector('#legacy-source-home');
+                        const button = document.querySelector('[data-testid="migration-run"]');
+                        const status = document.querySelector('[data-testid="migration-status"]');
+                        if (!panel || !input || !button || !status || !input.value.trim() || button.disabled) return;
+                        if (!status.textContent?.includes('Migration status: idle')) return;
+                        clearInterval(timer);
+                        if (typeof panel.requestSubmit === 'function') panel.requestSubmit(button);
+                        else button.click();
+                      };
+                      const timer = setInterval(activateMigration, 100);
+                      activateMigration();
+                    })();"#,
+                );
             }
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::run_fixture_journey_command,

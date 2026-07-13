@@ -36,6 +36,7 @@ Rebuild Distill completely from scratch in a cleaner, more elegant fashion, end 
 - Return-key remediation CodeRabbit attempt (`coderabbit review --type uncommitted --light`) reached “Summarizing changes… 1m 00s elapsed — still working” and was terminated with no findings; targeted renderer tests and the independent Grok diagnosis remain the review fallback.
 - Native-form/transport-matrix CodeRabbit attempt (`coderabbit review --type uncommitted --light`) reached “Preparing sandbox… 1m 00s elapsed — still working” and was terminated with no findings; the bounded Grok rereview and local smoke syntax/tests remain the review fallback.
 - Package-native DOM-route CodeRabbit attempt (`coderabbit review --type uncommitted --light`) reached “Summarizing changes… 1m 00s elapsed — still working” and was terminated with no findings; the bounded Grok recommendation and local Rust/desktop gates remain the review fallback.
+- Package-native DOM page-load-hook CodeRabbit retry reached “Writing review comments… 1m 00s elapsed — still working” and was terminated with no findings; local `cargo check`, format, typecheck, and smoke syntax checks remain the review fallback.
 - PR URL: https://github.com/AustinKelsay/distill/pull/38 (non-draft, base `staging`)
 
 ## Commands
