@@ -182,6 +182,9 @@ async function assertDialogHasFocusedDescendant(name) {
 
 async function clickAccessible(windowId, name, contains = false) {
   const bounds = await accessibleBounds(name, contains);
+  // AT-SPI scroll_to() can return before WebKitGTK has applied the viewport
+  // change; let the coordinate lookup and the rendered control converge.
+  await sleep(250);
   await focusWindow(windowId);
   await xdotool([
     "mousemove",
