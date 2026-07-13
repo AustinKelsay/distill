@@ -40,8 +40,10 @@ cutover language until exact-head evidence is green.
 
 The first exact-head Ubuntu package run then failed before the new slice at
 `invalid_configured_root`: the corrected Codex input had not settled before
-Sync. The smoke now re-runs Detect after the correction and requires
-`codex: ok`, making the durable preference boundary observable before Sync.
+Sync. A follow-up experiment showed re-running Detect is not valid for this
+hermetic root because Detect correctly requires a host executable. The smoke
+now blurs the corrected input and waits one second before Sync, making the
+draft-settling boundary explicit without changing Detect semantics.
 
 ## Verification evidence
 

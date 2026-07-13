@@ -341,11 +341,10 @@ async function runUiJourney(binary, home, roots) {
     // Detect result copy must stay redacted; clear the missing path before scanning names.
     await typeIntoAccessible(windowId, "codex source root", roots.codexRoot);
     await assertAccessibleNameOmits(DETECT_SIBLING_SECRET);
-    // Let the corrected draft settle, then re-detect before Sync so a stale
-    // missing-root draft cannot race the durable Source preference write.
-    await sleep(250);
-    await clickAccessible(windowId, "Detect Sources", true);
-    await waitForAccessibleText("codex: ok", true);
+    // Blur and settle the corrected draft so a stale missing-root value cannot
+    // race the durable Source preference write at the start of Sync.
+    await key(windowId, "Tab");
+    await sleep(1000);
 
     // Sync Fixture + hermetic providers through Start Sync Run (not Run Fixture journey).
     await clickAccessible(windowId, "Start Sync Run");
