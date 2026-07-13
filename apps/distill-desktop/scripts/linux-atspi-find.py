@@ -15,6 +15,8 @@ import gi
 gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi
 
+Atspi.init()
+
 
 def descendants(node):
     yield node
