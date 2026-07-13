@@ -10,8 +10,40 @@ Run from the repository root with a modern Node toolchain on `PATH` when desktop
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo test -p distill-library --features test-faults
 cargo build --workspace
 ```
+
+### Continuous PR enforcement (#46)
+
+`.github/workflows/rebuild-ci.yml` is the authoritative Ubuntu CI evidence for the
+core rebuild commands enforced on every qualifying pull request into `staging`
+(and on `workflow_dispatch`):
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `cargo test -p distill-library --features test-faults`
+- `cargo test -p distill-library --test library_ops_sync --features test-leases`
+- `npm ci`
+- `npm run desktop:typecheck`
+- `npm run desktop:lint`
+- `npm run desktop:format`
+- `npm run desktop:test`
+- `npm run desktop:frontend:build`
+
+The workflow uses the same `dtolnay/rust-toolchain@stable` and
+`actions/setup-node@v4` (Node 22, npm cache) conventions as the Linux package
+smoke and Rust advisory workflows, with `contents: read` only and bounded job
+timeouts. It does **not** run real provider roots, the full-scale
+`DISTILL_SCALE_BENCH` corpus, package signing/notarization, Windows jobs, or
+human assistive-technology observation. Local Darwin runs of the same commands
+remain useful developer feedback; they are not a substitute for the Ubuntu
+Actions result once a run ID is recorded.
+
+Authoritative Actions run ID for this gate:
+`REPLACE_AFTER_PUSH` — placeholder until the first green PR or
+`workflow_dispatch` run is linked after push.
 
 ## Sync / Source settings gates (#22)
 
@@ -22,12 +54,14 @@ cargo test -p distill-desktop --test host_fixture_journey
 npm run desktop:test
 ```
 
-Provider subprocess duration bounds and large-stdin cleanup are covered on macOS/Linux. Output-byte caps are covered on all platforms via a deterministic helper without spawning. Heartbeat accuracy uses the non-default `test-leases` feature only.
+Provider subprocess duration bounds and large-stdin cleanup are covered on macOS/Linux. Output-byte caps are covered on all platforms via a deterministic helper without spawning. Heartbeat accuracy uses the non-default `test-leases` feature only. The `test-leases` Sync suite is included in the continuous `#46` rebuild CI gate above; CLI/host fixture journeys remain separate caller evidence.
 
 ## Desktop gates
 
 ```bash
 npm run desktop:typecheck
+npm run desktop:lint
+npm run desktop:format
 npm run desktop:test
 npm run desktop:frontend:build
 cargo build -p distill-desktop
@@ -45,6 +79,11 @@ cargo test -p distill-library --test library_scale_budgets
 # scheduled/manual full corpus (logical 10 GiB padding; never a default PR gate):
 DISTILL_SCALE_BENCH=1 cargo test -p distill-library --test library_scale_budgets -- --ignored --nocapture
 ```
+
+Renderer typecheck/lint/format/test/frontend-build are part of the continuous
+`#46` rebuild CI gate. Packaging, installed-host smoke, a11y packaged focus,
+and scale budgets remain separate gates below and are **not** claimed by
+`rebuild-ci.yml`.
 
 The a11y smoke is a post-build renderer check. It does not claim signed packaged
 WebView or screen-reader coverage; the human checklist at

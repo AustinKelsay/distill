@@ -2,6 +2,12 @@
 
 This registry closes issue #37’s evidence-schema gap. Each row is one stable ID from `docs/testing/contract-test-matrix.md`; the expected DB/UI/failure result is the linked Scenario Matrix row, while the remaining columns make the fixture, executable symbol, platform, status, and evidence explicit. `legacy-baseline` rows are intentionally retained Electron evidence and are not a claim that Electron remains required for the native routine loop.
 
+## Continuous core rebuild CI (#46)
+
+`.github/workflows/rebuild-ci.yml` is the authoritative continuous Ubuntu PR enforcement for the core Rust and desktop rebuild commands listed in `docs/gates.md` (fmt, clippy, workspace tests, `test-faults`, `test-leases` Sync suite, and desktop typecheck/lint/format/test/frontend build). It does **not** replace Linux package smoke (`linux-package-smoke.yml`), RustSec advisory scan (`rust-audit.yml`), macOS packaging, full-scale benchmarks, real packaged provider roots, human assistive-technology observation, signing/notarization, Windows, Electron retirement, or merge/close of #17 / #38.
+
+Authoritative Actions run ID: `REPLACE_AFTER_PUSH` — placeholder until the first green PR or `workflow_dispatch` run is linked after push. Scenario rows below keep their existing per-symbol evidence; this section only records the continuous gate surface.
+
 
 | Scenario ID | Owning spec clause | Contract family / seam | Fixture | Executable test symbol | Expected result | Durable + Activity effect | Supported platforms | Status | Last evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
