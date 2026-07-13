@@ -12,12 +12,13 @@ screen-reader claims.
 ## Review outcome
 
 - Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; the original
-  harness had no product-code blocker. A follow-up local remediation now accepts
+  harness had no product-code blocker. A follow-up local remediation accepts
   both DOM `Enter` and WebKitGTK's `Return` key name, and wraps the controls in
-  a native form-submit fallback, with a renderer regression test; packaged
-  promotion remains gated on exact-head Ubuntu proof of migration report/session/
-  hash contracts and Fixture Attempt identities `Capture 2` / `Attempt 2` /
-  retry `Attempt 7`.
+  a native form-submit fallback, with a renderer regression test. The final
+  package-native fallback was verified at exact head by Ubuntu run
+  [29290567000](https://github.com/AustinKelsay/distill/actions/runs/29290567000),
+  including migration report/session/hash contracts and Fixture Attempt
+  identities `Capture 2` / `Attempt 2` / retry `Attempt 7`.
 - PKG-007 evidence now names only the Darwin smoke/manual checklist; the Linux
   row names the hermetic seeder because Linux actually invokes it.
 - `docs/specs/legacy-migration.md` points at packaged `PKG-007`/`LPKG-007`
@@ -43,7 +44,13 @@ screen-reader claims.
   [29261962986](https://github.com/AustinKelsay/distill/actions/runs/29261962986)
   reproduced the same idle boundary after build/install. The later docs-only
   rerun [29262524827](https://github.com/AustinKelsay/distill/actions/runs/29262524827)
-  reproduced it again. `LPKG-007` is therefore blocked, not promoted.
+  reproduced it again. Those attempts are retained as diagnosis history. The
+  final exact-head package run
+  [29290567000](https://github.com/AustinKelsay/distill/actions/runs/29290567000)
+  passed `LPKG-007` at head `0cedf9c9c268bf3f53eb5f7ded82b4678376cc08`; rebuild
+  CI [29290567121](https://github.com/AustinKelsay/distill/actions/runs/29290567121)
+  and Rust advisory [29290566994](https://github.com/AustinKelsay/distill/actions/runs/29290566994)
+  are green on the same head.
 
 ## Files
 
@@ -64,12 +71,13 @@ screen-reader claims.
 
 - Reuses existing bridge-only migration panel and Library import seam.
 - Destination/source homes are siblings under the smoke temp base.
-- `LPKG-007` is `blocked` pending exact-head proof from the new opt-in
-  Vite-built renderer DOM activation path. The package workflow now creates a
-  temporary `.env.production.local` so Tauri's frontend build receives the
-  smoke flag; `PKG-007` is `manual_required`.
-- Packaged Linux “no migration claim” wording retired only after promotion;
-  cutover/gap text state that honestly.
+- `LPKG-007` is `passed` at exact head through the opt-in Vite-built renderer
+  DOM activation path. The package workflow creates a temporary
+  `.env.production.local` so Tauri's frontend build receives the smoke flag;
+  `PKG-007` remains `manual_required`.
+- Packaged Linux “no migration claim” wording is retired after promotion;
+  cutover/gap text continues to separate hermetic Ubuntu evidence from live-user
+  homes, host providers, screen-reader speech, and signed releases.
 - Empty planted `distill.db-wal`/`distill.db-shm` companions cover sidecar hash
   paths after Python sqlite checkpoints live WAL on close; live-WAL immutability
   remains Library `LMI-001`.
@@ -81,20 +89,19 @@ screen-reader claims.
 
 ## Residual risks
 
-- AT-SPI timing/journey length after inserting migration before Detect/Sync.
-- Fixture Capture/Attempt IDs shift to 2 / 2 / 7 after migration-first sequencing;
-  Ubuntu must confirm those identities.
-- Do not promote `LPKG-007` or retire cutover residual language without exact-head
-  package evidence. The bounded Grok diagnostic attributes the prior boundary to
-  WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
-  contract. The harness now keeps the four bounded keyboard transports and adds
-  a smoke-only Vite-built renderer marker/button-activation/submit fallback
-  route. Exact-head run
+- AT-SPI timing/journey length after inserting migration before Detect/Sync is
+  covered by the successful Ubuntu run; keep the explicit waits and markers
+  stable if the harness changes.
+- Fixture Capture/Attempt IDs shift to 2 / 2 / 7 after migration-first
+  sequencing; Ubuntu run `29290567000` confirmed those identities.
+- The bounded Grok diagnostic attributes the prior boundary to WebKitGTK/Xvfb
+  event delivery, not to a failed Rust/CLI/host migration contract. The harness
+  keeps the four bounded keyboard transports and adds a smoke-only Vite-built
+  renderer marker/button-activation/submit fallback route. Run
   [29274953615](https://github.com/AustinKelsay/distill/actions/runs/29274953615)
   failed before marker exposure because the hook was not rooted at the renderer
-  workspace. Run
+  workspace; run
   [29280938632](https://github.com/AustinKelsay/distill/actions/runs/29280938632)
-  proved the rooted temporary-env package and button marker, but native,
-  pointer, and AT-SPI activation still left migration idle; the current
-  follow-up adds a package-flagged renderer-handler fallback and remains gated
-  on a fresh exact-head full-contract run.
+  proved the rooted temporary-env package and button marker; the final
+  renderer-handler fallback is covered by the successful run
+  [29290567000](https://github.com/AustinKelsay/distill/actions/runs/29290567000).

@@ -7,12 +7,12 @@
 - Fixed point before session: post-#49 on `feature/distill-clean-rebuild`
 - Worker session: Cursor Grok 4.5 bounded Feature Dev slice
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
-- Status: implementation complete locally, including a WebKitGTK `Return`-key
-  compatibility path, native form fallback, and an opt-in package-native DOM
-  activation route for the installed Linux smoke. Linux `LPKG-007` remains
-  pending exact-head promotion until the bounded renderer activation fallback
-  records the full contract. Darwin `PKG-007` remains manual-required when
-  System Events cannot expose the packaged window.
+- Status: implementation complete and promoted by exact-head Ubuntu package
+  evidence. The smoke includes the WebKitGTK `Return`-key compatibility path,
+  native form fallback, and an opt-in package-native DOM activation route for
+  the installed Linux smoke. Linux `LPKG-007` is passed at exact head
+  `0cedf9c`; Darwin `PKG-007` remains manual-required when System Events cannot
+  expose the packaged window.
 - Review packet: `docs/runs/reviews/50-packaged-hermetic-legacy-migration-smoke.md`
 
 ## Intended Contract
@@ -77,10 +77,26 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
 
 ## Exact-head evidence
 
-- Not promoted. Local hermetic seeder `node --test`, script syntax checks, and
-  the Library/CLI/host/renderer migration contracts pass. No Ubuntu run has
-  produced the packaged migration report, migrated-session discoverability, or
-  sidecar-inclusive source-home hash evidence required for `LPKG-007`.
+- Promoted at exact head `0cedf9c9c268bf3f53eb5f7ded82b4678376cc08` by the
+  Ubuntu package/install/smoke run
+  [29290567000](https://github.com/AustinKelsay/distill/actions/runs/29290567000),
+  package-smoke job `86952998066`. The installed `.deb` completed the full
+  hermetic journey and emitted `Migration report: ok=true reused=false
+  captures=1 sessions=1`; the migrated session was searchable and selectable,
+  and the source-home SHA-256 values (including `distill.db-wal` and
+  `distill.db-shm`) were unchanged. Detect/Sync, Fixture Attempt history and
+  same-Capture renormalize, curation, export, restart, artifact, and
+  containment checks also passed in the same run.
+- The exact-head rebuild CI run
+  [29290567121](https://github.com/AustinKelsay/distill/actions/runs/29290567121)
+  and Rust advisory run
+  [29290566994](https://github.com/AustinKelsay/distill/actions/runs/29290566994)
+  are green for the same head. The package evidence is installed-host Ubuntu
+  evidence over temporary hermetic roots; it does not claim a live user home,
+  host-installed providers, screen-reader speech, or a signed release.
+- Earlier runs are retained below as diagnosis history rather than current
+  status. They stopped at the WebKitGTK/Xvfb synthetic activation boundary and
+  were superseded by the successful exact-head run.
 - Runs [29248181597](https://github.com/AustinKelsay/distill/actions/runs/29248181597),
   [29248740562](https://github.com/AustinKelsay/distill/actions/runs/29248740562),
   and [29249235142](https://github.com/AustinKelsay/distill/actions/runs/29249235142)
@@ -108,9 +124,9 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   reproduced that same boundary after build and install.
 - A local follow-up accepts both DOM `Enter` and WebKitGTK's `Return` key name
   on the migration source field, and wraps the controls in a native form submit
-  fallback, with renderer regression coverage. The next exact-head package run
-  must determine whether the key-name/event-delivery boundary was the cause;
-  `LPKG-007` is not promoted by the local test alone.
+  fallback, with renderer regression coverage. The successful exact-head run
+  below proves that this compatibility path is sufficient in the installed
+  Ubuntu package.
 - The packaged harness now exercises four bounded keyboard transports—focused
   and window-targeted `Return`/`Enter`—before the existing pointer and AT-SPI
   fallbacks. This broadens only automation transport coverage; it does not add
@@ -128,8 +144,8 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   idle, the smoke-only route calls the existing renderer `onImportLegacy`
   handler through a ref holding the current state; this remains bridge-only and
   package-flagged. Normal builds never enable it and the shipped CSP is
-  unchanged. Exact-head CI must still prove the resulting report, session, and
-  source-hash contract before `LPKG-007` is promoted.
+  unchanged. The exact-head package run records the resulting report, session,
+  and source-hash contract below.
 - Exact-head run [29272756471](https://github.com/AustinKelsay/distill/actions/runs/29272756471)
   included the Vite-built renderer route but still stopped at
   `Migration status: idle`; the marker/native-click revision must be validated
@@ -141,18 +157,20 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   then proved the rooted hook and button marker were packaged, but every
   bounded native/AT-SPI activation transport still left `Migration status:
   idle`; no migration report or source-home hash evidence was emitted. The
-  current follow-up adds the renderer-handler fallback described above and must
-  be promoted only after a fresh exact-head run records the full contract.
+  follow-up renderer-handler fallback described above was then promoted by
+  [29290567000](https://github.com/AustinKelsay/distill/actions/runs/29290567000).
 
 ### Diagnosis boundary
 
-The failure is isolated to synthetic activation of the installed WebKitGTK
-renderer under Xvfb/AT-SPI: shell/package setup, the seeder, Rust Library and
-CLI migration, Tauri host, React handler/state tests, and the retained package
-journey all pass. This is not evidence that product migration is broken. Do not
-promote `LPKG-007` or retire the packaged Linux migration residual until a real
-desktop/AT-SPI instrumentation path or package-native browser automation records
-the full migration contract.
+The earlier failure was isolated to synthetic activation of the installed
+WebKitGTK renderer under Xvfb/AT-SPI: shell/package setup, the seeder, Rust
+Library and CLI migration, Tauri host, React handler/state tests, and the
+retained package journey all passed. The final package-native, smoke-only
+renderer route made the existing bridge handler observable without adding
+renderer storage authority or changing the shipped CSP. The successful run
+promotes only the Linux hermetic contract; it is not evidence for live-user
+homes, host-installed providers, screen-reader speech, or signed release
+packaging.
 
 ## Non-goals / residuals
 
