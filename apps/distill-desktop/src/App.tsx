@@ -1305,6 +1305,10 @@ export function App({ bridge }: AppProps) {
               ? ` · Migration activation: ${smokeMigrationActivation}`
               : ""
           }${
+            import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1" && migrationReport
+              ? ` · Migration report: ok=${String(migrationReport.ok)} reused=${String(migrationReport.reused_prior_import)} captures=${migrationReport.counts.captures} sessions=${migrationReport.counts.sessions}`
+              : ""
+          }${
             import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1" && migrationError
               ? ` · Migration error: ${migrationError.code} ${migrationError.message} · source: ${legacySourceHome} · destination: ${home}`
               : ""

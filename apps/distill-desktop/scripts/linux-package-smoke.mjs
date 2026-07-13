@@ -468,12 +468,11 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     // idle` even after the bridge returns. The bridge-success marker is set
     // only from an `ok` report with no skips, and the following report/session
     // assertions provide the durable packaged evidence.
-    await waitForAccessibleText("ok: true", true);
-    await waitForAccessibleText("reused: false", true);
-    await waitForAccessibleText(
-      `captures: ${legacy.expectedCaptures} · sessions: ${legacy.expectedSessions}`,
-      true,
-    );
+    const migrationReport = await waitForAccessibleText("Migration report: ", true, 10);
+    const expectedMigrationReport = `Migration report: ok=true reused=false captures=${legacy.expectedCaptures} sessions=${legacy.expectedSessions}`;
+    if (!migrationReport.name.includes(expectedMigrationReport)) {
+      fail(`packaged migration report did not match: ${migrationReport.name}`);
+    }
     await waitForFile(path.join(home, "distill.db"));
     // Migrated Session must be discoverable before hermetic Detect/Sync clutter.
     await clickAccessible(windowId, "Load sessions");
