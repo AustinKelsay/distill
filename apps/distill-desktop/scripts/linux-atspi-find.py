@@ -33,19 +33,33 @@ def descendants(node):
             yield from descendants(child)
 
 
+def candidate_values(node):
+    """Return the accessible name and any exposed AT-SPI text content."""
+    values = []
+    try:
+        values.append(node.get_name() or "")
+    except Exception:
+        pass
+    try:
+        text = node.get_text_iface()
+        if text is not None:
+            count = text.get_character_count()
+            if count > 0:
+                values.append(text.get_text(0, count) or "")
+    except Exception:
+        pass
+    return tuple(value for value in values if value)
+
+
 def find_named(name, contains, deadline):
     while time.monotonic() < deadline:
         desktop = Atspi.get_desktop(0)
         for node in descendants(desktop):
             try:
-                candidate_name = node.get_name() or ""
-                matches = name in candidate_name if contains else candidate_name == name
-                if not matches:
-                    continue
-                return {
-                    "name": candidate_name,
-                    "role": node.get_role_name(),
-                }
+                for candidate in candidate_values(node):
+                    matches = name in candidate if contains else candidate == name
+                    if matches:
+                        return {"name": candidate, "role": node.get_role_name()}
             except Exception:
                 continue
         time.sleep(0.25)
