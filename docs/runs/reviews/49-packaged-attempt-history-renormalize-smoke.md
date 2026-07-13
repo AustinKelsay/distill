@@ -26,15 +26,16 @@ The independent Grok review initially returned `STANDARDS_STATUS: fail` and
 `SPEC_STATUS: fail` for four bounded findings:
 
 1. The Linux smoke asserted parser text and `attempt 2` but not the discovered
-   Capture id, initial `#1` outcome, or Capture/outcome on the retry report.
+   Capture id, initial `#4` outcome, or Capture/outcome on the retry report.
 2. This review packet was referenced before it existed.
 3. macOS still described Attempt-history/renormalize as a non-goal despite the
    new `PKG-006` manual-required row.
 4. The cutover sentence sounded green while `LPKG-006` was still pending exact-
    head Ubuntu evidence.
 
-Codex remediation adds AT-SPI waits for `Capture 1`, `#1`, `succeeded`, the
-same Capture id on the retry report, `attempt 2`, and `#2`; adds the explicit
+Codex remediation adds AT-SPI waits for the deterministic Fixture `Capture 4`,
+`#4`, `succeeded`, the same Capture id on the retry report, `attempt 6`, and
+`#6`; adds the explicit
 Darwin manual checklist; retires macOS non-goal wording; and softens the
 cutover language until exact-head evidence is green.
 

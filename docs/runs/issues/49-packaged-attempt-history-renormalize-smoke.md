@@ -68,9 +68,9 @@ remain recorded rather than counted as Attempt evidence.
 
 When System Events exposes the packaged window, complete the retained Fixture
 search/detail journey, activate `Load Attempt history`, and verify the visible
-status includes a discovered Capture id plus the initial `#1` Attempt with
-`fixture/1.0.0` and its outcome. Activate `Renormalize Capture` and verify the
-same Capture id, `attempt 2`, parser id/version, and outcome appear in the
+status includes the discovered Fixture Capture id plus its initial `#4` Attempt with
+  `fixture/1.0.0` and its outcome. Activate `Renormalize Capture` and verify the
+  same Capture id, `attempt 6`, parser id/version, and outcome appear in the
 report/list. Confirm the existing curation/export/restart/Fixture-root checks
 still pass. Record `manual_required` rather than `passed` if AX cannot expose
 the window; this checklist does not claim VoiceOver speech.

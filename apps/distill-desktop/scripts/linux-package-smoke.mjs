@@ -378,15 +378,15 @@ async function runUiJourney(binary, home, roots) {
     // Distill-owned retry report without parser-version or provider-root controls.
     await activateAccessible(windowId, "Load Attempt history");
     await waitForAccessibleText("Attempt history status: ready", true);
-    await waitForAccessibleText("Capture 1", true);
-    await waitForAccessibleText("#1", true);
+    await waitForAccessibleText(`Capture ${fixtureCaptureId}`, true);
+    await waitForAccessibleText(`#${fixtureInitialAttemptId}`, true);
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
     await activateAccessible(windowId, "Renormalize Capture");
     await waitForAccessibleText("Renormalize: ready", true);
-    await waitForAccessibleText("Capture 1", true);
-    await waitForAccessibleText("attempt 2", true);
-    await waitForAccessibleText("#2", true);
+    await waitForAccessibleText(`Capture ${fixtureCaptureId}`, true);
+    await waitForAccessibleText(`attempt ${fixtureRetryAttemptId}`, true);
+    await waitForAccessibleText(`#${fixtureRetryAttemptId}`, true);
     await waitForAccessibleText("fixture/1.0.0", true);
     await waitForAccessibleText("succeeded", true);
 
@@ -448,6 +448,12 @@ if (JSON.stringify(capability.permissions) !== JSON.stringify(["core:event:defau
 const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-linux-smoke-"));
 const home = path.join(base, "home");
 const sessionTitle = "Linux Package Smoke";
+// Enabled Source preferences are returned in stable lexical order, so the
+// hermetic Fixture is the fourth accepted Capture/Attempt and renormalize
+// appends the sixth Attempt after the five-source Sync Run.
+const fixtureCaptureId = 4;
+const fixtureInitialAttemptId = 4;
+const fixtureRetryAttemptId = 6;
 const roots = await seedHermeticMultisourceRoots(base, {
   fixtureSessionTitle: sessionTitle,
   fixtureExternalSessionId: "linux-package-smoke",
