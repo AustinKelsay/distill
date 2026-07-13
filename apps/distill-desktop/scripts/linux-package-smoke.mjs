@@ -418,7 +418,7 @@ async function runUiJourney(binary, home, roots) {
     ) {
       fail(`attempt-history: unexpected retry report ${retryReport.name}`);
     }
-    const retryAttempt = await waitForAccessibleText("Attempt #", true);
+    const retryAttempt = await waitForAccessibleText(`#${fixtureRetryAttemptId}`, true);
     if (!retryAttempt.name.includes(`#${fixtureRetryAttemptId}`)) {
       fail(`attempt-history: unexpected retry attempt ${retryAttempt.name}`);
     }
