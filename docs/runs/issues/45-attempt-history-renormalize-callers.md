@@ -7,7 +7,7 @@
 - Fixed point before session: `d93eb66`
 - Worker session: Grok 4.5 High bounded implementation; Codex integration and remediation
 - Commit: `a58449c`
-- Status: Local implementation and review complete; final-head CI pending
+- Status: Complete — local implementation, review, and exact implementation-head CI green; staging handoff remains
 - Review packet: `docs/runs/reviews/45-attempt-history-renormalize-callers.md`
 
 ## Intended Contract
@@ -43,8 +43,8 @@ requests are invalidated when the selected Session or explorer is reset.
   gates; desktop typecheck/lint/format/frontend build.
 - Independent Grok standards/spec review against Matt Pocock skills v1.1 and
   the Plebdev Feature Dev loop; local CodeRabbit attempt with Grok fallback.
-- Final pushed-head Linux package/smoke and Rust advisory CI before closing the
-  issue and marking evidence rows passed.
+- Exact implementation-head Linux package/smoke and Rust advisory CI before
+  closing the issue and marking evidence rows passed.
 
 ## Evidence Symbols
 
@@ -56,6 +56,11 @@ requests are invalidated when the selected Session or explorer is reset.
 - `App.test.tsx::ignores Attempt results when the selected Session changes mid-flight`
 - `App.states.test.tsx::renders Attempt history and failed renormalize warning states`
 - Matrix/evidence IDs: `TCC-006`, `TCC-007`, `THC-005`, `THC-006`, `TRC-005`
+
+## Final-head CI
+
+- Linux package/install/smoke: [run 29222714955](https://github.com/AustinKelsay/distill/actions/runs/29222714955) — passed on implementation closeout head `afcd4a7`.
+- Rust advisory scan: [run 29222714957](https://github.com/AustinKelsay/distill/actions/runs/29222714957) — passed on implementation closeout head `afcd4a7`.
 
 ## Local Verification
 

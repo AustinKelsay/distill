@@ -60,9 +60,7 @@ FINDINGS: none after remediation
 
 ## Explicit residuals
 
-- Final pushed-head Linux package/install/smoke and Rust advisory CI are still
-  required before closing #45 and changing the five new evidence rows to
-  passed.
+- Exact implementation-head Linux package/install/smoke [run 29222714955](https://github.com/AustinKelsay/distill/actions/runs/29222714955) and Rust advisory [run 29222714957](https://github.com/AustinKelsay/distill/actions/runs/29222714957) passed on `afcd4a7`; subsequent closeout commits are documentation-only.
 - Packaged real-provider machine roots are not claimed; caller journeys use
   hermetic roots and a local OpenCode fake.
 - VoiceOver/Narrator speech, Developer ID signing/notarization/stapling,
