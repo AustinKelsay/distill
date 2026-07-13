@@ -1068,6 +1068,9 @@ export function App({ bridge }: AppProps) {
           type="button"
           onClick={onStartSync}
           disabled={!home.trim() || status === "running"}
+          aria-label={
+            status === "idle" ? "Start Sync Run" : `Start Sync Run — Status: ${status}`
+          }
         >
           Start Sync Run
         </button>

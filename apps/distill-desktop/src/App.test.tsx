@@ -929,6 +929,9 @@ describe("first-run Fixture UI", () => {
     await waitFor(() => {
       expect(screen.getByTestId("session-explorer-status")).toHaveTextContent("warning");
     });
+    expect(screen.getByRole("button", { name: /Start Sync Run/ })).toHaveAccessibleName(
+      "Start Sync Run — Status: warning",
+    );
   });
 
   it("renders typed error state from the bridge", async () => {
