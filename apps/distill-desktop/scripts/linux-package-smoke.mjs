@@ -192,7 +192,7 @@ async function clickAccessible(windowId, name, contains = false) {
     String(Math.round(bounds.x + bounds.width / 2)),
     String(Math.round(bounds.y + bounds.height / 2)),
   ]);
-  await xdotool(["click", "--window", windowId, "1"]);
+  await xdotool(["click", "1"]);
 }
 
 async function activateAccessible(windowId, name, contains = false) {
@@ -249,7 +249,7 @@ async function typeIntoFocusedAccessible(windowId, name, value, delay = 1) {
 }
 
 async function focusedKey(value) {
-  await xdotool(["key", value]);
+  await xdotool(["key", "--clearmodifiers", value]);
 }
 
 /**
