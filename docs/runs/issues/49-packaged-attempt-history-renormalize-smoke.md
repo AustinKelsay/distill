@@ -53,6 +53,13 @@ retirement.
   `LPKG-006` only after the packaged journey reaches the retry report and the
   retained export/restart/containment checks.
 
+The first exact-head Ubuntu run built and installed the package but exposed a
+pre-existing packaged caller race: after the redaction probe, Sync observed the
+stale missing-Codex root (`invalid_configured_root`). The harness now waits for
+the corrected draft to settle, re-runs Detect, and requires `codex: ok` before
+starting Sync. The failure remains recorded rather than counted as Attempt
+evidence.
+
 ## Darwin `PKG-006` manual checklist
 
 When System Events exposes the packaged window, complete the retained Fixture

@@ -38,6 +38,11 @@ same Capture id on the retry report, `attempt 2`, and `#2`; adds the explicit
 Darwin manual checklist; retires macOS non-goal wording; and softens the
 cutover language until exact-head evidence is green.
 
+The first exact-head Ubuntu package run then failed before the new slice at
+`invalid_configured_root`: the corrected Codex input had not settled before
+Sync. The smoke now re-runs Detect after the correction and requires
+`codex: ok`, making the durable preference boundary observable before Sync.
+
 ## Verification evidence
 
 - `node --check apps/distill-desktop/scripts/linux-package-smoke.mjs` — passed.
@@ -46,7 +51,9 @@ cutover language until exact-head evidence is green.
   build passed.
 - CodeRabbit was attempted on unstaged changes, reached summarization, and was
   bounded/terminated without findings; a post-remediation retry was rate-limited
-  (`waitTime: 51 seconds`), so Grok is the recorded fallback.
+  (`waitTime: 51 seconds`), and the final script-only retry completed with 0
+  findings. Grok's rereview returned `STANDARDS_STATUS: pass` and
+  `SPEC_STATUS: pass`.
 - Exact-head Ubuntu package/install/smoke and Rust advisory/rebuild checks are
   pending and required to promote `LPKG-006`.
 
