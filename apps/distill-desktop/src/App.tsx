@@ -1246,9 +1246,15 @@ export function App({ bridge }: AppProps) {
           ref={importLegacyRef}
           type="submit"
           data-testid="migration-run"
-          aria-label={
-            legacySourceHome.trim() ? "Import legacy home (ready)" : "Import legacy home"
-          }
+          aria-label={`${
+            home.trim() && legacySourceHome.trim()
+              ? "Import legacy home (ready)"
+              : "Import legacy home"
+          }${
+            import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1"
+              ? " · Migration automation: enabled"
+              : ""
+          }`}
           disabled={migrationStatus === "loading"}
         >
           {migrationStatus === "loading" ? "Importing…" : "Import legacy home"}

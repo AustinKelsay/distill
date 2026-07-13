@@ -394,8 +394,13 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     await sleep(750);
     // The migration panel is below the initial viewport; its AT-SPI text is
     // reliably exposed after the focused-input helper scrolls it into view.
-    await waitForAccessibleText("Migration automation: enabled", true, 10);
-    await waitForAccessibleText("Import legacy home (ready)", false, 10);
+    // The marker is included in the button accessible name because WebKitGTK
+    // may flatten the live region to only its current status text.
+    await waitForAccessibleText(
+      "Import legacy home (ready) · Migration automation: enabled",
+      true,
+      10,
+    );
     // Stay on the input first: App handles Enter/Return using the native value,
     // and the migration form also provides a browser-native submit fallback.
     // WebKitGTK/Xvfb has exposed several distinct XTEST transport paths across
