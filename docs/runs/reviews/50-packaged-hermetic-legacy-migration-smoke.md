@@ -13,10 +13,11 @@ screen-reader claims.
 
 - Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; the original
   harness had no product-code blocker. A follow-up local remediation now accepts
-  both DOM `Enter` and WebKitGTK's `Return` key name, with a renderer regression
-  test; packaged promotion remains gated on exact-head Ubuntu proof of migration
-  report/session/hash contracts and Fixture Attempt identities `Capture 2` /
-  `Attempt 2` / retry `Attempt 7`.
+  both DOM `Enter` and WebKitGTK's `Return` key name, and wraps the controls in
+  a native form-submit fallback, with a renderer regression test; packaged
+  promotion remains gated on exact-head Ubuntu proof of migration report/session/
+  hash contracts and Fixture Attempt identities `Capture 2` / `Attempt 2` /
+  retry `Attempt 7`.
 - PKG-007 evidence now names only the Darwin smoke/manual checklist; the Linux
   row names the hermetic seeder because Linux actually invokes it.
 - `docs/specs/legacy-migration.md` points at packaged `PKG-007`/`LPKG-007`

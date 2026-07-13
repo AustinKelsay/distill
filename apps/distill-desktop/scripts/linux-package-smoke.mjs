@@ -393,8 +393,8 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     );
     await sleep(750);
     await waitForAccessibleText("Import legacy home (ready)", false, 10);
-    // Stay on the input: App handles Enter using the native value, avoiding
-    // WebKitGTK's unreliable synthetic button click path under Xvfb.
+    // Stay on the input: App handles Enter/Return using the native value, and
+    // the migration form also provides a browser-native submit fallback.
     await focusedKey("Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);

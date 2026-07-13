@@ -8,8 +8,8 @@ process, or database authority.
 
 - Search and workflow-lane controls submit through a native form and remain usable with
   Enter. The standalone legacy-migration source field accepts both the standard DOM
-  `Enter` key and WebKitGTK's `Return` key name so packaged keyboard automation and
-  desktop keyboard paths invoke the same migration action.
+  `Enter` key and WebKitGTK's `Return` key name; the controls are also a native form
+  submit so browser keyboard handling reaches the same migration action.
 - Session rows, curation labels, tag add/remove actions, dialogs, Sync Run cancellation,
   and export cancellation are native keyboard controls.
 - A pending request exposes an explicit Cancel action. Cancellation invalidates the

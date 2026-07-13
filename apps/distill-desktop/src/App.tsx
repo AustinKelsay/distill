@@ -1157,16 +1157,24 @@ export function App({ bridge }: AppProps) {
         />
       </section>
 
-      <section
+      <form
         className="form"
         aria-label="Legacy Electron migration"
         aria-busy={migrationBusy}
         data-testid="migration-panel"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const source = event.currentTarget.elements.namedItem("legacy-source-home");
+          const sourceHome =
+            source instanceof HTMLInputElement ? source.value : legacySourceHome;
+          void onImportLegacy(sourceHome);
+        }}
       >
         <h2>Legacy migration</h2>
         <label htmlFor="legacy-source-home">Legacy Electron home</label>
         <input
           id="legacy-source-home"
+          name="legacy-source-home"
           value={legacySourceHome}
           onChange={(event) => setLegacySourceHome(event.target.value)}
           onKeyDown={(event) => {
@@ -1185,12 +1193,11 @@ export function App({ bridge }: AppProps) {
         />
         <button
           ref={importLegacyRef}
-          type="button"
+          type="submit"
           data-testid="migration-run"
           aria-label={
             legacySourceHome.trim() ? "Import legacy home (ready)" : "Import legacy home"
           }
-          onClick={() => void onImportLegacy()}
           disabled={migrationStatus === "loading"}
         >
           {migrationStatus === "loading" ? "Importing…" : "Import legacy home"}
@@ -1223,7 +1230,7 @@ export function App({ bridge }: AppProps) {
             </p>
           </div>
         ) : null}
-      </section>
+      </form>
 
       <section
         className="form"

@@ -106,9 +106,10 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   [29262524827](https://github.com/AustinKelsay/distill/actions/runs/29262524827)
   reproduced that same boundary after build and install.
 - A local follow-up accepts both DOM `Enter` and WebKitGTK's `Return` key name
-  on the migration source field, with a renderer regression test. The next
-  exact-head package run must determine whether the key-name mismatch was the
-  activation boundary; `LPKG-007` is not promoted by the local test alone.
+  on the migration source field, and wraps the controls in a native form submit
+  fallback, with renderer regression coverage. The next exact-head package run
+  must determine whether the key-name/event-delivery boundary was the cause;
+  `LPKG-007` is not promoted by the local test alone.
 
 ### Diagnosis boundary
 
