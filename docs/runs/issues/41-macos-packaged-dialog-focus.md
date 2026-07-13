@@ -6,7 +6,7 @@
 - Fixed point before session: `6a35d60`
 - Worker session: Grok 4.5 xhigh bounded implementation pass
 - Commit: `aeb4ea8`
-- Status: Complete — implementation, fresh package rebuild, local gates, and two-axis review pass; PR/CI closeout remains
+- Status: Complete — implementation, fresh package rebuild, local gates, two-axis review, and final-head PR checks pass; parent staging handoff remains
 - Review packet: `docs/runs/reviews/41-macos-packaged-dialog-focus.md`
 
 ## Intended Contract
@@ -40,7 +40,8 @@
 - `PATH=/opt/homebrew/Cellar/node/26.0.0/bin:$PATH npm test` — 104/104 passed;
   `npm run desktop:typecheck`, `desktop:lint`, and `desktop:frontend:build` passed;
   `cargo fmt --all -- --check` and `cargo tree --workspace --locked` passed.
-- Final two-axis review and commit/CI closeout remain pending.
+- Final two-axis review passed; PR #38 final-head Linux package/install/smoke `29215914811`
+  and Rust advisory `29215914787` are green.
 
 ## Remaining Scope
 
