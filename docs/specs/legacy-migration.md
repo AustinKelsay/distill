@@ -26,4 +26,4 @@ Report counters count rows created by this import (not descriptors merely reused
 
 ## Contract evidence
 
-The executable contract suite is `crates/distill-library/tests/library_legacy_import.rs`; CLI and Tauri host seams have corresponding tests. It covers representative mapping/search/curation/activity/export behavior, WAL-home immutability, path relationship rejection, same-fingerprint idempotency, redaction, and interrupted CAS cleanup.
+The executable contract suite is `crates/distill-library/tests/library_legacy_import.rs`; CLI and Tauri host seams have corresponding tests. It covers representative mapping/search/curation/activity/export behavior, WAL-home immutability, path relationship rejection, same-fingerprint idempotency, redaction, and interrupted CAS cleanup. Packaged caller evidence is tracked separately in `PKG-007`/`LPKG-007`: the Darwin row is manual-required when AX cannot expose the window, while the Linux row promotes only after exact-head AT-SPI smoke evidence over a temporary synthetic legacy home.

@@ -8,7 +8,9 @@
  * chosen-home, export, restart, and Fixture-containment contracts as macOS.
  * It also probes repair-dialog focus containment via AT-SPI (not screen-reader conformance)
  * and drives hermetic multi-Source Detect Sources + Start Sync Run before the Fixture
- * search/detail/Attempt-history/renormalize/curation/export journey.
+ * search/detail/Attempt-history/renormalize/curation/export journey. It also drives the
+ * existing bridge-only Legacy Electron migration panel over a temporary synthetic
+ * Electron home (host/CLI fixture shape) before Detect/Sync.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -18,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { seedHermeticLegacyHome } from "./packaged-hermetic-legacy-home.mjs";
 import {
   DETECT_SIBLING_SECRET,
   hermeticSourceRoots,
@@ -332,7 +335,16 @@ async function waitForFile(filePath) {
   fail(`expected packaged artifact did not appear: ${path.basename(filePath)}`);
 }
 
-async function runUiJourney(binary, home, roots) {
+/**
+ * Drive the installed-host UI journey including hermetic legacy migration.
+ *
+ * @param {string} binary - installed distill-desktop path
+ * @param {string} home - chosen native Distill home
+ * @param {import("./packaged-hermetic-multisource.mjs").HermeticMultisourceRoots} roots
+ * @param {import("./packaged-hermetic-legacy-home.mjs").HermeticLegacyHome} legacy
+ * @param {{ fixtureCaptureId: number, fixtureInitialAttemptId: number, fixtureRetryAttemptId: number }} attemptIds
+ */
+async function runUiJourney(binary, home, roots, legacy, attemptIds) {
   const processHandle = launch(binary, "initial");
   try {
     const windowId = await waitForWindow(processHandle, "initial");
@@ -346,6 +358,26 @@ async function runUiJourney(binary, home, roots) {
     await assertDialogHasFocusedDescendant("Confirm destructive repair");
     await key(windowId, "Escape");
     await assertAccessibleFocused("Repair library");
+
+    // Hermetic legacy Electron-home import through the existing bridge-only panel.
+    // Destination and source are siblings under the smoke base (not ancestor/alias).
+    await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 20);
+    await clickAccessible(windowId, "Import legacy home");
+    await waitForAccessibleText("Migration status: success", true);
+    await waitForAccessibleText("ok: true", true);
+    await waitForAccessibleText("reused: false", true);
+    await waitForAccessibleText(
+      `captures: ${legacy.expectedCaptures} · sessions: ${legacy.expectedSessions}`,
+      true,
+    );
+    await waitForFile(path.join(home, "distill.db"));
+    // Migrated Session must be discoverable before hermetic Detect/Sync clutter.
+    await clickAccessible(windowId, "Load sessions");
+    await typeIntoAccessible(windowId, "Search sessions", legacy.searchQuery);
+    await key(windowId, "Enter");
+    await activateAccessible(windowId, legacy.sessionTitle, true);
+    await clickAccessible(windowId, legacy.sessionTitle, true);
+    await waitForAccessibleText(legacy.sessionTitle, true);
 
     // Hermetic multi-Source Detect: missing Codex sibling must warn without leaking the secret.
     await configureSourceDraft(windowId, "codex", roots.missingSiblingRoot);
@@ -397,11 +429,11 @@ async function runUiJourney(binary, home, roots) {
       "Attempt history status: ready",
       true,
     );
-    if (!attemptStatus.name.includes(`Capture ${fixtureCaptureId}`)) {
+    if (!attemptStatus.name.includes(`Capture ${attemptIds.fixtureCaptureId}`)) {
       fail(`attempt-history: unexpected status identity ${attemptStatus.name}`);
     }
     const initialAttempt = await waitForAccessibleText("Attempt #", true);
-    if (!initialAttempt.name.includes(`#${fixtureInitialAttemptId}`)) {
+    if (!initialAttempt.name.includes(`#${attemptIds.fixtureInitialAttemptId}`)) {
       fail(`attempt-history: unexpected initial attempt ${initialAttempt.name}`);
     }
     await waitForAccessibleText("fixture/1.0.0", true);
@@ -413,13 +445,16 @@ async function runUiJourney(binary, home, roots) {
     }
     const retryReport = await waitForAccessibleText("attempt ", true);
     if (
-      !retryReport.name.includes(`Capture ${fixtureCaptureId}`) ||
-      !retryReport.name.includes(`attempt ${fixtureRetryAttemptId}`)
+      !retryReport.name.includes(`Capture ${attemptIds.fixtureCaptureId}`) ||
+      !retryReport.name.includes(`attempt ${attemptIds.fixtureRetryAttemptId}`)
     ) {
       fail(`attempt-history: unexpected retry report ${retryReport.name}`);
     }
-    const retryAttempt = await waitForAccessibleText(`#${fixtureRetryAttemptId}`, true);
-    if (!retryAttempt.name.includes(`#${fixtureRetryAttemptId}`)) {
+    const retryAttempt = await waitForAccessibleText(
+      `#${attemptIds.fixtureRetryAttemptId}`,
+      true,
+    );
+    if (!retryAttempt.name.includes(`#${attemptIds.fixtureRetryAttemptId}`)) {
       fail(`attempt-history: unexpected retry attempt ${retryAttempt.name}`);
     }
     await waitForAccessibleText("fixture/1.0.0", true);
@@ -483,15 +518,22 @@ if (JSON.stringify(capability.permissions) !== JSON.stringify(["core:event:defau
 const base = await fs.mkdtemp(path.join(os.tmpdir(), "distill-linux-smoke-"));
 const home = path.join(base, "home");
 const sessionTitle = "Linux Package Smoke";
-// The renderer's closed Source draft order is Fixture-first, so the retained
-// hermetic Fixture is Capture/Attempt 1 and one retry appends Attempt 6 after
-// the five initial Source Attempts.
-const fixtureCaptureId = 1;
-const fixtureInitialAttemptId = 1;
-const fixtureRetryAttemptId = 6;
+// Migration creates Capture/Attempt 1 first. Fixture remains first among Sync
+// Sources, so the retained hermetic Fixture is Capture/Attempt 2 and one retry
+// appends Attempt 7 after the five Sync Source Attempts (ids 2–6).
+const attemptIds = {
+  fixtureCaptureId: 2,
+  fixtureInitialAttemptId: 2,
+  fixtureRetryAttemptId: 7,
+};
 const roots = await seedHermeticMultisourceRoots(base, {
   fixtureSessionTitle: sessionTitle,
   fixtureExternalSessionId: "linux-package-smoke",
+});
+const legacy = await seedHermeticLegacyHome(base, {
+  sessionTitle: "Packaged Legacy Session",
+  externalSessionId: "packaged-legacy-1",
+  searchQuery: "packaged legacy",
 });
 const sourceRoots = hermeticSourceRoots(roots);
 
@@ -502,8 +544,12 @@ for (const root of sourceRoots) {
     hashes: await collectFileHashes(root),
   };
 }
+const beforeLegacySnapshot = {
+  files: await collectFiles(legacy.legacyHome),
+  hashes: await collectFileHashes(legacy.legacyHome),
+};
 const beforeBase = await collectFiles(base);
-await runUiJourney(binary, home, roots);
+await runUiJourney(binary, home, roots, legacy, attemptIds);
 const beforeRestart = await collectFiles(home);
 const restartProcess = launch(binary, "restart");
 try {
@@ -554,10 +600,26 @@ for (const root of sourceRoots) {
     );
   }
 }
+const afterLegacyFiles = await collectFiles(legacy.legacyHome);
+const afterLegacyHashes = await collectFileHashes(legacy.legacyHome);
+if (
+  JSON.stringify(beforeLegacySnapshot.files) !== JSON.stringify(afterLegacyFiles) ||
+  JSON.stringify(beforeLegacySnapshot.hashes) !== JSON.stringify(afterLegacyHashes)
+) {
+  fail("Linux packaged migration mutated the synthetic legacy Electron home");
+}
+if (
+  !afterLegacyFiles.includes("distill.db-wal") ||
+  !afterLegacyFiles.includes("distill.db-shm")
+) {
+  fail("Linux packaged legacy home lost WAL sidecars during migration");
+}
 const afterBase = await collectFiles(base);
 for (const file of afterBase.filter((entry) => !beforeBase.includes(entry))) {
   const absolute = path.join(base, file);
-  const allowed = [home, ...sourceRoots].some((root) => isWithin(absolute, root));
+  const allowed = [home, legacy.legacyHome, ...sourceRoots].some((root) =>
+    isWithin(absolute, root),
+  );
   if (!allowed) {
     fail(`Linux packaged write escaped chosen home/hermetic source roots: ${file}`);
   }
@@ -577,8 +639,10 @@ console.log(
       hermetic_multisource: "passed",
       detect_sibling_isolation: "passed",
       attempt_history_renormalize: "passed",
+      hermetic_legacy_migration: "passed",
       home,
       fixture_root: roots.fixtureRoot,
+      legacy_home: legacy.legacyHome,
       hermetic_roots: {
         codex: roots.codexRoot,
         claude_code: roots.claudeRoot,
@@ -589,7 +653,8 @@ console.log(
       export_files: exportFiles,
       non_claims: [
         "installed Ubuntu smoke only; hermetic temp roots only — no host-installed provider claim",
-        "no migration, crash-recovery, privacy, scale, export-atomicity, or screen-reader claim",
+        "hermetic synthetic legacy Electron home only — no live-user-home or Electron-product edit claim",
+        "no crash-recovery, privacy, scale, export-atomicity, or screen-reader claim",
       ],
     },
     null,

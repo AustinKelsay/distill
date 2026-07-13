@@ -18,7 +18,7 @@
     "smoke:macos": "node scripts/macos-package-smoke.mjs",
     "package:linux": "tauri build --bundles deb,appimage",
     "smoke:linux": "node scripts/linux-package-smoke.mjs",
-    "test:hermetic-fixtures": "node --test scripts/packaged-hermetic-multisource.node-test.mjs",
+    "test:hermetic-fixtures": "node --test scripts/packaged-hermetic-multisource.node-test.mjs scripts/packaged-hermetic-legacy-home.node-test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

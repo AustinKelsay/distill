@@ -11,6 +11,10 @@
  * Sync Run, then retains the Fixture search/detail/curation/export/restart path.
  * Attempt-history/renormalize is not automated by this System Events script;
  * PKG-006 is an explicit manual AX checklist when the packaged window is exposed.
+ * Hermetic legacy Electron-home import (PKG-007) is likewise manual-required on
+ * Darwin: seed a temporary host/CLI-shaped legacy home, drive Import legacy home,
+ * assert ok/captures/sessions/reused=false, search the migrated session, and
+ * compare before/after source-home hashes including distill.db-wal/shm.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -838,6 +842,7 @@ evidence.non_claims = [
   "unsigned local .app only; no Developer ID or notarization claim",
   "hermetic temp roots only — no host-installed provider claim",
   "Attempt-history/renormalize automation is manual-required on macOS when AX exposes the packaged window; no screen-reader claim",
-  "no migration, crash-recovery, privacy, scale, export-atomicity, or VoiceOver claim",
+  "hermetic legacy Electron-home import (PKG-007) is manual-required on macOS when AX exposes the packaged window; no live-user-home or Electron-product edit claim",
+  "no crash-recovery, privacy, scale, export-atomicity, or VoiceOver claim",
 ];
 console.log(JSON.stringify(evidence, null, 2));
