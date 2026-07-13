@@ -407,7 +407,7 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     );
     // WebKitGTK's native button activation path is reliable on Space under
     // Xvfb even when Return only moves focus.
-    await focusedKey("space");
+    await key(windowId, "space");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
     } catch {
