@@ -8,7 +8,7 @@
 - Worker session: Grok 4.5 xhigh bounded implementation pass; Codex integration
 - Commit: `947d576`
 - Status: Complete — implementation, local gates, two-axis review, CodeRabbit fallback, and final-head CI complete; staging handoff remains
-- Review packet: `docs/runs/reviews/44-tauri-multisource-thin-caller.md` (pending)
+- Review packet: `docs/runs/reviews/44-tauri-multisource-thin-caller.md` (PASS)
 
 ## Intended Contract
 
@@ -63,8 +63,8 @@ explicit rather than implied by the hermetic suite.
 
 ## Final-head CI
 
-- Linux package/install/smoke: [run 29220142820](https://github.com/AustinKelsay/distill/actions/runs/29220142820) — passed on `947d576`.
-- Rust advisory scan: [run 29220142815](https://github.com/AustinKelsay/distill/actions/runs/29220142815) — passed on `947d576`.
+- Linux package/install/smoke: [run 29220447308](https://github.com/AustinKelsay/distill/actions/runs/29220447308) — passed on final docs head `fa5bf99`.
+- Rust advisory scan: [run 29220447313](https://github.com/AustinKelsay/distill/actions/runs/29220447313) — passed on final docs head `fa5bf99`.
 - PR #38 remains the non-draft staging handoff.
 
 ## Non-goals / residuals
