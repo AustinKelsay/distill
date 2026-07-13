@@ -1168,6 +1168,17 @@ export function App({ bridge }: AppProps) {
           id="legacy-source-home"
           value={legacySourceHome}
           onChange={(event) => setLegacySourceHome(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              home.trim() &&
+              legacySourceHome.trim() &&
+              migrationStatus !== "loading"
+            ) {
+              event.preventDefault();
+              void onImportLegacy();
+            }
+          }}
           placeholder="/path/to/.distill"
         />
         <button

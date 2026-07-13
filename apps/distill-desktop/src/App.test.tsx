@@ -1696,6 +1696,46 @@ describe("first-run Fixture UI", () => {
     expect(screen.getByTestId("migration-report")).toHaveTextContent("skips: 1");
   });
 
+  it("submits legacy migration from the source path field", async () => {
+    const user = userEvent.setup();
+    const bridge = createFakeBridge({
+      migrationReport: {
+        ok: true,
+        reused_prior_import: false,
+        source_fingerprint: "fp-enter",
+        source_db_sha256: "db-enter",
+        content_fingerprint: "c-enter",
+        counts: {
+          sources: 1,
+          captures: 1,
+          captures_skipped: 0,
+          attempts: 1,
+          facts: 1,
+          sessions: 1,
+          messages: 1,
+          artifacts: 1,
+          tags: 0,
+          tag_assignments: 0,
+          labels: 0,
+          label_assignments: 0,
+          activity_events: 1,
+          exports: 0,
+          exports_skipped: 0,
+        },
+        skips: [],
+      },
+    });
+    render(<App bridge={bridge} />);
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    const source = screen.getByRole("textbox", { name: "Legacy Electron home" });
+    await user.type(source, "/tmp/legacy");
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(screen.getByTestId("migration-status")).toHaveTextContent("success");
+    });
+    expect(screen.getByTestId("migration-report")).toHaveTextContent("fp-enter");
+  });
+
   it("renders migration error state without ambient fetch", async () => {
     const user = userEvent.setup();
     const failing = createFakeBridge({

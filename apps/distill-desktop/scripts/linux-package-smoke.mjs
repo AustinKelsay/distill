@@ -362,14 +362,10 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     // Hermetic legacy Electron-home import through the existing bridge-only panel.
     // Destination and source are siblings under the smoke base (not ancestor/alias).
     // WebKitGTK can deliver xdotool input after the React controlled value
-    // update. Type slowly, then blur into the adjacent button so the browser
-    // has delivered the final input event before the action is invoked.
+    // update. Type slowly, then submit from the focused field so the browser
+    // dispatches the migration handler without relying on AT-SPI button action.
     await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 80);
-    await key(windowId, "Tab");
     await sleep(750);
-    // Prefer the focused DOM button event, then coordinate activation, because
-    // WebKitGTK may report a successful AT-SPI action without dispatching the
-    // React click handler. Keep the semantic action as a final fallback.
     await key(windowId, "Return");
     try {
       await waitForAccessibleText("Migration status: success", true, 5);
