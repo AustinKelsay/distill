@@ -360,6 +360,10 @@ async function runUiJourney(binary, home, roots) {
     await typeIntoAccessible(windowId, "Search sessions", "smoke");
     await key(windowId, "Enter");
     await clickAccessible(windowId, roots.fixtureSessionTitle, true);
+    // The Session detail request is asynchronous; wait for the selected Fixture
+    // projection before invoking the Activity-backed Attempt lookup.
+    await waitForAccessibleText("Raw captures: 1", true);
+    await waitForAccessibleText("Attempts: 1", true);
 
     // Attempt history and same-Capture renormalize stay bridge-only: the UI discovers
     // the Capture through Activity, then exposes immutable Attempt summaries and the
