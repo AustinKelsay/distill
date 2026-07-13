@@ -475,10 +475,14 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     }
     await waitForFile(path.join(home, "distill.db"));
     // Migrated Session must be discoverable before hermetic Detect/Sync clutter.
-    await clickAccessible(windowId, "Load sessions");
-    await typeIntoAccessible(windowId, "Search sessions", legacy.searchQuery);
-    await key(windowId, "Enter");
-    await activateAccessible(windowId, legacy.sessionTitle, true);
+    await typeIntoFocusedAccessible(windowId, "Search sessions", legacy.searchQuery, 40);
+    await sleep(500);
+    await atspiFocus(
+      ["--assert-focused", "--name", "Search sessions", "--timeout", "5"],
+      'input-focus: expected focused accessible "Search sessions"',
+    );
+    await focusedKey("Return");
+    await waitForAccessibleText("Sessions: ready", true);
     await clickAccessible(windowId, legacy.sessionTitle, true);
     await waitForAccessibleText(legacy.sessionTitle, true);
 
@@ -516,9 +520,14 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
       await waitForAccessibleText(`${kind}: completed`, true);
     }
 
-    await clickAccessible(windowId, "Load sessions");
-    await typeIntoAccessible(windowId, "Search sessions", "smoke");
-    await key(windowId, "Enter");
+    await typeIntoFocusedAccessible(windowId, "Search sessions", "smoke", 40);
+    await sleep(500);
+    await atspiFocus(
+      ["--assert-focused", "--name", "Search sessions", "--timeout", "5"],
+      'input-focus: expected focused accessible "Search sessions"',
+    );
+    await focusedKey("Return");
+    await waitForAccessibleText("Sessions: ready", true);
     // The session title also appears in the detail heading. Use the
     // interactive AT-SPI coordinate lookup so it selects the row button rather
     // than timing out on that non-actionable heading node.

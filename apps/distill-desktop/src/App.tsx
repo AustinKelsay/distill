@@ -529,15 +529,16 @@ export function App({ bridge }: AppProps) {
   }
 
   /** Load one bounded current-projection session page through the bridge. */
-  async function onLoadSessions(cursor: string | null = null) {
+  async function onLoadSessions(cursor: string | null = null, queryOverride?: string) {
     const requestId = ++sessionRequestRef.current;
     const append = cursor !== null;
     const hasVisibleItems = (sessionPage?.items.length ?? 0) > 0;
+    const query = queryOverride ?? sessionQuery;
     setSessionStatus(hasVisibleItems || append ? "refreshing" : "loading");
     setSessionError(null);
     try {
       const nextPage = await bridge.listSessions(home, {
-        query: sessionQuery.trim() || null,
+        query: query.trim() || null,
         lane: sessionLane,
         limit: 50,
         cursor,
@@ -1484,14 +1485,24 @@ export function App({ bridge }: AppProps) {
           aria-label="Session search and lane"
           onSubmit={(event) => {
             event.preventDefault();
-            void onLoadSessions();
+            const source = event.currentTarget.elements.namedItem("session-search");
+            const query =
+              source instanceof HTMLInputElement ? source.value : sessionQuery;
+            void onLoadSessions(null, query);
           }}
         >
           <label htmlFor="session-search">Search sessions</label>
           <input
             id="session-search"
+            name="session-search"
             value={sessionQuery}
             onChange={(event) => setSessionQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === "Return") {
+                event.preventDefault();
+                void onLoadSessions(null, event.currentTarget.value);
+              }
+            }}
             placeholder="Search current projection…"
           />
           <label htmlFor="session-lane">Workflow lane</label>
