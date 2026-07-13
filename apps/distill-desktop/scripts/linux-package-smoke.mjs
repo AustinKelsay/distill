@@ -387,7 +387,10 @@ async function runUiJourney(binary, home, roots) {
     // the Capture through Activity, then exposes immutable Attempt summaries and the
     // Distill-owned retry report without parser-version or provider-root controls.
     await activateAccessible(windowId, "Load Attempt history");
-    const attemptStatus = await waitForAccessibleText("Attempt history status: ready", true);
+    const attemptStatus = await waitForAccessibleText(
+      "Attempt history status: ready",
+      true,
+    );
     if (!attemptStatus.name.includes(`Capture ${fixtureCaptureId}`)) {
       fail(`attempt-history: unexpected status identity ${attemptStatus.name}`);
     }
