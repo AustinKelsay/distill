@@ -1087,7 +1087,13 @@ export function App({ bridge }: AppProps) {
           aria-busy={detectStatus === "loading"}
           data-testid="source-detection-panel"
         >
-          <p data-testid="detect-status">Status: {detectStatus}</p>
+          <p
+            role="status"
+            aria-label={`Status: ${detectStatus}`}
+            data-testid="detect-status"
+          >
+            Status: {detectStatus}
+          </p>
           {detectError ? (
             <p role="alert" data-testid="detect-error">
               {detectError.code}: {detectError.message}
