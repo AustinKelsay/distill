@@ -362,6 +362,9 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     // Hermetic legacy Electron-home import through the existing bridge-only panel.
     // Destination and source are siblings under the smoke base (not ancestor/alias).
     await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 20);
+    // WebKitGTK can deliver the slow xdotool input after the React controlled
+    // value update; settle before invoking the button so it is enabled.
+    await sleep(750);
     await activateAccessible(windowId, "Import legacy home");
     await waitForAccessibleText("Migration status: success", true);
     await waitForAccessibleText("ok: true", true);
