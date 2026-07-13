@@ -219,17 +219,27 @@ export function App({ bridge }: AppProps) {
         return;
       }
       window.clearInterval(timer);
-      if (typeof SubmitEvent === "function") {
-        panel.dispatchEvent(
-          new SubmitEvent("submit", {
-            bubbles: true,
-            cancelable: true,
-            submitter: button,
-          }),
-        );
-      } else {
-        panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      }
+      // Exercise the browser's native submit path first. WebKitGTK may not
+      // route a synthetic SubmitEvent through React's delegated listener, but
+      // a DOM button activation still follows the same form semantics as the
+      // user-facing control. Keep a bounded event fallback for package images
+      // where .click() is inert under Xvfb.
+      button.click();
+      window.setTimeout(() => {
+        if (status.textContent?.includes("Migration status: idle")) {
+          if (typeof SubmitEvent === "function") {
+            panel.dispatchEvent(
+              new SubmitEvent("submit", {
+                bubbles: true,
+                cancelable: true,
+                submitter: button,
+              }),
+            );
+          } else {
+            panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          }
+        }
+      }, 250);
     }, 100);
     return () => window.clearInterval(timer);
   }, []);
@@ -1212,6 +1222,11 @@ export function App({ bridge }: AppProps) {
         }}
       >
         <h2>Legacy migration</h2>
+        {import.meta.env.VITE_DISTILL_SMOKE_DOM_ACTIVATE === "1" ? (
+          <p data-testid="migration-automation-status" aria-live="polite">
+            Migration automation: enabled
+          </p>
+        ) : null}
         <label htmlFor="legacy-source-home">Legacy Electron home</label>
         <input
           id="legacy-source-home"

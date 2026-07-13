@@ -86,6 +86,6 @@ screen-reader claims.
   package evidence. The bounded Grok diagnostic attributes the prior boundary to
   WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
   contract. The harness now keeps the four bounded keyboard transports and adds
-  a smoke-only Vite-built renderer `requestSubmit` route; the exact-head run
+  a smoke-only Vite-built renderer native-click/submit fallback route; the exact-head run
   must validate that packaged route rather than treating the local hook as
   evidence.

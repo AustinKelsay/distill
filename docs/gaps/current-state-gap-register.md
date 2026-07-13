@@ -51,7 +51,7 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R005: Legacy Electron Home Migration
 
-- Status: resolved for the migration seam; packaged hermetic caller evidence is added by #50, and the renderer now accepts both DOM `Enter` and WebKitGTK `Return` on the migration field. `LPKG-007` remains pending exact-head Ubuntu validation of the smoke-only Vite-built renderer DOM route, while `PKG-007` is manual-required on Darwin. Electron remains only as intentional legacy evidence under GAP-R001.
+- Status: resolved for the migration seam; packaged hermetic caller evidence is added by #50, and the renderer now accepts both DOM `Enter` and WebKitGTK `Return` on the migration field. `LPKG-007` remains pending exact-head Ubuntu validation of the smoke-only Vite-built renderer marker/native-click/submit fallback route, while `PKG-007` is manual-required on Darwin. Electron remains only as intentional legacy evidence under GAP-R001.
 - Rule: a legacy Electron home is read-only evidence and must not be opened or mutated as a destination database.
 - Resolution: issue #31 adds a WAL-safe private SQLite snapshot, path-alias/traversal rejection, representative Capture/Attempt/Fact/Projection/Curation/Activity/export mapping, redacted reports, fingerprint markers, and import-owned CAS/export rollback cleanup. Issue #50 extends the installed Linux package smoke (and Darwin manual checklist) over a temporary host/CLI-shaped synthetic legacy home through the existing bridge-only migration panel without editing Electron product sources.
 - Impacted files/modules: `crates/distill-library/src/migrate`; Library/CLI/Tauri/React callers; packaged smoke harnesses; `docs/specs/legacy-migration.md`.

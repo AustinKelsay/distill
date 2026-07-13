@@ -9,7 +9,7 @@
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
 - Status: implementation complete locally, including a WebKitGTK `Return`-key
   compatibility path, native form fallback, and an opt-in package-native DOM
-  `requestSubmit` route for the installed Linux smoke; Linux `LPKG-007`
+  native DOM activation route for the installed Linux smoke; Linux `LPKG-007`
   remains pending exact-head promotion until this route records the full
   contract. Darwin `PKG-007` remains manual-required when System Events cannot
   expose the packaged window.
@@ -116,11 +116,16 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
   fallbacks. This broadens only automation transport coverage; it does not add
   a storage shortcut or change migration policy.
 - The Linux smoke package is built with `VITE_DISTILL_SMOKE_DOM_ACTIVATE=1`
-  only in the package workflow. The renderer waits for the real migration input
-  value and invokes the existing form's DOM `requestSubmit` path inside the
-  packaged WebView; normal builds never enable it and the shipped CSP is
-  unchanged. Exact-head CI must still prove the resulting report, session, and
-  source-hash contract before `LPKG-007` is promoted.
+  only in the package workflow. The renderer exposes an accessible smoke-only
+  marker, waits for the real migration input value, and invokes the existing
+  form through native button activation with a bounded DOM submit-event
+  fallback inside the packaged WebView; normal builds never enable it and the
+  shipped CSP is unchanged. Exact-head CI must still prove the resulting
+  report, session, and source-hash contract before `LPKG-007` is promoted.
+- Exact-head run [29272756471](https://github.com/AustinKelsay/distill/actions/runs/29272756471)
+  included the Vite-built renderer route but still stopped at
+  `Migration status: idle`; the marker/native-click revision must be validated
+  by the next exact-head run.
 
 ### Diagnosis boundary
 
