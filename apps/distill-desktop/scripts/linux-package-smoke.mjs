@@ -367,8 +367,20 @@ async function runUiJourney(binary, home, roots, legacy, attemptIds) {
     await typeIntoAccessible(windowId, "Legacy Electron home", legacy.legacyHome, 80);
     await key(windowId, "Tab");
     await sleep(750);
-    await waitForAccessibleText(legacy.legacyHome, true, 5);
-    await activateAccessible(windowId, "Import legacy home");
+    // Prefer the focused DOM button event, then coordinate activation, because
+    // WebKitGTK may report a successful AT-SPI action without dispatching the
+    // React click handler. Keep the semantic action as a final fallback.
+    await key(windowId, "Return");
+    try {
+      await waitForAccessibleText("Migration status: success", true, 5);
+    } catch {
+      await clickAccessible(windowId, "Import legacy home");
+      try {
+        await waitForAccessibleText("Migration status: success", true, 5);
+      } catch {
+        await activateAccessible(windowId, "Import legacy home");
+      }
+    }
     await waitForAccessibleText("Migration status: success", true);
     await waitForAccessibleText("ok: true", true);
     await waitForAccessibleText("reused: false", true);
