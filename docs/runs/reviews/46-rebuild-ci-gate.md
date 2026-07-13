@@ -64,6 +64,9 @@ executable, so a configured-root result was reported `unavailable` instead of `o
 The workflow now writes a deterministic Rust-test `PATH` to `GITHUB_ENV`, keeping Cargo
 and system tools while excluding host-installed provider CLI directories. This is a CI
 hermeticity fix; it does not change product detection behavior or provider claims.
+The follow-up run (`29224211256`) confirmed the provider fix but caught that the first
+PATH form also omitted Rustup's toolchain bin (and therefore `rustfmt`); the workflow now
+retains both the Cargo bin and `dirname "$(rustup which rustfmt)"` before the next run.
 
 ## Explicit residuals
 
