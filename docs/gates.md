@@ -99,7 +99,9 @@ Accessibility focus-state evidence only. Issue #48 extends the same harness with
 temporary hermetic Codex/Claude/OpenCode/Droid roots, Detect Sources sibling-failure
 isolation/redaction, and Start Sync Run before the retained Fixture journey
 (`PKG-004`/`PKG-005`). OpenCode uses a local `{root}/bin/opencode` stub only.
-Attempt-history/renormalize remains a bounded packaged non-goal. It does not claim
+The Linux packaged journey also drives the existing bridge-only Attempt-history and
+same-Capture renormalize controls (`LPKG-006`); Darwin `PKG-006` remains manual-required
+when System Events cannot expose the packaged window. It does not claim
 Developer ID signing, hardened runtime, notarization, host-installed providers,
 migration, crash recovery, privacy, scale, export atomicity, or VoiceOver coverage.
 The Cargo `tauri` subcommand is not required for this package
@@ -111,8 +113,9 @@ builds `.deb` and AppImage artifacts, verifies the Debian `Depends` metadata, in
 the `.deb`, and drives the installed `/usr/bin/distill-desktop` under Ubuntu's
 `dbus-run-session`/Xvfb environment. The smoke verifies the installed control tree and
 checks the same
-Fixture/search/detail/train-curation/export/restart/artifact/containment path as macOS,
-plus the #48 hermetic multi-Source Detect/Start Sync path (`LPKG-004`/`LPKG-005`).
+Fixture/search/detail/Attempt-history/renormalize/train-curation/export/restart/artifact/
+containment path as macOS, plus the #48 hermetic multi-Source Detect/Start Sync path
+(`LPKG-004`/`LPKG-005`) and the packaged retry path (`LPKG-006`).
 It does not claim screen-reader, host-installed provider, migration, crash-recovery,
 privacy, scale, or export atomicity coverage.
 

@@ -9,7 +9,8 @@
  * same checklist. That mode is explicit and never claims a packaged journey.
  * The journey seeds hermetic multi-Source roots, drives Detect Sources + Start
  * Sync Run, then retains the Fixture search/detail/curation/export/restart path.
- * Attempt-history/renormalize remains a bounded non-goal for this harness.
+ * Attempt-history/renormalize is not automated by this System Events script;
+ * PKG-006 is an explicit manual AX checklist when the packaged window is exposed.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -836,7 +837,7 @@ evidence.export_files = exportFiles;
 evidence.non_claims = [
   "unsigned local .app only; no Developer ID or notarization claim",
   "hermetic temp roots only — no host-installed provider claim",
-  "no Attempt-history/renormalize packaged journey (bounded non-goal; covered by host/renderer contracts)",
+  "Attempt-history/renormalize automation is manual-required on macOS when AX exposes the packaged window; no screen-reader claim",
   "no migration, crash-recovery, privacy, scale, export-atomicity, or VoiceOver claim",
 ];
 console.log(JSON.stringify(evidence, null, 2));

@@ -8,8 +8,7 @@
  * chosen-home, export, restart, and Fixture-containment contracts as macOS.
  * It also probes repair-dialog focus containment via AT-SPI (not screen-reader conformance)
  * and drives hermetic multi-Source Detect Sources + Start Sync Run before the Fixture
- * search/detail/curation/export journey. Attempt-history/renormalize remains a bounded
- * non-goal for this packaged harness.
+ * search/detail/Attempt-history/renormalize/curation/export journey.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -355,6 +354,24 @@ async function runUiJourney(binary, home, roots) {
     await typeIntoAccessible(windowId, "Search sessions", "smoke");
     await key(windowId, "Enter");
     await clickAccessible(windowId, roots.fixtureSessionTitle, true);
+
+    // Attempt history and same-Capture renormalize stay bridge-only: the UI discovers
+    // the Capture through Activity, then exposes immutable Attempt summaries and the
+    // Distill-owned retry report without parser-version or provider-root controls.
+    await clickAccessible(windowId, "Load Attempt history");
+    await waitForAccessibleText("Status: ready", true);
+    await waitForAccessibleText("Capture 1", true);
+    await waitForAccessibleText("#1", true);
+    await waitForAccessibleText("fixture/1.0.0", true);
+    await waitForAccessibleText("succeeded", true);
+    await clickAccessible(windowId, "Renormalize Capture");
+    await waitForAccessibleText("Renormalize: ready", true);
+    await waitForAccessibleText("Capture 1", true);
+    await waitForAccessibleText("attempt 2", true);
+    await waitForAccessibleText("#2", true);
+    await waitForAccessibleText("fixture/1.0.0", true);
+    await waitForAccessibleText("succeeded", true);
+
     await clickAccessible(windowId, "train");
     await clickAccessible(windowId, "Preview export");
     await clickAccessible(windowId, "Publish export");
@@ -500,6 +517,7 @@ console.log(
       restart: "passed",
       hermetic_multisource: "passed",
       detect_sibling_isolation: "passed",
+      attempt_history_renormalize: "passed",
       home,
       fixture_root: roots.fixtureRoot,
       hermetic_roots: {
@@ -512,7 +530,6 @@ console.log(
       export_files: exportFiles,
       non_claims: [
         "installed Ubuntu smoke only; hermetic temp roots only — no host-installed provider claim",
-        "no Attempt-history/renormalize packaged journey (bounded non-goal; covered by host/renderer contracts)",
         "no migration, crash-recovery, privacy, scale, export-atomicity, or screen-reader claim",
       ],
     },
