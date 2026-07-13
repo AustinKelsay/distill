@@ -1172,7 +1172,7 @@ export function App({ bridge }: AppProps) {
           onKeyDown={(event) => {
             const sourceHome = event.currentTarget.value;
             if (
-              event.key === "Enter" &&
+              (event.key === "Enter" || event.key === "Return") &&
               home.trim() &&
               sourceHome.trim() &&
               migrationStatus !== "loading"

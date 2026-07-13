@@ -11,10 +11,12 @@ screen-reader claims.
 
 ## Review outcome
 
-- Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; no product-code
-  blocker for the in-worktree harness. The packaged promotion gate is blocked
-  on exact-head Ubuntu proof of migration report/session/hash contracts and
-  Fixture Attempt identities `Capture 2` / `Attempt 2` / retry `Attempt 7`.
+- Independent Grok standards/spec review: `PASS_WITH_FINDINGS`; the original
+  harness had no product-code blocker. A follow-up local remediation now accepts
+  both DOM `Enter` and WebKitGTK's `Return` key name, with a renderer regression
+  test; packaged promotion remains gated on exact-head Ubuntu proof of migration
+  report/session/hash contracts and Fixture Attempt identities `Capture 2` /
+  `Attempt 2` / retry `Attempt 7`.
 - PKG-007 evidence now names only the Darwin smoke/manual checklist; the Linux
   row names the hermetic seeder because Linux actually invokes it.
 - `docs/specs/legacy-migration.md` points at packaged `PKG-007`/`LPKG-007`
@@ -82,4 +84,5 @@ screen-reader claims.
 - Do not promote `LPKG-007` or retire cutover residual language without exact-head
   package evidence. The bounded Grok diagnostic attributes the current boundary
   to WebKitGTK/Xvfb event delivery, not to a failed Rust/CLI/host migration
-  contract.
+  contract. The key-name compatibility patch is a hypothesis-driven remediation,
+  not yet packaged evidence.

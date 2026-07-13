@@ -7,10 +7,11 @@
 - Fixed point before session: post-#49 on `feature/distill-clean-rebuild`
 - Worker session: Cursor Grok 4.5 bounded Feature Dev slice
 - Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
-- Status: implementation complete locally; Linux `LPKG-007` is blocked before
-  exact-head promotion by packaged WebKitGTK/Xvfb synthetic-input dispatch.
-  Darwin `PKG-007` remains manual-required when System Events cannot expose the
-  packaged window.
+- Status: implementation complete locally, including a WebKitGTK `Return`-key
+  compatibility path and renderer coverage; Linux `LPKG-007` remains pending
+  exact-head promotion because the compatibility patch has not yet run in
+  Ubuntu package CI. Darwin `PKG-007` remains manual-required when System
+  Events cannot expose the packaged window.
 - Review packet: `docs/runs/reviews/50-packaged-hermetic-legacy-migration-smoke.md`
 
 ## Intended Contract
@@ -104,6 +105,10 @@ this checklist does not claim VoiceOver speech or a live-user legacy home.
 - The later docs-only rerun
   [29262524827](https://github.com/AustinKelsay/distill/actions/runs/29262524827)
   reproduced that same boundary after build and install.
+- A local follow-up accepts both DOM `Enter` and WebKitGTK's `Return` key name
+  on the migration source field, with a renderer regression test. The next
+  exact-head package run must determine whether the key-name mismatch was the
+  activation boundary; `LPKG-007` is not promoted by the local test alone.
 
 ### Diagnosis boundary
 

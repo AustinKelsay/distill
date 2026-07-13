@@ -51,11 +51,11 @@ All Electron baseline gaps currently listed here are historical. No open spec-al
 
 ### GAP-R005: Legacy Electron Home Migration
 
-- Status: resolved for the migration seam; packaged hermetic caller evidence is added by #50, but `LPKG-007` is blocked before exact-head Ubuntu promotion by packaged synthetic-input dispatch and `PKG-007` is manual-required on Darwin. Electron remains only as intentional legacy evidence under GAP-R001.
+- Status: resolved for the migration seam; packaged hermetic caller evidence is added by #50, and the renderer now accepts both DOM `Enter` and WebKitGTK `Return` on the migration field. `LPKG-007` remains pending exact-head Ubuntu validation of that remediation, while `PKG-007` is manual-required on Darwin. Electron remains only as intentional legacy evidence under GAP-R001.
 - Rule: a legacy Electron home is read-only evidence and must not be opened or mutated as a destination database.
 - Resolution: issue #31 adds a WAL-safe private SQLite snapshot, path-alias/traversal rejection, representative Capture/Attempt/Fact/Projection/Curation/Activity/export mapping, redacted reports, fingerprint markers, and import-owned CAS/export rollback cleanup. Issue #50 extends the installed Linux package smoke (and Darwin manual checklist) over a temporary host/CLI-shaped synthetic legacy home through the existing bridge-only migration panel without editing Electron product sources.
 - Impacted files/modules: `crates/distill-library/src/migrate`; Library/CLI/Tauri/React callers; packaged smoke harnesses; `docs/specs/legacy-migration.md`.
-- Severity: resolved for the import contract; final Electron retirement remains a cutover concern; packaged Linux promotion for `LPKG-007` remains blocked pending a viable exact-head synthetic-activation path.
+- Severity: resolved for the import contract; final Electron retirement remains a cutover concern; packaged Linux promotion for `LPKG-007` remains pending exact-head evidence after the renderer key-name compatibility remediation.
 - Acceptance criteria: WAL and rollback-journal homes remain byte-for-byte unchanged; repeated imports reuse markers; unsafe/missing content is skipped with stable redacted reasons; mapped sessions are searchable, curated, activity-visible, and export-metadata complete; packaged Linux smoke proves hermetic import report fields, migrated-session discoverability, and sidecar-inclusive source-home immutability without claiming a live-user home.
 
 ### GAP-R006: Hostile Inputs And Desktop Capabilities

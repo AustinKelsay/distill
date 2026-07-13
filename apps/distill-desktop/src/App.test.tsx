@@ -2,7 +2,7 @@
  * Renderer seam: React first-run UI against one typed Distill bridge fake.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
@@ -1734,6 +1734,46 @@ describe("first-run Fixture UI", () => {
       expect(screen.getByTestId("migration-status")).toHaveTextContent("success");
     });
     expect(screen.getByTestId("migration-report")).toHaveTextContent("fp-enter");
+  });
+
+  it("accepts the WebKitGTK Return key name for legacy migration", async () => {
+    const bridge = createFakeBridge({
+      migrationReport: {
+        ok: true,
+        reused_prior_import: false,
+        source_fingerprint: "fp-return",
+        source_db_sha256: "db-return",
+        content_fingerprint: "c-return",
+        counts: {
+          sources: 1,
+          captures: 1,
+          captures_skipped: 0,
+          attempts: 1,
+          facts: 1,
+          sessions: 1,
+          messages: 1,
+          artifacts: 0,
+          tags: 0,
+          tag_assignments: 0,
+          labels: 0,
+          label_assignments: 0,
+          activity_events: 1,
+          exports: 0,
+          exports_skipped: 0,
+        },
+        skips: [],
+      },
+    });
+    render(<App bridge={bridge} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Distill home" }), "/tmp/home");
+    const source = screen.getByRole("textbox", { name: "Legacy Electron home" });
+    await user.type(source, "/tmp/legacy");
+    fireEvent.keyDown(source, { key: "Return" });
+    await waitFor(() => {
+      expect(screen.getByTestId("migration-status")).toHaveTextContent("success");
+    });
+    expect(screen.getByTestId("migration-report")).toHaveTextContent("fp-return");
   });
 
   it("renders migration error state without ambient fetch", async () => {
