@@ -38,7 +38,10 @@ The tag-triggered beta workflow builds all three platforms and publishes
 prerelease artifacts. The beta macOS artifact is intentionally unsigned/ad-hoc;
 release builds never enable the smoke-only
 `VITE_DISTILL_SMOKE_DOM_ACTIVATE` marker. The macOS signing/notarization path
-is a follow-up gate for a signed release.
+is a follow-up gate for a signed release. For the Windows beta package, WiX
+requires a numeric-only prerelease identifier, so `package:windows:beta` merges
+`tauri.windows.beta.conf.json` (`0.2.0-1`), which MSI emits as `0.2.0.1` while
+release metadata and artifact names remain `0.2.0-beta.1`.
 
 The macOS package gate uses
 the workspace-installed Tauri CLI (the Cargo `tauri` subcommand is not required):

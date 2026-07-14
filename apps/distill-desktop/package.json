@@ -18,6 +18,7 @@
     "smoke:macos": "node scripts/macos-package-smoke.mjs",
     "package:linux": "tauri build --bundles deb,appimage",
     "package:windows": "tauri build --bundles nsis,msi",
+    "package:windows:beta": "tauri build --bundles nsis,msi --config src-tauri/tauri.windows.beta.conf.json",
     "smoke:linux": "node scripts/linux-package-smoke.mjs",
     "test:hermetic-fixtures": "node --test scripts/packaged-hermetic-multisource.node-test.mjs scripts/packaged-hermetic-legacy-home.node-test.mjs",
     "tauri": "tauri"
