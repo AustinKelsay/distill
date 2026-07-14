@@ -1,0 +1,954 @@
+//! Testable Tauri host command runner over the public Library seam.
+
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use distill_library::{
+    ActivityListPage, ActivityListRequest, AttemptSummary, CurationMutationResult, ExportDataset,
+    ExportPreview, ExportProgress, ExportProgressControl, ExportResult, FixtureJourneyPhase,
+    FixtureJourneyResult, HealthReport, LegacyImportReport, Library, OperationsPage,
+    OperationsRequest, RenormalizeReport, RepairOptions, RepairReport, SessionCurationRequest,
+    SessionDetail, SessionDetailRequest, SessionListPage, SessionListRequest, SourceDetectRequest,
+    SourceDetectResult, SourceKind, SourcePreference, SyncProgress, SyncRequest, SyncRunResult,
+    SyncRunSummary,
+};
+
+use crate::error::HostError;
+
+/// Validated legacy Electron import request.
+#[derive(Clone, Debug)]
+pub struct LegacyImportRequest {
+    /// Destination native Distill home.
+    pub home: PathBuf,
+    /// Legacy Electron Distill home (read-only).
+    pub source_home: PathBuf,
+}
+
+/// Validated Fixture journey request from the renderer or tests.
+#[derive(Clone, Debug)]
+pub struct FixtureJourneyRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Fixture root containing `distill.fixture.json`.
+    pub fixture_root: PathBuf,
+}
+
+/// Validated Capture id request for Attempt history and renormalize.
+#[derive(Clone, Debug)]
+pub struct CaptureIdRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Accepted Capture row id.
+    pub capture_id: i64,
+}
+
+/// Validated Distill-home-only request for health and repair.
+#[derive(Clone, Debug)]
+pub struct HomeRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+}
+
+/// Validated Sync start request.
+#[derive(Clone, Debug)]
+pub struct SyncStartRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Optional Source kind filter.
+    pub source_kinds: Vec<String>,
+}
+
+/// Validated Sync cancel/status request.
+#[derive(Clone, Debug)]
+pub struct SyncIdRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Sync Run id.
+    pub sync_run_id: i64,
+}
+
+/// Validated Source preference update.
+#[derive(Clone, Debug)]
+pub struct SourcePreferenceRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Source kind.
+    pub kind: String,
+    /// Enabled flag.
+    pub enabled: bool,
+    /// Optional configured root.
+    pub configured_root: Option<PathBuf>,
+}
+
+/// Validated independent Source detection batch.
+#[derive(Clone, Debug)]
+pub struct SourceDetectBatchRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// One typed detection request per Source, in caller order.
+    pub requests: Vec<SourceDetectRequest>,
+}
+
+/// Validated export preview/publish request.
+#[derive(Clone, Debug)]
+pub struct ExportRequest {
+    /// Distill home directory.
+    pub home: PathBuf,
+    /// Approved `train` or `holdout` dataset target.
+    pub dataset: ExportDataset,
+}
+
+struct ExportCancellationState {
+    token: std::sync::atomic::AtomicBool,
+    started: std::sync::atomic::AtomicBool,
+}
+
+type ExportCancellation = Arc<ExportCancellationState>;
+
+static EXPORT_CANCELLATIONS: OnceLock<Mutex<HashMap<String, ExportCancellation>>> = OnceLock::new();
+
+fn export_cancellation_key(request: &ExportRequest) -> String {
+    format!("{}\0{}", request.home.display(), request.dataset.as_str())
+}
+
+fn export_cancellation_registry() -> &'static Mutex<HashMap<String, ExportCancellation>> {
+    EXPORT_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct ExportCancellationGuard {
+    key: String,
+    token: ExportCancellation,
+}
+
+impl Drop for ExportCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut entries) = export_cancellation_registry().lock() {
+            if entries
+                .get(&self.key)
+                .is_some_and(|current| Arc::ptr_eq(current, &self.token))
+            {
+                entries.remove(&self.key);
+            }
+        }
+    }
+}
+
+fn acquire_export_cancellation(
+    request: &ExportRequest,
+) -> Result<ExportCancellationGuard, HostError> {
+    let key = export_cancellation_key(request);
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    let token = entries
+        .entry(key.clone())
+        .or_insert_with(|| {
+            Arc::new(ExportCancellationState {
+                token: std::sync::atomic::AtomicBool::new(false),
+                started: std::sync::atomic::AtomicBool::new(false),
+            })
+        })
+        .clone();
+    token
+        .started
+        .store(true, std::sync::atomic::Ordering::Release);
+    Ok(ExportCancellationGuard { key, token })
+}
+
+/** Register an export cancellation intent before starting its worker. */
+pub fn run_prepare_export_cancellation(request: &ExportRequest) -> Result<bool, HostError> {
+    let key = export_cancellation_key(request);
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    if let Some(state) = entries.get(&key) {
+        return Ok(!state
+            .started
+            .swap(true, std::sync::atomic::Ordering::AcqRel));
+    }
+    entries.insert(
+        key,
+        Arc::new(ExportCancellationState {
+            token: std::sync::atomic::AtomicBool::new(false),
+            started: std::sync::atomic::AtomicBool::new(true),
+        }),
+    );
+    Ok(true)
+}
+
+/**
+ * List/search current Session Projections through the public Library seam.
+ */
+pub fn run_list_sessions(
+    request: &HomeRequest,
+    page: SessionListRequest,
+) -> Result<SessionListPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_sessions(page).map_err(HostError::from_library)
+}
+
+/**
+ * List append-only Activity Events through the public Library seam.
+ */
+pub fn run_list_activity(
+    request: &HomeRequest,
+    page: ActivityListRequest,
+) -> Result<ActivityListPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_activity(page).map_err(HostError::from_library)
+}
+
+/**
+ * List operational Sync Run and export lifecycle summaries.
+ */
+pub fn run_list_operations(
+    request: &HomeRequest,
+    page: OperationsRequest,
+) -> Result<OperationsPage, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .list_operations(page)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Load one bounded current-projection Session detail page.
+ */
+pub fn run_session_detail(
+    request: &HomeRequest,
+    detail: SessionDetailRequest,
+) -> Result<Option<SessionDetail>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .session_detail(detail)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus a positive Capture row id.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer.
+ * - `capture_id`: Accepted Capture row id discovered via Activity or Sync evidence.
+ */
+pub fn validate_capture_id_request(
+    home: &str,
+    capture_id: i64,
+) -> Result<CaptureIdRequest, HostError> {
+    let home_request = validate_home_request(home)?;
+    if capture_id <= 0 {
+        return Err(HostError::validation(
+            "capture id must be a positive Capture row id",
+        ));
+    }
+    Ok(CaptureIdRequest {
+        home: home_request.home,
+        capture_id,
+    })
+}
+
+/**
+ * List immutable Attempt summaries for one Capture through the public Library seam.
+ */
+pub fn run_capture_attempts(request: &CaptureIdRequest) -> Result<Vec<AttemptSummary>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .capture_attempts(request.capture_id)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Re-normalize one Capture from Distill-owned bytes through the public Library seam.
+ *
+ * Optional `advance_kind`/`advance_version` advance the in-memory parser registry in the
+ * same Library open before renormalize. The renderer never supplies parser ids.
+ *
+ * Parameters:
+ * - `request`: validated home and Capture id
+ * - `advance_kind`: optional closed Source kind string
+ * - `advance_version`: optional strictly newer semantic version
+ */
+pub fn run_renormalize_capture(
+    request: &CaptureIdRequest,
+    advance_kind: Option<String>,
+    advance_version: Option<String>,
+) -> Result<RenormalizeReport, HostError> {
+    match (&advance_kind, &advance_version) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(HostError::validation(
+                "renormalize requires both advance kind and version, or neither",
+            ));
+        }
+    }
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    if let (Some(kind_raw), Some(version)) = (advance_kind, advance_version) {
+        let kind = SourceKind::parse(&kind_raw)
+            .ok_or_else(|| HostError::validation("unknown Source kind for parser advance"))?;
+        library
+            .set_registered_parser_version(kind, version)
+            .map_err(HostError::from_library)?;
+    }
+    library
+        .renormalize_capture(request.capture_id)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus Session Identity fields for a curation mutation.
+ */
+pub fn validate_session_curation_request(
+    home: &str,
+    request: SessionCurationRequest,
+) -> Result<(HomeRequest, SessionCurationRequest), HostError> {
+    let home_request = validate_home_request(home)?;
+    let source_kind = request.source_kind.trim();
+    let external_session_id = request.external_session_id.trim();
+    if source_kind.is_empty() {
+        return Err(HostError::validation("source kind must not be empty"));
+    }
+    if external_session_id.is_empty() {
+        return Err(HostError::validation(
+            "external session id must not be empty",
+        ));
+    }
+    Ok((
+        home_request,
+        SessionCurationRequest {
+            source_kind: source_kind.to_string(),
+            external_session_id: external_session_id.to_string(),
+            name: request.name,
+        },
+    ))
+}
+
+/**
+ * Add a manual tag through the public Library seam.
+ */
+pub fn run_add_session_tag(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .add_session_tag(curation)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Remove a manual tag through the public Library seam.
+ */
+pub fn run_remove_session_tag(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .remove_session_tag(curation)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Toggle a catalog label through the public Library seam.
+ */
+pub fn run_toggle_session_label(
+    request: &HomeRequest,
+    curation: SessionCurationRequest,
+) -> Result<CurationMutationResult, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .toggle_session_label(curation)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate renderer-supplied home and Fixture paths.
+ *
+ * Rejects empty paths, NUL bytes, and parent-segment traversal (`..`). Fixture
+ * roots must already exist as directories. Capability policy remains least
+ * privilege: the renderer has no ambient filesystem/process/SQL/shell access.
+ */
+pub fn validate_fixture_journey_request(
+    home: &str,
+    fixture_root: &str,
+) -> Result<FixtureJourneyRequest, HostError> {
+    let home = validate_path_argument("home", home)?;
+    let fixture_root = validate_path_argument("fixture root", fixture_root)?;
+    let fixture_path = PathBuf::from(&fixture_root);
+    if !fixture_path.is_dir() {
+        return Err(HostError::validation(
+            "fixture root is not an existing directory",
+        ));
+    }
+    Ok(FixtureJourneyRequest {
+        home: PathBuf::from(home),
+        fixture_root: fixture_path,
+    })
+}
+
+/**
+ * Validate a Distill home path for health or repair commands.
+ */
+pub fn validate_home_request(home: &str) -> Result<HomeRequest, HostError> {
+    let home = validate_path_argument("home", home)?;
+    Ok(HomeRequest {
+        home: PathBuf::from(home),
+    })
+}
+
+/**
+ * Validate destination home and legacy Electron source home paths.
+ *
+ * Path relationship and read-only open checks remain Library authority.
+ */
+pub fn validate_legacy_import_request(
+    home: &str,
+    source_home: &str,
+) -> Result<LegacyImportRequest, HostError> {
+    let home = validate_path_argument("home", home)?;
+    let source_home = validate_path_argument("source home", source_home)?;
+    Ok(LegacyImportRequest {
+        home: PathBuf::from(home),
+        source_home: PathBuf::from(source_home),
+    })
+}
+
+/**
+ * Validate a Sync start request.
+ */
+pub fn validate_sync_start_request(
+    home: &str,
+    source_kinds: Vec<String>,
+) -> Result<SyncStartRequest, HostError> {
+    let request = validate_home_request(home)?;
+    Ok(SyncStartRequest {
+        home: request.home,
+        source_kinds,
+    })
+}
+
+/**
+ * Validate a Sync id request.
+ */
+pub fn validate_sync_id_request(home: &str, sync_run_id: i64) -> Result<SyncIdRequest, HostError> {
+    let request = validate_home_request(home)?;
+    if sync_run_id <= 0 {
+        return Err(HostError::validation("sync run id must be positive"));
+    }
+    Ok(SyncIdRequest {
+        home: request.home,
+        sync_run_id,
+    })
+}
+
+/**
+ * Validate a Source preference update.
+ */
+pub fn validate_source_preference_request(
+    home: &str,
+    kind: &str,
+    enabled: bool,
+    configured_root: Option<&str>,
+) -> Result<SourcePreferenceRequest, HostError> {
+    let request = validate_home_request(home)?;
+    let kind = kind.trim();
+    if kind.is_empty() {
+        return Err(HostError::validation("source kind must not be empty"));
+    }
+    let configured_root = match configured_root {
+        Some(root) if root.trim().is_empty() => {
+            return Err(HostError::validation(
+                "configured root must not be empty when provided",
+            ));
+        }
+        Some(root) => {
+            let root = validate_path_argument("configured root", root)?;
+            Some(PathBuf::from(root))
+        }
+        None => None,
+    };
+    Ok(SourcePreferenceRequest {
+        home: request.home,
+        kind: kind.to_string(),
+        enabled,
+        configured_root,
+    })
+}
+
+/**
+ * Validate an independent Source detection batch.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer
+ * - `requests`: typed SourceDetectRequest values (kind + optional configured root)
+ */
+pub fn validate_source_detect_request(
+    home: &str,
+    requests: Vec<SourceDetectRequest>,
+) -> Result<SourceDetectBatchRequest, HostError> {
+    let home_request = validate_home_request(home)?;
+    if requests.is_empty() {
+        return Err(HostError::validation(
+            "detect_sources requires at least one request",
+        ));
+    }
+    let mut validated = Vec::with_capacity(requests.len());
+    for request in requests {
+        let kind = request.kind.trim();
+        if kind.is_empty() {
+            return Err(HostError::validation("source kind must not be empty"));
+        }
+        let configured_root = match request.configured_root.as_deref() {
+            Some(root) if root.trim().is_empty() => {
+                return Err(HostError::validation(
+                    "configured root must not be empty when provided",
+                ));
+            }
+            Some(root) => {
+                let root = validate_path_argument("configured root", root)?;
+                Some(root)
+            }
+            None => None,
+        };
+        validated.push(SourceDetectRequest {
+            kind: kind.to_string(),
+            configured_root,
+        });
+    }
+    Ok(SourceDetectBatchRequest {
+        home: home_request.home,
+        requests: validated,
+    })
+}
+
+/**
+ * Run the Library Fixture journey and report typed progress phases.
+ */
+pub fn run_fixture_journey<F>(
+    request: &FixtureJourneyRequest,
+    mut on_progress: F,
+) -> Result<FixtureJourneyResult, HostError>
+where
+    F: FnMut(FixtureJourneyPhase),
+{
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .run_fixture_journey(Path::new(&request.fixture_root), |phase| {
+            on_progress(phase);
+        })
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Open a Distill home and return typed health.
+ */
+pub fn run_health(request: &HomeRequest) -> Result<HealthReport, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.health().map_err(HostError::from_library)
+}
+
+/**
+ * Import a legacy Electron Distill home into the destination native home.
+ */
+pub fn run_import_legacy(request: &LegacyImportRequest) -> Result<LegacyImportReport, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .import_legacy_electron_home(&request.source_home)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Explicit Library repair after the renderer supplies confirmation.
+ */
+pub fn run_repair(request: &HomeRequest, confirm: bool) -> Result<RepairReport, HostError> {
+    if !confirm {
+        return Err(HostError::validation(
+            "repair requires explicit confirmation because it performs destructive cleanup",
+        ));
+    }
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .repair(RepairOptions::all_documented())
+        .map_err(HostError::from_library)
+}
+
+/**
+ * List Source preferences.
+ */
+pub fn run_list_sources(request: &HomeRequest) -> Result<Vec<SourcePreference>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library.list_sources().map_err(HostError::from_library)
+}
+
+/**
+ * Detect Sources independently through the public Library seam (read-only).
+ *
+ * Parameters:
+ * - `request`: validated home plus per-Source detection requests
+ */
+pub fn run_detect_sources(
+    request: &SourceDetectBatchRequest,
+) -> Result<Vec<SourceDetectResult>, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .detect_sources(&request.requests)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Upsert one Source preference.
+ */
+pub fn run_set_source_preference(
+    request: &SourcePreferenceRequest,
+) -> Result<SourcePreference, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .set_source_preference(
+            &request.kind,
+            request.enabled,
+            request.configured_root.as_deref(),
+        )
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Start a Sync Run off the UI thread with typed progress.
+ */
+pub fn run_sync_start<F>(
+    request: &SyncStartRequest,
+    on_progress: F,
+) -> Result<SyncRunResult, HostError>
+where
+    F: FnMut(SyncProgress),
+{
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .start_sync(
+            SyncRequest {
+                source_kinds: request.source_kinds.clone(),
+            },
+            on_progress,
+        )
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Load Sync Run status.
+ */
+pub fn run_sync_status(
+    request: &HomeRequest,
+    sync_run_id: Option<i64>,
+) -> Result<SyncRunSummary, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .sync_status(sync_run_id)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Request Sync Run cancellation.
+ */
+pub fn run_sync_cancel(request: &SyncIdRequest) -> Result<SyncRunSummary, HostError> {
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .request_sync_cancel(request.sync_run_id)
+        .map_err(HostError::from_library)?;
+    library
+        .sync_status(Some(request.sync_run_id))
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Validate Distill home plus closed export dataset target.
+ *
+ * Parameters:
+ * - `home`: Distill home path from the renderer
+ * - `dataset`: caller-supplied dataset string (`train` or `holdout`)
+ */
+pub fn validate_export_request(home: &str, dataset: &str) -> Result<ExportRequest, HostError> {
+    let request = validate_home_request(home)?;
+    let dataset = ExportDataset::parse(dataset).map_err(HostError::validation)?;
+    Ok(ExportRequest {
+        home: request.home,
+        dataset,
+    })
+}
+
+/**
+ * Preview export eligibility through the public Library seam.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ */
+pub fn run_preview_export(request: &ExportRequest) -> Result<ExportPreview, HostError> {
+    let library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .preview_export(request.dataset)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Publish a recoverable export and report typed progress.
+ *
+ * The compatibility runner continues publication; callers that need
+ * cancellation can use `run_publish_export_cancellable` or the typed control
+ * seam below.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ * - `on_progress`: typed export progress observer
+ */
+pub fn run_publish_export<F>(
+    request: &ExportRequest,
+    mut on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress),
+{
+    run_publish_export_with_control(request, |progress| {
+        on_progress(progress);
+        ExportProgressControl::Continue
+    })
+}
+
+/**
+ * Publish an export while allowing the caller to request cancellation at a
+ * typed Library checkpoint.
+ *
+ * Parameters:
+ * - `request`: validated home and dataset
+ * - `on_progress`: typed observer/control callback
+ */
+pub fn run_publish_export_with_control<F>(
+    request: &ExportRequest,
+    on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress) -> ExportProgressControl,
+{
+    let mut library = Library::open(&request.home).map_err(HostError::from_library)?;
+    library
+        .publish_export(request.dataset, on_progress)
+        .map_err(HostError::from_library)
+}
+
+/**
+ * Publish an export with a desktop cancellation token registered for the
+ * duration of the blocking operation.
+ */
+pub fn run_publish_export_cancellable<F>(
+    request: &ExportRequest,
+    mut on_progress: F,
+) -> Result<ExportResult, HostError>
+where
+    F: FnMut(ExportProgress),
+{
+    let guard = acquire_export_cancellation(request)?;
+    let state = Arc::clone(&guard.token);
+
+    run_publish_export_with_control(request, |progress| {
+        on_progress(progress);
+        if state.token.load(std::sync::atomic::Ordering::Acquire) {
+            ExportProgressControl::Cancel
+        } else {
+            ExportProgressControl::Continue
+        }
+    })
+}
+
+/**
+ * Request cancellation for an active desktop export.
+ *
+ * Returns `true` when an active publication was found and signalled.
+ */
+pub fn run_export_cancel(request: &ExportRequest) -> Result<bool, HostError> {
+    let mut entries = export_cancellation_registry()
+        .lock()
+        .map_err(|_| HostError {
+            code: "runtime".to_string(),
+            message: "export cancellation registry poisoned".to_string(),
+        })?;
+    let state = entries
+        .entry(export_cancellation_key(request))
+        .or_insert_with(|| {
+            Arc::new(ExportCancellationState {
+                token: std::sync::atomic::AtomicBool::new(true),
+                started: std::sync::atomic::AtomicBool::new(false),
+            })
+        });
+    state
+        .token
+        .store(true, std::sync::atomic::Ordering::Release);
+    Ok(true)
+}
+
+/**
+ * Validate a renderer-supplied filesystem path argument.
+ *
+ * Rejects empty strings, embedded NUL bytes, and any `..` path segment so the
+ * host never treats traversal strings as ordinary Distill homes or Source roots.
+ * Raw path text is never echoed into the validation error message.
+ *
+ * Parameters:
+ * - `label`: Human-readable argument name used only in generic error text.
+ * - `raw`: Renderer-supplied path string.
+ */
+fn validate_path_argument(label: &str, raw: &str) -> Result<String, HostError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(HostError::validation(format!(
+            "{label} path must not be empty"
+        )));
+    }
+    if trimmed.contains('\0') {
+        return Err(HostError::validation(format!(
+            "{label} path must not contain NUL bytes"
+        )));
+    }
+    let path = Path::new(trimmed);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(HostError::validation(format!(
+            "{label} path must not contain parent traversal segments"
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    use distill_library::ActivityListRequest;
+    use tempfile::TempDir;
+
+    /**
+     * Write a minimal Fixture root for host detection tests.
+     */
+    fn write_basic_fixture(root: &Path) {
+        let captures = root.join("captures");
+        fs::create_dir_all(&captures).expect("captures");
+        fs::write(
+            captures.join("hello.jsonl"),
+            concat!(
+                r#"{"record_type":"session_meta","title":"Host Detect","summary":"detect"}"#,
+                "\n",
+                r#"{"record_type":"message","role":"user","text":"Hello from host detect"}"#,
+                "\n",
+                r#"{"record_type":"message","role":"assistant","text":"Host detect greeting"}"#,
+                "\n",
+            ),
+        )
+        .expect("capture");
+        fs::write(
+            root.join("distill.fixture.json"),
+            r#"{
+  "version": 1,
+  "captures": [
+    {
+      "id": "hello",
+      "kind": "file",
+      "relative_path": "captures/hello.jsonl",
+      "external_session_id": "fixture-session-host-detect",
+      "title": "Host Detect"
+    }
+  ]
+}"#,
+        )
+        .expect("manifest");
+    }
+
+    /**
+     * THC-007: validated detect_sources isolates siblings, redacts diagnostics,
+     * and performs no Activity mutation.
+     */
+    #[test]
+    fn host_detect_sources_isolates_siblings_without_mutation() {
+        let temp = TempDir::new().expect("temp");
+        let home = temp.path().join("home");
+        let good = temp.path().join("good root");
+        let bad = temp.path().join("bad root with spaces and secret token");
+        fs::create_dir_all(&good).expect("good");
+        fs::create_dir_all(&bad).expect("bad");
+        write_basic_fixture(&good);
+
+        let empty = validate_source_detect_request(home.to_str().unwrap(), vec![]);
+        assert_eq!(empty.expect_err("empty").code, "validation");
+
+        let blank_kind = validate_source_detect_request(
+            home.to_str().unwrap(),
+            vec![SourceDetectRequest {
+                kind: "  ".into(),
+                configured_root: None,
+            }],
+        );
+        assert_eq!(blank_kind.expect_err("blank").code, "validation");
+
+        let request = validate_source_detect_request(
+            home.to_str().unwrap(),
+            vec![
+                SourceDetectRequest {
+                    kind: "fixture".into(),
+                    configured_root: Some(bad.display().to_string()),
+                },
+                SourceDetectRequest {
+                    kind: "fixture".into(),
+                    configured_root: Some(good.display().to_string()),
+                },
+                SourceDetectRequest {
+                    kind: "droid".into(),
+                    configured_root: None,
+                },
+                SourceDetectRequest {
+                    kind: "codex".into(),
+                    configured_root: Some(
+                        temp.path()
+                            .join("missing root with secret token")
+                            .display()
+                            .to_string(),
+                    ),
+                },
+            ],
+        )
+        .expect("validate");
+
+        let results = run_detect_sources(&request).expect("detect");
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].status, "unhealthy");
+        assert_eq!(results[1].status, "ok");
+        assert_eq!(results[2].status, "disabled");
+        assert_eq!(results[3].status, "unhealthy");
+        assert_eq!(
+            results[3].error_class.as_deref(),
+            Some("invalid_configured_root")
+        );
+        let bad_message = results[0].error_message.as_deref().unwrap_or("");
+        assert!(!bad_message.contains("secret"));
+        assert!(!bad_message.contains("spaces"));
+        assert!(!bad_message.contains('/'));
+        assert!(!results[3]
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("secret"));
+
+        let library = Library::open(&home).expect("reopen");
+        let activity = library
+            .list_activity(ActivityListRequest {
+                limit: 50,
+                cursor: None,
+            })
+            .expect("activity");
+        assert!(activity.items.is_empty(), "detect must not append Activity");
+    }
+}

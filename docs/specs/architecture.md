@@ -12,6 +12,11 @@ The current canonical product loop is:
 
 SQLite remains a retained architectural constraint for the local data layer.
 
+The v1 hostile-input and desktop capability boundary is normative in
+`docs/specs/privacy-and-capabilities.md`: `sensitive` is export-only, the
+renderer has no ambient storage/process authority, and v1 does not provide
+application encryption, per-session delete, retention purge, or secure-forget.
+
 ## Explicit Non-Goals
 
 These items are not part of the current normative architecture:
@@ -111,3 +116,48 @@ An append-only audit event describing something meaningful that happened in Dist
 ### `Job`
 
 An operational unit of work used for source sync or future operational workflows. Jobs are not the canonical session or audit model.
+
+## Rebuild Library Shape
+
+The clean rebuild centers product behavior in one deep Rust `Library` crate (`crates/distill-library`). Desktop (Tauri), CLI, and contract tests are equal callers of that public seam. SQLite, FTS5, content-addressed files, migrations, and recovery protocols remain Library internals (see ADRs `0001`–`0003`).
+
+Public Library methods for the Fixture tracer, all v1 Sources, and thin callers:
+
+- `Library::open(home)` — create or open a Distill home, apply ordered checksummed migrations, enforce restrictive Unix modes (`0o700` directories, `0o600` files), and perform safe open reconciliation that removes only canonical `{64 lowercase hex}.partial` staging files while reporting what was reconciled
+- `Library::open_with_limits(home, max_capture_bytes)` — open with an explicit testable Capture acceptance limit
+- `detect_fixture(fixture_root)` — return a caller-facing `SourceSummary` through the production Fixture SourceAdapter detect path
+- `ingest_fixture(fixture_root)` — run the production `SourceAdapter` seam with the Fixture adapter only; the ingest report includes distinct `SessionIdentity` values projected during the run
+- `set_registered_parser_version(kind, version)` — advance the Library-owned parser version for one closed `SourceKind`; callers cannot supply parser ids
+- `set_registered_fixture_parser_version(version)` — Fixture compatibility shim over `set_registered_parser_version`
+- `renormalize_capture(capture_id)` — re-run the registered parser for the Capture's persisted Source kind against checksum-verified Distill-owned bytes without creating a new Capture, rereading a Source root, or invoking OpenCode; unknown persisted kinds return typed `UnknownSourceKind` without Attempt/Projection mutation
+- `capture_attempts(capture_id)` — return immutable caller-safe Attempt summaries, including parser version, outcome, projection generation, diagnostics, and Fact count
+- `run_fixture_journey(fixture_root, on_progress)` — first-run helper that detects, ingests, loads the first projected Session, and returns health as a `FixtureJourneyResult` with typed progress phases
+- `session_slice` / `session_detail` / `list_sessions` — read bounded current-projection detail and deterministic cursor-paged list/search pages over the FTS index, intersected with manual workflow lanes
+- `add_session_tag` / `remove_session_tag` / `toggle_session_label` — transactionally mutate manual session curation by Session Identity, append matching Activity Events, enforce dataset-label exclusivity, and return the current manual curation snapshot plus derived workflow state
+- `preview_export(dataset)` / `publish_export(dataset, on_progress)` — derive one current-projection eligibility snapshot for `distill-session-jsonl-v1`, preview without side effects, and publish a checksummed Library-owned JSONL artifact through the durable `preparing` → `committed` → rename → `published` lifecycle with restart reconciliation and cancellation
+- `replay_capture(capture_id)` — return Distill-owned Capture bytes after checksum verification
+- `health()` — report schema/migration integrity (including SQLite quick/integrity/foreign-key checks), referenced inline/blob size+checksum without following CAS symlinks or leaving the Distill home, exact projection↔FTS agreement across session_id/message_id/title/project_path/role/text, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections (empty successful projections are valid), mismatched Session counters, and Sync Run operations status (`ok` / `active` / `failed`, including stale leases) as typed `HealthIssue` values with redacted summaries
+- `list_sources` / `set_source_preference` — persist enabled/disabled and optional canonical configured-root overrides per Source without exposing adapter or storage internals
+- `detect_sources` — return one independent typed detection result per requested Source (Fixture has no executable; executable-backed Sources report availability separately from data-root health; effective data root; typed health/status); detection instantiates each adapter with its Library-registered parser identity; one failing Source never aborts siblings
+- `start_sync` / `request_sync_cancel` / `sync_status` — durable Sync Run bookkeeping with typed progress, safe cancellation checkpoints before each Source and Capture Candidate (cancel requested at CandidateStarted still finishes that candidate; lease ownership is re-asserted after the progress callback before candidate work), `sync_already_running` / `sync_no_enabled_sources` / unknown-kind rejection with no side effects, owner/lease/heartbeat stale detection on open using system UTC only (no public injectable clock), background lease heartbeat for long candidates, and typed `sync_lease_lost` when ownership is lost; Sync instantiates each adapter with its Library-registered parser identity
+- `repair(options)` — explicit idempotent transactional repair for documented repairable states (orphan CAS deletion of in-root regular canonical blobs only, incomplete-state resolution via failed pending Attempts plus `capture_failed` recovery Activity without inventing Attempts, Session counter recompute, FTS rebuild from Session title/project_path, staging cleanup of canonical `{64 hex}.partial` only); never silently deletes referenced content or immutable Captures/Facts
+- `recent_activity(limit)` — return a bounded oldest-first Activity slice retained for tracer compatibility
+- `list_activity(ActivityListRequest)` — return newest-first append-only Activity Events with opaque keyset cursors and caller-safe redacted payload JSON; the read path never mutates audit history
+- `list_operations(OperationsRequest)` — return independent cursor-paged Sync Run and export lifecycle summaries plus `operations_status`; operational diagnostics omit export paths and redact path-bearing error text without consulting Activity as authority
+- `import_legacy_electron_home(source_home)` — snapshot a legacy Electron SQLite home read-only (including WAL sidecars), reject unsafe path relationships, map representative history/curation/activity/export data into the native model, and return a redacted idempotent `LegacyImportReport`
+
+Thin callers:
+
+- `crates/distill-cli` — Fixture journey plus owning `health`, `repair`, `sources list|set|detect`, `sync start|status|cancel`, `sessions tag-add|tag-remove|label-toggle`, `captures attempts|renormalize`, `export preview|publish`, `activity`, `operations`, and `migrate`/`import-legacy` commands; `sources detect` is a read-only bridge over `Library::detect_sources` with stable human/JSON output, redacted caller messages, and sibling-failure isolation (one unhealthy Source never aborts the batch); `captures attempts` and `captures renormalize` are provider-neutral bridges over `Library::capture_attempts` / `Library::renormalize_capture` (optional same-process `--advance-kind`/`--advance-version` only; no parser ids, SQL, Source-root reread, or OpenCode subprocess); the CLI provider journey contract exercises Codex, Claude Code, OpenCode, and Droid through these same commands; exit `0` success, `1` Library/runtime failure, `2` usage/validation
+- `apps/distill-desktop` — Tauri 2 host runs the retained Fixture journey plus provider-neutral Source preference, independent Source detection, Sync, search/detail, curation, Capture Attempt history, Distill-owned renormalize, export, Activity, and Operations calls off the UI thread via `spawn_blocking`, validates inputs, emits typed Fixture, Sync, and Export progress, and returns typed results to a sandboxed React renderer; the renderer carries only Source kind/root/enabled drafts, exposes bridge-only Source detection idle/loading/ready/empty/warning/error states, and discovers Capture ids via Activity for Attempt history / renormalize UI states without provider parsing policy or parser-version preference UI; repair requires explicit confirmation; Activity and Operations panels load only on explicit action and expose idle/loading/empty/warning/error/cancelled states; renderer remains bridge-only
+
+Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, mid-projection publication points, and export temp-write/commit/rename boundaries). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
+
+The legacy Electron application source was retired before beta and is not a
+dependency of the Rust Library. The Library keeps only a read-only importer for
+Electron-shaped homes; historical source references are provenance in the
+legacy-boundary docs.
+
+## SourceAdapter Seam
+
+Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. Fixture, Codex, Claude Code, OpenCode, and Droid are proven through the same Library seam; the CLI provider journey separately proves that the caller does not grow provider-specific policy.

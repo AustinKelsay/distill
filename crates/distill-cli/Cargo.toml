@@ -1,0 +1,26 @@
+# Thin Distill CLI that calls the public Library Fixture journey.
+
+[package]
+name = "distill-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin Distill CLI Fixture caller"
+default-run = "distill"
+
+[[bin]]
+name = "distill"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+distill-library = { path = "../distill-library" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+rusqlite = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }

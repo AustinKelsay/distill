@@ -1,0 +1,50 @@
+{
+  "name": "@distill/desktop",
+  "version": "0.2.0-beta.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:a11y": "vitest run src/App.a11y.test.tsx src/App.states.test.tsx src/styles.a11y.test.ts",
+    "a11y:smoke": "node scripts/a11y-keyboard-smoke.mjs",
+    "package:macos": "tauri build --bundles app --no-sign",
+    "smoke:macos": "node scripts/macos-package-smoke.mjs",
+    "package:linux": "tauri build --bundles deb,appimage",
+    "package:windows": "tauri build --bundles nsis,msi",
+    "smoke:linux": "node scripts/linux-package-smoke.mjs",
+    "test:hermetic-fixtures": "node --test scripts/packaged-hermetic-multisource.node-test.mjs scripts/packaged-hermetic-legacy-home.node-test.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.2",
+    "eslint": "^9.28.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.2.0",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.33.1",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.1",
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

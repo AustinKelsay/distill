@@ -158,9 +158,20 @@ Lane semantics:
 - `Favorites` contains sessions with label `favorite`
 - unlabeled sessions remain visible in `All` only in the current MVP branch
 
+The `sensitive` label is an export-only policy boundary. It does not encrypt
+content, delete a Session, purge retained history, or provide secure-forget;
+v1 intentionally provides none of those application-level controls. The
+hostile-input and capability rules that protect caller diagnostics and the
+renderer boundary are specified in `docs/specs/privacy-and-capabilities.md`.
+
 ## Export Contract
 
 Current canonical export behavior is approved dataset export from the current materialized projection.
+
+The v1 published format is `distill-session-jsonl-v1`: one deterministic JSON object per line. Preview
+and publish share the same eligibility snapshot and policy; preview performs no filesystem, export-row,
+or Activity mutation. The Library owns `<distill-home>/exports`, and callers do not select arbitrary
+destinations in v1.
 
 Current approved dataset targets are:
 
@@ -209,6 +220,21 @@ This intentionally mirrors the current implementation rather than a richer futur
 Export source truth is the current session projection, not raw capture history.
 
 For compatibility, additive export fields may be introduced without renaming existing top-level fields, but any exported session or message metadata must still come from the current projection only.
+
+Publication lifecycle is durable and restart-aware:
+
+1. create an `exports` row in `preparing` state and write a temporary file under the Library-owned
+   `exports` directory;
+2. flush the temporary file, compute its SHA-256 and byte/record counts, and move the row to
+   `committed`;
+3. atomically rename the temporary file to its same-volume final path;
+4. move the row to `published` and append one `export_written` Activity Event in the same SQLite
+   transaction.
+
+Cancellation or publication failure is terminal (`cancelled` or `failed_publish`) and must not
+report a final path unless the file and bookkeeping agree. Reopening the Library reconciles
+incomplete rows and removes only disposable temporary files; it never invents `export_written`
+for an unrecovered artifact.
 
 ## Explicit Out-Of-Scope Items
 

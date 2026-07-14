@@ -1,0 +1,27 @@
+# Distill beta Cargo workspace. The shipped product is Rust Library + CLI + Tauri;
+# legacy Electron-shaped homes remain supported only as read-only migration input.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/distill-library",
+    "crates/distill-cli",
+    "apps/distill-desktop/src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.2.0-beta.1"
+
+[workspace.dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+semver = "1"
+tempfile = "3"
+thiserror = "2"
+hex = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = { version = "1", features = ["v4"] }

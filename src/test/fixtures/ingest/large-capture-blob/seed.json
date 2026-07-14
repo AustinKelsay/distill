@@ -1,6 +1,0 @@
-{
-  "projectPath": "/tmp/large-capture",
-  "messagePrefix": "Blob persistence fixture ",
-  "repeatCount": 70000,
-  "assistantText": "Stored through the blob-backed raw capture path."
-}

@@ -8,7 +8,7 @@ Every source connector exposes exactly four operations:
 
 ```ts
 interface SourceConnector {
-  kind: "codex" | "claude_code" | "opencode";
+  kind: "fixture" | "codex" | "claude_code" | "opencode" | "droid";
   detect(): DiscoveredSource;
   discoverCaptures(): DiscoveredCapture[];
   snapshotCapture(capture: DiscoveredCapture): CaptureSnapshot;
@@ -165,6 +165,36 @@ Canonical structured artifacts:
 - file payloads
 - unknown structured parts preserved as raw structured artifacts
 
+## Droid Appendix
+
+### Detection
+
+The Droid connector resolves a configured root first, then the default
+`$HOME/.factory/sessions` root when present. It reports an absent or unreadable root through
+typed, caller-safe diagnostics and does not require a provider subprocess.
+
+### Discovery
+
+The canonical capture set is recursive `.jsonl` session files under the sessions root. Sidecar
+`<session-id>.settings.json` files and other non-JSONL files are auxiliary metadata, not Captures.
+Candidates use deterministic `droid://session/<id>` identities; duplicate external ids resolve by
+sorted source path, and the adapter falls back from `session_start.id` to the filename stem and
+then to a deterministic synthetic identity.
+
+### Snapshot
+
+Snapshot source truth is the exact session JSONL file bytes, including checksum, byte size, and
+source modification metadata. Distill-owned Capture content remains sufficient for replay after
+the Droid root is removed.
+
+### Parse
+
+Canonical transcript candidates are visible text blocks in user and assistant `message` rows.
+Structured blocks become Capture Artifacts for images, tool calls/results, thinking, files, and
+unknown block types. Session-start metadata, sidecar title/model/archive fields, owner, project
+path, timestamps, unknown roles, malformed rows, and deterministic synthetic provenance remain
+available as canonical facts or session metadata without provider policy leaking into shared code.
+
 ## Adding A New Connector
 
 A new connector may be added only when:
@@ -173,3 +203,44 @@ A new connector may be added only when:
 2. its parsing rules are added to this file
 3. its contract tests are added to `docs/testing/contract-test-matrix.md`
 4. any shared-shape changes are reflected in the canonical specs
+
+## Rebuild SourceAdapter Seam
+
+The Rust Library implements connectors behind an internal `SourceAdapter` trait with the same four responsibilities:
+
+```rust
+trait SourceAdapter {
+    fn detect(&self) -> Result<DiscoveredSource, SourceStageError>;
+    fn discover(&self, source: &DiscoveredSource) -> Result<Vec<CaptureCandidate>, SourceStageError>;
+    fn snapshot(&self, candidate: &CaptureCandidate) -> Result<CaptureSnapshot, SourceStageError>;
+    fn parse(
+        &self,
+        candidate: &CaptureCandidate,
+        snapshot: &CaptureSnapshot,
+    ) -> Result<ParsedCapture, SourceStageError>;
+}
+```
+
+`DiscoveredSource` also carries the adapter-owned parser identity and version recorded on each Normalization Attempt. This keeps the four-operation seam source-agnostic without hard-coding Fixture parser metadata in ingestion.
+
+Adapters remain forbidden from SQLite, projection mutation, search, Curation, export, and Activity persistence.
+
+### Fixture Appendix
+
+- Detect only the root explicitly supplied by a test or packaged smoke harness (`distill.fixture.json` must be present).
+- Discover file-backed and virtual Capture Candidates with deterministic logical identity (`fixture://...` paths).
+- Snapshot through the same production preservation path; no test-only persistence shortcut.
+- Parse synthetic Fixture JSONL covering dialogue messages plus structured tool/reasoning records as Capture Facts and Artifacts.
+- Use explicit Fixture Session IDs when supplied; otherwise apply the production deterministic synthetic-identity rule.
+
+The Rust rebuild now implements Fixture (#18), Codex (#26), Claude Code (#27), OpenCode (#28), and
+Droid (#29) through the same SourceAdapter and Library ingest seam. Codex detection requires the
+configured home and `codex` executable, discovery peeks only for a session metadata id when
+rollout filenames do not provide one, and archived candidates are folded before live candidates
+so live wins deterministically. Claude Code detection requires the configured home and `claude`
+executable, discovers project JSONL captures, and keeps history/settings auxiliary. OpenCode
+detection requires a configured data root and executable, discovery uses a bounded `opencode db`
+query for deterministic virtual session identities, and snapshot preserves the complete bounded
+`opencode export` stdout payload before parsing. Droid is file-backed under its configured or
+default sessions root and preserves exact JSONL bytes, sidecar metadata, and deterministic logical
+identities. Exact source bytes remain the snapshot truth for every file-backed adapter.

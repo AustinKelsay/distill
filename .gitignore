@@ -1,7 +1,11 @@
 node_modules
 dist
+target
 *.db
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 npm-debug.log*
+apps/distill-desktop/src-tauri/gen
+apps/distill-desktop/dist
+.gate-logs/

@@ -1,0 +1,104 @@
+# Issue Session — #49 Packaged Attempt-history + Capture-renormalize Smoke
+
+## Issue
+
+- Issue: [#49](https://github.com/AustinKelsay/distill/issues/49)
+- Parent: [#17](https://github.com/AustinKelsay/distill/issues/17)
+- Fixed point before session: post-#48 on `feature/distill-clean-rebuild`
+- Worker session: Cursor Grok 4.5 High bounded audit; Codex integration
+- Loop: Matt Pocock skills v1.1 / Plebdev Feature Dev loop v0.4.0
+- Status: complete for the Linux packaged contract; exact-head `97c309b` Ubuntu
+  run `29245798595` passed package/build/install/smoke and the retained journey.
+  Darwin `PKG-006` remains manual-required when System Events cannot expose the
+  packaged window.
+- Review packet: `docs/runs/reviews/49-packaged-attempt-history-renormalize-smoke.md`
+
+## Intended Contract
+
+After the retained packaged Fixture search/detail journey, drive the existing
+bridge-only Attempt-history controls. `Load Attempt history` must discover the
+selected Session's Capture through Activity and render an immutable Attempt row
+with Capture id, outcome, and parser id/version. `Renormalize Capture` must retry
+the same Capture through the existing Distill-owned bridge seam, expose the
+Attempt/report, and leave the Fixture/provider roots byte-stable. The retained
+curation, JSONL export, restart, artifact, and containment assertions remain
+part of the same journey.
+
+This slice does not add parser-version preference UI, provider-root controls,
+host-installed provider claims, or new product policy. It does not claim
+screen-reader speech, signing/notarization, Windows packaging, or Electron
+retirement.
+
+## Testing Seam
+
+- Primary: installed Ubuntu `.deb` under `dbus-run-session`/Xvfb with AT-SPI and
+  `xdotool`, using the existing `linux-package-smoke.mjs` journey.
+- Darwin: the corresponding `PKG-006` row is manual-required if AX cannot see
+  the packaged window; no failure is silently promoted to a pass.
+- Existing renderer/host/CLI Attempt contracts remain the product-policy
+  coverage; this issue only adds packaged caller evidence.
+- Forbidden shortcuts: SQL/storage access in the renderer, parser-version
+  controls, provider-root rereads, Electron edits, signing, Windows packaging,
+  and host-installed/real-machine provider roots.
+
+## Verification Plan
+
+- `node --check apps/distill-desktop/scripts/linux-package-smoke.mjs`
+- `npm --prefix apps/distill-desktop run test:hermetic-fixtures`
+- Desktop typecheck, lint, format, renderer tests, and frontend build.
+- Rust workspace, fault-injection, format, clippy, dependency-tree, and diff
+  gates as required by the rebuild workflow.
+- Attempt CodeRabbit on unstaged changes; if bounded/rate-limited, record the
+  independent Grok standards/spec review fallback.
+- Exact-head Ubuntu package/install/smoke and Rust advisory workflows; promote
+  `LPKG-006` only after the packaged journey reaches the retry report and the
+  retained export/restart/containment checks.
+
+The first exact-head Ubuntu run built and installed the package but exposed a
+pre-existing packaged caller race: after the redaction probe, Sync observed the
+stale missing-Codex root (`invalid_configured_root`). A follow-up experiment
+showed that re-running Detect is invalid for the hermetic Codex root because
+Detect correctly requires a host executable. The harness now types the
+corrected Codex root with a slower AT-SPI/`xdotool` delay, re-runs the
+read-only detector, and requires the expected `codex: unavailable` executable
+status before Sync. This both proves the corrected root reached the bridge and
+refreshes the current React handler without changing Sync policy. Both failures
+remain recorded rather than counted as Attempt evidence.
+
+## Darwin `PKG-006` manual checklist
+
+When System Events exposes the packaged window, complete the retained Fixture
+search/detail journey, activate `Load Attempt history`, and verify the visible
+status includes the discovered Fixture Capture id plus its initial `#1` Attempt with
+  `fixture/1.0.0` and its outcome. Activate `Renormalize Capture` and verify the
+  same Capture id, `attempt 6`, parser id/version, and outcome appear in the
+report/list. Confirm the existing curation/export/restart/Fixture-root checks
+still pass. Record `manual_required` rather than `passed` if AX cannot expose
+the window; this checklist does not claim VoiceOver speech.
+
+## Evidence Symbols
+
+- `apps/distill-desktop/scripts/linux-package-smoke.mjs::runUiJourney`
+- `linux-package-smoke.mjs` evidence field `attempt_history_renormalize`
+- Matrix/evidence IDs: `PKG-006`, `LPKG-006`
+
+## Final exact-head evidence
+
+- Head: `97c309b630d85e60bf226f157a642797844e4764` (`97c309b`)
+- Ubuntu package/install/smoke: [run 29245798595](https://github.com/AustinKelsay/distill/actions/runs/29245798595)
+- Result: package build, install, AT-SPI journey, Rust gates, desktop gates,
+  and Rust advisory workflow passed.
+- `LPKG-006`: Activity-discovered Fixture `Capture 1`; initial `Attempt 1`
+  (`fixture/1.0.0`, `succeeded`); same-Capture renormalize report/list with
+  retry `Attempt 6` (`fixture/1.0.0`, `succeeded`); retained curation, JSONL
+  export, restart, artifact, and Fixture-root containment checks passed.
+- Darwin `PKG-006` remains manual-required; this evidence does not claim
+  screen-reader speech, signing/notarization, Windows packaging, or
+  host-installed provider coverage.
+
+## Non-goals / residuals
+
+- Darwin AX automation when the packaged window is not exposed; human
+  VoiceOver/Narrator speech, signing/notarization/stapling, Windows packaging,
+  host-installed providers, Electron retirement, Rust advisory warning policy,
+  and #17/#38 closure remain explicit residuals.

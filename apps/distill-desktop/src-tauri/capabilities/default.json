@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least-privilege Distill desktop capabilities for issue #32. The renderer may only use core events plus the explicitly registered host invoke commands. No filesystem, shell, process, dialog, HTTP, or SQLite plugin permissions are granted. Path arguments are validated in Rust host code; sensitive is export-only policy and v1 has no application encryption, per-session delete, retention purge, or secure-forget.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

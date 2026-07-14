@@ -245,6 +245,8 @@ Canonical semantics:
 - dataset-label exclusivity must be enforced transactionally when a manual toggle enables a conflicting dataset label
 - labels take precedence over tags when export or review behavior would otherwise conflict
 - UI surfaces should present labels before tags, and export metadata should list labels before tags
+- curation mutations target Session Identity, normalize names before lookup, and commit assignment changes with their `tag_added`, `tag_removed`, or `label_toggled` Activity Event in one transaction
+- duplicate, missing-session, blank, unknown-label, and missing-assignment commands are true no-ops with no Activity side effects
 
 Example:
 
@@ -258,8 +260,13 @@ Purpose:
 
 Canonical semantics:
 
-- one row per completed export artifact written by Distill
-- export rows describe operational output, not raw capture history
+- one row per export attempt, with terminal `published`, `failed_publish`, or `cancelled` state
+- `preparing` and `committed` rows are restart-repairable publication states
+- published rows describe operational output, not raw capture history, and include format, dataset,
+  final/temp paths, checksum, byte size, record count, and eligibility snapshot metadata
+- `preparing`/`committed` rows may retain an intended final path for checksum-based restart
+  reconciliation; only a `published` row reports that path as authoritative and may emit
+  `export_written`
 
 ## `activity_events`
 
@@ -305,7 +312,7 @@ Append-only entities:
 - `captures`
 - `capture_records`
 - `activity_events`
-- `exports`
+- `legacy_import_markers` (migration `0005_legacy_import_markers.sql`) keyed by a combined legacy DB/WAL/content fingerprint and storing only a redacted import report
 
 Replace-on-success projection entities:
 
@@ -318,8 +325,61 @@ Mutable operational or preference entities:
 - `sources`
 - `jobs`
 - `user_preferences`
+- `exports` (mutable restart-repairable lifecycle rows; published artifacts remain immutable)
 - manual curation descriptors and assignments
 
 ## Current Implementation Mapping
 
-The current SQLite schema is an implementation artifact in `schema.sql`. It is informative, not authoritative. Any gap between `schema.sql` and this document must be tracked in `docs/gaps/current-state-gap-register.md`.
+The retired Electron SQLite schema was an implementation artifact in the historical
+`schema.sql`. It is not shipped or authoritative. The active SQLite schema is
+owned by the Rust migrations under `crates/distill-library/migrations/`; any gap
+between those migrations and this document must be tracked in
+`docs/gaps/current-state-gap-register.md`.
+
+## Rebuild Model: Captures, Attempts, Facts, Projection
+
+The Rust Library rebuild separates four durable concepts that the legacy Electron `CaptureStatus` state machine collapsed:
+
+1. **Capture** — immutable identity plus Distill-owned, checksum-verified content. Accepted only after verified ownership. Exact dedupe key remains `(source_kind, source_path, sha256)`.
+2. **Normalization Attempt** — one parser identity/version execution against a Capture. Attempts record outcome, error classification, metrics, and the successful projection generation when applicable. The same Capture may have many Attempts across parser versions. Failed Attempts keep typed safe diagnostics and never rewrite prior Facts or the current projection.
+3. **Capture Fact** — immutable provider-shaped record belonging to a successful Attempt. Facts are never rewritten; a newer parser creates a new Attempt and new Facts. Prior Attempt Fact counts remain observable through caller-safe summaries.
+4. **Session Projection** — the latest successful normalized view for `(source_kind, external_session_id)`, including projected messages and artifacts. Replacement is atomic and generation-scoped. A failed Attempt leaves the prior current generation unchanged. Successful replacement is full replace even when the new message or artifact set is shorter or empty.
+
+Rebuild schema entities (fresh Distill home; no legacy schema inclusion):
+
+- `schema_migrations(version, checksum, applied_at)`
+- `sources`
+- `captures` (immutable content refs: inline or blob)
+- `normalization_attempts`
+- `capture_facts`
+- `sessions` with separately named `accepted_capture_count`, `normalization_attempt_count`, and `successful_projection_generation`
+- `projection_messages`, `projection_artifacts`
+- `tags`, `tag_assignments`, `labels`, and `label_assignments` with session-scoped object identity and assignment origin
+- `exports` (migration `0004_exports.sql`) with durable publication lifecycle, checksums, and eligibility snapshots
+- FTS5 over the current projection (`projection_fts`)
+- `activity_events`
+
+Inline versus blob storage is an internal Library choice. The documented threshold is **64 KiB** (`INLINE_CONTENT_THRESHOLD_BYTES`). Larger Captures are staged, checksummed, atomically renamed into the content-addressed store, then accepted in SQLite.
+
+Health and recovery classification over that durable state:
+
+- migration/schema integrity via checksummed `schema_migrations` plus SQLite quick/integrity/foreign-key checks with stable redacted messages
+- referenced Capture content presence, size, and checksum (inline or blob), never following CAS symlinks and never reading outside the Distill home even when `blob_path` is absolute or traverses parents
+- exact current `projection_messages` ↔ `projection_fts` agreement across session_id, message_id, title, project_path, role, and text (not count-only)
+- canonical disposable staging partials (`{64 lowercase hex}.partial`) and unrecognized staging entries under the Distill `staging/` directory
+- unreferenced regular in-root canonical CAS blobs under `blobs/`, with symlinks/malformed tree entries reported as blocking rather than deletion candidates
+- incomplete Captures (no Attempt and no Capture-scoped `capture_failed` recovery), pending Attempts, Sessions with broken `current_attempt_id`/generation linkage, and mismatched materialized Session counters
+- empty successful projections are valid when linkage invariants hold
+- `operations_status` is `ok` when no queued/running Sync Run exists, `active` when a live lease is present, and `failed` when a stale or inconsistent Sync Run is detected
+- additive migration `0002` introduces per-Source `enabled` / `configured_root` preferences, durable `sync_runs` with explicit `queued|running|completed|warning|failed|cancelled` status, owner/lease/heartbeat fields, a partial unique index permitting only one queued/running run, and per-source `sync_run_source_outcomes`
+
+Safe open reconciliation may remove only canonical `{64 lowercase hex}.partial` staging files and must report what it reconciled. On open, the Library also idempotently fails only stale active Sync Runs (lease expired relative to system UTC; no public injectable clock) and appends one `sync_failed` Activity with safe structured context per newly failed run. Opening another Library against a home with a live lease must not mark the owner stale. Lease refresh and terminal updates are conditional on owner id plus active status; stale repair and owner terminalization are mutually exclusive.
+
+Public Library read/write extensions for Attempt history and retry:
+
+- `capture_attempts(capture_id)` returns immutable Attempt summaries with parser identity/version, outcome, typed error class/message, optional projection generation, and Fact count
+- `renormalize_capture(capture_id)` re-runs the Library-registered parser for the Capture's persisted Source kind against Distill-owned Capture bytes without accepting a new Capture, rereading a Source root, invoking OpenCode, or accepting caller-supplied arbitrary parser ids; unknown/unregistered persisted kinds return typed `LibraryError::UnknownSourceKind` with no Attempt or Projection mutation
+- `list_sessions(request)` returns deterministic current-projection search/list pages with Unicode-safe FTS normalization, workflow-lane intersection, and keyset cursors; `session_detail(request)` returns bounded message/artifact slices with continuation cursors and manual curation read models
+- `set_registered_parser_version(kind, version)` accepts only a closed `SourceKind` and a strictly newer semantic version; parser ids remain adapter-owned constants
+- `set_registered_fixture_parser_version(version)` remains as a Fixture-only compatibility shim over `set_registered_parser_version`
+- `health()` / `repair(options)` own integrity classification and documented recovery; see architecture and ingest-pipeline rebuild notes

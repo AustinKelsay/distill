@@ -1,5 +1,0 @@
-{"timestamp":"2026-03-25T10:00:00.000Z","type":"session_meta","payload":{"id":"abc12345-1111-2222-3333-abcdefabcdef","timestamp":"2026-03-25T10:00:00.000Z","cwd":"/tmp/demo","cli_version":"1.2.3","model_provider":"openai"}}
-{"timestamp":"2026-03-25T10:00:00.500Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
-{"timestamp":"2026-03-25T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/tmp/demo</cwd>"}]}}
-{"timestamp":"2026-03-25T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello codex"}]}}
-{"timestamp":"2026-03-25T10:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will update the code."}]}}

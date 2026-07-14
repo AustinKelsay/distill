@@ -52,12 +52,14 @@ Current normative job type:
 
 - `sync_sources`
 
+Rebuild Sync Runs are durable operational bookkeeping distinct from Activity. Status is the closed set `queued`, `running`, `completed`, `warning`, `failed`, `cancelled`. A partial unique index (or equivalent transaction-safe invariant) permits only one queued/running Sync Run per Distill home. Queue and canonical sync Activity transitions commit together where required. A second start returns typed `sync_already_running` and creates no Sync Run or Activity side effects. Unknown Source kinds and selections that resolve to zero enabled Sources return typed safe errors (`invalid_argument` / `sync_no_enabled_sources`) with zero Sync Run and Activity side effects.
+
 Sync jobs may track:
 
-- queued/running/completed/failed status
+- queued/running/completed/warning/failed/cancelled status
 - warning status for non-fatal sync completions with warning details
 - attempts
-- scheduling metadata
+- owner/lease/heartbeat metadata for stale detection
 - aggregated import metrics
 - last error
 
@@ -68,6 +70,20 @@ Warning-only sync state is operational only:
 - it means the sync completed without a fatal job failure
 - warning details and aggregate metrics remain visible in jobs/logs
 - warning-only sync state must not by itself imply a canonical `sync_failed` audit event for the overall sync run
+- warning Sync Runs still emit canonical `sync_completed` with warning metrics in the payload
+- one successful Source/candidate plus one failed sibling terminates as `warning`; all-failing no-progress execution terminates as `failed`
+
+Cancellation uses the closed Activity taxonomy:
+
+- operational Sync Run status becomes `cancelled`
+- the canonical Activity Event is `sync_failed` with structured `reason: "cancelled"` (there is no `sync_cancelled` event type)
+- never treat operational logs as audit truth
+- `request_sync_cancel` on a terminal run is explicitly idempotent (no status mutation)
+- `sync_status(None)` with no runs returns typed `not_found`
+
+Active Sync Runs carry an owner id plus heartbeat/lease. Production uses system UTC only; there is no public injectable Library clock. The deterministic stale threshold is 60 seconds without heartbeat renewal. A background lease heartbeat on a separate connection renews ownership for the run lifetime so long candidates are not falsely marked stale; it stops promptly on terminalization and never renews a terminal or ownership-lost run. Lease refresh and terminal updates require `id + owner_id + active status`; zero changed rows surface typed `sync_lease_lost` so a worker whose lease was failed on reopen cannot overwrite status/Activity or continue candidate work. On Library open, only stale active runs are idempotently failed with one `sync_failed` Activity each. Stale repair and normal owner terminalization are mutually exclusive. Health `operations_status` is `ok`, `active`, or `failed` (stale/inconsistent).
+
+Every post-queue Sync execution path reaches exactly one terminal durable state and matching Activity, or returns `sync_lease_lost` after another opener already terminalized the run. Ordinary per-Source detect/discover/snapshot/config failures become failed Source outcomes with stable redacted diagnostics so sibling Sources continue. Internal fatal errors best-effort terminalize as `failed` without overwriting an already terminal/stale row.
 
 ## Logs Behavior
 
@@ -91,6 +107,16 @@ Canonical rule:
 
 If jobs and activity disagree, activity is the authoritative domain audit and the gap must be treated as an implementation bug.
 
+## Caller Read Models
+
+The Rust Library exposes two read models for thin callers:
+
+- `list_activity(ActivityListRequest)` returns immutable Activity Events newest-first by durable event id. The `v1` keyset cursor is opaque to callers and replaying a cursor returns the same page. Structured payloads retain safe provenance, reason, status, and metrics fields while redacting filesystem paths, SQL, command/output streams, and provider/raw payload blobs. Malformed payload JSON reads as an empty object. This query is read-only and never performs log cleanup or rewrites an audit row.
+- `list_operations(OperationsRequest)` returns `operations_status` plus independent newest-first pages for Sync Runs and export lifecycle rows. Sync and export cursors advance separately. Export rows expose lifecycle, checksum, size, count, and typed diagnostics but never output or temporary filesystem paths. Path-like fragments in Sync/export diagnostics are redacted while stable context is retained.
+- The same read-model redaction removes credential- and secret-shaped keys/values. Caller-facing Library, CLI, and Tauri errors use safe typed messages; raw paths, SQL, command streams, provider payloads, and credentials do not cross the caller boundary. The full hostile-input and capability contract is normative in `docs/specs/privacy-and-capabilities.md`.
+
+The CLI surfaces these models as `activity` and `operations` commands with stable JSON envelopes (`ok` plus the page shape) and documented exit codes. The Tauri host and React renderer use the same typed requests. Activity and Operations are explicit-action panels: each renders idle, loading, empty, warning, error, and cancelled states. Cancelling a panel invalidates its in-flight response and leaves the panel in a visible cancelled state; no ambient fetch is required.
+
 ## Current In-Scope Operational Features
 
 The current normative operational scope includes:
@@ -105,3 +131,17 @@ The current normative operational scope does not require:
 - a general-purpose background worker system
 - distributed job processing
 - job types for indexing or auto-tagging
+
+## Library Health And Repair
+
+Library health and repair are operational surfaces owned by the deep Library seam, not Activity Event rewrites:
+
+- `health()` classifies schema/migration (checksums plus SQLite quick/integrity/foreign-key checks), referenced content, projection/FTS agreement across every searchable field, staging partials, unreferenced CAS blobs, incomplete Captures/Attempts/current projections, and Session counter drift
+- empty successful projections are valid when `current_attempt_id` points at a succeeded Attempt for the claimed generation
+- Captures interrupted before parser execution are incomplete until they have an Attempt or a Capture-scoped `capture_failed` recovery Activity; repair appends that Activity and never invents a Normalization Attempt
+- user-facing diagnostics use typed issue codes and stable redacted summaries; raw filesystem paths, SQL, and payloads must not leak
+- safe open reconciliation removes only canonical `{64 lowercase hex}.partial` staging files and reports counts; noncanonical staging entries are reported, never silently deleted
+- CAS discovery/repair never follows symlinks and never reads or deletes outside the Distill home, even if a corrupted `blob_path` is absolute or traverses parents
+- explicit `repair` is idempotent, uses transactions for related SQLite mutations, requires caller opt-in for destructive actions, and returns typed named action counts
+- repair never deletes referenced content or mutates immutable Captures/Facts
+- `operations_status` is `ok` / `active` / `failed` based on Sync Run lease health (issue #22). Export rows have their own durable lifecycle; opening a home reconciles incomplete `preparing`/`committed` rows and reports recovery through typed export results rather than overloading Sync status.

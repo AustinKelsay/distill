@@ -27,6 +27,10 @@ That means the Distill MVP can begin with direct local ingestion and does not ne
 
 This discovery pass is machine-specific and date-specific. The exact file counts below were accurate on 2026-03-30 on this workstation.
 
+The source-location notes below are historical discovery evidence. They do not
+describe the shipped implementation: the beta uses the Rust adapters and Tauri
+desktop under `crates/` and `apps/distill-desktop/`.
+
 ## Source Locations
 
 ### Codex CLI

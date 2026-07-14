@@ -14,10 +14,15 @@ Authoritative normative documents:
 4. `docs/specs/connectors.md`
 5. `docs/specs/search-curation-export.md`
 6. `docs/specs/activity-and-ops.md`
-7. `docs/governance/spec-governance.md`
-8. `docs/testing/contract-test-matrix.md`
-9. `docs/gaps/current-state-gap-register.md`
-10. `docs/roadmap/spec-alignment-plan.md`
+7. `docs/specs/legacy-migration.md`
+8. `docs/specs/privacy-and-capabilities.md`
+9. `docs/specs/accessibility-and-visual-states.md`
+10. `docs/specs/scale-and-latency.md`
+11. `docs/governance/spec-governance.md`
+12. `docs/testing/contract-test-matrix.md`
+13. `docs/testing/contract-scenario-evidence.md` (the #37 per-scenario evidence registry)
+14. `docs/gaps/current-state-gap-register.md`
+15. `docs/roadmap/spec-alignment-plan.md`
 
 Non-normative documents explain the current implementation, preserve research notes, or provide navigation:
 
@@ -25,10 +30,12 @@ Non-normative documents explain the current implementation, preserve research no
 - `PLAN.md`
 - `IMPLEMENTATION.md`
 - `DISCOVERY.md`
-- `schema.sql`
-- `src/**`
+- `docs/legacy/electron/README.md`
+- historical Electron source paths recorded in Git history
 
-`schema.sql` and `src/**` are implementation artifacts, not the canonical domain specification. When they diverge from the canonical docs, the docs and the gap register win.
+The retired Electron source and its `schema.sql` are not part of the beta build,
+test, or release path. When historical artifacts diverge from the canonical
+docs, the docs and the gap register win.
 
 ## How To Read The Docs
 
@@ -40,10 +47,15 @@ Read the documents in this order:
 4. `docs/specs/connectors.md`
 5. `docs/specs/search-curation-export.md`
 6. `docs/specs/activity-and-ops.md`
-7. `docs/gaps/current-state-gap-register.md`
-8. `docs/testing/contract-test-matrix.md`
-9. `docs/roadmap/spec-alignment-plan.md`
-10. `docs/governance/spec-governance.md`
+7. `docs/specs/legacy-migration.md`
+8. `docs/specs/privacy-and-capabilities.md`
+9. `docs/specs/accessibility-and-visual-states.md`
+10. `docs/specs/scale-and-latency.md`
+11. `docs/gaps/current-state-gap-register.md`
+12. `docs/testing/contract-test-matrix.md`
+13. `docs/testing/contract-scenario-evidence.md`
+14. `docs/roadmap/spec-alignment-plan.md`
+15. `docs/governance/spec-governance.md`
 
 That order moves from system intent to entity semantics to pipeline behavior to current drift, tests, delivery order, and process.
 
@@ -55,10 +67,18 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Connector boundary: `docs/specs/connectors.md`
 - Search, curation, and export behavior: `docs/specs/search-curation-export.md`
 - Audit and operational behavior: `docs/specs/activity-and-ops.md`
+- Legacy Electron migration behavior: `docs/specs/legacy-migration.md`
+- Privacy, hostile-input, and desktop capability boundary: `docs/specs/privacy-and-capabilities.md`
+- Accessibility, keyboard, status, and visual-state contract: `docs/specs/accessibility-and-visual-states.md`
+- Scale, latency, progress, and cancellation budgets: `docs/specs/scale-and-latency.md`
 - Known implementation drift: `docs/gaps/current-state-gap-register.md`
 - Required contract tests: `docs/testing/contract-test-matrix.md`
+- Per-scenario cutover evidence: `docs/testing/contract-scenario-evidence.md`
+- Verification gates: `docs/gates.md`
 - Delivery sequence: `docs/roadmap/spec-alignment-plan.md`
 - Contribution rules: `docs/governance/spec-governance.md`
+- First-beta release boundary: `docs/release/first-beta.md`
+- Retired Electron boundary: `docs/legacy/electron/README.md`
 
 ## Updating Docs And Tests
 
