@@ -46,9 +46,9 @@ the packaged window.
 
 ## Signing and support boundaries
 
-The release workflow is configured to consume Apple signing/notarization secrets
-when the repository provides them. Without those secrets, macOS output is an
-unsigned developer artifact and must be labeled as such. Windows installers are
+The first-beta workflow intentionally builds an unsigned/ad-hoc macOS artifact;
+Developer ID signing, hardened runtime, notarization, and ticket stapling are a
+follow-up release gate rather than a beta claim. Windows installers are
 build-verified but have no automated UI smoke claim in beta. Screen-reader speech,
 live-user-home migration, and host-installed provider behavior remain human or
 out-of-scope validation gates.

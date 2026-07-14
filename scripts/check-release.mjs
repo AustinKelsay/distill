@@ -44,6 +44,7 @@ for (const requiredPath of [
   "docs/release/first-beta.md",
   ".github/workflows/beta-release.yml",
   "apps/distill-desktop/src-tauri/tauri.linux.conf.json",
+  "apps/distill-desktop/src-tauri/icons/icon.ico",
 ]) {
   if (!fs.existsSync(path.join(root, requiredPath))) fail(`missing ${requiredPath}`);
 }
