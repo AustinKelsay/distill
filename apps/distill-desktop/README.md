@@ -35,10 +35,10 @@ npm run release:package:windows    # Windows
 ```
 
 The tag-triggered beta workflow builds all three platforms and publishes
-prerelease artifacts. Release builds never enable the smoke-only
+prerelease artifacts. The beta macOS artifact is intentionally unsigned/ad-hoc;
+release builds never enable the smoke-only
 `VITE_DISTILL_SMOKE_DOM_ACTIVATE` marker. The macOS signing/notarization path
-uses repository secrets when configured; without them, the workflow's app is an
-unsigned developer artifact.
+is a follow-up gate for a signed release.
 
 The macOS package gate uses
 the workspace-installed Tauri CLI (the Cargo `tauri` subcommand is not required):
