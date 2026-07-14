@@ -30,10 +30,12 @@ Non-normative documents explain the current implementation, preserve research no
 - `PLAN.md`
 - `IMPLEMENTATION.md`
 - `DISCOVERY.md`
-- `schema.sql`
-- `src/**`
+- `docs/legacy/electron/README.md`
+- historical Electron source paths recorded in Git history
 
-`schema.sql` and `src/**` are implementation artifacts, not the canonical domain specification. When they diverge from the canonical docs, the docs and the gap register win.
+The retired Electron source and its `schema.sql` are not part of the beta build,
+test, or release path. When historical artifacts diverge from the canonical
+docs, the docs and the gap register win.
 
 ## How To Read The Docs
 
@@ -75,6 +77,8 @@ That order moves from system intent to entity semantics to pipeline behavior to 
 - Verification gates: `docs/gates.md`
 - Delivery sequence: `docs/roadmap/spec-alignment-plan.md`
 - Contribution rules: `docs/governance/spec-governance.md`
+- First-beta release boundary: `docs/release/first-beta.md`
+- Retired Electron boundary: `docs/legacy/electron/README.md`
 
 ## Updating Docs And Tests
 

@@ -330,7 +330,11 @@ Mutable operational or preference entities:
 
 ## Current Implementation Mapping
 
-The current SQLite schema is an implementation artifact in `schema.sql`. It is informative, not authoritative. Any gap between `schema.sql` and this document must be tracked in `docs/gaps/current-state-gap-register.md`.
+The retired Electron SQLite schema was an implementation artifact in the historical
+`schema.sql`. It is not shipped or authoritative. The active SQLite schema is
+owned by the Rust migrations under `crates/distill-library/migrations/`; any gap
+between those migrations and this document must be tracked in
+`docs/gaps/current-state-gap-register.md`.
 
 ## Rebuild Model: Captures, Attempts, Facts, Projection
 

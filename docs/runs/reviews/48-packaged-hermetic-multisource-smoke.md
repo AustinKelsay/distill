@@ -1,5 +1,9 @@
 # Review Packet — #48 Packaged Hermetic Multi-Source Smoke
 
+This review packet preserves pre-beta fixture provenance. Any old root `src/**`
+path is historical; the shipped smoke harness is under
+`apps/distill-desktop/scripts/`.
+
 ## Review context
 
 - Issue: [#48](https://github.com/AustinKelsay/distill/issues/48)

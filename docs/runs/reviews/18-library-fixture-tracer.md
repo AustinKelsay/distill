@@ -1,5 +1,9 @@
 # Review Packet — #18 Library Fixture Tracer
 
+This review packet is historical evidence. Its old `src/**` paths were removed
+before beta; native coverage now lives under `crates/` and
+`apps/distill-desktop/`.
+
 ## Issue
 
 - Issue: [#18](https://github.com/AustinKelsay/distill/issues/18)

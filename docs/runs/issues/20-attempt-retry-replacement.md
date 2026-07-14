@@ -1,5 +1,9 @@
 # Issue Session — #20 Attempt Retry, Replay, and Projection Replacement
 
+This issue packet is historical evidence. Its old `src/**` paths were removed
+before beta; native coverage now lives under `crates/` and
+`apps/distill-desktop/`.
+
 ## Issue
 
 - Issue: [#20](https://github.com/AustinKelsay/distill/issues/20)

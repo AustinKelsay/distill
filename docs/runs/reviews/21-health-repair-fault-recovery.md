@@ -1,5 +1,9 @@
 # Review Packet — #21 Health, Repair, and Ingest Fault Recovery
 
+This review packet is historical evidence. Its old `src/**` and `schema.sql`
+paths were removed before beta; native coverage now lives under `crates/` and
+`apps/distill-desktop/`.
+
 ## Issue
 
 - Issue: [#21](https://github.com/AustinKelsay/distill/issues/21)

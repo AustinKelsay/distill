@@ -1,6 +1,11 @@
 # Legacy Electron Home Migration
 
-The native Rust `Library` owns the one-way, read-only import seam from a legacy Electron Distill home. The source is evidence, never a writable migration database: the importer must leave every source file byte-for-byte unchanged, including SQLite WAL sidecars and Distill-owned `blobs/` and `exports/` files.
+The native Rust `Library` owns the one-way, read-only import seam from a legacy
+Electron Distill home. The old Electron application is not required to perform
+the import, and its source code is not part of the beta build. The source is
+evidence, never a writable migration database: the importer must leave every
+source file byte-for-byte unchanged, including SQLite WAL sidecars and
+Distill-owned `blobs/` and `exports/` files.
 
 ## Public seam and callers
 

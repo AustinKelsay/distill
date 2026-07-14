@@ -153,7 +153,10 @@ Thin callers:
 
 Test-only fault injection lives behind the non-default `test-faults` Cargo feature on `distill-library`. It is absent from production default API/behavior (including any message-prefix fault special cases) and interrupts real ingest boundaries (stage write, CAS rename, Capture/`capture_recorded` tx, post-accept Attempt, mid-projection publication points, and export temp-write/commit/rename boundaries). Mid-SQLite-transaction faults observe rollback rather than inventing impossible partial rows.
 
-The legacy Electron application under `src/**` remains available until migration and cutover. It is not a dependency of the Rust Library.
+The legacy Electron application source was retired before beta and is not a
+dependency of the Rust Library. The Library keeps only a read-only importer for
+Electron-shaped homes; historical source references are provenance in the
+legacy-boundary docs.
 
 ## SourceAdapter Seam
 

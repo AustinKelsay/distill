@@ -10,6 +10,22 @@
 - Human owner: Austin Kelsay
 - Started: 2026-07-11
 - Current status: #18–#50 complete for the agent-performable rebuild slices; #50 packaged hermetic legacy Electron-home import smoke is promoted by exact-head Ubuntu evidence at `0cedf9c9c268bf3f53eb5f7ded82b4678376cc08` / run `29290567000` (Darwin `PKG-007` manual-required); #48/#49 also have green Ubuntu exact-head evidence (`29233489395` and `29245798595`); Darwin AX remains manual-required in this runner; staging handoff remains the non-draft PR #38
+
+## First-beta closeout
+
+The beta release boundary is now `0.2.0-beta.1`. The Rust Library, thin CLI,
+and Tauri/React desktop are the only shipped product path. The tracked root
+Electron/TypeScript application, root schema, static entrypoint, and root
+TypeScript configuration were removed; their acceptance history remains in
+`docs/legacy/electron/README.md` and `legacy-baseline` registry rows only.
+
+Release metadata is checked by `npm run release:check`; documentation and matrix
+parity are checked by `npm run check:docs`; `.github/workflows/beta-release.yml`
+builds macOS, Linux, and Windows prerelease artifacts from `v0.2.0-beta.1`.
+Local macOS packaging passed as an unsigned developer artifact. Linux and
+Windows package jobs do not claim screen-reader or packaged UI smoke coverage;
+Apple signing/notarization and human assistive-technology observation remain
+explicit manual release gates.
 - Skill setup status: Complete — GitHub Issues, canonical triage labels, and single product-domain context
 - Sub-agent policy: Grok 4.5 xhigh only unless the human explicitly authorizes a small number of Luna high workers
 

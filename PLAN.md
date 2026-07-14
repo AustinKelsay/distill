@@ -6,11 +6,12 @@ The full multi-branch plan lives in [docs/roadmap/spec-alignment-plan.md](docs/r
 
 ## Current Program
 
-The active program is spec realignment and drift-guard hardening:
+The active program is first-beta hardening and release:
 
 - move canonical architecture and behavior docs into `docs/`
 - explicitly track current implementation drift
-- define contract-test coverage before later implementation cleanup branches
+- keep the native contract checks and release metadata coherent
+- retire the old Electron product source while preserving read-only migration evidence
 
 ## Review Order
 

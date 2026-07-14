@@ -25,9 +25,9 @@
 - `docs/testing/contract-scenario-evidence.md`: 130 stable rows with clause,
   family/seam, fixture, executable symbol, expected result, durable/Activity effect,
   supported platforms, status, and last evidence.
-- `src/test/docs.test.ts`: exact matrix/registry parity plus resolvable test titles,
-  Vitest titles, Rust nested functions, and package-script/file checks.
-- Node 26 `npm test`: 104/104 passed.
+- `scripts/check-docs.mjs`: exact matrix/registry parity, canonical-doc markers,
+  active executable paths, and the retired-Electron boundary.
+- `npm run check:docs`: the beta documentation gate.
 - Rust fixture tracer: 6/6 passed; `schema_status == "ok"` is asserted on first open and
   reopen, alongside 64-character migration checksum rows.
 - Rust format check passed; the full Rust/desktop/Tauri and package gates are recorded
@@ -44,5 +44,5 @@ artifact is unsigned/ad-hoc; Windows packaging is out of scope; and the full sca
 benchmark is scheduled/manual on other hardware. `cargo tree --locked` proves Rust
 dependency reproducibility; advisory scanning is governed by the pinned #40 CI
 workflow, with its warning inventory and non-clean boundary recorded explicitly.
-Electron remains only as migration and legacy-baseline evidence, not as a routine
-native-loop dependency.
+Electron source remains retired; migration fixtures and legacy-baseline rows are
+historical evidence, not a routine native-loop dependency.

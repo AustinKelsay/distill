@@ -2,6 +2,10 @@
 
 This document is normative for the sequencing of the spec realignment program.
 
+Historical pre-beta slices below may mention `src/**` or `schema.sql`; those
+paths describe the retired Electron implementation, not an active beta path.
+Current work belongs under `crates/` and `apps/distill-desktop/`.
+
 ## Goal
 
 Make Distill’s documentation truthful, tech-agnostic, and hard to drift from, then use that spec package to drive future implementation branches.
@@ -106,9 +110,9 @@ Acceptance criteria:
 
 Scope:
 
-- shared ingest fixture corpus under `src/test/fixtures/ingest/`
-- typed fixture/install helper under `src/test/support/ingest_fixtures.ts`
-- executable connector contract suite in `src/test/connector_contract.test.ts`
+- historical shared ingest fixture corpus under retired `src/test/fixtures/ingest/`
+- historical typed fixture/install helper under retired `src/test/support/ingest_fixtures.ts`
+- historical executable connector contract suite under retired `src/test/connector_contract.test.ts`
 - refactor core parse and import tests to reuse the shared fixture corpus where it reduces duplication
 
 Depends on:

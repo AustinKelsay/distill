@@ -1,5 +1,9 @@
 # Issue Session — #48 Packaged Hermetic Multi-Source Smoke
 
+This issue packet preserves pre-beta fixture provenance. Any old root `src/**`
+path is historical; the shipped smoke harness is under
+`apps/distill-desktop/scripts/`.
+
 ## Issue
 
 - Issue: [#48](https://github.com/AustinKelsay/distill/issues/48)

@@ -12,8 +12,8 @@ When documents disagree, use this order:
 4. `docs/gaps/current-state-gap-register.md`
 5. `docs/roadmap/spec-alignment-plan.md`
 6. root markdown files
-7. `schema.sql`
-8. implementation code
+7. active implementation code
+8. historical artifacts such as `schema.sql` and retired source paths
 9. discovery notes
 
 ## PR Checklist

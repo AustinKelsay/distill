@@ -40,10 +40,11 @@ Do not treat these as canonical:
 - `PLAN.md`
 - `IMPLEMENTATION.md`
 - `DISCOVERY.md`
-- `schema.sql`
-- current code under `src/**`
+- `docs/legacy/electron/README.md`
+- historical `schema.sql` and `src/**` paths recorded in Git history
 
-Those are useful for orientation and implementation mapping only.
+The legacy boundary is useful for migration provenance only. Active
+implementation lives under `crates/` and `apps/distill-desktop/`.
 
 ## If You Are About To Touch These Areas
 

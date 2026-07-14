@@ -1,8 +1,9 @@
 # Distill Verification Gates
 
-Canonical rebuild verification commands for the Rust Library, thin callers, desktop host, and legacy Electron baseline.
+Canonical beta verification commands for the Rust Library, thin callers, desktop
+host, release metadata, and packaged artifacts.
 
-Run from the repository root with a modern Node toolchain on `PATH` when desktop or legacy npm suites are included.
+Run from the repository root with Node 22+ and the stable Rust toolchain.
 
 ## Core Rust gates
 
@@ -123,13 +124,18 @@ Scale reports are Library-only JSON evidence. The default test is a bounded synt
 smoke; the 25k Session / 1M message / 10 GiB logical-home run is environment-gated and
 must record hardware, cold/warm samples, p50/p95, progress gaps, and cancel acknowledgement.
 
-## Legacy Electron baseline
+## Beta metadata and documentation gates
 
 ```bash
-npm test
+npm run check:docs
+npm run release:check
 ```
 
-Preferred Node for the documented legacy suite: Node 26 (`/opt/homebrew/Cellar/node/26.0.0/bin` on this machine). Node 22 may hit the known inspector incompatibility.
+`check:docs` validates the canonical docs package, matrix/registry parity,
+active executable paths, and the explicit retired-Electron boundary. It replaces
+the historical `src/test/docs.test.ts` check. `release:check` validates that all
+workspace/package/Tauri versions match the beta version and that release files
+are present.
 
 ## Security and dependency gates
 
@@ -141,7 +147,7 @@ npm audit --audit-level=moderate --ignore-scripts
 ```
 
 `cargo tree --locked` proves the Rust workspace resolves from the checked-in lockfile;
-`npm audit` is the JavaScript advisory scan, including the retained Electron baseline.
+`npm audit` is the JavaScript advisory scan for the active desktop workspace.
 
 ### RustSec advisory scan (#40)
 
@@ -183,10 +189,9 @@ A non-authoritative advisory inventory observed against the current lockfile
 
 ## Documentation-drift gate
 
-`npm test` includes `src/test/docs.test.ts`, which verifies the canonical docs package,
-authority order, gap register, matrix, fixture manifest, and agent instructions. The
-cutover evidence records this as the documentation-drift result; a docs-only change
-must still run the same test.
+`npm run check:docs` verifies the canonical docs package, authority order, gap
+register, matrix/registry parity, active executable paths, and agent instructions.
+A docs-only change must still run the same check.
 
 ## Combined launcher
 
@@ -195,6 +200,7 @@ node scripts/run-library-checks.mjs rebuild   # fmt + clippy + cargo test
 node scripts/run-library-checks.mjs library   # same as rebuild
 node scripts/run-library-checks.mjs faults    # test-faults suite
 node scripts/run-library-checks.mjs desktop   # typecheck/lint/format/test/frontend build
-node scripts/run-library-checks.mjs npm       # legacy npm test
+node scripts/run-library-checks.mjs docs      # docs and retired-boundary check
+node scripts/run-library-checks.mjs release   # beta version/artifact check
 node scripts/run-library-checks.mjs all       # full package
 ```

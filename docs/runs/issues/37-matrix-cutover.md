@@ -4,8 +4,9 @@
 
 Evidence complete on `feature/distill-clean-rebuild`; final staging handoff is the
 non-draft PR [#38](https://github.com/AustinKelsay/distill/pull/38). The native rebuild
-is the routine source-to-export product path. Electron under `src/**` is intentionally
-retained as read-only migration/baseline evidence and is not deleted by this ticket.
+is the routine source-to-export product path. The old Electron product source is
+retired before beta; only read-only migration fixtures and historical matrix rows
+remain.
 
 Run date: 2026-07-12. Primary local toolchain: Node 26.0.0, npm 11.12.1, Rust stable,
 macOS Darwin arm64. Linux package evidence is the Ubuntu 24.04 x86_64 CI run recorded
@@ -77,6 +78,6 @@ commands on Darwin; the Ubuntu workflow is the authoritative Linux package gate.
   is now governed by the pinned CI workflow from #40; the recorded warning inventory /
   non-clean boundary remains explicit and is not treated as an unperformed residual.
 
-These residuals do not make Electron a routine dependency. Electron remains in the
-repository so the read-only migration seam and legacy baseline can be exercised until a
-separate retirement decision is approved.
+These residuals do not make Electron a routine dependency. The source is retired;
+the read-only migration seam and legacy baseline are preserved as Rust fixtures and
+historical documentation only.

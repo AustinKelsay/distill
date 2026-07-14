@@ -4,7 +4,8 @@ This file is authoritative for generic coding agents working in this repository.
 
 ## First Rule
 
-Do not infer target behavior from `src/**`, `schema.sql`, or root markdown files before reading the canonical docs package.
+Do not infer target behavior from historical Electron paths, `schema.sql`, or
+root markdown files before reading the canonical docs package.
 
 The canonical source of truth lives under `docs/`.
 
@@ -38,10 +39,11 @@ These are informative, not authoritative:
 - `PLAN.md`
 - `IMPLEMENTATION.md`
 - `DISCOVERY.md`
-- `schema.sql`
-- the current implementation in `src/**`
+- `docs/legacy/electron/README.md`
+- historical `schema.sql` and `src/**` paths recorded in Git history
 
-Use them to locate code and understand current behavior, but not to redefine the spec.
+Use the legacy boundary to understand migration provenance, but not to redefine
+the spec. Active implementation lives under `crates/` and `apps/distill-desktop/`.
 
 ## When Docs And Code Differ
 

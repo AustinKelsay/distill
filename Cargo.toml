@@ -1,5 +1,5 @@
-# Distill Cargo workspace for the Rust Library rebuild.
-# Legacy Electron under src/** remains untouched; CLI and Tauri callers live beside the Library.
+# Distill beta Cargo workspace. The shipped product is Rust Library + CLI + Tauri;
+# legacy Electron-shaped homes remain supported only as read-only migration input.
 
 [workspace]
 resolver = "2"
@@ -12,7 +12,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 
 [workspace.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }

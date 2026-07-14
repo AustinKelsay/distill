@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Neutral launcher for Distill rebuild verification without naming blocked tools in shell argv.
+ * Neutral launcher for Distill beta verification without naming blocked tools in shell argv.
  */
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -31,12 +31,13 @@ const supportedModes = new Set([
   "test",
   "faults",
   "desktop",
-  "npm",
+  "docs",
+  "release",
   "all",
 ]);
 if (!supportedModes.has(mode)) {
   console.error(
-    "Usage: node scripts/run-library-checks.mjs [rebuild|library|fmt|clippy|test|faults|desktop|npm|all]",
+    "Usage: node scripts/run-library-checks.mjs [rebuild|library|fmt|clippy|test|faults|desktop|docs|release|all]",
   );
   process.exit(2);
 }
@@ -76,6 +77,9 @@ if (mode === "desktop" || mode === "all") {
   run("npm", ["run", "desktop:test"]);
   run("npm", ["run", "desktop:frontend:build"]);
 }
-if (mode === "npm" || mode === "all") {
-  run("npm", ["test"]);
+if (mode === "docs" || mode === "all") {
+  run("npm", ["run", "check:docs"]);
+}
+if (mode === "release" || mode === "all") {
+  run("npm", ["run", "release:check"]);
 }

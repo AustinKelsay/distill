@@ -1,5 +1,9 @@
 # Review Packet — #20 Attempt Retry and Projection Replacement
 
+This review packet is historical evidence. Its old `src/**` paths were removed
+before beta; native coverage now lives under `crates/` and
+`apps/distill-desktop/`.
+
 ## Issue
 
 - Issue: [#20](https://github.com/AustinKelsay/distill/issues/20)

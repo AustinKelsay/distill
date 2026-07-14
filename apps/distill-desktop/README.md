@@ -1,4 +1,4 @@
-# Distill Desktop (rebuild)
+# Distill Desktop (first beta)
 
 Sandboxed Tauri 2 + React first-run Fixture caller. The renderer talks only through
 an explicit typed bridge; it has no Node, filesystem, process, SQLite, or shell
@@ -26,7 +26,21 @@ Development host (requires platform Tauri dependencies):
 npm run desktop:dev
 ```
 
-`desktop:build` proves the release host with `--no-bundle`. The macOS package gate uses
+`desktop:build` proves the release host with `--no-bundle`. The beta package commands are:
+
+```bash
+npm run desktop:package:macos
+npm run desktop:package:linux       # Ubuntu/Linux
+npm run release:package:windows    # Windows
+```
+
+The tag-triggered beta workflow builds all three platforms and publishes
+prerelease artifacts. Release builds never enable the smoke-only
+`VITE_DISTILL_SMOKE_DOM_ACTIVATE` marker. The macOS signing/notarization path
+uses repository secrets when configured; without them, the workflow's app is an
+unsigned developer artifact.
+
+The macOS package gate uses
 the workspace-installed Tauri CLI (the Cargo `tauri` subcommand is not required):
 
 ```bash

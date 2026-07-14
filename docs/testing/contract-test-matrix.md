@@ -1,6 +1,9 @@
 # Distill Contract Test Matrix
 
-This document is normative for planned and required contract tests.
+This document is normative for planned and required contract tests. Rows with
+status `legacy-baseline` in the companion registry are retired Electron
+provenance, not beta coverage; active rows must point to Rust, Tauri, renderer,
+or release-check executables in the current workspace.
 
 Where a `Primary Branch` or `Target Branch` is listed below, it records the first branch that claimed the contract, even when the scenario is now implemented and passing in the current tree.
 
@@ -62,7 +65,7 @@ Shared fixture requirements:
 
 Executable fixture sources:
 
-- shared fixture manifest: `src/test/fixtures/ingest/manifest.json`
+- historical shared fixture manifest: `src/test/fixtures/ingest/manifest.json`
 - fixture install/helper surface: `src/test/support/ingest_fixtures.ts`
 - connector contract executable suite: `src/test/connector_contract.test.ts`
 
@@ -264,7 +267,8 @@ fields for every scenario ID: owning spec clause, contract family/seam, fixture,
 executable test symbol, expected result (by reference to the scenario row), durable
 and Activity effect, supported platforms, status, and last evidence. A scenario is
 not considered cutover-complete unless it has an explicit registry status; legacy
-Electron rows are retained as `legacy-baseline` evidence rather than deleted.
+Electron rows are retained as `legacy-baseline` historical provenance rather
+than deleted; they do not require the retired source tree or Electron runtime.
 
 ## Expected DB State Guidance
 

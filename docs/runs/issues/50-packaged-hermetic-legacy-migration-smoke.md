@@ -1,5 +1,9 @@
 # Issue Session — #50 Packaged Hermetic Legacy Electron-home Import Smoke
 
+This issue packet preserves pre-beta legacy-home evidence. Old root `src/**`
+paths are historical; the shipped migration seam is Rust-owned and the smoke
+harness is under `apps/distill-desktop/scripts/`.
+
 ## Issue
 
 - Issue: [#50](https://github.com/AustinKelsay/distill/issues/50)
