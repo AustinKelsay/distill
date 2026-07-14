@@ -9,7 +9,7 @@
   "scripts": {
     "check:docs": "node scripts/check-docs.mjs",
     "release:check": "node scripts/check-release.mjs",
-    "release:package:windows": "npm run --workspace @distill/desktop package:windows",
+    "release:package:windows": "npm run --workspace @distill/desktop package:windows:beta",
     "desktop:dev": "npm run --workspace @distill/desktop tauri -- dev",
     "desktop:build": "npm run --workspace @distill/desktop tauri -- build --no-bundle",
     "desktop:package:macos": "npm run --workspace @distill/desktop package:macos",

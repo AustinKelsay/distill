@@ -49,6 +49,10 @@ the packaged window.
 The first-beta workflow intentionally builds an unsigned/ad-hoc macOS artifact;
 Developer ID signing, hardened runtime, notarization, and ticket stapling are a
 follow-up release gate rather than a beta claim. Windows installers are
-build-verified but have no automated UI smoke claim in beta. Screen-reader speech,
-live-user-home migration, and host-installed provider behavior remain human or
-out-of-scope validation gates.
+build-verified but have no automated UI smoke claim in beta. The Windows MSI
+uses the platform-only numeric Tauri version `0.2.0-1`, which WiX maps to package
+version `0.2.0.1`; the release tag, release metadata, and artifact names remain
+the canonical `0.2.0-beta.1` beta version. This mapping is kept in
+`tauri.windows.beta.conf.json` and enforced by `npm run release:check`.
+Screen-reader speech, live-user-home migration, and host-installed provider
+behavior remain human or out-of-scope validation gates.
