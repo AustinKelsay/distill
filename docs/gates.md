@@ -18,7 +18,7 @@ cargo build --workspace
 ### Continuous PR enforcement (#46)
 
 `.github/workflows/rebuild-ci.yml` is the authoritative Ubuntu CI evidence for the
-core rebuild commands enforced on every qualifying pull request into `staging`
+core rebuild commands enforced on every qualifying pull request into `main`
 (and on `workflow_dispatch`):
 
 - `cargo fmt --all -- --check`

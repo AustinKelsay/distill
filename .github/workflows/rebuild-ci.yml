@@ -5,7 +5,7 @@ name: Distill rebuild CI
 
 on:
   pull_request:
-    branches: [staging]
+    branches: [main]
     paths:
       - "crates/**"
       - "apps/distill-desktop/**"
