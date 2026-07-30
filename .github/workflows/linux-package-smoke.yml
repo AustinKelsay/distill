@@ -2,7 +2,7 @@ name: Distill Linux package smoke
 
 on:
   pull_request:
-    branches: [staging]
+    branches: [main]
     paths:
       - "apps/distill-desktop/**"
       - "crates/**"
