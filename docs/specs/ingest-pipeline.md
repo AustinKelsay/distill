@@ -10,8 +10,8 @@ This spec defines the end-to-end behavior for importing local captures into Dist
 
 ### `source kind`
 
-The normalized connector identifier such as `fixture`, `codex`, `claude_code`, `opencode`, or
-`droid`.
+The normalized connector identifier such as `fixture`, `codex`, `claude_code`, `opencode`,
+`droid`, or `pi`.
 
 ### `capture`
 
@@ -233,7 +233,7 @@ The ingest pipeline does not:
 
 The Rust Library ingest path preserves the Electron-era invariants above and adds explicit Attempt bookkeeping:
 
-1. SourceAdapter `detect` / `discover` / `snapshot` / `parse` run through the production seam (Fixture, Codex, Claude Code, OpenCode, and Droid are implemented).
+1. SourceAdapter `detect` / `discover` / `snapshot` / `parse` run through the production seam (Fixture, Codex, Claude Code, OpenCode, Droid, and Pi are implemented).
 2. File-backed candidates are rejected with typed `PathOutsideConfiguredRoot` when their canonical path escapes the configured Source root.
 3. Capture size is bounded; exceeding the configured limit fails with typed `CaptureTooLarge` before acceptance.
 4. Capture acceptance requires Distill-owned recoverable content (inline or CAS blob) and checksum verification; the Capture row and its `capture_recorded` Activity Event commit together.
@@ -241,7 +241,7 @@ The Rust Library ingest path preserves the Electron-era invariants above and add
 6. Failed Attempts never mutate the current Session Projection or FTS generation. They retain typed safe diagnostics (`parse_failed` or `projection_failed`) and, when a Session already exists, refresh only the separately named Capture and Attempt counters.
 7. Exact duplicate snapshots are inert: no new Capture, Attempt, projection mutation, FTS change, or Activity Event.
 8. Changed bytes for the same source path create a new immutable Capture and a new Attempt. A successful Attempt fully replaces the prior projection, including when the new message or artifact set is shorter or empty.
-9. The same accepted Capture can be re-normalized from Distill-owned replay bytes by a newer version of the registered parser for that Capture's Source kind without creating a new Capture. Prior Attempts and Capture Facts remain immutable and observable through caller-safe Attempt summaries. The Library owns one closed parser identity per v1 Source kind (Fixture, Codex, Claude Code, OpenCode, Droid); callers advance only typed Source-kind versions and never supply parser ids. Replay never rereads a Source root and never invokes OpenCode. If a persisted Capture kind is unknown or has no registered parser, the Library returns typed `UnknownSourceKind` without creating an Attempt or mutating the current Projection.
+9. The same accepted Capture can be re-normalized from Distill-owned replay bytes by a newer version of the registered parser for that Capture's Source kind without creating a new Capture. Prior Attempts and Capture Facts remain immutable and observable through caller-safe Attempt summaries. The Library owns one closed parser identity per v1 Source kind (Fixture, Codex, Claude Code, OpenCode, Droid, Pi); callers advance only typed Source-kind versions and never supply parser ids. Replay never rereads a Source root and never invokes OpenCode or Pi. If a persisted Capture kind is unknown or has no registered parser, the Library returns typed `UnknownSourceKind` without creating an Attempt or mutating the current Projection.
 10. Replay and health read Distill-owned content only; deleting the original source must not break replay.
 11. Interrupted ingest reopen contracts (issue #21) use the real transaction boundaries:
     - stage write before CAS rename → disposable canonical `staging/{64 lowercase hex}.partial` only; safe open removes it; noncanonical staging names are reported, never silently deleted
@@ -252,7 +252,7 @@ The Rust Library ingest path preserves the Electron-era invariants above and add
     - Fact/projection rows before FTS, after FTS before Attempt success/Activity, and after `projection_replaced` before commit → publication transaction rolls back; pending Attempt remains; last-good projection/FTS preserved
 12. Test-only fault injection behind the non-default `test-faults` feature proves those reopen states via a typed cfg-gated fault variant. Production default builds do not expose fault controls or message-prefix fault special cases.
 13. Sync Runs (issue #22) drive ingest through a deep internal checkpoint seam rather than duplicating Capture/Attempt/projection policy. Safe cancellation is observed only before each Source and before each Capture Candidate. A cancel request during a candidate finishes that candidate's snapshot/accept/Attempt/projection transaction, then stops before the next candidate. After CandidateStarted progress callbacks, lease ownership is re-asserted before candidate work without honoring a newly requested cancellation. Progress events cover run queued/started, each Source, and each Candidate (logical identity only; no absolute path dumps). Terminal Sync Run status is `completed` for all-clean, `warning` for partial candidate/source success, `cancelled` when a durable cancel request is honored, and `failed` for fatal no-progress execution. Sync continues later candidates after ordinary snapshot/policy failures (appending `capture_failed` where required); direct `ingest_fixture` still aborts those errors so existing Fixture tracer gates remain. Ordinary per-Source detect/discover/config failures become failed Source outcomes so siblings continue. Last-good projection and #18–#21 invariants are preserved.
-14. Configured Source roots are canonicalized, must exist as directories, reject empty/traversal escapes, and may resolve through symlinks to a stored canonical path. Provider subprocess policy (a direct-child/process-group best-effort duration bound, stdout/stderr byte caps, and redacted errors) is Library-internal and used by OpenCode #28; descendants that detach from the child process group are outside this boundary. Codex #26 and Droid #29 are file-backed and do not require a provider subprocess during Sync.
+14. Configured Source roots are canonicalized, must exist as directories, reject empty/traversal escapes, and may resolve through symlinks to a stored canonical path. Provider subprocess policy (a direct-child/process-group best-effort duration bound, stdout/stderr byte caps, and redacted errors) is Library-internal and used by OpenCode #28; descendants that detach from the child process group are outside this boundary. Codex #26, Droid #29, and Pi are file-backed and do not require a provider subprocess during Sync.
 
 Legacy Electron still uses the `CaptureStatus` state machine documented above. The rebuild gap register tracks the dual-model period until Electron cutover.
 

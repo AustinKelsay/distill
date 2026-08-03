@@ -1,10 +1,11 @@
-//! SourceAdapter seam shared by Fixture, Codex, Claude Code, OpenCode, and Droid adapters.
+//! SourceAdapter seam shared by Fixture, Codex, Claude Code, OpenCode, Droid, and Pi adapters.
 
 mod claude;
 mod codex;
 mod droid;
 mod fixture;
 mod opencode;
+mod pi;
 mod registry;
 
 pub use claude::{ClaudeAdapter, CLAUDE_PARSER_ID, CLAUDE_PARSER_VERSION};
@@ -13,6 +14,7 @@ pub use codex::{CodexAdapter, CODEX_PARSER_ID, CODEX_PARSER_VERSION};
 pub use droid::{default_droid_sessions_root, DroidAdapter, DROID_PARSER_ID, DROID_PARSER_VERSION};
 pub use fixture::{parse_fixture_bytes, FixtureAdapter, FIXTURE_PARSER_ID, FIXTURE_PARSER_VERSION};
 pub use opencode::{OpenCodeAdapter, OPENCODE_PARSER_ID, OPENCODE_PARSER_VERSION};
+pub use pi::{PiAdapter, PI_PARSER_ID, PI_PARSER_VERSION};
 pub use registry::ParserRegistry;
 
 use std::path::PathBuf;
@@ -24,7 +26,7 @@ use thiserror::Error;
 /// Closed Source kind identifiers for v1.
 ///
 /// [`SourceKind::Fixture`], [`SourceKind::Codex`], [`SourceKind::ClaudeCode`],
-/// [`SourceKind::OpenCode`], and [`SourceKind::Droid`] have concrete adapters.
+/// [`SourceKind::OpenCode`], [`SourceKind::Droid`], and [`SourceKind::Pi`] have concrete adapters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -38,6 +40,8 @@ pub enum SourceKind {
     OpenCode,
     /// Factory Droid Source adapter (#29).
     Droid,
+    /// Pi coding agent Source adapter.
+    Pi,
 }
 
 impl SourceKind {
@@ -49,6 +53,7 @@ impl SourceKind {
             Self::ClaudeCode => "claude_code",
             Self::OpenCode => "opencode",
             Self::Droid => "droid",
+            Self::Pi => "pi",
         }
     }
 
@@ -60,6 +65,7 @@ impl SourceKind {
             "claude_code" => Some(Self::ClaudeCode),
             "opencode" => Some(Self::OpenCode),
             "droid" => Some(Self::Droid),
+            "pi" => Some(Self::Pi),
             _ => None,
         }
     }
@@ -72,6 +78,7 @@ impl SourceKind {
             Self::ClaudeCode,
             Self::OpenCode,
             Self::Droid,
+            Self::Pi,
         ]
     }
 }
@@ -285,5 +292,6 @@ pub(crate) fn parse_replay_bytes(
         SourceKind::ClaudeCode => claude::parse_claude_bytes(candidate, bytes),
         SourceKind::OpenCode => opencode::parse_opencode_bytes(candidate, bytes),
         SourceKind::Droid => droid::parse_droid_bytes(candidate, bytes),
+        SourceKind::Pi => pi::parse_pi_bytes(candidate, bytes),
     }
 }

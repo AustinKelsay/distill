@@ -8,7 +8,8 @@ use semver::Version;
 use super::{
     ParserIdentity, SourceKind, CLAUDE_PARSER_ID, CLAUDE_PARSER_VERSION, CODEX_PARSER_ID,
     CODEX_PARSER_VERSION, DROID_PARSER_ID, DROID_PARSER_VERSION, FIXTURE_PARSER_ID,
-    FIXTURE_PARSER_VERSION, OPENCODE_PARSER_ID, OPENCODE_PARSER_VERSION,
+    FIXTURE_PARSER_VERSION, OPENCODE_PARSER_ID, OPENCODE_PARSER_VERSION, PI_PARSER_ID,
+    PI_PARSER_VERSION,
 };
 use crate::error::{LibraryError, LibraryResult};
 
@@ -20,6 +21,7 @@ pub struct ParserRegistry {
     claude_code: ParserIdentity,
     opencode: ParserIdentity,
     droid: ParserIdentity,
+    pi: ParserIdentity,
 }
 
 impl ParserRegistry {
@@ -48,6 +50,10 @@ impl ParserRegistry {
                 id: DROID_PARSER_ID.to_string(),
                 version: DROID_PARSER_VERSION.to_string(),
             },
+            pi: ParserIdentity {
+                id: PI_PARSER_ID.to_string(),
+                version: PI_PARSER_VERSION.to_string(),
+            },
         }
     }
 
@@ -64,6 +70,7 @@ impl ParserRegistry {
             SourceKind::ClaudeCode => &self.claude_code,
             SourceKind::OpenCode => &self.opencode,
             SourceKind::Droid => &self.droid,
+            SourceKind::Pi => &self.pi,
         }
     }
 
@@ -116,6 +123,7 @@ impl ParserRegistry {
             SourceKind::ClaudeCode => &mut self.claude_code,
             SourceKind::OpenCode => &mut self.opencode,
             SourceKind::Droid => &mut self.droid,
+            SourceKind::Pi => &mut self.pi,
         }
     }
 }

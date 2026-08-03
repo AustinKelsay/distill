@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::adapter::{
     default_droid_sessions_root, ClaudeAdapter, CodexAdapter, DroidAdapter, FixtureAdapter,
-    OpenCodeAdapter, ParserRegistry, SourceAdapter, SourceKind,
+    OpenCodeAdapter, ParserRegistry, PiAdapter, SourceAdapter, SourceKind,
 };
 use crate::error::{LibraryError, LibraryResult};
 use crate::ingest::{self, IngestCheckpoints};
@@ -183,6 +183,37 @@ where
                 }
             };
             let adapter = DroidAdapter::with_parser(root, parsers.get(SourceKind::Droid).clone());
+            sync_adapter_source(
+                conn,
+                paths,
+                sync_run_id,
+                owner_id,
+                source_kind,
+                &adapter,
+                max_capture_bytes,
+                on_progress,
+                aggregate,
+            )
+        }
+        SourceKind::Pi => {
+            let root = match load_configured_root(conn, source_kind) {
+                Ok(Some(root)) => root,
+                Ok(None) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        "configured_root_required",
+                        "source sync requires a configured root",
+                    ));
+                }
+                Err(err) => {
+                    return Ok(failed_outcome(
+                        source_kind,
+                        err.code(),
+                        "configured root is invalid",
+                    ));
+                }
+            };
+            let adapter = PiAdapter::with_parser(root, parsers.get(SourceKind::Pi).clone());
             sync_adapter_source(
                 conn,
                 paths,
