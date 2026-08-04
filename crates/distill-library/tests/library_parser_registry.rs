@@ -124,6 +124,29 @@ fn write_droid_session(root: &Path) -> PathBuf {
 }
 
 /**
+ * Write a Pi session with a `session` header and one user/assistant exchange.
+ */
+fn write_pi_session(root: &Path) -> PathBuf {
+    let path = root
+        .join("--home-user-project--")
+        .join("20260601_100000_pi-ses-001.jsonl");
+    fs::create_dir_all(root.join("--home-user-project--")).expect("parent");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"pi-ses-001","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/tmp/demo"}"#,
+            "\n",
+            r#"{"type":"message","id":"u1","timestamp":"2026-06-01T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"hello pi"}]}}"#,
+            "\n",
+            r#"{"type":"message","id":"a1","timestamp":"2026-06-01T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"hello!"}]}}"#,
+            "\n",
+        ),
+    )
+    .expect("write session");
+    path
+}
+
+/**
  * Mixed OpenCode export covering dialogue text.
  */
 fn mixed_export_json() -> String {
@@ -600,6 +623,52 @@ fn droid_renormalize_after_source_removal() {
         .expect("present");
     assert_eq!(detail.summary.successful_projection_generation, 2);
     assert!(detail.messages[0].text.contains("Please review"));
+}
+
+/**
+ * Pi renormalize after sessions-root removal.
+ */
+#[test]
+fn pi_renormalize_after_source_removal() {
+    let temp = TempDir::new().expect("temp");
+    let home = temp.path().join("home");
+    let sessions = temp.path().join("pi-sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    write_pi_session(&sessions);
+
+    let mut library = Library::open(&home).expect("open");
+    library
+        .set_source_preference("pi", true, Some(sessions.as_path()))
+        .expect("prefer");
+    let result = library
+        .start_sync(SyncRequest::default(), |_| {})
+        .expect("sync");
+    assert_eq!(result.run.accepted_captures, 1);
+    let capture_id = first_capture_id(&library);
+    let before = library.capture_attempts(capture_id).expect("attempts");
+    assert_eq!(before[0].parser_id, "pi");
+    let original = before[0].clone();
+
+    fs::remove_dir_all(&sessions).expect("remove pi root");
+    library
+        .set_registered_parser_version(SourceKind::Pi, "2.0.0")
+        .expect("v2");
+    let retry = library
+        .renormalize_capture(capture_id)
+        .expect("renormalize");
+    assert_eq!(retry.outcome, "succeeded");
+    assert_eq!(retry.parser_id, "pi");
+    assert_eq!(retry.parser_version, "2.0.0");
+
+    let after = library.capture_attempts(capture_id).expect("after");
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0], original);
+    let detail = library
+        .session_slice("pi", "pi-ses-001", 20, 20)
+        .expect("session")
+        .expect("present");
+    assert_eq!(detail.summary.successful_projection_generation, 2);
+    assert!(detail.messages[0].text.contains("hello pi"));
 }
 
 /**

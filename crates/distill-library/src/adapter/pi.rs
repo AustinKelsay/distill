@@ -81,8 +81,8 @@ impl SourceAdapter for PiAdapter {
         &self,
         source: &DiscoveredSource,
     ) -> Result<Vec<CaptureCandidate>, SourceStageError> {
-        let mut candidates = discover_pi_sessions(&source.data_root)
-            .map_err(SourceStageError::Discover)?;
+        let mut candidates =
+            discover_pi_sessions(&source.data_root).map_err(SourceStageError::Discover)?;
         candidates.sort_by(|left, right| left.source_path.cmp(&right.source_path));
         Ok(candidates)
     }
@@ -283,10 +283,7 @@ fn parse_pi_jsonl(
                     .map(str::to_string);
             }
             if project_path.is_none() {
-                project_path = value
-                    .get("cwd")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
+                project_path = value.get("cwd").and_then(Value::as_str).map(str::to_string);
             }
             if session_version.is_none() {
                 session_version = value.get("version").and_then(Value::as_i64);
@@ -308,16 +305,14 @@ fn parse_pi_jsonl(
             .and_then(|message| message.get("role"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        let content_blocks = normalize_content_blocks(message.and_then(|message| message.get("content")));
+        let content_blocks =
+            normalize_content_blocks(message.and_then(|message| message.get("content")));
         let content_text = extract_text_blocks(&content_blocks);
 
-        let is_message_entry = record_type == "message"
-            && matches!(role.as_deref(), Some("user") | Some("assistant"));
+        let is_message_entry =
+            record_type == "message" && matches!(role.as_deref(), Some("user") | Some("assistant"));
         let has_text = !content_text.is_empty();
-        let entry_id = value
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let entry_id = value.get("id").and_then(Value::as_str).map(str::to_string);
 
         let fact_ordinal = facts.len();
         facts.push(ParsedFact {
@@ -332,8 +327,16 @@ fn parse_pi_jsonl(
             let ordinal = messages.len();
             messages.push(ParsedMessage {
                 role: role.clone().unwrap_or_else(|| "user".to_string()),
-                message_kind: if has_text { "text".into() } else { "meta".into() },
-                text: if has_text { content_text } else { "[tool]".into() },
+                message_kind: if has_text {
+                    "text".into()
+                } else {
+                    "meta".into()
+                },
+                text: if has_text {
+                    content_text
+                } else {
+                    "[tool]".into()
+                },
                 external_message_id: entry_id,
             });
             Some(ordinal)
@@ -359,9 +362,7 @@ fn parse_pi_jsonl(
         }
     }
 
-    let has_header_id = session_id
-        .as_ref()
-        .is_some_and(|value| !value.is_empty());
+    let has_header_id = session_id.as_ref().is_some_and(|value| !value.is_empty());
     let has_candidate_id = candidate
         .external_session_id
         .as_deref()
@@ -388,7 +389,10 @@ fn parse_pi_jsonl(
     let title = pick_pi_title(&messages);
 
     let mut metadata = Map::new();
-    metadata.insert("external_session_id_provenance".to_string(), provenance_strategy);
+    metadata.insert(
+        "external_session_id_provenance".to_string(),
+        provenance_strategy,
+    );
     if synthetic_identity {
         metadata.insert("synthetic_identity".to_string(), json!(true));
         metadata.insert(
@@ -713,10 +717,7 @@ mod tests {
             .facts
             .iter()
             .any(|fact| fact.record_type == "compaction"));
-        assert!(parsed
-            .facts
-            .iter()
-            .any(|fact| fact.record_type == "label"));
+        assert!(parsed.facts.iter().any(|fact| fact.record_type == "label"));
 
         assert!(parsed
             .artifacts

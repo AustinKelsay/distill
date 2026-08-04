@@ -129,14 +129,19 @@ fn detect_one(
                 return SourceDetectResult {
                     kind: kind.as_str().into(),
                     status: "disabled".into(),
-                    executable: None,
+                    executable: find_executable("pi").map(|path| path.display().to_string()),
                     effective_data_root: pref.and_then(|p| p.configured_root.clone()),
                     display_name: Some("Pi".into()),
                     error_class: None,
                     error_message: None,
                 };
             }
-            detect_pi(request, pref, parsers.get(SourceKind::Pi))
+            detect_pi(
+                request,
+                pref,
+                parsers.get(SourceKind::Pi),
+                find_executable("pi").map(|path| path.display().to_string()),
+            )
         }
     }
 }
@@ -437,6 +442,7 @@ fn detect_pi(
     request: &SourceDetectRequest,
     pref: Option<&crate::types::SourcePreference>,
     parser: &crate::adapter::ParserIdentity,
+    executable: Option<String>,
 ) -> SourceDetectResult {
     let root = match resolve_root_path(request, pref) {
         Ok(Some(root)) => root,
@@ -444,7 +450,7 @@ fn detect_pi(
             return SourceDetectResult {
                 kind: SourceKind::Pi.as_str().into(),
                 status: "missing".into(),
-                executable: None,
+                executable,
                 effective_data_root: None,
                 display_name: Some("Pi".into()),
                 error_class: Some("configured_root_required".into()),
@@ -455,7 +461,7 @@ fn detect_pi(
             return SourceDetectResult {
                 kind: SourceKind::Pi.as_str().into(),
                 status: "unhealthy".into(),
-                executable: None,
+                executable,
                 effective_data_root: None,
                 display_name: Some("Pi".into()),
                 error_class: Some(err.code().into()),
@@ -466,19 +472,28 @@ fn detect_pi(
 
     let adapter = PiAdapter::with_parser(root, parser.clone());
     match adapter.detect() {
-        Ok(discovered) => SourceDetectResult {
+        Ok(discovered) if executable.is_some() => SourceDetectResult {
             kind: SourceKind::Pi.as_str().into(),
             status: "ok".into(),
-            executable: None,
+            executable,
             effective_data_root: Some(discovered.data_root.display().to_string()),
             display_name: Some(discovered.display_name),
             error_class: None,
             error_message: None,
         },
+        Ok(discovered) => SourceDetectResult {
+            kind: SourceKind::Pi.as_str().into(),
+            status: "unavailable".into(),
+            executable,
+            effective_data_root: Some(discovered.data_root.display().to_string()),
+            display_name: Some(discovered.display_name),
+            error_class: Some("executable_not_found".into()),
+            error_message: Some(stable_detect_message("executable_not_found")),
+        },
         Err(err) => SourceDetectResult {
             kind: SourceKind::Pi.as_str().into(),
             status: "unhealthy".into(),
-            executable: None,
+            executable,
             effective_data_root: None,
             display_name: Some("Pi".into()),
             error_class: Some(err.code().into()),
@@ -663,10 +678,35 @@ mod tests {
                 id: crate::adapter::PI_PARSER_ID.to_string(),
                 version: crate::adapter::PI_PARSER_VERSION.to_string(),
             },
+            Some("pi".into()),
         );
         assert_eq!(result.status, "ok");
-        assert!(result.executable.is_none());
+        assert!(result.executable.is_some());
         assert!(result.effective_data_root.is_some());
+    }
+
+    #[test]
+    fn pi_detection_classifies_missing_executable_without_provider_text() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("pi-sessions");
+        std::fs::create_dir_all(&root).expect("root");
+        let result = detect_pi(
+            &SourceDetectRequest {
+                kind: "pi".into(),
+                configured_root: Some(root.display().to_string()),
+            },
+            None,
+            &crate::adapter::ParserIdentity {
+                id: crate::adapter::PI_PARSER_ID.to_string(),
+                version: crate::adapter::PI_PARSER_VERSION.to_string(),
+            },
+            None,
+        );
+        assert_eq!(result.status, "unavailable");
+        assert_eq!(result.error_class.as_deref(), Some("executable_not_found"));
+        let message = result.error_message.as_deref().unwrap_or_default();
+        assert!(!message.to_ascii_lowercase().contains("pi"));
+        assert!(!message.contains('/'));
     }
 
     #[test]

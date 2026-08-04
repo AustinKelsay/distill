@@ -10,7 +10,7 @@ Version 1 provides no application-level encryption at rest, per-session delete, 
 
 ## Hostile Input Contracts
 
-All five v1 SourceAdapters (Fixture, Codex, Claude Code, OpenCode, and Droid) use the shared Library ingest boundary:
+All six v1 SourceAdapters (Fixture, Codex, Claude Code, OpenCode, Droid, and Pi) use the shared Library ingest boundary:
 
 - file-backed candidates are checked against the configured Source root before snapshot; parent traversal and symlink escapes never become Captures
 - discovery does not follow directory or file symlinks; an in-root symlink is skipped rather than treated as a second source of truth

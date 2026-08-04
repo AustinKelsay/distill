@@ -239,7 +239,9 @@ Adapters remain forbidden from SQLite, projection mutation, search, Curation, ex
 
 The Pi connector verifies:
 
-- the `pi` executable is available
+- the `pi` executable is available (detection reports `unavailable` with
+  `executable_not_found` when the executable is missing, without leaking provider
+  text; the root is still validated when the executable is present)
 - the Pi sessions root exists and is a directory
 
 #### Discovery
