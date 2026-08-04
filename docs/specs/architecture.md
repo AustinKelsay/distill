@@ -160,4 +160,4 @@ legacy-boundary docs.
 
 ## SourceAdapter Seam
 
-Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. Fixture, Codex, Claude Code, OpenCode, and Droid are proven through the same Library seam; the CLI provider journey separately proves that the caller does not grow provider-specific policy.
+Connectors use an internal Library `SourceAdapter` with exactly four operations: `detect`, `discover`, `snapshot`, and `parse`. The trait and provider-shaped values are not part of the public caller interface. Adapters never touch SQLite, Curation, search, exports, or Activity persistence. Fixture, Codex, Claude Code, OpenCode, Droid, and Pi are proven through the same Library seam; the CLI provider journey separately proves that the caller does not grow provider-specific policy.

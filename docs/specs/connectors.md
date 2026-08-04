@@ -8,7 +8,7 @@ Every source connector exposes exactly four operations:
 
 ```ts
 interface SourceConnector {
-  kind: "fixture" | "codex" | "claude_code" | "opencode" | "droid";
+  kind: "fixture" | "codex" | "claude_code" | "opencode" | "droid" | "pi";
   detect(): DiscoveredSource;
   discoverCaptures(): DiscoveredCapture[];
   snapshotCapture(capture: DiscoveredCapture): CaptureSnapshot;
@@ -233,8 +233,61 @@ Adapters remain forbidden from SQLite, projection mutation, search, Curation, ex
 - Parse synthetic Fixture JSONL covering dialogue messages plus structured tool/reasoning records as Capture Facts and Artifacts.
 - Use explicit Fixture Session IDs when supplied; otherwise apply the production deterministic synthetic-identity rule.
 
-The Rust rebuild now implements Fixture (#18), Codex (#26), Claude Code (#27), OpenCode (#28), and
-Droid (#29) through the same SourceAdapter and Library ingest seam. Codex detection requires the
+### Pi Appendix
+
+#### Detection
+
+The Pi connector verifies:
+
+- the `pi` executable is available (detection reports `unavailable` with
+  `executable_not_found` when the executable is missing, without leaking provider
+  text; the root is still validated when the executable is present)
+- the Pi sessions root exists and is a directory
+
+#### Discovery
+
+The canonical capture set is Pi session JSONL files under the configured sessions root.
+
+Files are organized by working directory under `sessions/--<encoded-cwd>--/` subdirectories with filenames following the pattern `<timestamp>_<uuid>.jsonl`.
+
+#### Snapshot
+
+Snapshot source truth is the session JSONL file.
+
+#### Parse
+
+Valid Pi session JSONL files begin with a `session` header line containing `id`, `version`, `timestamp`, and `cwd` fields. The header `id` is first-wins (only the first header line contributes the session identity), trimmed, and empty ids are rejected. Headerless files remain discoverable; the parser uses the documented fallbacks below.
+
+Session identity is resolved in the following priority:
+
+1. **Header id**: from the first `session` header line's `id` field (trimmed, non-empty).
+2. **Filename stem**: the filename stem (directory-scoped by the relative path from the sessions root to prevent cross-directory collisions) when no header id is present.
+3. **Synthetic**: a deterministic SHA-256 digest of the candidate `source_path` when neither header nor filename stem provides an identity.
+
+Filename-stem and synthetic identities are recorded with `{"kind":"synthetic","strategy":"filename_stem"}` and `{"kind":"synthetic","strategy":"source_path_sha256"}` provenance respectively.
+
+Canonical transcript candidates:
+
+- user message entries (`"type": "message"`, `"message.role": "user"`)
+- assistant message entries (`"type": "message"`, `"message.role": "assistant"`)
+
+Canonical structured artifacts:
+
+- image blocks
+- tool_use blocks
+- tool_result blocks
+- file blocks
+- other structured block types
+
+Canonical non-transcript raw facts:
+
+- compaction entries
+- label entries
+- the session header
+- unknown entry types
+
+The Rust rebuild now implements Fixture (#18), Codex (#26), Claude Code (#27), OpenCode (#28),
+Droid (#29), and Pi through the same SourceAdapter and Library ingest seam. Codex detection requires the
 configured home and `codex` executable, discovery peeks only for a session metadata id when
 rollout filenames do not provide one, and archived candidates are folded before live candidates
 so live wins deterministically. Claude Code detection requires the configured home and `claude`
@@ -243,4 +296,7 @@ detection requires a configured data root and executable, discovery uses a bound
 query for deterministic virtual session identities, and snapshot preserves the complete bounded
 `opencode export` stdout payload before parsing. Droid is file-backed under its configured or
 default sessions root and preserves exact JSONL bytes, sidecar metadata, and deterministic logical
-identities. Exact source bytes remain the snapshot truth for every file-backed adapter.
+identities. Pi is file-backed under its configured sessions root and discovers Pi session JSONL
+files with deterministic identities resolved from the `session` header when available, using
+the documented filename-stem or synthetic fallbacks otherwise. Exact
+source bytes remain the snapshot truth for every file-backed adapter.

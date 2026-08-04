@@ -128,5 +128,6 @@ fn default_display_name(kind: SourceKind) -> &'static str {
         SourceKind::ClaudeCode => "Claude Code",
         SourceKind::OpenCode => "OpenCode",
         SourceKind::Droid => "Droid",
+        SourceKind::Pi => "Pi",
     }
 }
