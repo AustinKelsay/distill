@@ -3,14 +3,14 @@ name: Distill beta release
 on:
   push:
     tags:
-      - "v0.2.0-beta.1"
+      - "v0.2.0-beta.2"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  DISTILL_VERSION: 0.2.0-beta.1
+  DISTILL_VERSION: 0.2.0-beta.2
 
 jobs:
   verify:

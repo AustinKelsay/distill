@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "distill-cli"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "clap",
  "distill-library",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "distill-desktop"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "distill-library",
  "hex",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "distill-library"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "chrono",
  "hex",

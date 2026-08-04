@@ -13,7 +13,7 @@ This file is informative. Target behavior is defined by the canonical docs in
 - Renderer: `apps/distill-desktop/src` is a React/Vite UI with no filesystem,
   process, shell, SQL, or Node authority.
 - Release metadata: the root workspace, desktop package, and Tauri config all
-  use `0.2.0-beta.1`.
+  use `0.2.0-beta.2`.
 
 The old Electron/TypeScript product implementation was removed before beta.
 Only its compatibility contract remains: Rust reads Electron-shaped homes from

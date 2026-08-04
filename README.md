@@ -5,9 +5,8 @@ curating, and exporting local LLM chat history.
 
 ## Status
 
-The first beta is `0.2.0-beta.1`. The shipped product is a Rust Library with a
-thin Rust CLI and a Tauri 2 + React desktop app. Codex CLI, Claude Code, and
-OpenCode are supported capture sources.
+The first beta was `0.2.0-beta.1`; the current beta is `0.2.0-beta.2`. The shipped product is a Rust Library with a
+thin Rust CLI and a Tauri 2 + React desktop app. Codex CLI, Claude Code, OpenCode, Droid, and Pi are supported capture sources.
 
 The former Electron/TypeScript product source has been retired from this
 workspace. Native Rust migration code can still read an old Electron-shaped
@@ -52,9 +51,10 @@ npm run release:package:windows    # Windows
 ```
 
 The release workflow builds macOS, Linux, and Windows artifacts from the
-`v0.2.0-beta.1` tag. Release packaging never enables the smoke-test DOM marker;
+`v0.2.0-beta.2` tag. Release packaging never enables the smoke-test DOM marker;
 the signed/notarized macOS path needs Apple credentials. See
-[docs/release/first-beta.md](docs/release/first-beta.md) for the exact claims
+[docs/release/first-beta.md](docs/release/first-beta.md) and
+[docs/release/second-beta.md](docs/release/second-beta.md) for the exact claims
 and remaining manual checks.
 
 ## Canonical docs
