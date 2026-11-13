@@ -32,7 +32,7 @@ fn rules() -> &'static [Rule] {
             r("bearer", r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}"),
             // Personal data and private network names, not only credentials.
             r("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-            r("tailnet_host", r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
+            r("tailnet_host", r"(?i)\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
             r(
                 "tailscale_ip",
                 r"\b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b",
@@ -75,7 +75,8 @@ impl Findings {
 /// Addresses that identify a service, not a person: `git@github.com` remotes, `noreply@…`.
 fn is_service_address(m: &str) -> bool {
     let local = m.split('@').next().unwrap_or("").to_ascii_lowercase();
-    local == "git" || local.starts_with("noreply") || local.starts_with("no-reply")
+    // Exact matches only: `noreply+alice@…` still identifies a person.
+    matches!(local.as_str(), "git" | "noreply" | "no-reply")
 }
 
 pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> String {
@@ -122,6 +123,15 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
             .iter_mut()
             .for_each(|x| redact_value(x, home_dir, findings)),
         serde_json::Value::Object(o) => {
+            // Keys can carry identifiers too (`{"alice@proton.me": "active"}`).
+            if o.keys()
+                .any(|k| redact(k, home_dir, &mut Findings::default()) != *k)
+            {
+                let old = std::mem::take(o);
+                for (k, x) in old {
+                    o.insert(redact(&k, home_dir, findings), x);
+                }
+            }
             for (k, x) in o.iter_mut() {
                 if is_credential_key(k)
                     && let serde_json::Value::String(s) = x
@@ -188,7 +198,7 @@ mod tests {
     #[test]
     fn catches_personal_and_network_identifiers() {
         let mut f = Findings::default();
-        let text = "mail alice@proton.me, ssh box.tail1234.ts.net or 100.101.2.3; \
+        let text = "mail alice@proton.me, ssh box.tail1234.ts.net or 100.101.2.3, OTHER.tail1.TS.NET, noreply+bob@proton.me; \
                     clone git@github.com:o/r.git, from noreply@anthropic.com, not 10.0.0.1";
         let out = redact(text, None, &mut f);
         assert!(
@@ -200,9 +210,24 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("10.0.0.1"));
-        assert_eq!(f.by_rule["email"], 1);
-        assert_eq!(f.by_rule["tailnet_host"], 1);
+        assert!(!out.contains("TS.NET") && !out.contains("bob@"), "{out}");
+        assert_eq!(f.by_rule["email"], 2);
+        assert_eq!(f.by_rule["tailnet_host"], 2);
         assert_eq!(f.by_rule["tailscale_ip"], 1);
+    }
+
+    #[test]
+    fn redacts_identifiers_in_object_keys() {
+        let mut f = Findings::default();
+        let mut v = serde_json::json!({"alice@proton.me": "active", "box.tail1234.ts.net": "100.101.2.3", "plain": "x"});
+        redact_value(&mut v, None, &mut f);
+        let text = v.to_string();
+        assert!(
+            !text.contains("alice@") && !text.contains("ts.net") && !text.contains("100.101"),
+            "{text}"
+        );
+        assert_eq!(v["plain"], "x");
+        assert_eq!(v["[REDACTED:email]"], "active");
     }
 
     #[test]

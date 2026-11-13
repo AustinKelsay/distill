@@ -206,7 +206,9 @@ pub fn digest(meta: &SessionMeta, events: &[Event]) -> String {
         out.push_str(&format!("time: {a} to {b}\n"));
     }
     match &meta.git {
-        Some(g) if g.branch.is_some() && g.sha_at_start.is_some() => out.push_str(&format!(
+        // The branch resolved: either it had a commit before the session or the session made
+        // its first ones.
+        Some(g) if g.branch.is_some() && (g.sha_at_start.is_some() || !g.commits.is_empty()) => out.push_str(&format!(
             "git: branch {}: {} commits on it while the session ran (may include other work), {} later reverted\n",
             g.branch.as_deref().unwrap_or(""),
             g.commits.len(),
