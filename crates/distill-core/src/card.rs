@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::write_json_pretty;
 
-pub const PROMPT_VERSION: u32 = 1;
+pub const PROMPT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,6 +93,13 @@ impl CardDraft {
             produced_by,
         }
     }
+}
+
+/// Whether a card still describes its session: written with the current prompt from the
+/// capture the session was last normalized from.
+pub fn is_current(card: &Card, raw_sha256: &str) -> bool {
+    card.produced_by.prompt_version >= PROMPT_VERSION
+        && card.produced_by.input_sha256.as_deref() == Some(raw_sha256)
 }
 
 pub fn load(session_dir: &Path) -> Option<Card> {

@@ -197,7 +197,9 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
     let mut chosen: Vec<(SessionMeta, Option<Card>)> = normalize::read_index(home)?
         .into_iter()
         .map(|m| {
-            let c = card::load(&normalize::session_dir(home, &m));
+            // A stale card (old prompt, or the session changed since) doesn't count.
+            let c = card::load(&normalize::session_dir(home, &m))
+                .filter(|c| card::is_current(c, &m.raw.sha256));
             (m, c)
         })
         .filter(|(m, c)| recipe.filter.accepts(m, c.as_ref()))

@@ -30,6 +30,13 @@ fn rules() -> &'static [Rule] {
             r("jwt", r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
             r("nostr_secret", r"\bnsec1[02-9ac-hj-np-z]{58}\b"),
             r("bearer", r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}"),
+            // Personal data and private network names, not only credentials.
+            r("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+            r("tailnet_host", r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
+            r(
+                "tailscale_ip",
+                r"\b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b",
+            ),
             r(
                 "assigned_secret",
                 // Only the value is replaced (the `keep` group stays), so JSON stays valid.
@@ -65,16 +72,28 @@ impl Findings {
 }
 
 /// Replace secrets with `[REDACTED:<rule>]` and the user's home directory with `~`.
+/// Addresses that identify a service, not a person: `git@github.com` remotes, `noreply@…`.
+fn is_service_address(m: &str) -> bool {
+    let local = m.split('@').next().unwrap_or("").to_ascii_lowercase();
+    local == "git" || local.starts_with("noreply") || local.starts_with("no-reply")
+}
+
 pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> String {
     let mut out = text.to_string();
     for rule in rules() {
-        let n = rule.re.find_iter(&out).count() as u64;
+        let mut n = 0u64;
+        let replaced = rule.re.replace_all(&out, |c: &regex::Captures| {
+            let whole = &c[0];
+            if rule.name == "email" && is_service_address(whole) {
+                return whole.to_string();
+            }
+            n += 1;
+            let keep = c.name("keep").map_or("", |k| k.as_str());
+            format!("{keep}[REDACTED:{}]", rule.name)
+        });
         if n > 0 {
             *findings.by_rule.entry(rule.name.to_string()).or_default() += n;
-            out = rule
-                .re
-                .replace_all(&out, format!("${{keep}}[REDACTED:{}]", rule.name))
-                .into_owned();
+            out = replaced.into_owned();
         }
     }
     if let Some(h) = home_dir
@@ -164,6 +183,26 @@ mod tests {
         assert_eq!(parsed["n"], 1);
         assert_eq!(parsed["token"], "[REDACTED:assigned_secret]");
         assert_eq!(f.total(), 3);
+    }
+
+    #[test]
+    fn catches_personal_and_network_identifiers() {
+        let mut f = Findings::default();
+        let text = "mail alice@proton.me, ssh box.tail1234.ts.net or 100.101.2.3; \
+                    clone git@github.com:o/r.git, from noreply@anthropic.com, not 10.0.0.1";
+        let out = redact(text, None, &mut f);
+        assert!(
+            !out.contains("alice@") && !out.contains("ts.net") && !out.contains("100.101"),
+            "{out}"
+        );
+        assert!(
+            out.contains("git@github.com:o/r.git") && out.contains("noreply@anthropic.com"),
+            "{out}"
+        );
+        assert!(out.contains("10.0.0.1"));
+        assert_eq!(f.by_rule["email"], 1);
+        assert_eq!(f.by_rule["tailnet_host"], 1);
+        assert_eq!(f.by_rule["tailscale_ip"], 1);
     }
 
     #[test]
