@@ -46,12 +46,17 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
     Ok(parsed)
 }
 
+/// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
+pub const META_VERSION: u32 = 2;
+
 /// Per-origin result of the last normalize, so unchanged captures are skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizeState {
     pub source: SourceKind,
     pub sha256: String,
     pub version: u32,
+    #[serde(default = "first_meta_version")]
+    pub meta_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,6 +64,10 @@ pub struct NormalizeState {
     /// The capture parsed but holds no conversation (a header-only file).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub empty: bool,
+}
+
+fn first_meta_version() -> u32 {
+    1
 }
 
 fn state_path(home: &Home) -> PathBuf {
@@ -109,6 +118,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && let Some(s) = state.get(origin)
             && s.sha256 == rec.sha256
             && s.version == version
+            && s.meta_version == META_VERSION
         {
             report.skipped += 1;
             continue;
@@ -118,6 +128,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             source: rec.source,
             sha256: rec.sha256.clone(),
             version,
+            meta_version: META_VERSION,
             session: None,
             error: None,
             empty: false,
@@ -186,9 +197,12 @@ fn normalize_one(
     let ended_at = events.iter().rev().find_map(|e| e.ts.clone());
     let steward = parsed.cwd.as_deref().is_some_and(|c| home.is_inside(c));
     let git = match (&parsed.cwd, &started_at) {
-        (Some(cwd), Some(start)) if !steward => {
-            git_cache.outcome(cwd, start, ended_at.as_deref().unwrap_or(start))
-        }
+        (Some(cwd), Some(start)) if !steward => git_cache.outcome(
+            cwd,
+            parsed.git_branch.as_deref(),
+            start,
+            ended_at.as_deref().unwrap_or(start),
+        ),
         _ => None,
     };
     let meta = SessionMeta {

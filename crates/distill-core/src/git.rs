@@ -61,17 +61,38 @@ impl Cache {
         })
     }
 
-    pub fn outcome(&mut self, cwd: &str, started: &str, ended: &str) -> Option<GitOutcome> {
+    /// Commits are read from the session's own branch only. Counting the whole repository
+    /// credited sessions with other agents' parallel work.
+    pub fn outcome(
+        &mut self,
+        cwd: &str,
+        branch: Option<&str>,
+        started: &str,
+        ended: &str,
+    ) -> Option<GitOutcome> {
         let repo = self.top(cwd)?;
         let start = DateTime::parse_from_rfc3339(started).ok()?;
         let end = DateTime::parse_from_rfc3339(ended).ok()? + Duration::hours(1);
+        // A branch that no longer exists (merged and deleted) gives no attribution.
+        let rev = branch.filter(|b| {
+            !b.is_empty()
+                && *b != "HEAD"
+                && git(&repo, &["rev-parse", "--verify", "--quiet", b]).is_some()
+        });
+        let Some(rev) = rev else {
+            return Some(GitOutcome {
+                repo,
+                branch: branch.map(str::to_string),
+                ..Default::default()
+            });
+        };
         let sha_at_start = git(
             &repo,
             &[
                 "rev-list",
                 "-1",
                 &format!("--before={}", start.to_rfc3339()),
-                "--all",
+                rev,
             ],
         )
         .filter(|s| !s.is_empty());
@@ -79,7 +100,7 @@ impl Cache {
             &repo,
             &[
                 "log",
-                "--all",
+                rev,
                 "--format=%H",
                 &format!("--since={}", start.to_rfc3339()),
                 &format!("--until={}", end.to_rfc3339()),
@@ -96,6 +117,7 @@ impl Cache {
             .count() as u32;
         Some(GitOutcome {
             repo,
+            branch: Some(rev.to_string()),
             sha_at_start,
             commits,
             reverted,
@@ -142,10 +164,21 @@ mod tests {
         );
         let during = git(d.to_str().unwrap(), &["rev-parse", "HEAD"]).unwrap();
         run(d, &["revert", "--no-edit", "HEAD"], "2026-01-02T10:00:00Z");
+        let head = git(d.to_str().unwrap(), &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        // Work on another branch in the same window is not credited to this session.
+        run(d, &["switch", "-q", "-c", "other"], "2026-01-01T10:40:00Z");
+        std::fs::write(d.join("b"), "x").unwrap();
+        run(d, &["add", "b"], "2026-01-01T10:40:00Z");
+        run(
+            d,
+            &["commit", "-q", "-m", "elsewhere"],
+            "2026-01-01T10:40:00Z",
+        );
         let mut cache = Cache::default();
         let o = cache
             .outcome(
                 d.to_str().unwrap(),
+                Some(&head),
                 "2026-01-01T10:00:00Z",
                 "2026-01-01T11:00:00Z",
             )
@@ -153,10 +186,20 @@ mod tests {
         assert_eq!(o.commits, vec![during]);
         assert_eq!(o.reverted, 1);
         assert!(o.sha_at_start.is_some());
+        let unknown = cache
+            .outcome(
+                d.to_str().unwrap(),
+                None,
+                "2026-01-01T10:00:00Z",
+                "2026-01-01T11:00:00Z",
+            )
+            .unwrap();
+        assert!(unknown.commits.is_empty(), "no branch, no attribution");
         assert!(
             cache
                 .outcome(
                     "/definitely/not/a/repo",
+                    None,
                     "2026-01-01T10:00:00Z",
                     "2026-01-01T11:00:00Z"
                 )

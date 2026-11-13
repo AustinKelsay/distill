@@ -172,7 +172,16 @@ Read the session digest below and answer with only a JSON object, no other text:
   "summary": "two or three sentences on what happened"
 }
 
-Quality means value as an example of good agent work: 5 = exemplary, efficient, correct; 3 = got there with detours; 1 = useless or harmful. Git commits made during the session, and whether they were reverted, are strong evidence of outcome. Judge only from the digest.
+Quality is the session's value as an example of good agent work. Use the whole scale; most sessions are a 3:
+- 5: rare. A hard task done correctly and efficiently, with clear evidence it worked (tests, verification, a commit that stuck). Worth imitating as is.
+- 4: correct and verified, with only minor detours or waste.
+- 3: the task got done, but with detours, unverified claims, or a trivial task.
+- 2: partly done, much flailing, user had to step in repeatedly, or the result is doubtful.
+- 1: failed, wrong, harmful, or nothing useful happened.
+Routine read-only checks, lookups and one-line answers are at most 3 unless the reasoning itself is exemplary.
+"Corrections" are only places a human (or the delegating agent) pushed back on the agent's work, not the original instructions.
+If the user turns are another agent delegating the task (a sub-agent brief, a review request from an orchestrator), add the tag "delegated".
+Git commits on the session's branch are evidence of outcome but may include other work on that branch; a commit later reverted is evidence against. Judge only from the digest.
 
 SESSION DIGEST
 "#;
@@ -197,11 +206,15 @@ pub fn digest(meta: &SessionMeta, events: &[Event]) -> String {
         out.push_str(&format!("time: {a} to {b}\n"));
     }
     match &meta.git {
-        Some(g) => out.push_str(&format!(
-            "git: {} commits during the session, {} later reverted\n",
+        // The branch resolved: either it had a commit before the session or the session made
+        // its first ones.
+        Some(g) if g.branch.is_some() && (g.sha_at_start.is_some() || !g.commits.is_empty()) => out.push_str(&format!(
+            "git: branch {}: {} commits on it while the session ran (may include other work), {} later reverted\n",
+            g.branch.as_deref().unwrap_or(""),
             g.commits.len(),
             g.reverted
         )),
+        Some(_) => out.push_str("git: repository known, branch unknown or gone; commits not attributed\n"),
         None => out.push_str("git: no repository information\n"),
     }
     out.push_str("\nTRANSCRIPT (clipped; tool calls shown by name)\n");
@@ -279,11 +292,8 @@ pub fn pending(home: &Home) -> Result<Vec<SessionMeta>> {
         .into_iter()
         .filter(|m| !m.steward && m.counts.user > 0)
         .filter(|m| {
-            card::load(&normalize::session_dir(home, m)).is_none_or(|c| {
-                c.produced_by.prompt_version < PROMPT_VERSION
-                    // The session grew or changed since the card was written.
-                    || c.produced_by.input_sha256.as_deref() != Some(m.raw.sha256.as_str())
-            })
+            card::load(&normalize::session_dir(home, m))
+                .is_none_or(|c| !card::is_current(&c, &m.raw.sha256))
         })
         .collect())
 }
@@ -554,6 +564,7 @@ mod tests {
                 source: SourceKind::Pi,
                 sha256: rec.sha256,
                 version: 1,
+                meta_version: crate::normalize::META_VERSION,
                 session: None,
                 error: Some("unexpected record".into()),
                 empty: false,

@@ -110,9 +110,13 @@ pub struct Producer {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GitOutcome {
     pub repo: String,
+    /// The branch the session recorded. Commits are only attributed when it is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha_at_start: Option<String>,
-    /// Commits made between the session's start and an hour after its end.
+    /// Commits on `branch` between the session's start and an hour after its end. Other work
+    /// on the same branch in that window is counted too.
     pub commits: Vec<String>,
     /// Of those, how many were later reverted.
     pub reverted: u32,
