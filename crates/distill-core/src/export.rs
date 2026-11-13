@@ -189,6 +189,9 @@ fn build_dir(home: &Home, recipe: &str, build: &str) -> PathBuf {
 /// Build a recipe. The build id is a hash of the recipe and its inputs, so the same inputs
 /// always give the same id and the same bytes; an existing build is returned as is.
 pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
+    // Builds remove superseded unapproved builds, so they must not interleave with each other
+    // or with an approval (which would turn a build we are about to remove into a kept one).
+    let _lock = home.lock("exports")?;
     let recipe = load_recipe(home, name)?;
     let recipe_sha = sha256_hex(toml::to_string(&recipe)?.as_bytes());
     let mut chosen: Vec<(SessionMeta, Option<Card>)> = normalize::read_index(home)?
@@ -367,6 +370,7 @@ pub fn list_builds(home: &Home) -> Result<Vec<BuildSummary>> {
 /// Approve a build so it may leave the machine. This is the human's decision; the steward never
 /// calls it.
 pub fn approve(home: &Home, recipe: &str, build: &str, by: &str) -> Result<()> {
+    let _lock = home.lock("exports")?;
     let dir = build_dir(home, recipe, build);
     if !dir.join("manifest.json").exists() {
         bail!("no build {recipe}/{build}");
