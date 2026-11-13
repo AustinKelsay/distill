@@ -262,6 +262,14 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
         built_at: now_rfc3339(),
     };
     write_json_pretty(&dir.join("manifest.json"), &manifest)?;
+    // Older builds of this recipe that were never approved are superseded and can be rebuilt,
+    // so they are removed; otherwise every hourly tick on a growing archive leaves one behind.
+    // Approved builds are kept.
+    for old in list_builds(home)? {
+        if old.recipe == name && old.build != build_id && !old.approved {
+            fs::remove_dir_all(&old.path)?;
+        }
+    }
     let mut entry = RunEntry::new(
         "export",
         true,

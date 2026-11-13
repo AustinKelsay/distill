@@ -232,6 +232,10 @@ enrich_every_hours = 24
     fs::remove_file(&old_card).unwrap();
     let b3 = json(&home, &["export", "build", "good-sessions"]);
     assert_ne!(b3[0]["build"], build.as_str());
+    assert!(
+        !home.join(format!("exports/good-sessions/{build}")).exists(),
+        "a superseded, unapproved build is removed"
+    );
     let st = json(&home, &["status"]);
     let pending: Vec<_> = st["needs_you"]
         .as_array()
