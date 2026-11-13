@@ -1,64 +1,52 @@
-# DISTILL
+# Distill
 
-DISTILL is a local-first desktop app for collecting, normalizing, searching,
-curating, and exporting local LLM chat history.
+Distill passively collects every AI coding-agent session on your machine, keeps the raw bytes forever, and lets agents turn them into data for fine-tuning, evals and personal analysis. You set it up once, glance at a dashboard, and approve anything that leaves the machine.
 
-## Status
-
-The first beta was `0.2.0-beta.1`; the current beta is `0.2.0-beta.2`. The shipped product is a Rust Library with a
-thin Rust CLI and a Tauri 2 + React desktop app. Codex CLI, Claude Code, OpenCode, Droid, and Pi are supported capture sources.
-
-The former Electron/TypeScript product source has been retired from this
-workspace. Native Rust migration code can still read an old Electron-shaped
-Distill home without modifying it; see [the legacy boundary](docs/legacy/electron/README.md).
-
-## What DISTILL does
-
-- discovers supported local chat captures
-- preserves raw capture content in DISTILL-owned local storage
-- normalizes sessions, messages, and artifacts into local SQLite
-- searches and reviews the current session projection
-- labels and tags sessions
-- exports approved sessions to JSONL
-- imports a legacy Electron home through a read-only migration seam
-
-Everything is local-first: source data stays on the machine, and the importer
-creates its own durable copy.
-
-## Local setup
-
-```bash
-npm ci
-npm run check:release
-npm run desktop:dev
+```
+sources ──sweep──▶ raw archive ──steward──▶ derived files ──recipe + redaction + approval──▶ datasets
+(Claude Code,      append-only,             meta, events,
+ Codex, OpenCode,  content-addressed,       cards; rebuildable
+ Droid, Pi,        no model                 at any time
+ Cursor)
 ```
 
-The Rust CLI can exercise the same Library contract without the desktop host:
+![Dashboard](docs/images/dashboard.png)
 
-```bash
-cargo run -p distill-cli -- --home /tmp/distill-home --fixture /path/to/fixture --format json
+## Quick start
+
+```sh
+cargo build --release
+./target/release/distill init          # detect sources, write ~/distill/config.toml
+./target/release/distill tick          # sweep, normalize, steward, rebuild datasets
+./target/release/distill status
+./target/release/distill schedule install   # run `tick` every hour (launchd / systemd)
+./target/release/distill gui           # setup and dashboard (build with: cargo build --release -p distill-gui)
 ```
 
-By default, Distill stores its local database and files in `~/.distill`. Set
-`DISTILL_HOME` to use another location.
+`DISTILL_HOME` or `--home` moves the home from `~/distill`.
 
-## Beta packaging
+## What runs where
 
-```bash
-npm run desktop:package:macos
-npm run desktop:package:linux       # Ubuntu/Linux
-npm run release:package:windows    # Windows
-```
+| Piece | What it does |
+| --- | --- |
+| `distill sweep` | Copies new and changed session files into `raw/`. A file that only grew replaces its old copy; a rewritten file keeps both. SQLite sources are read through SQLite's backup API (Cursor) or exported per session (OpenCode). Excluded repos are never copied. |
+| `distill normalize` | Turns raw captures into `sessions/<source>/<id>/meta.json` and `events.jsonl`: prompts, replies, reasoning, tool calls and tool results. Joins each session to git: commit at start, commits made during it, later reverts. |
+| `distill steward run` | Asks an installed harness (`claude -p` or `codex exec`, no tools) to read a digest of each session and answer with a card: task, outcome, quality 1–5, corrections, tags. Distill writes the card; the agent never touches the archive. Stops at the daily budget. |
+| `distill export build` | Builds each recipe in `recipes/` into `exports/<recipe>/<build>/data.jsonl` with secrets redacted. Same inputs give the same build id and bytes. Builds wait for approval. |
+| `distill export approve` / `publish` | Only approved builds can be copied out. |
+| `distill-mcp` | Read-only MCP server (stdio): `distill_stats`, `distill_list_sessions`, `distill_read_session`, `distill_search`. |
+| `distill-gui` | Native [Rune](https://github.com/anomalyco/rune) window: one-time setup and a dashboard with approvals. |
 
-The release workflow builds macOS, Linux, and Windows artifacts from the
-`v0.2.0-beta.2` tag. Release packaging never enables the smoke-test DOM marker;
-the signed/notarized macOS path needs Apple credentials. See
-[docs/release/first-beta.md](docs/release/first-beta.md) and
-[docs/release/second-beta.md](docs/release/second-beta.md) for the exact claims
-and remaining manual checks.
+Add the MCP server to Claude Code with `claude mcp add distill -- /path/to/distill-mcp`.
 
-## Canonical docs
+## Rules for unattended agents
 
-The authoritative architecture, behavior, and verification docs live under
-[docs/README.md](docs/README.md). [IMPLEMENTATION.md](IMPLEMENTATION.md) is a
-short current implementation map, not a second specification.
+1. The archive is read-only to agents; they only produce derived files, through Distill.
+2. Nothing leaves the machine without a human approval.
+3. Steward spend is capped per day.
+4. Sessions the steward runs are tagged and kept out of datasets.
+5. Every run writes to `runs/`, including what failed.
+
+See `docs/plan.md` for the design and `docs/status.md` for what is built.
+
+This replaces the earlier Tauri/Electron Distill (last commit tagged `legacy-final`; `v0.2.0-beta.*` releases).

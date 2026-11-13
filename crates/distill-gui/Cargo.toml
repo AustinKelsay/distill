@@ -1,0 +1,12 @@
+[package]
+name = "distill-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+distill-core.workspace = true
+rune = { git = "https://github.com/anomalyco/rune", rev = "b06a272542ff23be4690c9d5b6cd416c389f42bc", features = ["tooling"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "b06a272542ff23be4690c9d5b6cd416c389f42bc" }
