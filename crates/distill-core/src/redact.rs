@@ -129,7 +129,16 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
             {
                 let old = std::mem::take(o);
                 for (k, x) in old {
-                    o.insert(redact(&k, home_dir, findings), x);
+                    let base = redact(&k, home_dir, findings);
+                    // Two keys can redact to the same placeholder; number the rest so no value
+                    // is dropped.
+                    let mut key = base.clone();
+                    let mut n = 2;
+                    while o.contains_key(&key) {
+                        key = format!("{base} #{n}");
+                        n += 1;
+                    }
+                    o.insert(key, x);
                 }
             }
             for (k, x) in o.iter_mut() {
@@ -228,6 +237,22 @@ mod tests {
         );
         assert_eq!(v["plain"], "x");
         assert_eq!(v["[REDACTED:email]"], "active");
+    }
+
+    #[test]
+    fn colliding_redacted_keys_keep_every_value() {
+        let mut f = Findings::default();
+        let mut v = serde_json::json!({
+            "alice@example.com": {"active": true},
+            "bob@example.com": {"active": false},
+            "[REDACTED:email]": "already"
+        });
+        redact_value(&mut v, None, &mut f);
+        let o = v.as_object().unwrap();
+        assert_eq!(o.len(), 3, "{v}");
+        assert!(!v.to_string().contains("@example.com"), "{v}");
+        let actives: Vec<_> = o.values().filter_map(|x| x.get("active")).collect();
+        assert_eq!(actives.len(), 2);
     }
 
     #[test]
