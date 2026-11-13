@@ -1,5 +1,0 @@
-dist
-src-tauri/gen
-src-tauri/target
-node_modules
-*.png
