@@ -69,11 +69,14 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
 /// Captures larger than this that yield no events are treated as format drift.
 const DRIFT_BYTES: u64 = 16 * 1024;
 
-/// Whether a capture is too big to hold nothing. Not for Cursor: its chats are SQLite files
-/// whose size is mostly empty pages, and its parser fails outright when the store's layout is
-/// not what it expects.
+/// Whether a capture is too big to hold nothing. Only for files a harness writes itself: not
+/// for Cursor (its chats are SQLite files whose size is mostly empty pages, and its parser fails
+/// outright when the store's layout is not what it expects), and not for sessions Distill
+/// exports from a database (`…#session=…`, `…#thread=…`), whose shape its own query fixes; a
+/// schema change fails that query instead. A database session can legitimately hold nothing
+/// but a long system prompt.
 fn drift_suspect(rec: &CaptureRecord) -> bool {
-    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor
+    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor && !rec.origin.contains('#')
 }
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
@@ -292,6 +295,16 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             Ok(None) => {
                 report.empty += 1;
                 entry.empty = true;
+                // It held a session before (an earlier parser read more into it): that session
+                // is gone from the index now.
+                if let Some(old) = previous
+                    && find(home, rec.source, &old)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| m.raw.origin == *origin)
+                {
+                    let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
+                }
             }
             Err(e) => {
                 report.failed += 1;
