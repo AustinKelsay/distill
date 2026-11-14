@@ -66,8 +66,10 @@ fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, orig
         return true;
     }
     match source::path_cwd(kind, path) {
-        Some((cwd, lossy)) => source::path_cwd_excluded(&cwd, lossy, exclude),
-        None => !primary,
+        Some((cwd, enc)) => source::path_cwd_excluded(&cwd, enc, exclude),
+        // Antigravity and Hermes never say where they ran, so with any exclusion set nothing
+        // from them is archived; elsewhere a session without a recorded cwd is kept.
+        None => !primary || source::records_no_cwd(kind),
     }
 }
 
@@ -242,6 +244,72 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(meta.counts.user, 1);
+    }
+
+    #[test]
+    fn exclusions_cover_dotted_droid_folders_and_sources_without_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let droid = root.join("factory/sessions/-work-private.repo");
+        std::fs::create_dir_all(&droid).unwrap();
+        std::fs::write(droid.join("d1.settings.json"), "{}").unwrap();
+        let ag = root.join("ag/brain/c1/.system_generated/logs");
+        std::fs::create_dir_all(&ag).unwrap();
+        std::fs::write(
+            ag.join("transcript_full.jsonl"),
+            r#"{"type":"USER_INPUT","content":"hi"}"#,
+        )
+        .unwrap();
+
+        let home = Home::new(root.join("home"));
+        let mut config = Config {
+            sources: vec![],
+            ..Default::default()
+        };
+        let c = config.source_mut(SourceKind::Droid);
+        c.enabled = true;
+        c.roots = vec![root.join("factory/sessions")];
+        let c = config.source_mut(SourceKind::Antigravity);
+        c.enabled = true;
+        c.roots = vec![root.join("ag")];
+        config.privacy.exclude_paths = vec!["/work/private.repo".into()];
+        let r = sweep(&home, &config, None).unwrap();
+        assert_eq!((r.new, r.excluded), (0, 2), "{r:?}");
+
+        config.privacy.exclude_paths.clear();
+        let r = sweep(&home, &config, None).unwrap();
+        assert_eq!(r.new, 2, "{r:?}");
+    }
+
+    #[test]
+    fn a_codex_session_compressed_later_stays_one_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let codex = root.join("codex");
+        std::fs::create_dir_all(&codex).unwrap();
+        let rollout = r#"{"timestamp":"2026-11-01T00:00:00Z","type":"session_meta","payload":{"id":"c1","cwd":"/w"}}
+{"timestamp":"2026-11-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}
+"#;
+        std::fs::write(codex.join("rollout-c1.jsonl"), rollout).unwrap();
+        let home = Home::new(root.join("home"));
+        let mut config = Config {
+            sources: vec![],
+            ..Default::default()
+        };
+        let c = config.source_mut(SourceKind::Codex);
+        c.enabled = true;
+        c.roots = vec![codex.clone()];
+        sweep(&home, &config, None).unwrap();
+        crate::normalize::normalize(&home, false).unwrap();
+        std::fs::remove_file(codex.join("rollout-c1.jsonl")).unwrap();
+        std::fs::write(
+            codex.join("rollout-c1.jsonl.zst"),
+            zstd::stream::encode_all(rollout.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        sweep(&home, &config, None).unwrap();
+        let n = crate::normalize::normalize(&home, false).unwrap();
+        assert_eq!(n.sessions, 1, "{n:?}");
     }
 
     #[test]

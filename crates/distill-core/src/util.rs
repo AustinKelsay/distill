@@ -107,11 +107,13 @@ pub fn safe_component(s: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim_matches('.');
-    if trimmed.is_empty() {
-        "_".to_string()
-    } else {
-        trimmed.chars().take(120).collect()
+    if !trimmed.is_empty() && trimmed == s && s.len() <= 120 {
+        return s.to_string();
     }
+    // Cleaning or shortening can map different ids to one name (long ids that share a prefix,
+    // `a:b` and `a%b`), so those names carry a hash of the original.
+    let prefix: String = trimmed.chars().take(100).collect();
+    format!("{prefix}-{}", &sha256_hex(s.as_bytes())[..16])
 }
 
 /// Shorten text to at most `max` characters on a char boundary, marking the cut.
@@ -122,4 +124,25 @@ pub fn clip(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max).collect();
     out.push_str(" …[clipped]");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_names_stay_unique() {
+        assert_eq!(
+            safe_component("abc-123_x.y"),
+            "abc-123_x.y",
+            "clean ids keep their name"
+        );
+        let long = "thread:delegated-task:command%3Amcp%3A".repeat(4);
+        let a = safe_component(&format!("{long}aaaa"));
+        let b = safe_component(&format!("{long}bbbb"));
+        assert_ne!(a, b, "long ids sharing a prefix get different names");
+        assert!(a.len() <= 117);
+        assert_ne!(safe_component("a:b"), safe_component("a%b"));
+        assert_ne!(safe_component(".."), safe_component("."));
+    }
 }

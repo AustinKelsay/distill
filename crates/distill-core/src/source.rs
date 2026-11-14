@@ -317,10 +317,19 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
     Ok(out)
 }
 
-/// Working directory encoded in a file's path, for sources that name folders after it:
-/// Claude Code and Droid (`-Users-me-repo`, lossy: `/` and `.` both become `-`) and Grok
-/// (percent-encoded). Returns the folder's cwd text and whether it is the lossy encoding.
-pub fn path_cwd(kind: SourceKind, path: &Path) -> Option<(String, bool)> {
+/// How a harness turns a working directory into a folder name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathEncoding {
+    /// Claude Code: `/` and `.` both become `-` (lossy).
+    DashSlashDot,
+    /// Droid: `/` becomes `-`; dots are kept.
+    DashSlash,
+    /// Grok: percent-encoded, decoded exactly.
+    Exact,
+}
+
+/// Working directory encoded in a file's path, for harnesses that name folders after it.
+pub fn path_cwd(kind: SourceKind, path: &Path) -> Option<(String, PathEncoding)> {
     let s = path.to_string_lossy();
     let after = |marker: &str| {
         s.split(marker)
@@ -329,13 +338,18 @@ pub fn path_cwd(kind: SourceKind, path: &Path) -> Option<(String, bool)> {
             .map(str::to_string)
     };
     match kind {
-        SourceKind::ClaudeCode => after("/projects/").map(|d| (d, true)),
+        SourceKind::ClaudeCode => after("/projects/").map(|d| (d, PathEncoding::DashSlashDot)),
         SourceKind::Droid => after("/sessions/")
             .filter(|d| d.starts_with('-'))
-            .map(|d| (d, true)),
-        SourceKind::Grok => after("/sessions/").map(|d| (percent_decode(&d), false)),
+            .map(|d| (d, PathEncoding::DashSlash)),
+        SourceKind::Grok => after("/sessions/").map(|d| (percent_decode(&d), PathEncoding::Exact)),
         _ => None,
     }
+}
+
+/// Sources whose sessions record no working directory at all, so exclusions can't be checked.
+pub fn records_no_cwd(kind: SourceKind) -> bool {
+    matches!(kind, SourceKind::Antigravity | SourceKind::Hermes)
 }
 
 pub fn percent_decode(s: &str) -> String {
@@ -358,21 +372,22 @@ pub fn percent_decode(s: &str) -> String {
 }
 
 /// Whether an excluded path matches a cwd taken from `path_cwd`.
-pub fn path_cwd_excluded(encoded: &str, lossy: bool, exclude: &[String]) -> bool {
+pub fn path_cwd_excluded(encoded: &str, enc: PathEncoding, exclude: &[String]) -> bool {
     exclude.iter().any(|p| {
         let p = p.trim_end_matches('/');
         if p.is_empty() {
             return false;
         }
-        if lossy {
-            let enc: String = p
+        let want: String = match enc {
+            PathEncoding::DashSlashDot => p
                 .chars()
                 .map(|c| if c == '/' || c == '.' { '-' } else { c })
-                .collect();
-            encoded == enc || encoded.starts_with(&format!("{enc}-"))
-        } else {
-            encoded == p || encoded.starts_with(&format!("{p}/"))
-        }
+                .collect(),
+            PathEncoding::DashSlash => p.replace('/', "-"),
+            PathEncoding::Exact => p.to_string(),
+        };
+        let sep = if enc == PathEncoding::Exact { "/" } else { "-" };
+        encoded == want || encoded.starts_with(&format!("{want}{sep}"))
     })
 }
 

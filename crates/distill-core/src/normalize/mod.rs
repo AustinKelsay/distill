@@ -63,7 +63,7 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
 }
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
-pub const META_VERSION: u32 = 2;
+pub const META_VERSION: u32 = 3;
 
 /// Per-origin result of the last normalize, so unchanged captures are skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,6 +211,7 @@ fn normalize_one(
     // Two captures can claim one session id (a copied or forked file). Keep both.
     if let Ok(Some(existing)) = find(home, rec.source, &session_id)
         && existing.raw.origin != rec.origin
+        && !same_session_file(&existing.raw.origin, &rec.origin)
     {
         session_id = format!(
             "{session_id}-{}",
@@ -266,6 +267,19 @@ fn normalize_one(
     Ok(Some(meta))
 }
 
+/// Codex compresses a session file in place (`x.jsonl` → `x.jsonl.zst`, sometimes into
+/// `archived_sessions/`). Both captures stay in the archive; they are one session.
+fn same_session_file(a: &str, b: &str) -> bool {
+    let name = |o: &str| {
+        o.rsplit('/')
+            .next()
+            .unwrap_or(o)
+            .trim_end_matches(".zst")
+            .to_string()
+    };
+    name(a) == name(b)
+}
+
 fn fallback_id(origin: &str) -> Option<String> {
     let name = origin.rsplit('/').next()?;
     Some(
@@ -298,6 +312,12 @@ pub fn rebuild_index(home: &Home) -> Result<usize> {
             if let Ok(text) = std::fs::read_to_string(&p)
                 && let Ok(m) = serde_json::from_str::<SessionMeta>(&text)
             {
+                // A folder left under an older naming of its session is stale; the session
+                // lives in its current folder. Derived data, so it is removed.
+                if entry.file_name().to_str() != Some(safe_component(&m.session_id).as_str()) {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                    continue;
+                }
                 metas.push(m);
             }
         }
