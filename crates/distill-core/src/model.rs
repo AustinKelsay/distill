@@ -191,10 +191,11 @@ impl SessionMeta {
         };
         // A named original must also reach (nearly) as far as the mirror: T3 can carry a
         // native session on after its source stopped being captured. Cursor's times mark only
-        // when each turn began, so they can't say how far a session went.
+        // when each turn began, which a T3 thread's (when each item finished) can't be compared
+        // with; a Cursor transcript keeps the same turn times as its store, so it is compared.
         let covers = |k: &String| {
             originals.keys.get(k).is_some_and(|ended| {
-                if k.starts_with("cursor/") {
+                if k.starts_with("cursor/") && self.source == SourceKind::T3Code {
                     return true;
                 }
                 match (
@@ -361,9 +362,13 @@ mod tests {
         let o = Originals::of(&[thread.clone(), transcript.clone()]);
         assert!(!transcript.is_duplicate(&o) && !thread.is_duplicate(&o));
         // With the store archived, both are copies.
-        let store = session("cursor", "agent-1", "");
+        let store = session("cursor", "agent-1", r#","ended_at":"2026-11-01T10:00:00Z""#);
         let o = Originals::of(&[thread.clone(), transcript.clone(), store.clone()]);
         assert!(transcript.is_duplicate(&o) && thread.is_duplicate(&o));
         assert!(!store.is_duplicate(&o));
+        // A transcript with a turn the store doesn't have (same turn clock) is kept.
+        let mut ahead = transcript.clone();
+        ahead.ended_at = Some("2026-11-01T11:00:00Z".into());
+        assert!(!ahead.is_duplicate(&o));
     }
 }
