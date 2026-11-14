@@ -10,6 +10,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::blocks::millis_to_rfc3339;
 use crate::model::{Event, EventKind, Parsed};
@@ -25,31 +26,52 @@ fn open(db: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Every session, with a hash of everything its export holds as the change signal. Goose
+/// edits messages in place (tool metadata, for one) without touching the session's
+/// `updated_at`, so neither that nor the newest message id is enough. The database is small;
+/// hashing it each sweep is cheap.
 pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     let conn = open(db)?;
+    let mut hashes: std::collections::BTreeMap<String, Sha256> = Default::default();
     let mut stmt = conn.prepare(
-        "SELECT s.id, COALESCE(MAX(m.id), 0), s.updated_at
-         FROM sessions s LEFT JOIN messages m ON m.session_id = s.id
-         GROUP BY s.id ORDER BY s.id",
+        "SELECT id, COALESCE(working_dir, ''), COALESCE(created_at, ''), session_type,
+                COALESCE(provider_name, ''), COALESCE(model_config_json, ''),
+                COALESCE(parent_session_id, '')
+         FROM sessions",
     )?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, i64>(1)?,
-            r.get::<_, Option<String>>(2)?,
-        ))
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        let (session_id, last_message, updated) = row?;
-        out.push(Candidate::GooseSession {
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let mut h = Sha256::new();
+        for i in 1..7 {
+            h.update(r.get::<_, String>(i)?.as_bytes());
+            h.update([0]);
+        }
+        hashes.insert(r.get(0)?, h);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT session_id, id, COALESCE(message_id, ''), role, content_json, created_timestamp
+         FROM messages ORDER BY session_id, created_timestamp, id",
+    )?;
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let Some(h) = hashes.get_mut(&r.get::<_, String>(0)?) else {
+            continue;
+        };
+        h.update(r.get::<_, i64>(1)?.to_le_bytes());
+        for i in 2..5 {
+            h.update(r.get::<_, String>(i)?.as_bytes());
+            h.update([0]);
+        }
+        h.update(r.get::<_, i64>(5)?.to_le_bytes());
+    }
+    Ok(hashes
+        .into_iter()
+        .map(|(session_id, h)| Candidate::GooseSession {
             db: db.to_path_buf(),
             session_id,
-            // A new message or a session update both change it.
-            updated: format!("{last_message}:{}", updated.unwrap_or_default()),
-        });
-    }
-    Ok(out)
+            updated: hex::encode(h.finalize())[..16].to_string(),
+        })
+        .collect())
 }
 
 pub struct Export {
@@ -123,14 +145,17 @@ fn s(v: &Value, k: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Goose writes `created_timestamp` in seconds.
+/// Goose writes `created_timestamp` in seconds. Anything outside 1970–9999 is not a time.
 fn when(v: &Value) -> Option<String> {
     let t = v.get("created").and_then(Value::as_i64)?;
-    Some(millis_to_rfc3339(if t > 100_000_000_000 {
+    let ms = if t > 100_000_000_000 {
         t
     } else {
-        t * 1000
-    }))
+        t.checked_mul(1000)?
+    };
+    (0..=253_402_300_799_999)
+        .contains(&ms)
+        .then(|| millis_to_rfc3339(ms))
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
@@ -214,8 +239,14 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                                 .or_else(|| result.get("error"))
                                 .unwrap_or(&Value::Null);
                             e.text = Some(super::blocks::result_text(content));
+                            // A tool can fail inside a call that went through: MCP reports that
+                            // as `isError` in the result.
                             e.is_error = Some(
-                                result.get("status").and_then(Value::as_str) != Some("success"),
+                                result.get("status").and_then(Value::as_str) != Some("success")
+                                    || result
+                                        .pointer("/value/isError")
+                                        .and_then(Value::as_bool)
+                                        .unwrap_or(false),
                             );
                             out.push(e);
                         }
@@ -283,6 +314,29 @@ mod tests {
         assert_eq!(p.events[3].text.as_deref(), Some("1 failed"));
         assert_eq!(p.events[3].is_error, Some(false));
         assert_eq!(p.events[0].ts.as_deref(), Some("2026-11-01T10:00:00.000Z"));
+
+        // A tool that failed inside a successful call, and one whose call failed.
+        let failed = parse(br#"{"row":"message","role":"user","created":-9223372036854775808,"content":[{"type":"toolResponse","id":"x","toolResult":{"status":"success","value":{"isError":true,"content":[{"type":"text","text":"boom"}]}}},{"type":"toolResponse","id":"y","toolResult":{"status":"error","error":"no such tool"}}]}"#)
+        .unwrap();
+        assert_eq!(failed.events[0].is_error, Some(true));
+        assert_eq!(failed.events[1].is_error, Some(true));
+        assert_eq!(
+            failed.events[0].ts, None,
+            "an impossible time is dropped, not a panic"
+        );
+
+        // A message edited in place changes the fingerprint.
+        let before = list_sessions(&db).unwrap()[0].fingerprint();
+        Connection::open(&db)
+            .unwrap()
+            .execute(
+                r#"UPDATE messages SET content_json = '[{"type":"text","text":"run all tests"}]' WHERE message_id = 'a'"#,
+                [],
+            )
+            .unwrap();
+        assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
+        let sessions = list_sessions(&db).unwrap();
+        let export = export_session(&db, "20261101_1").unwrap();
 
         // A new message appends to the export.
         Connection::open(&db)

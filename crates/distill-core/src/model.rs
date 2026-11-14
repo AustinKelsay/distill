@@ -172,10 +172,9 @@ impl SessionMeta {
         format!("{}/{}", self.source.id(), self.session_id)
     }
 
-    /// A mirror whose originals are in the archive: see [`Originals::of`], which settles every
-    /// mirror in an index.
+    /// A mirror whose originals are in the archive and cover it.
     pub fn is_duplicate(&self, originals: &Originals) -> bool {
-        self.mirror && !originals.survivors.contains(&self.key())
+        self.mirror && self.copied_in(originals)
     }
 
     /// Whether `originals` hold what this mirror copies. With the originals named, each must be
@@ -220,17 +219,15 @@ fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok()
 }
 
-/// The sessions in an index that hold content: every one that isn't a mirror, and every mirror
-/// whose originals are missing (it is then the only copy). Mirrors are settled one at a time,
-/// Cursor's transcripts before T3 Code's threads (which may copy them), each counting as an
-/// original for the ones after it, so two copies of a lost session keep exactly one.
+/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`]. Only a
+/// harness's own sessions count: a mirror is never taken as proof for another mirror, since it
+/// may hold less (or more) than the session it copies. When the original is gone, two copies of
+/// it both stay.
 #[derive(Debug, Default)]
 pub struct Originals {
     pub sources: std::collections::HashSet<SourceKind>,
     /// Each original's key, with when it ended.
     pub keys: std::collections::HashMap<String, Option<String>>,
-    /// Mirrors that are the only copy of what they hold.
-    pub survivors: std::collections::HashSet<String>,
 }
 
 impl Originals {
@@ -239,25 +236,6 @@ impl Originals {
         for m in metas.iter().filter(|m| !m.mirror) {
             o.sources.insert(m.source);
             o.keys.insert(m.key(), m.ended_at.clone());
-        }
-        let mut mirrors: Vec<&SessionMeta> = metas.iter().filter(|m| m.mirror).collect();
-        mirrors.sort_by_key(|m| (m.source == SourceKind::T3Code, m.key()));
-        for m in mirrors {
-            if m.copied_in(&o) {
-                continue;
-            }
-            // The only copy: it stands for itself and for the sessions it names.
-            o.survivors.insert(m.key());
-            o.sources.insert(m.source);
-            o.keys.insert(m.key(), m.ended_at.clone());
-            for k in &m.mirror_refs {
-                o.keys
-                    .entry(k.clone())
-                    .or_insert_with(|| m.ended_at.clone());
-            }
-            for k in m.mirror_of.iter().chain(&m.mirror_unresolved) {
-                o.sources.insert(*k);
-            }
         }
         o
     }
@@ -368,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn of_two_copies_of_a_lost_session_one_survives() {
+    fn only_a_harnesss_own_sessions_prove_a_copy() {
         // A Cursor agent whose store is gone: its transcript and the T3 thread that ran it.
         let transcript = session(
             "cursor",
@@ -381,11 +359,7 @@ mod tests {
             r#","mirror":true,"mirror_of":["cursor"],"mirror_refs":["cursor/agent-1"]"#,
         );
         let o = Originals::of(&[thread.clone(), transcript.clone()]);
-        assert!(
-            !transcript.is_duplicate(&o),
-            "the transcript is the copy kept"
-        );
-        assert!(thread.is_duplicate(&o));
+        assert!(!transcript.is_duplicate(&o) && !thread.is_duplicate(&o));
         // With the store archived, both are copies.
         let store = session("cursor", "agent-1", "");
         let o = Originals::of(&[thread.clone(), transcript.clone(), store.clone()]);
