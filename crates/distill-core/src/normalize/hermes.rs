@@ -29,10 +29,49 @@ fn open(db: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// The session columns an export holds. Only ones set when a session starts, plus its title,
-/// so an export grows by appending.
-const SESSION_COLS: &str = "id, source, model, system_prompt, parent_session_id, started_at, \
-                            cwd, git_branch, title";
+/// The session fields an export holds: ones set when a session starts, plus its title (set
+/// once, early; renaming a session rewrites its export). Built against the database's own
+/// columns, since older Hermes versions lack some, and newer ones keep the system prompt in
+/// `system_prompts`, referenced by hash.
+fn session_select(conn: &Connection) -> Result<String> {
+    let mut have = std::collections::HashSet::new();
+    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('sessions')")?;
+    for name in stmt.query_map([], |r| r.get::<_, String>(0))? {
+        have.insert(name?);
+    }
+    let prompts_table = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'system_prompts'",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+    let col = |c: &str| {
+        if have.contains(c) {
+            c.to_string()
+        } else {
+            "NULL".to_string()
+        }
+    };
+    let prompt = if prompts_table && have.contains("system_prompt_hash") {
+        format!(
+            "COALESCE({}, (SELECT prompt FROM system_prompts p WHERE p.hash = sessions.system_prompt_hash))",
+            col("system_prompt")
+        )
+    } else {
+        col("system_prompt")
+    };
+    Ok(format!(
+        "SELECT id, {}, {}, {prompt}, {}, {}, {}, {}, {} FROM sessions",
+        col("source"),
+        col("model"),
+        col("parent_session_id"),
+        col("started_at"),
+        col("cwd"),
+        col("git_branch"),
+        col("title")
+    ))
+}
 /// The message columns an export holds, in order.
 const MESSAGE_COLS: &str = "id, role, content, tool_call_id, tool_calls, tool_name, timestamp, \
                             reasoning, reasoning_content, finish_reason, active, compacted";
@@ -61,7 +100,7 @@ fn value(r: &rusqlite::Row, i: usize) -> rusqlite::Result<Value> {
 pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     let conn = open(db)?;
     let mut hashes: std::collections::BTreeMap<String, Sha256> = Default::default();
-    let mut stmt = conn.prepare(&format!("SELECT {SESSION_COLS} FROM sessions"))?;
+    let mut stmt = conn.prepare(&session_select(&conn)?)?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let mut h = Sha256::new();
@@ -103,7 +142,7 @@ pub struct Export {
 pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
     let conn = open(db)?;
     let header: Value = conn.query_row(
-        &format!("SELECT {SESSION_COLS} FROM sessions WHERE id = ?1"),
+        &format!("{} WHERE id = ?1", session_select(&conn)?),
         [session_id],
         |r| {
             Ok(json!({
@@ -174,20 +213,21 @@ pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
         return Ok(parse_export(id, bytes));
     }
     let mut out = parse_file(origin, bytes)?;
-    // A file is a copy of the database's session with the same id, when there is one.
+    // A file is a copy of the database's session with the same id, when there is one. Files
+    // keep the ids they had before the database was read, so their cards stay put.
     let id = out
         .session_id
         .clone()
         .unwrap_or_else(|| file_id(origin).to_string());
-    out.session_id = Some(format!("file-{id}"));
     out.mirror_of = vec![SourceKind::Hermes];
-    out.mirror_refs = vec![format!("hermes/{id}")];
+    out.mirror_refs = vec![format!("hermes/db-{id}")];
     Ok(out)
 }
 
 fn parse_export(id: &str, bytes: &[u8]) -> Parsed {
     let mut out = Parsed {
-        session_id: Some(id.to_string()),
+        // Apart from the files' ids, which predate reading the database.
+        session_id: Some(format!("db-{id}")),
         ..Default::default()
     };
     let s = |v: &Value, k: &str| {
@@ -294,8 +334,8 @@ mod tests {
 {"role":"assistant","content":"","reasoning":"look it up","tool_calls":[{"id":"c1","function":{"name":"web","arguments":"{\"q\":\"weather\"}"}}],"timestamp":"2026-10-01T00:00:02Z"}
 {"role":"tool","tool_call_id":"c1","content":"sunny","timestamp":"2026-10-01T00:00:03Z"}"#;
         let p = parse("/h/sessions/20261001_000000_ab12.jsonl", jsonl.as_bytes()).unwrap();
-        assert_eq!(p.session_id.as_deref(), Some("file-20261001_000000_ab12"));
-        assert_eq!(p.mirror_refs, vec!["hermes/20261001_000000_ab12"]);
+        assert_eq!(p.session_id.as_deref(), Some("20261001_000000_ab12"));
+        assert_eq!(p.mirror_refs, vec!["hermes/db-20261001_000000_ab12"]);
         let kinds: Vec<_> = p.events.iter().map(|e| e.kind).collect();
         assert_eq!(
             kinds,
@@ -311,7 +351,7 @@ mod tests {
 
         let json = r#"{"session_id":"s9","model":"m","session_start":"2026-09-01T00:00:00Z","system_prompt":"be brief","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#;
         let p = parse("/h/sessions/session_s9.json", json.as_bytes()).unwrap();
-        assert_eq!(p.session_id.as_deref(), Some("file-s9"));
+        assert_eq!(p.session_id.as_deref(), Some("s9"));
         assert_eq!(p.events.len(), 3);
         assert_eq!(p.events[1].ts.as_deref(), Some("2026-09-01T00:00:00Z"));
     }
@@ -323,13 +363,16 @@ mod tests {
         let conn = Connection::open(&db).unwrap();
         conn.execute_batch(
             r#"CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, system_prompt TEXT,
-                 parent_session_id TEXT, started_at REAL NOT NULL, cwd TEXT, git_branch TEXT, title TEXT);
+                 parent_session_id TEXT, started_at REAL NOT NULL, cwd TEXT, git_branch TEXT, title TEXT,
+                 system_prompt_hash TEXT);
+               CREATE TABLE system_prompts (hash TEXT PRIMARY KEY, prompt TEXT NOT NULL);
+               INSERT INTO system_prompts VALUES ('h1', 'be brief');
                CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
                  content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL,
                  reasoning TEXT, reasoning_content TEXT, finish_reason TEXT, active INTEGER NOT NULL DEFAULT 1,
                  compacted INTEGER NOT NULL DEFAULT 0);
-               INSERT INTO sessions VALUES ('20261101_100000_aa', 'cli', 'glm-5', 'be brief', NULL, 1793527200.0,
-                 '/work/app', 'main', 'Weather');
+               INSERT INTO sessions VALUES ('20261101_100000_aa', 'cli', 'glm-5', NULL, NULL, 1793527200.0,
+                 '/work/app', 'main', 'Weather', 'h1');
                INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES
                  ('20261101_100000_aa', 'user', 'weather?', NULL, 1793527201.0),
                  ('20261101_100000_aa', 'assistant', '', '[{"id":"c1","function":{"name":"web","arguments":"{\"q\":\"weather\"}"}}]', 1793527202.0);
@@ -343,7 +386,7 @@ mod tests {
         let export = export_session(&db, "20261101_100000_aa").unwrap();
         assert_eq!(export.cwd.as_deref(), Some("/work/app"));
         let p = parse(&origin, &export.bytes).unwrap();
-        assert_eq!(p.session_id.as_deref(), Some("20261101_100000_aa"));
+        assert_eq!(p.session_id.as_deref(), Some("db-20261101_100000_aa"));
         assert_eq!(p.title.as_deref(), Some("Weather"));
         assert_eq!(p.git_branch.as_deref(), Some("main"));
         assert!(!p.is_mirror());
@@ -358,6 +401,8 @@ mod tests {
             ]
         );
         assert_eq!(p.events[2].input.as_ref().unwrap()["q"], "weather");
+        // The system prompt stored by hash is resolved.
+        assert_eq!(p.events[0].text.as_deref(), Some("be brief"));
         assert_eq!(p.events[1].ts.as_deref(), Some("2026-11-01T10:00:01.000Z"));
 
         // A new message appends; compaction (an in-place update) changes the fingerprint.

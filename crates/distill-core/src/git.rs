@@ -66,10 +66,11 @@ impl Cache {
             .ok()?;
         // Read on another thread, so a large output can't fill the pipe and stall the child.
         let mut stdout = child.stdout.take()?;
-        let reader = std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = stdout.read_to_end(&mut buf);
-            buf
+            let _ = tx.send(buf);
         });
         let deadline = std::time::Instant::now() + limit;
         let status = loop {
@@ -85,14 +86,17 @@ impl Cache {
                 }
             }
         };
-        let Some(status) = status else {
-            // Not waited for: a process git started may still hold the pipe open.
-            drop(reader);
+        // The output is waited for under the same deadline: a process git started can keep the
+        // pipe open after git itself has exited.
+        let out = status.and_then(|_| {
+            rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .ok()
+        });
+        let (Some(status), Some(out)) = (status, out) else {
             self.timeouts += 1;
             self.stalled.insert(scope);
             return None;
         };
-        let out = reader.join().unwrap_or_default();
         status
             .success()
             .then(|| String::from_utf8_lossy(&out).trim().to_string())
@@ -139,6 +143,20 @@ impl Cache {
     /// Commits are read from the session's own branch only. Counting the whole repository
     /// credited sessions with other agents' parallel work.
     pub fn outcome(
+        &mut self,
+        cwd: &str,
+        branch: Option<&str>,
+        started: &str,
+        ended: &str,
+    ) -> Option<GitOutcome> {
+        // A command that hung leaves the outcome partial; then there is none, so the caller can
+        // keep what an earlier run found.
+        let timeouts = self.timeouts;
+        let outcome = self.outcome_inner(cwd, branch, started, ended);
+        (self.timeouts == timeouts).then_some(outcome).flatten()
+    }
+
+    fn outcome_inner(
         &mut self,
         cwd: &str,
         branch: Option<&str>,
@@ -250,6 +268,51 @@ mod tests {
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(cache.timeouts, 1);
+
+        // A git that exits at once but leaves a process holding its output open.
+        let stub2 = dir.path().join("git2");
+        std::fs::write(&stub2, "#!/bin/sh\n(sleep 30) &\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut cache = Cache {
+            program: Some((stub2, std::time::Duration::from_millis(300))),
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        assert!(cache.git(&cwd, &["rev-parse", "--show-toplevel"]).is_none());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(cache.timeouts, 1);
+
+        // The repository is found, then the next command hangs: no partial outcome.
+        let stub3 = dir.path().join("git3");
+        std::fs::write(
+            &stub3,
+            format!("#!/bin/sh\ncase \"$*\" in *--show-toplevel*) echo {cwd};; *) exec sleep 30;; esac\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub3, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut cache = Cache {
+            program: Some((stub3, std::time::Duration::from_millis(300))),
+            ..Default::default()
+        };
+        assert!(
+            cache
+                .outcome(
+                    &cwd,
+                    Some("main"),
+                    "2026-11-01T00:00:00Z",
+                    "2026-11-01T01:00:00Z"
+                )
+                .is_none()
+        );
+        assert!(cache.stalled_for(&cwd));
     }
 
     use super::*;

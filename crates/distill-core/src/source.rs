@@ -305,7 +305,12 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
             }
             // Hermes keeps every session in `state.db` too (more of them than it writes out as
             // files); it is exported one session at a time, not copied whole.
-            SourceKind::Hermes if root.is_file() => {
+            SourceKind::Hermes
+                if root.is_file()
+                    && [".db", ".sqlite", ".sqlite3"]
+                        .iter()
+                        .any(|e| root.to_string_lossy().ends_with(e)) =>
+            {
                 out.extend(crate::normalize::hermes::list_sessions(root)?);
             }
             _ => {
