@@ -38,7 +38,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Pi => Some(1),
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
-        SourceKind::Hermes => Some(1),
+        SourceKind::Hermes => Some(4),
         SourceKind::T3Code => Some(7),
         SourceKind::Cursor => Some(4),
         SourceKind::Goose => Some(2),
@@ -69,11 +69,14 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
 /// Captures larger than this that yield no events are treated as format drift.
 const DRIFT_BYTES: u64 = 16 * 1024;
 
-/// Whether a capture is too big to hold nothing. Not for Cursor: its chats are SQLite files
-/// whose size is mostly empty pages, and its parser fails outright when the store's layout is
-/// not what it expects.
+/// Whether a capture is too big to hold nothing. Only for files a harness writes itself: not
+/// for Cursor (its chats are SQLite files whose size is mostly empty pages, and its parser fails
+/// outright when the store's layout is not what it expects), and not for sessions Distill
+/// exports from a database (`…#session=…`, `…#thread=…`), whose shape its own query fixes; a
+/// schema change fails that query instead. A database session can legitimately hold nothing
+/// but a long system prompt.
 fn drift_suspect(rec: &CaptureRecord) -> bool {
-    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor
+    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor && !rec.origin.contains('#')
 }
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
@@ -97,6 +100,9 @@ pub struct NormalizeState {
     /// For a T3 thread, the native references capture it was normalized with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs: Option<String>,
+    /// Git couldn't be asked about this session's folder; the next run tries again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub git_stalled: bool,
 }
 
 fn first_meta_version() -> u32 {
@@ -141,6 +147,9 @@ pub struct NormalizeReport {
     /// Of the failures, captures that parsed cleanly to nothing (see [`DRIFT_BYTES`]).
     #[serde(default)]
     pub drift: u64,
+    /// Git commands that hung and were killed; those sessions have no git outcome.
+    #[serde(default)]
+    pub git_timeouts: u64,
     pub sessions: u64,
 }
 
@@ -230,6 +239,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && let Some(s) = state.get(origin)
             && s.sha256 == rec.sha256
             && s.refs == refs
+            && !s.git_stalled
             && s.version == version
             && s.meta_version == META_VERSION
             // An empty result recorded before drift was checked gets the check now.
@@ -259,6 +269,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             error: None,
             empty: false,
             refs,
+            git_stalled: false,
         };
         match result {
             Ok(Some(meta)) => {
@@ -273,6 +284,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 {
                     let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
                 }
+                entry.git_stalled = meta.cwd.is_some() && git_cache.last_stalled();
                 entry.session = Some(meta.session_id);
             }
             // A sizable capture that parses to nothing almost always means the harness changed
@@ -289,6 +301,16 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             Ok(None) => {
                 report.empty += 1;
                 entry.empty = true;
+                // It held a session before (an earlier parser read more into it): that session
+                // is gone from the index now.
+                if let Some(old) = previous
+                    && find(home, rec.source, &old)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| m.raw.origin == *origin)
+                {
+                    let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
+                }
             }
             Err(e) => {
                 report.failed += 1;
@@ -297,6 +319,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         }
         state.insert(origin.clone(), entry);
     }
+    report.git_timeouts = git_cache.timeouts;
     write_json_pretty(&state_path(home), &state)?;
     report.sessions = rebuild_index(home)? as u64;
 
@@ -305,7 +328,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         "normalize",
         ok,
         format!(
-            "Normalized {} ({} unchanged, {} empty, {} failed, {} without a parser){}",
+            "Normalized {} ({} unchanged, {} empty, {} failed, {} without a parser){}{}",
             crate::util::count(report.normalized, "session"),
             report.skipped,
             report.empty,
@@ -313,6 +336,11 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             report.no_parser,
             if report.drift > 0 {
                 format!("; {} look like format drift", report.drift)
+            } else {
+                String::new()
+            },
+            if report.git_timeouts > 0 {
+                "; git hung and was skipped (on macOS, give distill Full Disk Access)".to_string()
             } else {
                 String::new()
             }
@@ -330,6 +358,7 @@ fn normalize_one(
     version: u32,
     git_cache: &mut crate::git::Cache,
 ) -> Result<Option<SessionMeta>> {
+    git_cache.begin_session();
     let bytes = archive.read_blob(&rec.sha256)?;
     let mut parsed = parse(rec.source, &rec.origin, &bytes)?;
     // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
@@ -378,6 +407,15 @@ fn normalize_one(
             ended_at.as_deref().unwrap_or(start),
         ),
         _ => None,
+    };
+    // When git couldn't be asked this run, the join from an earlier run still stands.
+    let git = match (git, &parsed.cwd) {
+        (None, Some(_)) if git_cache.last_stalled() => find(home, rec.source, &session_id)
+            .ok()
+            .flatten()
+            .filter(|m| m.raw.origin == rec.origin)
+            .and_then(|m| m.git),
+        (git, _) => git,
     };
     let meta = SessionMeta {
         source: rec.source,
@@ -568,6 +606,7 @@ mod tests {
                     error: None,
                     empty: true,
                     refs: None,
+                    git_stalled: false,
                 },
             );
         }

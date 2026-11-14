@@ -44,6 +44,8 @@ cargo build --release
 
 Add the MCP server to Claude Code with `claude mcp add distill -- /path/to/distill-mcp`.
 
+On macOS, give the `distill` binary Full Disk Access (System Settings → Privacy & Security), or the timer can't read repositories under `~/Desktop`, `~/Documents` or `~/Downloads` to join sessions to git. A launchd job is never shown the permission prompt; without access its git commands block, and Distill kills them after 15 seconds and skips git for that folder until the next run. Reinstalling an unsigned binary resets the grant.
+
 Claude Code deletes transcripts older than 30 days by default. Distill sweeps hourly, so it keeps them, but raising `cleanupPeriodDays` in `~/.claude/settings.json` keeps the originals around too.
 
 ## Rules for unattended agents

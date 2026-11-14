@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::archive::{Archive, CaptureKind, copy_sqlite};
 use crate::config::Config;
 use crate::home::Home;
-use crate::normalize::{goose, opencode, t3code};
+use crate::normalize::{goose, hermes, opencode, t3code};
 use crate::runlog::{self, RunEntry};
 use crate::source::{self, Candidate, SourceKind};
 
@@ -248,13 +248,27 @@ fn capture_one(
             }
             archive.put(SourceKind::T3Code, &origin, &fingerprint, &export.bytes[..])?
         }
-        Candidate::GooseSession { db, session_id, .. } => {
-            let export = goose::export_session(db, session_id)?;
-            if db_session_excluded(config, export.working_dir.as_deref()) {
+        Candidate::DbSession {
+            kind,
+            db,
+            session_id,
+            ..
+        } => {
+            let (bytes, cwd) = match kind {
+                SourceKind::Hermes => {
+                    let e = hermes::export_session(db, session_id)?;
+                    (e.bytes, e.cwd)
+                }
+                _ => {
+                    let e = goose::export_session(db, session_id)?;
+                    (e.bytes, e.working_dir)
+                }
+            };
+            if db_session_excluded(config, cwd.as_deref()) {
                 report.excluded += 1;
                 return Ok(());
             }
-            archive.put(SourceKind::Goose, &origin, &fingerprint, &export.bytes[..])?
+            archive.put(*kind, &origin, &fingerprint, &bytes[..])?
         }
         Candidate::OpenCodeSession { db, session_id, .. } => {
             let export = opencode::export_session(db, session_id)?;
