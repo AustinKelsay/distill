@@ -165,10 +165,20 @@ impl SessionMeta {
         format!("{}/{}", self.source.id(), self.session_id)
     }
 
-    /// A mirror whose originals Distill is still capturing. With one of those sources turned
-    /// off, the mirror is the only copy left, so it counts as a session of its own.
-    pub fn is_duplicate(&self, config: &crate::config::Config) -> bool {
-        self.mirror && self.mirror_of.iter().all(|&k| config.enabled(k))
+    /// A mirror whose originals are in the archive. When a source never was captured (it was
+    /// turned off before its sessions were swept), the mirror is the only copy, so it counts as
+    /// a session of its own.
+    pub fn is_duplicate(&self, archived: &std::collections::HashSet<SourceKind>) -> bool {
+        self.mirror && self.mirror_of.iter().all(|k| archived.contains(k))
+    }
+
+    /// Sources that have sessions of their own in `metas` (not counting mirrors).
+    pub fn archived_sources(metas: &[SessionMeta]) -> std::collections::HashSet<SourceKind> {
+        metas
+            .iter()
+            .filter(|m| !m.mirror)
+            .map(|m| m.source)
+            .collect()
     }
 }
 
@@ -210,7 +220,6 @@ impl Parsed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
 
     fn mirror(of: &str) -> SessionMeta {
         serde_json::from_str(&format!(
@@ -222,17 +231,15 @@ mod tests {
     }
 
     #[test]
-    fn a_mirror_stops_being_a_duplicate_when_its_source_is_off() {
-        let mut config = Config::default();
+    fn a_mirror_is_a_duplicate_only_when_its_originals_are_archived() {
         let m = mirror(r#","mirror_of":["codex"]"#);
-        assert!(m.is_duplicate(&config));
+        let with_codex: std::collections::HashSet<_> = [SourceKind::Codex].into();
+        assert!(m.is_duplicate(&with_codex));
+        // Codex never captured: the mirror is the only copy.
+        assert!(!m.is_duplicate(&Default::default()));
         // Metas from before `mirror_of` was recorded stay duplicates.
-        assert!(mirror("").is_duplicate(&config));
-        for s in &mut config.sources {
-            if s.kind == SourceKind::Codex {
-                s.enabled = false;
-            }
-        }
-        assert!(!m.is_duplicate(&config));
+        assert!(mirror("").is_duplicate(&Default::default()));
+        // A mirror doesn't count as an original of its own source.
+        assert!(SessionMeta::archived_sources(&[m]).is_empty());
     }
 }

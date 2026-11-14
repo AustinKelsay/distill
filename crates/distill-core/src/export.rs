@@ -188,14 +188,14 @@ pub struct BuildSummary {
     pub path: PathBuf,
 }
 
-/// Every session a recipe may draw from, with its card if that card is current. Mirrors of
-/// sessions captured natively are left out.
+/// Every session a recipe may draw from, with its card if that card is current. Mirrors whose
+/// originals are archived are left out.
 pub fn candidates(home: &Home) -> Result<Vec<(SessionMeta, Option<Card>)>> {
-    // Without a config every source counts as on, so every mirror is a duplicate.
-    let config = home.load_config().unwrap_or_default();
-    Ok(normalize::read_index(home)?
+    let metas = normalize::read_index(home)?;
+    let archived = SessionMeta::archived_sources(&metas);
+    Ok(metas
         .into_iter()
-        .filter(|m| !m.is_duplicate(&config))
+        .filter(|m| !m.is_duplicate(&archived))
         .map(|m| {
             // A stale card (old prompt, or the session changed since) doesn't count.
             let c = card::load(&normalize::session_dir(home, &m))

@@ -66,6 +66,13 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
 /// Captures larger than this that yield no events are treated as format drift.
 const DRIFT_BYTES: u64 = 16 * 1024;
 
+/// Whether a capture is too big to hold nothing. Not for Cursor: its chats are SQLite files
+/// whose size is mostly empty pages, and its parser fails outright when the store's layout is
+/// not what it expects.
+fn drift_suspect(rec: &CaptureRecord) -> bool {
+    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor
+}
+
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
 pub const META_VERSION: u32 = 3;
 
@@ -207,6 +214,8 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && s.sha256 == rec.sha256
             && s.version == version
             && s.meta_version == META_VERSION
+            // An empty result recorded before drift was checked gets the check now.
+            && !(s.empty && drift_suspect(rec))
             // When several captures share a session, skip only if this one wrote it, under the
             // session's own id rather than a collision suffix from before they were grouped.
             && (!alias.is_some_and(|(_, shared)| shared)
@@ -250,9 +259,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             // A sizable capture that parses to nothing almost always means the harness changed
             // its format and the parser now skips everything. Report it as a failure, so it
             // shows on the dashboard and in repair briefs, rather than as an empty session.
-            // Not for Cursor: its chats are SQLite files whose size is mostly empty pages, and
-            // its parser fails outright when the store's layout is not what it expects.
-            Ok(None) if rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor => {
+            Ok(None) if drift_suspect(rec) => {
                 report.failed += 1;
                 report.drift += 1;
                 entry.error = Some(format!(
@@ -510,8 +517,28 @@ mod tests {
                     .unwrap();
             }
         }
+        // A run from before drift was checked recorded the big capture as empty.
+        let archive = Archive::open(&home).unwrap();
+        let mut state = BTreeMap::new();
+        for (origin, rec) in archive.latest() {
+            state.insert(
+                origin.clone(),
+                NormalizeState {
+                    source: rec.source,
+                    sha256: rec.sha256.clone(),
+                    version: parser_version(rec.source).unwrap(),
+                    meta_version: META_VERSION,
+                    session: None,
+                    error: None,
+                    empty: true,
+                },
+            );
+        }
+        write_json_pretty(&state_path(&home), &state).unwrap();
+
         let r = normalize(&home, false).unwrap();
-        assert_eq!((r.failed, r.drift, r.empty), (1, 1, 1));
+        // The small one stays cached as empty; the big one is checked again and flagged.
+        assert_eq!((r.failed, r.drift, r.skipped), (1, 1, 1));
         let fails = failure_list(&home, SourceKind::ClaudeCode);
         assert_eq!(fails.len(), 1);
         assert!(fails[0].0.ends_with("big.jsonl"));

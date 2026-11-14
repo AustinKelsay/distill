@@ -253,20 +253,27 @@ pub fn propose(home: &Home, config: &Config) -> Result<ProposeReport> {
             bail!("no steward budget left today");
         }
         budget = budget.min(left);
+    } else if crate::steward::calls_today(home)? >= config.steward.max_sessions_per_run as u64 {
+        // Harnesses that don't report cost share one daily call limit with card writing.
+        bail!("no steward calls left today");
     }
     let digest = digest(home)?;
-    let answer = crate::steward::ask(home, config, &prompt(&digest), budget)?;
-    let mut report = ProposeReport {
-        cost_usd: answer.cost_usd,
-        ..Default::default()
-    };
-    let result = match &answer.error {
-        Some(e) => Err(anyhow::anyhow!("{e}")),
-        None => drafts(&answer.text).map(|d| {
-            let (kept, rejected) = check(home, d);
-            report.proposed = kept;
-            report.rejected = rejected;
-        }),
+    let mut report = ProposeReport::default();
+    // Every attempt is logged as a call, so a failed one still counts against the day.
+    let answer = crate::steward::ask(home, config, &prompt(&digest), budget);
+    let result = match &answer {
+        Err(e) => Err(anyhow::anyhow!("{e:#}")),
+        Ok(a) => {
+            report.cost_usd = a.cost_usd;
+            match &a.error {
+                Some(e) => Err(anyhow::anyhow!("{e}")),
+                None => drafts(&a.text).map(|d| {
+                    let (kept, rejected) = check(home, d);
+                    report.proposed = kept;
+                    report.rejected = rejected;
+                }),
+            }
+        }
     };
     if result.is_ok() {
         for p in &report.proposed {
@@ -292,8 +299,9 @@ pub fn propose(home: &Home, config: &Config) -> Result<ProposeReport> {
             Err(e) => format!("Recipe proposal failed: {e:#}"),
         },
     );
-    entry.cost_usd = answer.cost_usd;
+    entry.cost_usd = report.cost_usd;
     entry.details = serde_json::to_value(&report)?;
+    entry.details["calls"] = json!(1);
     runlog::record(home, &entry)?;
     result.map(|()| report)
 }
@@ -524,5 +532,18 @@ mod tests {
         // Asked this week already.
         assert!(!due(&home, &Config::default()));
         assert!(accept(&home, "rust-only").is_err());
+    }
+
+    #[test]
+    fn proposals_share_the_daily_call_limit_and_count_failed_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_with_cards(dir.path());
+        let mut config = stub_config(dir.path(), "no json here");
+        config.steward.max_sessions_per_run = 1;
+        // The answer is unusable, but the call was made and counts.
+        assert!(propose(&home, &config).is_err());
+        assert_eq!(crate::steward::calls_today(&home).unwrap(), 1);
+        let e = propose(&home, &config).unwrap_err();
+        assert!(format!("{e:#}").contains("no steward calls left"), "{e:#}");
     }
 }

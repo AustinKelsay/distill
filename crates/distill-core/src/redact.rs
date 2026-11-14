@@ -33,10 +33,11 @@ fn rules() -> &'static [Rule] {
             // Personal data and private network names, not only credentials.
             r("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
             // Addresses turned into slugs (`alice-smith-gmail-com`), as contact tools and file
-            // names write them: a common mail provider, or any domain under com, org, edu or gov.
+            // names write them. Only mail providers' domains: a slug ending in any domain
+            // (`my-github-org`) is far more often a name than an address.
             r(
                 "email_slug",
-                r"\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)|[a-z0-9]+-(?:com|org|edu|gov))\b",
+                r"\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)\b",
             ),
             r("tailnet_host", r"(?i)\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
             // A tailnet name on its own (`tail0c0ffe`), left after output was cut short
@@ -240,15 +241,16 @@ mod tests {
     #[test]
     fn catches_slugged_addresses_and_cut_off_tailnet_names() {
         let mut f = Findings::default();
-        let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, jdoe-example-org; \
+        let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, j-doe-outlook-com; \
                     ssh -L 1:2 me@box-a1b2.tail0c0f\nshot-gateway-tail0c0ffe-ts-net.png; \
                     on tailnet `tailbe9c07`, tailed and tailing stay; \
-                    keep 2026-01-01-help-me, alice-drink-me, sys-subsystem-net, detail-view";
+                    keep 2026-01-01-help-me, alice-drink-me, sys-subsystem-net, detail-view, \
+                    git clone git@github.com:my-github-org/my-repo.git; gh api orgs/my-github-org/repos";
         let out = redact(text, None, &mut f);
         for leaked in [
             "jane-roe",
             "user123",
-            "jdoe",
+            "j-doe",
             "tail0c0f",
             "a1b2",
             "tailbe9c07",
@@ -261,6 +263,8 @@ mod tests {
             "sys-subsystem-net",
             "detail-view",
             "tailed and tailing",
+            "git@github.com:my-github-org/my-repo.git",
+            "gh api orgs/my-github-org/repos",
         ] {
             assert!(out.contains(kept), "{kept} was redacted: {out}");
         }

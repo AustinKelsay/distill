@@ -60,6 +60,9 @@ impl LegacyReport {
     }
 }
 
+/// Marks captures this import wrote, so an interrupted import can pick up where it stopped.
+const FINGERPRINT_PREFIX: &str = "legacy:";
+
 /// The old app's store under the user's home.
 pub fn default_db() -> Result<std::path::PathBuf> {
     Ok(crate::home::user_home()?.join(".distill/distill.db"))
@@ -102,9 +105,6 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         dry_run,
         ..Default::default()
     };
-    // Origins taken by this import. A later legacy capture of one of them (the same session,
-    // grown) is imported on top, so its append chain lands as it did in the old app.
-    let mut ours: HashSet<String> = HashSet::new();
     for c in captures {
         report.seen += 1;
         // Codex and OpenCode captures were kept as summaries of files the sweep reads
@@ -117,7 +117,14 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
             report.excluded += 1;
             continue;
         }
-        if known.contains(&c.sha) || (archive.latest().contains_key(path) && !ours.contains(path)) {
+        // An origin whose latest capture came from an import (this run or an interrupted
+        // earlier one) takes the next legacy capture on top, so its chain lands as it did in
+        // the old app. One the sweep has captured is left alone.
+        let swept = archive
+            .latest()
+            .get(path)
+            .is_some_and(|r| !r.fingerprint.starts_with(FINGERPRINT_PREFIX));
+        if known.contains(&c.sha) || swept {
             report.already_archived += 1;
             continue;
         }
@@ -133,9 +140,8 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         report.imported += 1;
         report.bytes += bytes.len() as u64;
         if !dry_run {
-            let fingerprint = format!("legacy:{}", c.sha);
+            let fingerprint = format!("{FINGERPRINT_PREFIX}{}", c.sha);
             archive.put(SourceKind::ClaudeCode, path, &fingerprint, &bytes[..])?;
-            ours.insert(path.to_string());
         }
     }
     if !dry_run {
@@ -230,6 +236,68 @@ mod tests {
         // Running it again changes nothing.
         let again = import(&home, &config(&[]), &db, false).unwrap();
         assert_eq!((again.imported, again.already_archived), (0, 1));
+    }
+
+    #[test]
+    fn an_interrupted_import_resumes_the_rest_of_a_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let db = dir.path().join("legacy.db");
+        legacy_db(&db, &LINES[..1], None);
+        // The old app captured the session again after it grew.
+        let grown: String = LINES.iter().map(|l| format!("{l}\n")).collect();
+        let conn = Connection::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO captures VALUES (3, 1, '/u/.claude/projects/-w-app/s1.jsonl', ?, '2026-03-02')",
+            [hex::encode(Sha256::digest(grown.as_bytes()))],
+        )
+        .unwrap();
+        for (i, l) in LINES.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO capture_records (capture_id, line_no, content_json) VALUES (3, ?, ?)",
+                rusqlite::params![i as i64 + 1, l],
+            )
+            .unwrap();
+        }
+        // Simulate a run that stopped after the first snapshot.
+        conn.execute("UPDATE captures SET source_path = NULL WHERE id = 3", [])
+            .unwrap();
+        assert_eq!(import(&home, &config(&[]), &db, false).unwrap().imported, 1);
+        conn.execute(
+            "UPDATE captures SET source_path = '/u/.claude/projects/-w-app/s1.jsonl' WHERE id = 3",
+            [],
+        )
+        .unwrap();
+
+        let r = import(&home, &config(&[]), &db, false).unwrap();
+        assert_eq!((r.imported, r.already_archived), (1, 1));
+        let archive = Archive::open(&home).unwrap();
+        let rec = &archive.latest()["/u/.claude/projects/-w-app/s1.jsonl"];
+        assert_eq!(rec.size, grown.len() as u64);
+        assert_eq!(rec.kind, crate::archive::CaptureKind::Append);
+    }
+
+    #[test]
+    fn leaves_origins_the_sweep_captured_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let db = dir.path().join("legacy.db");
+        legacy_db(&db, LINES, None);
+        {
+            home.ensure().unwrap();
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            archive
+                .put(
+                    SourceKind::ClaudeCode,
+                    "/u/.claude/projects/-w-app/s1.jsonl",
+                    "size:mtime",
+                    &b"newer bytes from disk\n"[..],
+                )
+                .unwrap();
+        }
+        let r = import(&home, &config(&[]), &db, false).unwrap();
+        assert_eq!((r.imported, r.already_archived), (0, 1));
     }
 
     #[test]

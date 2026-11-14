@@ -251,11 +251,15 @@ fn parse_timestamp(s: &str) -> Option<String> {
         _ => (1, zone),
     };
     let (h, m) = match rest.split_once(':') {
-        Some((h, m)) => (h.parse::<i32>().ok()?, m.parse::<i32>().ok()?),
+        Some((h, m)) => (h.parse::<u8>().ok()?, m.parse::<u8>().ok()?),
         None if rest.is_empty() => (0, 0),
-        None => (rest.parse::<i32>().ok()?, 0),
+        None => (rest.parse::<u8>().ok()?, 0),
     };
-    let offset = chrono::FixedOffset::east_opt(sign * (h * 3600 + m * 60))?;
+    // Real offsets run from UTC-12 to UTC+14; anything else is not a timestamp.
+    if h > 14 || m >= 60 {
+        return None;
+    }
+    let offset = chrono::FixedOffset::east_opt(sign * (i32::from(h) * 3600 + i32::from(m) * 60))?;
     let naive = chrono::NaiveDateTime::parse_from_str(local, "%A, %b %d, %Y, %I:%M %p").ok()?;
     let t = naive.and_local_timezone(offset).single()?;
     Some(
@@ -421,6 +425,26 @@ mod tests {
         assert_eq!(p.events[6].input.as_ref().unwrap()["command"], "make");
         assert_eq!(p.events[7].text.as_deref(), Some("ok"));
         assert_eq!(p.events[7].call_id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn timestamps_with_odd_or_impossible_offsets() {
+        assert_eq!(
+            parse_timestamp("Monday, Jul 6, 2026, 8:54 AM (UTC+5:30)").as_deref(),
+            Some("2026-07-06T03:24:00.000Z")
+        );
+        assert_eq!(
+            parse_timestamp("Monday, Jul 6, 2026, 8:54 PM (UTC)").as_deref(),
+            Some("2026-07-06T20:54:00.000Z")
+        );
+        for bad in [
+            "Monday, Jul 6, 2026, 8:54 AM (UTC+2147483647)",
+            "Monday, Jul 6, 2026, 8:54 AM (UTC-15)",
+            "Monday, Jul 6, 2026, 8:54 AM (UTC+1:75)",
+            "Monday, Jul 6, 2026, 8:54 AM",
+        ] {
+            assert_eq!(parse_timestamp(bad), None, "{bad}");
+        }
     }
 
     #[test]
