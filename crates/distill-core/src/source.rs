@@ -77,7 +77,7 @@ impl SourceKind {
     /// Whether Distill can turn this source's raw captures into trajectories. Sources without a
     /// parser are still archived, so nothing is lost while one is written.
     pub fn has_parser(self) -> bool {
-        !matches!(self, SourceKind::Cursor)
+        crate::normalize::parser_version(self).is_some()
     }
 
     pub fn default_roots(self) -> Vec<PathBuf> {
@@ -116,14 +116,16 @@ impl SourceKind {
         match self {
             SourceKind::ClaudeCode | SourceKind::Droid | SourceKind::Pi => name.ends_with(".jsonl"),
             SourceKind::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
-            SourceKind::OpenCode | SourceKind::T3Code => true,
+            SourceKind::OpenCode => true,
+            // A thread's native references are archived beside it but aren't a session.
+            SourceKind::T3Code => !origin.ends_with(crate::normalize::t3code::NATIVE_SUFFIX),
             SourceKind::Grok => name == "chat_history.jsonl",
             SourceKind::Antigravity => name == "transcript_full.jsonl",
             SourceKind::Hermes => {
                 name.ends_with(".jsonl")
                     || (name.starts_with("session_") && name.ends_with(".json"))
             }
-            SourceKind::Cursor => false,
+            SourceKind::Cursor => name == "store.db",
         }
     }
 }
@@ -411,7 +413,13 @@ pub fn peek_cwd(kind: SourceKind, path: &Path) -> Option<String> {
     } else {
         file.take(256 * 1024).read_to_end(&mut buf).ok()?;
     }
-    let text = String::from_utf8_lossy(&buf);
+    cwd_in(kind, &buf)
+}
+
+/// The working directory a session's first records name, read from its bytes.
+pub fn cwd_in(kind: SourceKind, bytes: &[u8]) -> Option<String> {
+    let head = &bytes[..bytes.len().min(256 * 1024)];
+    let text = String::from_utf8_lossy(head);
     for line in text.lines().take(50) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;

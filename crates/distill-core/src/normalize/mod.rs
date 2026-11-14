@@ -6,6 +6,7 @@ pub mod blocks;
 pub mod chat;
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 pub mod droid;
 pub mod grok;
 pub mod hermes;
@@ -16,7 +17,7 @@ pub mod t3code;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{Archive, CaptureRecord};
@@ -37,8 +38,8 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(3),
-        SourceKind::Cursor => None,
+        SourceKind::T3Code => Some(6),
+        SourceKind::Cursor => Some(3),
     }
 }
 
@@ -57,9 +58,19 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
         SourceKind::Antigravity => antigravity::parse(origin, bytes)?,
         SourceKind::Hermes => hermes::parse(origin, bytes)?,
         SourceKind::T3Code => t3code::parse(bytes)?,
-        SourceKind::Cursor => bail!("no parser for {kind}"),
+        SourceKind::Cursor => cursor::parse(origin, bytes)?,
     };
     Ok(parsed)
+}
+
+/// Captures larger than this that yield no events are treated as format drift.
+const DRIFT_BYTES: u64 = 16 * 1024;
+
+/// Whether a capture is too big to hold nothing. Not for Cursor: its chats are SQLite files
+/// whose size is mostly empty pages, and its parser fails outright when the store's layout is
+/// not what it expects.
+fn drift_suspect(rec: &CaptureRecord) -> bool {
+    rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor
 }
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
@@ -80,6 +91,9 @@ pub struct NormalizeState {
     /// The capture parsed but holds no conversation (a header-only file).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub empty: bool,
+    /// For a T3 thread, the native references capture it was normalized with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
 }
 
 fn first_meta_version() -> u32 {
@@ -121,11 +135,17 @@ pub struct NormalizeReport {
     /// Older captures of a Codex file that was since compressed or moved.
     #[serde(default)]
     pub superseded: u64,
+    /// Of the failures, captures that parsed cleanly to nothing (see [`DRIFT_BYTES`]).
+    #[serde(default)]
+    pub drift: u64,
     pub sessions: u64,
 }
 
 pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     home.ensure()?;
+    // Two runs at once (the timer and a manual run) would each read the state, rewrite
+    // sessions from it and save their own copy, losing the other's work.
+    let _lock = home.lock("normalize")?;
     let archive = Archive::open(home)?;
     let mut state = load_state(home);
     let mut report = NormalizeReport::default();
@@ -195,11 +215,22 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             report.no_parser += 1;
             continue;
         };
+        let refs = (rec.source == SourceKind::T3Code)
+            .then(|| {
+                archive
+                    .latest()
+                    .get(&format!("{origin}{}", t3code::NATIVE_SUFFIX))
+            })
+            .flatten()
+            .map(|r| r.sha256.clone());
         if !force
             && let Some(s) = state.get(origin)
             && s.sha256 == rec.sha256
+            && s.refs == refs
             && s.version == version
             && s.meta_version == META_VERSION
+            // An empty result recorded before drift was checked gets the check now.
+            && !(s.empty && drift_suspect(rec))
             // When several captures share a session, skip only if this one wrote it, under the
             // session's own id rather than a collision suffix from before they were grouped.
             && (!alias.is_some_and(|(_, shared)| shared)
@@ -224,6 +255,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             session: None,
             error: None,
             empty: false,
+            refs,
         };
         match result {
             Ok(Some(meta)) => {
@@ -239,6 +271,17 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                     let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
                 }
                 entry.session = Some(meta.session_id);
+            }
+            // A sizable capture that parses to nothing almost always means the harness changed
+            // its format and the parser now skips everything. Report it as a failure, so it
+            // shows on the dashboard and in repair briefs, rather than as an empty session.
+            Ok(None) if drift_suspect(rec) => {
+                report.failed += 1;
+                report.drift += 1;
+                entry.error = Some(format!(
+                    "{} bytes parsed to no events; the format may have changed",
+                    rec.size
+                ));
             }
             Ok(None) => {
                 report.empty += 1;
@@ -259,8 +302,17 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         "normalize",
         ok,
         format!(
-            "Normalized {} sessions ({} unchanged, {} empty, {} failed, {} without a parser)",
-            report.normalized, report.skipped, report.empty, report.failed, report.no_parser
+            "Normalized {} sessions ({} unchanged, {} empty, {} failed, {} without a parser){}",
+            report.normalized,
+            report.skipped,
+            report.empty,
+            report.failed,
+            report.no_parser,
+            if report.drift > 0 {
+                format!("; {} look like format drift", report.drift)
+            } else {
+                String::new()
+            }
         ),
     );
     entry.details = serde_json::to_value(&report)?;
@@ -276,7 +328,22 @@ fn normalize_one(
     git_cache: &mut crate::git::Cache,
 ) -> Result<Option<SessionMeta>> {
     let bytes = archive.read_blob(&rec.sha256)?;
-    let parsed = parse(rec.source, &rec.origin, &bytes)?;
+    let mut parsed = parse(rec.source, &rec.origin, &bytes)?;
+    // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
+    // threads captured before references were kept) fall back to their sources.
+    if rec.source == SourceKind::T3Code && parsed.is_mirror() {
+        let refs_origin = format!("{}{}", rec.origin, t3code::NATIVE_SUFFIX);
+        let refs = match archive.latest().get(&refs_origin) {
+            Some(r) => t3code::native_refs(&archive.read_blob(&r.sha256)?),
+            None => Default::default(),
+        };
+        parsed.mirror_unresolved = if refs.keys.is_empty() && refs.unresolved.is_empty() {
+            parsed.mirror_of.clone()
+        } else {
+            refs.unresolved
+        };
+        parsed.mirror_refs = refs.keys;
+    }
     if parsed.events.is_empty() {
         return Ok(None);
     }
@@ -331,7 +398,10 @@ fn normalize_one(
             version,
         },
         steward,
-        mirror: parsed.mirror,
+        mirror: !parsed.mirror_of.is_empty(),
+        mirror_of: parsed.mirror_of,
+        mirror_refs: parsed.mirror_refs,
+        mirror_unresolved: parsed.mirror_unresolved,
         git,
     };
     let dir = session_dir(home, &meta);
@@ -454,5 +524,58 @@ pub fn find(home: &Home, source: SourceKind, session_id: &str) -> Result<Option<
     match std::fs::read_to_string(p) {
         Ok(t) => Ok(Some(serde_json::from_str(&t)?)),
         Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_large_capture_that_parses_to_nothing_is_reported_as_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        // Records in a shape the parser doesn't know: what a format change looks like.
+        let line = r#"{"type":"turn.v2","payload":{"role":"user","text":"hello there"}}"#;
+        let big: String = std::iter::repeat_n(format!("{line}\n"), 400).collect();
+        let small = format!("{line}\n");
+        {
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            for (name, body) in [("big", &big), ("small", &small)] {
+                let origin = format!("/u/.claude/projects/-w/{name}.jsonl");
+                archive
+                    .put(SourceKind::ClaudeCode, &origin, "f", body.as_bytes())
+                    .unwrap();
+            }
+        }
+        // A run from before drift was checked recorded the big capture as empty.
+        let archive = Archive::open(&home).unwrap();
+        let mut state = BTreeMap::new();
+        for (origin, rec) in archive.latest() {
+            state.insert(
+                origin.clone(),
+                NormalizeState {
+                    source: rec.source,
+                    sha256: rec.sha256.clone(),
+                    version: parser_version(rec.source).unwrap(),
+                    meta_version: META_VERSION,
+                    session: None,
+                    error: None,
+                    empty: true,
+                    refs: None,
+                },
+            );
+        }
+        write_json_pretty(&state_path(&home), &state).unwrap();
+
+        let r = normalize(&home, false).unwrap();
+        // The small one stays cached as empty; the big one is checked again and flagged.
+        assert_eq!((r.failed, r.drift, r.skipped), (1, 1, 1));
+        let fails = failure_list(&home, SourceKind::ClaudeCode);
+        assert_eq!(fails.len(), 1);
+        assert!(fails[0].0.ends_with("big.jsonl"));
+        assert!(fails[0].1.contains("format may have changed"));
     }
 }

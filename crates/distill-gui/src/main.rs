@@ -48,6 +48,8 @@ pub struct DashState {
     pub loading: bool,
     /// (recipe, build) pairs whose approval is on its way to disk.
     pub approving: BTreeSet<(String, String)>,
+    /// Proposed recipes being accepted.
+    pub accepting: BTreeSet<String>,
     /// A one-line result of the last action ("Approved …", "Saved settings").
     pub notice: Option<String>,
 }
@@ -132,6 +134,12 @@ impl State {
         }
     }
 
+    pub fn accept_recipe(&mut self, name: String) {
+        if self.dash.accepting.insert(name.clone()) {
+            self.request(Request::AcceptRecipe(name));
+        }
+    }
+
     fn land(&mut self, reply: Reply) {
         match reply {
             Reply::Dashboard(Ok(d)) => {
@@ -162,6 +170,14 @@ impl State {
                 self.dash.notice = Some(match result {
                     Ok(()) => format!("Approved \"{recipe}\" build {build}"),
                     Err(e) => format!("Could not approve \"{recipe}\": {e}"),
+                });
+                self.request(Request::LoadDashboard);
+            }
+            Reply::Accepted { name, result } => {
+                self.dash.accepting.remove(&name);
+                self.dash.notice = Some(match result {
+                    Ok(()) => format!("\"{name}\" is now a dataset recipe; the next run builds it"),
+                    Err(e) => format!("Could not accept \"{name}\": {e}"),
                 });
                 self.request(Request::LoadDashboard);
             }

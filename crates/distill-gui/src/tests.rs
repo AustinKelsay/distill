@@ -48,8 +48,8 @@ fn setup_steps_through_and_finish_queues_the_chosen_config() {
     let mut rt = runtime(s);
     assert_eq!(rt.state.screen, Screen::Setup);
     assert!(
-        shows(&rt, "no parser yet, archived only"),
-        "Cursor says it is archived only"
+        !shows(&rt, "no parser yet, archived only"),
+        "every source has a parser"
     );
     assert!(shows(&rt, "not found"), "Droid is missing in the fixture");
 
@@ -194,6 +194,34 @@ fn dashboard_shows_tiles_and_approve_queues_the_build_once() {
     assert_eq!(rt.state.outbox, vec![Request::LoadDashboard]);
     settle(&mut rt);
     assert!(shows(&rt, "Approved \"agentic-rust\""));
+}
+
+#[test]
+fn a_proposed_recipe_is_accepted_from_the_dashboard() {
+    let mut s = fixture::state(Some(Config::default()));
+    fixture::dashboard(&mut s);
+    // Tall enough that the whole "Needs you" list is on screen.
+    let mut rt = Runtime::new(s, view, (1040.0, 1600.0), Env::new(true, 1.0));
+    settle(&mut rt);
+    assert!(shows(
+        &rt,
+        "proposes a dataset \"rust-successes\" (48 sessions)"
+    ));
+    press(&mut rt, "accept-3");
+    let want = Request::AcceptRecipe("rust-successes".to_string());
+    assert_eq!(rt.state.outbox, vec![want]);
+    assert!(shows(&rt, "Accepting…"));
+    rt.update(|s, _| {
+        s.outbox.clear();
+        s.land(Reply::Accepted {
+            name: "rust-successes".to_string(),
+            result: Ok(()),
+        });
+    });
+    assert!(rt.state.dash.accepting.is_empty());
+    assert_eq!(rt.state.outbox, vec![Request::LoadDashboard]);
+    settle(&mut rt);
+    assert!(shows(&rt, "\"rust-successes\" is now a dataset recipe"));
 }
 
 #[test]

@@ -1,9 +1,12 @@
 //! The sweep: copy new and changed session data into the archive. Deterministic, no model.
 
+use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::archive::{Archive, CaptureKind, copy_sqlite};
 use crate::config::Config;
@@ -54,6 +57,41 @@ impl SweepReport {
 /// records or from the folder it sits in; a sidecar whose session can't be placed is kept out
 /// whenever any exclusion is set.
 fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, origin: &str) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    let cwd = || source::peek_cwd(kind, path);
+    excluded(config, kind, path, origin, cwd)
+}
+
+/// [`file_excluded`] for bytes that are no longer (or never were) a file at `path`. Stricter:
+/// such bytes come from somewhere other than a sweep (an import), so when neither the records
+/// nor the folder say where the session ran, they are kept out.
+pub(crate) fn bytes_excluded(
+    config: &Config,
+    kind: SourceKind,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    // A blank or relative cwd says nothing about where the session ran.
+    let recorded = source::cwd_in(kind, bytes).filter(|c| c.starts_with('/'));
+    if recorded.is_none() && source::path_cwd(kind, &config.roots_for(kind), path).is_none() {
+        return true;
+    }
+    let origin = path.to_string_lossy();
+    excluded(config, kind, path, &origin, || recorded)
+}
+
+fn excluded(
+    config: &Config,
+    kind: SourceKind,
+    path: &std::path::Path,
+    origin: &str,
+    recorded_cwd: impl FnOnce() -> Option<String>,
+) -> bool {
     let exclude = &config.privacy.exclude_paths;
     if exclude.is_empty() {
         return false;
@@ -61,7 +99,7 @@ fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, orig
     let primary = kind.is_primary(origin);
     // A recorded cwd is exact; the folder name is lossy (`-work-private-tools` also looks like
     // a child of `-work-private`), so it is only the fallback.
-    if primary && let Some(cwd) = source::peek_cwd(kind, path) {
+    if primary && let Some(cwd) = recorded_cwd() {
         return config.is_excluded(&cwd);
     }
     match source::path_cwd(kind, &config.roots_for(kind), path) {
@@ -89,10 +127,17 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
                 continue;
             }
         };
+        // T3 Code's native references, read once per database.
+        let mut refs: HashMap<PathBuf, HashMap<String, Vec<u8>>> = HashMap::new();
         for c in candidates {
             report.seen += 1;
             if let Err(e) = capture_one(home, config, &mut archive, &c, &mut report) {
                 report.errors.push(format!("{}: {e:#}", c.origin()));
+            }
+            if let Err(e) = capture_native_refs(config, &mut archive, &c, &mut refs, &mut report) {
+                report
+                    .errors
+                    .push(format!("{}: native refs: {e:#}", c.origin()));
             }
         }
     }
@@ -100,6 +145,61 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
     entry.details = serde_json::to_value(&report)?;
     runlog::record(home, &entry)?;
     Ok(report)
+}
+
+/// Whether exclusions keep a T3 Code thread out. One that doesn't say where it ran is kept out
+/// while any exclusion is set, like the other databases.
+fn t3_excluded(config: &Config, cwd: Option<&str>) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    cwd.is_none_or(|c| config.is_excluded(c))
+}
+
+/// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
+/// normalize can tell which originals a mirror copies. Written whenever they change, which can
+/// happen without the thread changing (a native id filled in later).
+fn capture_native_refs(
+    config: &Config,
+    archive: &mut Archive,
+    c: &Candidate,
+    refs: &mut HashMap<PathBuf, HashMap<String, Vec<u8>>>,
+    report: &mut SweepReport,
+) -> Result<()> {
+    let Candidate::T3Thread { db, thread_id, .. } = c else {
+        return Ok(());
+    };
+    let origin = c.origin();
+    // Only for threads in the archive, and only while they still pass the exclusions: a
+    // thread excluded after it was first captured gets nothing new.
+    if !archive.latest().contains_key(&origin) {
+        return Ok(());
+    }
+    if !config.privacy.exclude_paths.is_empty()
+        && t3_excluded(config, t3code::thread_cwd(db, thread_id)?.as_deref())
+    {
+        return Ok(());
+    }
+    if !refs.contains_key(db) {
+        refs.insert(db.clone(), t3code::export_native_refs(db)?);
+    }
+    let bytes = refs[db]
+        .get(thread_id.as_str())
+        .cloned()
+        .unwrap_or_default();
+    let refs_origin = format!("{origin}{}", t3code::NATIVE_SUFFIX);
+    let sha = hex::encode(Sha256::digest(&bytes));
+    if archive
+        .latest()
+        .get(&refs_origin)
+        .is_some_and(|r| r.sha256 == sha)
+    {
+        return Ok(());
+    }
+    if let Some(r) = archive.put(SourceKind::T3Code, &refs_origin, "refs", &bytes[..])? {
+        report.bytes_written += r.size;
+    }
+    Ok(())
 }
 
 fn capture_one(
@@ -141,9 +241,7 @@ fn capture_one(
         }
         Candidate::T3Thread { db, thread_id, .. } => {
             let export = t3code::export_thread(db, thread_id)?;
-            if let Some(cwd) = &export.cwd
-                && config.is_excluded(cwd)
-            {
+            if t3_excluded(config, export.cwd.as_deref()) {
                 report.excluded += 1;
                 return Ok(());
             }

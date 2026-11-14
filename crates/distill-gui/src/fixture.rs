@@ -209,6 +209,11 @@ pub fn dashboard_data() -> Dashboard {
             NeedsYou::NoParser {
                 source: SourceKind::Cursor,
             },
+            NeedsYou::ProposedRecipe {
+                name: "rust-successes".to_string(),
+                description: "Rust sessions that worked, as chat data".to_string(),
+                matches: 48,
+            },
         ],
         last_sweep: Some((Utc::now() - Duration::minutes(12)).to_rfc3339()),
     }

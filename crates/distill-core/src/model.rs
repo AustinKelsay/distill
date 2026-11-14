@@ -152,6 +152,17 @@ pub struct SessionMeta {
     /// thread run on Codex, say). Searchable, but left out of datasets and steward cards.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mirror: bool,
+    /// The sources holding the originals of a mirror. Empty on metas written before this was
+    /// recorded, which count as mirrors of enabled sources.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_of: Vec<SourceKind>,
+    /// The exact sessions a mirror copies (`source/session id`), when the harness named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_refs: Vec<String>,
+    /// Sources of a mirror's runs that name no original; those count as copied when the
+    /// source has sessions at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_unresolved: Vec<SourceKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitOutcome>,
 }
@@ -159,6 +170,65 @@ pub struct SessionMeta {
 impl SessionMeta {
     pub fn key(&self) -> String {
         format!("{}/{}", self.source.id(), self.session_id)
+    }
+
+    /// A mirror whose originals are in the archive. With the originals named, each must be
+    /// there; otherwise their sources must have sessions at all. A mirror of sessions that were
+    /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
+    /// session of its own.
+    pub fn is_duplicate(&self, originals: &Originals) -> bool {
+        if !self.mirror {
+            return false;
+        }
+        // Runs whose original isn't named count as copied when their source has sessions.
+        // Metas from before originals were recorded name none, so they check every source.
+        let unresolved = if self.mirror_refs.is_empty() && self.mirror_unresolved.is_empty() {
+            &self.mirror_of
+        } else {
+            &self.mirror_unresolved
+        };
+        // A named original must also reach (nearly) as far as the mirror: T3 can carry a
+        // native session on after its source stopped being captured.
+        let covers = |k: &String| {
+            originals.keys.get(k).is_some_and(|ended| {
+                match (
+                    ended.as_deref().and_then(ts),
+                    self.ended_at.as_deref().and_then(ts),
+                ) {
+                    (Some(orig), Some(mirror)) => orig + COVER_SLACK >= mirror,
+                    _ => true,
+                }
+            })
+        };
+        self.mirror_refs.iter().all(covers)
+            && unresolved.iter().all(|k| originals.sources.contains(k))
+    }
+}
+
+/// How much later a mirror may end than its original and still count as a copy of it: T3
+/// records a turn a little after the harness does.
+const COVER_SLACK: chrono::Duration = chrono::Duration::minutes(15);
+
+fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(s).ok()
+}
+
+/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`].
+#[derive(Debug, Default)]
+pub struct Originals {
+    pub sources: std::collections::HashSet<SourceKind>,
+    /// Each original's key, with when it ended.
+    pub keys: std::collections::HashMap<String, Option<String>>,
+}
+
+impl Originals {
+    pub fn of(metas: &[SessionMeta]) -> Self {
+        let mut o = Originals::default();
+        for m in metas.iter().filter(|m| !m.mirror) {
+            o.sources.insert(m.source);
+            o.keys.insert(m.key(), m.ended_at.clone());
+        }
+        o
     }
 }
 
@@ -173,10 +243,19 @@ pub struct Parsed {
     pub harness_version: Option<String>,
     pub parent_session: Option<String>,
     pub events: Vec<Event>,
-    pub mirror: bool,
+    /// For a copy of sessions captured natively elsewhere: the sources holding the originals.
+    pub mirror_of: Vec<SourceKind>,
+    /// And the originals themselves (`source/session id`), when known.
+    pub mirror_refs: Vec<String>,
+    /// Sources of runs whose original isn't known.
+    pub mirror_unresolved: Vec<SourceKind>,
 }
 
 impl Parsed {
+    pub fn is_mirror(&self) -> bool {
+        !self.mirror_of.is_empty()
+    }
+
     pub fn add_model(&mut self, m: &str) {
         if !m.is_empty() && !self.models.iter().any(|x| x == m) {
             self.models.push(m.to_string());
@@ -189,5 +268,65 @@ impl Parsed {
         }
         e.seq = self.events.len() as u64;
         self.events.push(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mirror(of: &str) -> SessionMeta {
+        serde_json::from_str(&format!(
+            r#"{{"source":"t3code","session_id":"t1","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+                "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"t3code","version":4}},
+                "mirror":true{of}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_mirror_is_a_duplicate_only_when_its_originals_are_archived() {
+        let m = mirror(r#","mirror_of":["codex"]"#);
+        let mut codex = Originals::default();
+        codex.sources.insert(SourceKind::Codex);
+        assert!(m.is_duplicate(&codex));
+        // Codex never captured: the mirror is the only copy.
+        assert!(!m.is_duplicate(&Originals::default()));
+        // Metas from before `mirror_of` was recorded stay duplicates.
+        assert!(mirror("").is_duplicate(&Originals::default()));
+        // A mirror doesn't count as an original of its own source.
+        assert!(Originals::of(&[m]).sources.is_empty());
+
+        // Named originals must each be present; another session of the source isn't enough.
+        let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
+        assert!(!exact.is_duplicate(&codex));
+        codex.keys.insert("codex/c-1".into(), None);
+        assert!(exact.is_duplicate(&codex));
+
+        // A named original that's missing keeps the mirror, whatever the other runs say.
+        let partial = mirror(
+            r#","mirror_of":["codex"],"mirror_refs":["codex/c-2"],"mirror_unresolved":["codex"]"#,
+        );
+        assert!(!partial.is_duplicate(&codex));
+        codex.keys.insert("codex/c-2".into(), None);
+        assert!(partial.is_duplicate(&codex));
+        // The unresolved run's source must have sessions too.
+        let keys_only = Originals {
+            sources: Default::default(),
+            keys: codex.keys.clone(),
+        };
+        assert!(!partial.is_duplicate(&keys_only));
+
+        // T3 carried the session on after the original was last captured: keep the mirror.
+        let mut later = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
+        later.ended_at = Some("2026-11-01T12:00:00Z".into());
+        codex
+            .keys
+            .insert("codex/c-1".into(), Some("2026-11-01T11:00:00Z".into()));
+        assert!(!later.is_duplicate(&codex));
+        codex
+            .keys
+            .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
+        assert!(later.is_duplicate(&codex));
     }
 }

@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use distill_core::config::Config;
 use distill_core::source::{self, Detection, SourceKind};
 use distill_core::stats::{self, Dashboard};
-use distill_core::{Home, export, schedule, setup};
+use distill_core::{Home, export, propose, schedule, setup};
 use rune::Waker;
 
 /// Who the dashboard's approvals are recorded as.
@@ -27,6 +27,8 @@ pub enum Request {
         recipe: String,
         build: String,
     },
+    /// Turn a proposed recipe into a recipe.
+    AcceptRecipe(String),
     CheckSchedule,
 }
 
@@ -39,6 +41,10 @@ pub enum Reply {
     Approved {
         recipe: String,
         build: String,
+        result: Result<(), String>,
+    },
+    Accepted {
+        name: String,
         result: Result<(), String>,
     },
     Schedule(bool),
@@ -100,6 +106,10 @@ fn run(home: &Home, req: Request) -> Reply {
                 build,
                 result,
             }
+        }
+        Request::AcceptRecipe(name) => {
+            let result = propose::accept(home, &name).map_err(|e| format!("{e:#}"));
+            Reply::Accepted { name, result }
         }
         Request::CheckSchedule => Reply::Schedule(schedule::is_installed()),
     }

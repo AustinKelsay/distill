@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::card::{self, Card, Outcome};
 use crate::home::Home;
-use crate::model::{Event, EventKind, SessionMeta};
+use crate::model::{Event, EventKind, Originals, SessionMeta};
 use crate::normalize;
 use crate::redact::{Findings, redact, redact_value};
 use crate::runlog::{self, RunEntry};
@@ -61,16 +61,19 @@ pub struct Filter {
     pub since: Option<String>,
     #[serde(default)]
     pub min_tool_calls: u64,
+    /// Require a card carrying at least one of these tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl Filter {
     fn needs_card(&self) -> bool {
-        self.min_quality.is_some() || !self.outcomes.is_empty()
+        self.min_quality.is_some() || !self.outcomes.is_empty() || !self.tags.is_empty()
     }
 
     pub fn accepts(&self, meta: &SessionMeta, card: Option<&Card>) -> bool {
         // Steward sessions are always left out, so Distill never trains on its own runs.
-        if meta.steward || meta.mirror {
+        if meta.steward {
             return false;
         }
         if !self.sources.is_empty() && !self.sources.contains(&meta.source) {
@@ -93,6 +96,9 @@ impl Filter {
                 return false;
             }
             if !self.outcomes.is_empty() && !self.outcomes.contains(&c.outcome) {
+                return false;
+            }
+            if !self.tags.is_empty() && !c.tags.iter().any(|t| self.tags.contains(t)) {
                 return false;
             }
         }
@@ -182,6 +188,23 @@ pub struct BuildSummary {
     pub path: PathBuf,
 }
 
+/// Every session a recipe may draw from, with its card if that card is current. Mirrors whose
+/// originals are archived are left out.
+pub fn candidates(home: &Home) -> Result<Vec<(SessionMeta, Option<Card>)>> {
+    let metas = normalize::read_index(home)?;
+    let originals = Originals::of(&metas);
+    Ok(metas
+        .into_iter()
+        .filter(|m| !m.is_duplicate(&originals))
+        .map(|m| {
+            // A stale card (old prompt, or the session changed since) doesn't count.
+            let c = card::load(&normalize::session_dir(home, &m))
+                .filter(|c| card::is_current(c, &m.raw.sha256));
+            (m, c)
+        })
+        .collect())
+}
+
 fn build_dir(home: &Home, recipe: &str, build: &str) -> PathBuf {
     home.exports_dir().join(recipe).join(build)
 }
@@ -194,14 +217,8 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
     let _lock = home.lock("exports")?;
     let recipe = load_recipe(home, name)?;
     let recipe_sha = sha256_hex(toml::to_string(&recipe)?.as_bytes());
-    let mut chosen: Vec<(SessionMeta, Option<Card>)> = normalize::read_index(home)?
+    let mut chosen: Vec<(SessionMeta, Option<Card>)> = candidates(home)?
         .into_iter()
-        .map(|m| {
-            // A stale card (old prompt, or the session changed since) doesn't count.
-            let c = card::load(&normalize::session_dir(home, &m))
-                .filter(|c| card::is_current(c, &m.raw.sha256));
-            (m, c)
-        })
         .filter(|(m, c)| recipe.filter.accepts(m, c.as_ref()))
         .collect();
     chosen.sort_by_key(|(m, _)| m.key());
