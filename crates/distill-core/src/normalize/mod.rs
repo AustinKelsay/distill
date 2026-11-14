@@ -118,6 +118,9 @@ pub struct NormalizeReport {
     /// Archived files that belong to a session but aren't one (attachments, tool output).
     #[serde(default)]
     pub sidecars: u64,
+    /// Older captures of a Codex file that was since compressed or moved.
+    #[serde(default)]
+    pub superseded: u64,
     pub sessions: u64,
 }
 
@@ -128,11 +131,36 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     let mut report = NormalizeReport::default();
     let mut git_cache = crate::git::Cache::default();
 
+    // Codex compresses or moves a session file (`x.jsonl` → `archived_sessions/x.jsonl.zst`).
+    // Every capture stays in the archive, but only the newest one of a file is the session, so
+    // incremental runs and full rebuilds agree.
+    let mut newest: std::collections::HashMap<String, (&str, &str)> = Default::default();
+    for (origin, rec) in archive.latest() {
+        if rec.source == SourceKind::Codex {
+            let e = newest
+                .entry(codex_file(origin))
+                .or_insert((origin, &rec.captured_at));
+            if rec.captured_at.as_str() > e.1 {
+                *e = (origin, &rec.captured_at);
+            }
+        }
+    }
+    let superseded = |origin: &str, rec: &CaptureRecord| {
+        rec.source == SourceKind::Codex
+            && newest
+                .get(&codex_file(origin))
+                .is_some_and(|(o, _)| *o != origin)
+    };
+
     for (origin, rec) in archive.latest() {
         // Sidecars (tool-result files, attachments, settings, databases) stay in the archive
         // but are not sessions on their own.
         if !rec.source.is_primary(origin) {
             report.sidecars += 1;
+            continue;
+        }
+        if superseded(origin, rec) {
+            report.superseded += 1;
             continue;
         }
         let Some(version) = parser_version(rec.source) else {
@@ -211,7 +239,8 @@ fn normalize_one(
     // Two captures can claim one session id (a copied or forked file). Keep both.
     if let Ok(Some(existing)) = find(home, rec.source, &session_id)
         && existing.raw.origin != rec.origin
-        && !same_session_file(&existing.raw.origin, &rec.origin)
+        && !(rec.source == SourceKind::Codex
+            && codex_file(&existing.raw.origin) == codex_file(&rec.origin))
     {
         session_id = format!(
             "{session_id}-{}",
@@ -267,17 +296,15 @@ fn normalize_one(
     Ok(Some(meta))
 }
 
-/// Codex compresses a session file in place (`x.jsonl` → `x.jsonl.zst`, sometimes into
-/// `archived_sessions/`). Both captures stay in the archive; they are one session.
-fn same_session_file(a: &str, b: &str) -> bool {
-    let name = |o: &str| {
-        o.rsplit('/')
-            .next()
-            .unwrap_or(o)
-            .trim_end_matches(".zst")
-            .to_string()
-    };
-    name(a) == name(b)
+/// A Codex session file's name without the compression suffix: the same file whether it is
+/// live under `sessions/` or compressed under `archived_sessions/`.
+fn codex_file(origin: &str) -> String {
+    origin
+        .rsplit('/')
+        .next()
+        .unwrap_or(origin)
+        .trim_end_matches(".zst")
+        .to_string()
 }
 
 fn fallback_id(origin: &str) -> Option<String> {

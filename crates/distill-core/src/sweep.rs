@@ -313,6 +313,85 @@ mod tests {
     }
 
     #[test]
+    fn the_newest_capture_of_a_moved_codex_file_wins_even_on_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (live, archived) = (
+            root.join("codex/sessions"),
+            root.join("codex/archived_sessions"),
+        );
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::create_dir_all(&archived).unwrap();
+        let head = r#"{"timestamp":"2026-11-01T00:00:00Z","type":"session_meta","payload":{"id":"c1","cwd":"/w"}}
+"#;
+        let turn = |t: &str| {
+            format!(
+                r#"{{"timestamp":"2026-11-01T00:00:01Z","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"{t}"}}]}}}}"#
+            ) + "\n"
+        };
+        std::fs::write(
+            live.join("rollout-c1.jsonl"),
+            format!("{head}{}", turn("one")),
+        )
+        .unwrap();
+        let home = Home::new(root.join("home"));
+        let mut config = Config {
+            sources: vec![],
+            ..Default::default()
+        };
+        let c = config.source_mut(SourceKind::Codex);
+        c.enabled = true;
+        c.roots = vec![root.join("codex")];
+        sweep(&home, &config, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100)); // captured_at has 1 s resolution
+        std::fs::remove_file(live.join("rollout-c1.jsonl")).unwrap();
+        let both = format!("{head}{}{}", turn("one"), turn("two"));
+        std::fs::write(
+            archived.join("rollout-c1.jsonl.zst"),
+            zstd::stream::encode_all(both.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        sweep(&home, &config, None).unwrap();
+        for force in [false, true] {
+            let n = crate::normalize::normalize(&home, force).unwrap();
+            assert_eq!(n.sessions, 1, "{n:?}");
+            let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                meta.counts.user, 2,
+                "force={force}: the newer capture is kept"
+            );
+        }
+    }
+
+    #[test]
+    fn distinct_files_with_the_same_name_stay_separate_outside_codex() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (d, text) in [("a", "first"), ("b", "second")] {
+            let p = root.join(format!("claude/projects/-{d}"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join("shared.jsonl"),
+                format!(r#"{{"type":"user","cwd":"/{d}","timestamp":"2026-11-01T00:00:00Z","message":{{"role":"user","content":"{text}"}}}}"#),
+            )
+            .unwrap();
+        }
+        let home = Home::new(root.join("home"));
+        let mut config = Config {
+            sources: vec![],
+            ..Default::default()
+        };
+        let c = config.source_mut(SourceKind::ClaudeCode);
+        c.enabled = true;
+        c.roots = vec![root.join("claude/projects")];
+        sweep(&home, &config, None).unwrap();
+        let n = crate::normalize::normalize(&home, false).unwrap();
+        assert_eq!(n.sessions, 2, "{n:?}");
+    }
+
+    #[test]
     fn a_sweep_waits_for_the_archive_lock() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
