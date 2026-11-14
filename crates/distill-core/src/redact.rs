@@ -39,6 +39,13 @@ fn rules() -> &'static [Rule] {
                 "email_slug",
                 r"(?i)\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)\b",
             ),
+            // A slugged address at any domain, when the address itself sits right after it
+            // (a contact list: `jdoe-example-org ['jdoe@example.org']`). Runs after `email`, so
+            // the address is already a marker; the slug alone (`my-github-org`) is kept.
+            r(
+                "email_slug",
+                r"(?i)\b[a-z0-9]+(?:[._-][a-z0-9]+)*-[a-z0-9]+-(?:com|org|net|edu|gov|io|co)\b(?P<after>[^\n]{0,40}?\[REDACTED:email\])",
+            ),
             r("tailnet_host", r"(?i)\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
             // A tailnet name on its own (`tail0c0ffe`), left after output was cut short
             // (`box.tail0c0f`), or slugged (`box-tail0c0ffe-ts-net`).
@@ -103,7 +110,8 @@ pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> St
             }
             n += 1;
             let keep = c.name("keep").map_or("", |k| k.as_str());
-            format!("{keep}[REDACTED:{}]", rule.name)
+            let after = c.name("after").map_or("", |k| k.as_str());
+            format!("{keep}[REDACTED:{}]{after}", rule.name)
         });
         if n > 0 {
             *findings.by_rule.entry(rule.name.to_string()).or_default() += n;
@@ -269,6 +277,17 @@ mod tests {
             assert!(out.contains(kept), "{kept} was redacted: {out}");
         }
         assert_eq!(f.by_rule["email_slug"], 3);
+
+        // Any domain, when the address follows: a contact list.
+        let mut f = Findings::default();
+        let out = redact(
+            "unknown: jdoe-example-org ['jdoe@example.org'] []\npm-sync-org stays",
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("jdoe"), "{out}");
+        assert!(out.contains("pm-sync-org stays"), "{out}");
+        assert_eq!(f.by_rule["email_slug"], 1);
     }
 
     #[test]
