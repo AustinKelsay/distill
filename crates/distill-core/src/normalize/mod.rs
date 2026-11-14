@@ -37,7 +37,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(2),
+        SourceKind::T3Code => Some(3),
         SourceKind::Cursor => None,
     }
 }

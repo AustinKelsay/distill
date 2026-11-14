@@ -72,14 +72,15 @@ pub struct Export {
 
 pub fn export_thread(db: &Path, thread_id: &str) -> Result<Export> {
     let conn = open(db)?;
-    let (payload, created_at, project_root): (String, String, Option<String>) = conn.query_row(
-        "SELECT t.payload_json, t.created_at, p.workspace_root
+    let (payload, created_at, project_root, instance): (String, String, Option<String>, String) =
+        conn.query_row(
+            "SELECT t.payload_json, t.created_at, p.workspace_root, t.default_provider
          FROM orchestration_v2_projection_threads t
          LEFT JOIN projection_projects p ON p.project_id = t.project_id
          WHERE t.thread_id = ?1",
-        [thread_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )?;
+            [thread_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
     let t: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
     let cwd = t
         .get("worktreePath")
@@ -92,6 +93,9 @@ pub fn export_thread(db: &Path, thread_id: &str) -> Result<Export> {
         "row": "thread",
         "thread_id": thread_id,
         "created_at": created_at,
+        // The provider instance the thread was made with; the fallback for threads whose runs
+        // carry no provider (older threads imported into T3's current schema).
+        "provider_instance": instance,
         "project_root": project_root,
         "worktree_path": t.get("worktreePath"),
         "branch": t.get("branch"),
@@ -175,6 +179,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let raw = String::from_utf8_lossy(bytes);
     let mut model = None;
     let mut drivers: Vec<String> = Vec::new();
+    let mut thread_instance: Option<String> = None;
     for line in raw.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -200,6 +205,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 if out.title.is_none() {
                     out.title = s(&v, "title");
                 }
+                thread_instance = s(&v, "provider_instance");
                 continue;
             }
             Some("run") => {
@@ -285,6 +291,18 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     }
     // A mirror only when every run went through a harness Distill reads natively; a thread
     // with any other run holds content found nowhere else.
+    if drivers.is_empty()
+        && let Some(inst) = &thread_instance
+    {
+        // `claudeAgent_2` is a second Claude Code instance.
+        let base = inst
+            .rsplit_once('_')
+            .filter(|(_, n)| n.chars().all(|c| c.is_ascii_digit()));
+        drivers.push(base.map_or(inst.as_str(), |(b, _)| b).to_string());
+        if out.harness_version.is_none() {
+            out.harness_version = Some(inst.clone());
+        }
+    }
     out.mirror = !drivers.is_empty() && drivers.iter().all(|d| NATIVE.contains(&d.as_str()));
     Ok(out)
 }
@@ -370,6 +388,16 @@ mod tests {
         assert!(after.starts_with(&before), "the export grew by appending");
         let p = parse(&after).unwrap();
         assert_eq!(p.models, vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn threads_without_runs_fall_back_to_their_provider_instance() {
+        let mirror = r#"{"row":"thread","thread_id":"t8","provider_instance":"claudeAgent_2"}
+{"row":"item","item":{"type":"user_message","text":"hi"}}"#;
+        assert!(parse(mirror.as_bytes()).unwrap().mirror);
+        let own = r#"{"row":"thread","thread_id":"t7","provider_instance":"cursor"}
+{"row":"item","item":{"type":"user_message","text":"hi"}}"#;
+        assert!(!parse(own.as_bytes()).unwrap().mirror);
     }
 
     #[test]
