@@ -116,7 +116,9 @@ impl SourceKind {
         match self {
             SourceKind::ClaudeCode | SourceKind::Droid | SourceKind::Pi => name.ends_with(".jsonl"),
             SourceKind::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
-            SourceKind::OpenCode | SourceKind::T3Code => true,
+            SourceKind::OpenCode => true,
+            // A thread's native references are archived beside it but aren't a session.
+            SourceKind::T3Code => !origin.ends_with(crate::normalize::t3code::NATIVE_SUFFIX),
             SourceKind::Grok => name == "chat_history.jsonl",
             SourceKind::Antigravity => name == "transcript_full.jsonl",
             SourceKind::Hermes => {

@@ -156,6 +156,9 @@ pub struct SessionMeta {
     /// recorded, which count as mirrors of enabled sources.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mirror_of: Vec<SourceKind>,
+    /// The exact sessions a mirror copies (`source/session id`), when the harness named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitOutcome>,
 }
@@ -165,20 +168,37 @@ impl SessionMeta {
         format!("{}/{}", self.source.id(), self.session_id)
     }
 
-    /// A mirror whose originals are in the archive. When a source never was captured (it was
-    /// turned off before its sessions were swept), the mirror is the only copy, so it counts as
-    /// a session of its own.
-    pub fn is_duplicate(&self, archived: &std::collections::HashSet<SourceKind>) -> bool {
-        self.mirror && self.mirror_of.iter().all(|k| archived.contains(k))
+    /// A mirror whose originals are in the archive. With the originals named, each must be
+    /// there; otherwise their sources must have sessions at all. A mirror of sessions that were
+    /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
+    /// session of its own.
+    pub fn is_duplicate(&self, originals: &Originals) -> bool {
+        if !self.mirror {
+            return false;
+        }
+        if self.mirror_refs.is_empty() {
+            self.mirror_of.iter().all(|k| originals.sources.contains(k))
+        } else {
+            self.mirror_refs.iter().all(|k| originals.keys.contains(k))
+        }
     }
+}
 
-    /// Sources that have sessions of their own in `metas` (not counting mirrors).
-    pub fn archived_sources(metas: &[SessionMeta]) -> std::collections::HashSet<SourceKind> {
-        metas
-            .iter()
-            .filter(|m| !m.mirror)
-            .map(|m| m.source)
-            .collect()
+/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`].
+#[derive(Debug, Default)]
+pub struct Originals {
+    pub sources: std::collections::HashSet<SourceKind>,
+    pub keys: std::collections::HashSet<String>,
+}
+
+impl Originals {
+    pub fn of(metas: &[SessionMeta]) -> Self {
+        let mut o = Originals::default();
+        for m in metas.iter().filter(|m| !m.mirror) {
+            o.sources.insert(m.source);
+            o.keys.insert(m.key());
+        }
+        o
     }
 }
 
@@ -195,6 +215,8 @@ pub struct Parsed {
     pub events: Vec<Event>,
     /// For a copy of sessions captured natively elsewhere: the sources holding the originals.
     pub mirror_of: Vec<SourceKind>,
+    /// And the originals themselves (`source/session id`), when known.
+    pub mirror_refs: Vec<String>,
 }
 
 impl Parsed {
@@ -233,13 +255,20 @@ mod tests {
     #[test]
     fn a_mirror_is_a_duplicate_only_when_its_originals_are_archived() {
         let m = mirror(r#","mirror_of":["codex"]"#);
-        let with_codex: std::collections::HashSet<_> = [SourceKind::Codex].into();
-        assert!(m.is_duplicate(&with_codex));
+        let mut codex = Originals::default();
+        codex.sources.insert(SourceKind::Codex);
+        assert!(m.is_duplicate(&codex));
         // Codex never captured: the mirror is the only copy.
-        assert!(!m.is_duplicate(&Default::default()));
+        assert!(!m.is_duplicate(&Originals::default()));
         // Metas from before `mirror_of` was recorded stay duplicates.
-        assert!(mirror("").is_duplicate(&Default::default()));
+        assert!(mirror("").is_duplicate(&Originals::default()));
         // A mirror doesn't count as an original of its own source.
-        assert!(SessionMeta::archived_sources(&[m]).is_empty());
+        assert!(Originals::of(&[m]).sources.is_empty());
+
+        // Named originals must each be present; another session of the source isn't enough.
+        let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
+        assert!(!exact.is_duplicate(&codex));
+        codex.keys.insert("codex/c-1".into());
+        assert!(exact.is_duplicate(&codex));
     }
 }

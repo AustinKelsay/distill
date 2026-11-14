@@ -30,6 +30,72 @@ fn native(driver: &str) -> Option<SourceKind> {
     })
 }
 
+/// Suffix of the origin that holds a thread's native session references (see
+/// [`export_native_refs`]), archived beside the thread's own export.
+pub const NATIVE_SUFFIX: &str = "#native";
+
+/// The harness session behind each of a thread's runs (`nativeThreadRef.nativeId`), one JSON
+/// line per run in order. Kept apart from the thread's export so that export keeps growing by
+/// appending; this is what matches a mirror to its original.
+pub fn export_native_refs(db: &Path, thread_id: &str) -> Result<Vec<u8>> {
+    let conn = open(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT pt.driver, pt.payload_json
+         FROM orchestration_v2_projection_runs r
+         LEFT JOIN orchestration_v2_projection_provider_threads pt
+           ON pt.provider_thread_id = r.provider_thread_id
+         WHERE r.thread_id = ?1
+         ORDER BY r.ordinal, r.run_id",
+    )?;
+    let rows = stmt.query_map([thread_id], |r| {
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<String>>(1)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (driver, payload) = row?;
+        let native_id = payload
+            .and_then(|p| serde_json::from_str::<Value>(&p).ok())
+            .and_then(|p| s(p.get("nativeThreadRef")?, "nativeId"));
+        serde_json::to_writer(&mut out, &json!({"driver": driver, "native_id": native_id}))?;
+        out.push(b'\n');
+    }
+    Ok(out)
+}
+
+/// The sessions (as `source/session id` keys) a mirror copies, from [`export_native_refs`]
+/// output. Empty unless every run names a native session.
+pub fn native_keys(refs: &[u8]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for line in String::from_utf8_lossy(refs).lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return Vec::new();
+        };
+        let (Some(kind), Some(id)) = (
+            s(&v, "driver").as_deref().and_then(native),
+            s(&v, "native_id").filter(|i| !i.is_empty()),
+        ) else {
+            return Vec::new();
+        };
+        // Pi names its session by file (`…/<time>_<session id>.jsonl`).
+        let id = match kind {
+            SourceKind::Pi => id
+                .rsplit('/')
+                .next()
+                .and_then(|f| f.strip_suffix(".jsonl"))
+                .map(|f| f.rsplit('_').next().unwrap_or(f).to_string())
+                .unwrap_or(id),
+            _ => id,
+        };
+        keys.push(format!("{}/{id}", kind.id()));
+    }
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 /// How long a thread must be idle before it is captured.
 const SETTLE_MINUTES: i64 = 10;
 
@@ -325,7 +391,7 @@ mod tests {
         conn.execute_batch(&format!(
             r#"CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, project_id TEXT, title TEXT, default_provider TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, payload_json TEXT);
                CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, workspace_root TEXT);
-               CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider TEXT, driver TEXT, updated_at TEXT);
+               CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider TEXT, driver TEXT, updated_at TEXT, payload_json TEXT);
                CREATE TABLE orchestration_v2_projection_runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, provider TEXT, provider_thread_id TEXT, payload_json TEXT);
                CREATE TABLE orchestration_v2_projection_turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, payload_json TEXT);
                INSERT INTO projection_projects VALUES ('p1', '/work/app');
@@ -333,7 +399,8 @@ mod tests {
                  '{{"title":"Fix it","branch":"main","modelSelection":{{"model":"m1"}},"opens":3}}');
                INSERT INTO orchestration_v2_projection_threads VALUES ('t2', 'p1', 'Live', 'x', '2999-01-01T00:00:00Z', '2999-01-01T00:00:00Z', NULL, '{{}}');
                INSERT INTO orchestration_v2_projection_threads VALUES ('t3', 'p1', 'Gone', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '{{}}');
-               INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt1', 't1', '{instance}', '{driver}', '2026-01-01T00:00:00Z');
+               INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt1', 't1', '{instance}', '{driver}', '2026-01-01T00:00:00Z',
+                 '{{"nativeThreadRef":{{"driver":"{driver}","nativeId":"native-1"}}}}');
                INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't1', 1, '{instance}', 'pt1', '{{"modelSelection":{{"model":"m1"}}}}');
                INSERT INTO orchestration_v2_projection_turn_items VALUES ('i1', 't1', 1, '{{"runId":"r1","type":"user_message","text":"run tests","startedAt":"2026-01-01T00:00:01Z"}}');
                INSERT INTO orchestration_v2_projection_turn_items VALUES ('i2', 't1', 2, '{{"runId":"r1","id":"i2","type":"command_execution","input":"cargo test","output":"1 failed","exitCode":1,"status":"failed"}}');
@@ -396,6 +463,32 @@ mod tests {
         assert!(after.starts_with(&before), "the export grew by appending");
         let p = parse(&after).unwrap();
         assert_eq!(p.models, vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn exports_the_native_session_behind_each_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fixture(dir.path(), "claudeAgent_2", "claudeAgent");
+        let refs = export_native_refs(&db, "t1").unwrap();
+        assert_eq!(native_keys(&refs), vec!["claude-code/native-1"]);
+        assert!(export_native_refs(&db, "t3").unwrap().is_empty());
+    }
+
+    #[test]
+    fn native_refs_name_the_sessions_a_mirror_copies() {
+        let refs = br#"{"driver":"codex","native_id":"01a1-c"}
+{"driver":"pi","native_id":"/h/.pi/agent/sessions/--w--/2026-10-10T21-47-05-111Z_01a1-p.jsonl"}
+{"driver":"claudeAgent","native_id":"c-1"}
+{"driver":"codex","native_id":"01a1-c"}
+"#;
+        assert_eq!(
+            native_keys(refs),
+            vec!["claude-code/c-1", "codex/01a1-c", "pi/01a1-p"]
+        );
+        // A run with no native session, or on a harness Distill doesn't read: no exact match.
+        assert!(native_keys(br#"{"driver":"codex","native_id":null}"#).is_empty());
+        assert!(native_keys(br#"{"driver":"cursor","native_id":"x"}"#).is_empty());
+        assert!(native_keys(b"").is_empty());
     }
 
     #[test]

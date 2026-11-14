@@ -275,7 +275,8 @@ pub fn propose(home: &Home, config: &Config) -> Result<ProposeReport> {
             }
         }
     };
-    if result.is_ok() {
+    // Saving is part of the result: a write that fails still leaves the call logged below.
+    let result = result.and_then(|()| {
         for p in &report.proposed {
             write_atomic(
                 &proposal_path(home, &p.name),
@@ -289,8 +290,8 @@ pub fn propose(home: &Home, config: &Config) -> Result<ProposeReport> {
         write_json_pretty(
             &home.state_dir().join("propose.json"),
             &json!({"last_at": now_rfc3339(), "prompt_version": PROMPT_VERSION}),
-        )?;
-    }
+        )
+    });
     let mut entry = RunEntry::new(
         "propose",
         result.is_ok(),
@@ -545,5 +546,16 @@ mod tests {
         assert_eq!(crate::steward::calls_today(&home).unwrap(), 1);
         let e = propose(&home, &config).unwrap_err();
         assert!(format!("{e:#}").contains("no steward calls left"), "{e:#}");
+    }
+
+    #[test]
+    fn a_call_whose_results_cannot_be_saved_still_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_with_cards(dir.path());
+        // Something in the way of the state file.
+        fs::create_dir_all(home.state_dir().join("propose.json")).unwrap();
+        let config = stub_config(dir.path(), "[]");
+        assert!(propose(&home, &config).is_err());
+        assert_eq!(crate::steward::calls_today(&home).unwrap(), 1);
     }
 }

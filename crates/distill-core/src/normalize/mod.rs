@@ -38,8 +38,8 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(4),
-        SourceKind::Cursor => Some(1),
+        SourceKind::T3Code => Some(5),
+        SourceKind::Cursor => Some(2),
     }
 }
 
@@ -91,6 +91,9 @@ pub struct NormalizeState {
     /// The capture parsed but holds no conversation (a header-only file).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub empty: bool,
+    /// For a T3 thread, the native references capture it was normalized with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
 }
 
 fn first_meta_version() -> u32 {
@@ -209,9 +212,18 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             report.no_parser += 1;
             continue;
         };
+        let refs = (rec.source == SourceKind::T3Code)
+            .then(|| {
+                archive
+                    .latest()
+                    .get(&format!("{origin}{}", t3code::NATIVE_SUFFIX))
+            })
+            .flatten()
+            .map(|r| r.sha256.clone());
         if !force
             && let Some(s) = state.get(origin)
             && s.sha256 == rec.sha256
+            && s.refs == refs
             && s.version == version
             && s.meta_version == META_VERSION
             // An empty result recorded before drift was checked gets the check now.
@@ -240,6 +252,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             session: None,
             error: None,
             empty: false,
+            refs,
         };
         match result {
             Ok(Some(meta)) => {
@@ -312,7 +325,17 @@ fn normalize_one(
     git_cache: &mut crate::git::Cache,
 ) -> Result<Option<SessionMeta>> {
     let bytes = archive.read_blob(&rec.sha256)?;
-    let parsed = parse(rec.source, &rec.origin, &bytes)?;
+    let mut parsed = parse(rec.source, &rec.origin, &bytes)?;
+    // A T3 mirror's originals are named in a capture beside it.
+    if rec.source == SourceKind::T3Code
+        && parsed.is_mirror()
+        && let Some(refs) =
+            archive
+                .latest()
+                .get(&format!("{}{}", rec.origin, t3code::NATIVE_SUFFIX))
+    {
+        parsed.mirror_refs = t3code::native_keys(&archive.read_blob(&refs.sha256)?);
+    }
     if parsed.events.is_empty() {
         return Ok(None);
     }
@@ -369,6 +392,7 @@ fn normalize_one(
         steward,
         mirror: !parsed.mirror_of.is_empty(),
         mirror_of: parsed.mirror_of,
+        mirror_refs: parsed.mirror_refs,
         git,
     };
     let dir = session_dir(home, &meta);
@@ -531,6 +555,7 @@ mod tests {
                     session: None,
                     error: None,
                     empty: true,
+                    refs: None,
                 },
             );
         }

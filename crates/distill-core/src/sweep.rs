@@ -73,7 +73,8 @@ pub(crate) fn bytes_excluded(
     if config.privacy.exclude_paths.is_empty() {
         return false;
     }
-    let recorded = source::cwd_in(kind, bytes);
+    // A blank or relative cwd says nothing about where the session ran.
+    let recorded = source::cwd_in(kind, bytes).filter(|c| c.starts_with('/'));
     if recorded.is_none() && source::path_cwd(kind, &config.roots_for(kind), path).is_none() {
         return true;
     }
@@ -128,12 +129,42 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
             if let Err(e) = capture_one(home, config, &mut archive, &c, &mut report) {
                 report.errors.push(format!("{}: {e:#}", c.origin()));
             }
+            if let Err(e) = capture_native_refs(&mut archive, &c) {
+                report
+                    .errors
+                    .push(format!("{}: native refs: {e:#}", c.origin()));
+            }
         }
     }
     let mut entry = RunEntry::new("sweep", report.errors.is_empty(), report.summary());
     entry.details = serde_json::to_value(&report)?;
     runlog::record(home, &entry)?;
     Ok(report)
+}
+
+/// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
+/// normalize can tell which originals a mirror copies. Refreshed when the thread changes.
+fn capture_native_refs(archive: &mut Archive, c: &Candidate) -> Result<()> {
+    let Candidate::T3Thread { db, thread_id, .. } = c else {
+        return Ok(());
+    };
+    let origin = c.origin();
+    // Excluded threads are never archived; neither are their references.
+    if !archive.latest().contains_key(&origin) {
+        return Ok(());
+    }
+    let refs_origin = format!("{origin}{}", t3code::NATIVE_SUFFIX);
+    let fingerprint = c.fingerprint();
+    if archive
+        .latest()
+        .get(&refs_origin)
+        .is_some_and(|r| r.fingerprint == fingerprint)
+    {
+        return Ok(());
+    }
+    let bytes = t3code::export_native_refs(db, thread_id)?;
+    archive.put(SourceKind::T3Code, &refs_origin, &fingerprint, &bytes[..])?;
+    Ok(())
 }
 
 fn capture_one(

@@ -289,10 +289,10 @@ pub struct RunOptions {
 /// Sessions that need a card, newest first.
 pub fn pending(home: &Home) -> Result<Vec<SessionMeta>> {
     let metas = normalize::read_index(home)?;
-    let archived = SessionMeta::archived_sources(&metas);
+    let originals = crate::model::Originals::of(&metas);
     Ok(metas
         .into_iter()
-        .filter(|m| !m.steward && !m.is_duplicate(&archived) && m.counts.user > 0)
+        .filter(|m| !m.steward && !m.is_duplicate(&originals) && m.counts.user > 0)
         .filter(|m| {
             card::load(&normalize::session_dir(home, m))
                 .is_none_or(|c| !card::is_current(&c, &m.raw.sha256))
@@ -571,6 +571,7 @@ mod tests {
                 session: None,
                 error: Some("unexpected record".into()),
                 empty: false,
+                refs: None,
             },
         );
         crate::util::write_json_pretty(&home.state_dir().join("normalize.json"), &state).unwrap();

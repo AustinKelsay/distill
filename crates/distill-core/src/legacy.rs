@@ -8,7 +8,7 @@
 //! Only captures whose rebuilt bytes match their recorded hash are imported, and only for
 //! origins the archive has never seen; anything the new sweep already captured stays as it is.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -105,7 +105,14 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         dry_run,
         ..Default::default()
     };
-    for c in captures {
+    // Where each capture falls in the old app's order, so a retry never lays an older
+    // snapshot over a newer one it already imported.
+    let order: HashMap<(String, String), usize> = captures
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| Some(((c.path.clone()?, c.sha.clone()), i)))
+        .collect();
+    for (i, c) in captures.iter().enumerate() {
         report.seen += 1;
         // Codex and OpenCode captures were kept as summaries of files the sweep reads
         // directly; only Claude Code's line records rebuild the original bytes.
@@ -120,11 +127,13 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         // An origin whose latest capture came from an import (this run or an interrupted
         // earlier one) takes the next legacy capture on top, so its chain lands as it did in
         // the old app. One the sweep has captured is left alone.
-        let swept = archive
-            .latest()
-            .get(path)
-            .is_some_and(|r| !r.fingerprint.starts_with(FINGERPRINT_PREFIX));
-        if known.contains(&c.sha) || swept {
+        let latest = archive.latest().get(path);
+        let swept = latest.is_some_and(|r| !r.fingerprint.starts_with(FINGERPRINT_PREFIX));
+        let behind = latest
+            .and_then(|r| r.fingerprint.strip_prefix(FINGERPRINT_PREFIX))
+            .and_then(|sha| order.get(&(path.to_string(), sha.to_string())))
+            .is_some_and(|&newest| newest >= i);
+        if known.contains(&c.sha) || swept || behind {
             report.already_archived += 1;
             continue;
         }
@@ -278,6 +287,44 @@ mod tests {
     }
 
     #[test]
+    fn a_retry_never_lays_an_older_snapshot_over_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let db = dir.path().join("legacy.db");
+        // Snapshot A (one line) can't be verified at first; B (both lines) can.
+        legacy_db(&db, &LINES[..1], Some(&"0".repeat(64)));
+        let grown: String = LINES.iter().map(|l| format!("{l}\n")).collect();
+        let conn = Connection::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO captures VALUES (3, 1, '/u/.claude/projects/-w-app/s1.jsonl', ?, '2026-03-02')",
+            [hex::encode(Sha256::digest(grown.as_bytes()))],
+        )
+        .unwrap();
+        for (i, l) in LINES.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO capture_records (capture_id, line_no, content_json) VALUES (3, ?, ?)",
+                rusqlite::params![i as i64 + 1, l],
+            )
+            .unwrap();
+        }
+        assert_eq!(import(&home, &config(&[]), &db, false).unwrap().imported, 1);
+        // A's hash is fixed; a retry must not make it the latest.
+        let first = format!("{}\n", LINES[0]);
+        conn.execute(
+            "UPDATE captures SET raw_sha256 = ? WHERE id = 1",
+            [hex::encode(Sha256::digest(first.as_bytes()))],
+        )
+        .unwrap();
+        let r = import(&home, &config(&[]), &db, false).unwrap();
+        assert_eq!((r.imported, r.already_archived), (0, 2));
+        let archive = Archive::open(&home).unwrap();
+        assert_eq!(
+            archive.latest()["/u/.claude/projects/-w-app/s1.jsonl"].size,
+            grown.len() as u64
+        );
+    }
+
+    #[test]
     fn leaves_origins_the_sweep_captured_alone() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path().join("home"));
@@ -317,6 +364,14 @@ mod tests {
             None,
         );
         let r = import(&home, &config(&["/elsewhere"]), &db_nocwd, false).unwrap();
+        assert_eq!((r.imported, r.excluded), (0, 1));
+        let db_blank = dir.path().join("blank.db");
+        legacy_db(
+            &db_blank,
+            &[r#"{"type":"user","cwd":".","message":{"role":"user","content":"hi"}}"#],
+            None,
+        );
+        let r = import(&home, &config(&["/elsewhere"]), &db_blank, false).unwrap();
         assert_eq!((r.imported, r.excluded), (0, 1));
         // With Claude Code turned off nothing is imported.
         let mut off = config(&[]);

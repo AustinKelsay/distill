@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::card::{self, Card, Outcome};
 use crate::home::Home;
-use crate::model::{Event, EventKind, SessionMeta};
+use crate::model::{Event, EventKind, Originals, SessionMeta};
 use crate::normalize;
 use crate::redact::{Findings, redact, redact_value};
 use crate::runlog::{self, RunEntry};
@@ -192,10 +192,10 @@ pub struct BuildSummary {
 /// originals are archived are left out.
 pub fn candidates(home: &Home) -> Result<Vec<(SessionMeta, Option<Card>)>> {
     let metas = normalize::read_index(home)?;
-    let archived = SessionMeta::archived_sources(&metas);
+    let originals = Originals::of(&metas);
     Ok(metas
         .into_iter()
-        .filter(|m| !m.is_duplicate(&archived))
+        .filter(|m| !m.is_duplicate(&originals))
         .map(|m| {
             // A stale card (old prompt, or the session changed since) doesn't count.
             let c = card::load(&normalize::session_dir(home, &m))
