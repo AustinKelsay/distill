@@ -23,6 +23,9 @@ pub struct Cache {
     stalled: HashSet<String>,
     /// Git commands that timed out this run.
     pub timeouts: u64,
+    /// Whether the last [`Cache::outcome`] was cut short by a stalled folder (the session's or
+    /// its repository's).
+    last_stalled: bool,
     /// Test seam: another program and limit than `git` and [`GIT_TIMEOUT`].
     #[cfg(test)]
     program: Option<(std::path::PathBuf, std::time::Duration)>,
@@ -155,10 +158,21 @@ impl Cache {
         // "no such branch"; that is no outcome either.
         let timeouts = self.timeouts;
         let outcome = self.outcome_inner(cwd, branch, started, ended);
-        let stalled = self.timeouts != timeouts
-            || self.stalled_for(cwd)
-            || outcome.as_ref().is_some_and(|o| self.stalled_for(&o.repo));
+        let repo_stalled = self
+            .tops
+            .get(cwd)
+            .cloned()
+            .flatten()
+            .is_some_and(|r| self.stalled_for(&r));
+        let stalled = self.timeouts != timeouts || self.stalled_for(cwd) || repo_stalled;
+        self.last_stalled = stalled;
         (!stalled).then_some(outcome).flatten()
+    }
+
+    /// Whether the last [`Cache::outcome`] couldn't ask git (as opposed to git answering that
+    /// there was nothing).
+    pub fn last_stalled(&self) -> bool {
+        self.last_stalled
     }
 
     fn outcome_inner(
@@ -318,6 +332,7 @@ mod tests {
                 .is_none()
         );
         assert!(cache.stalled_for(&cwd));
+        assert!(cache.last_stalled());
         // Later sessions there, with the repository top cached, get no partial outcome either.
         assert!(
             cache
@@ -329,6 +344,49 @@ mod tests {
                 )
                 .is_none()
         );
+
+        // The session's folder and its repository fall in different stall scopes (a session
+        // run in /tmp inside a repository elsewhere), and the hang is at the repository.
+        let repo_s = "/srv/repo-elsewhere".to_string();
+        let stub4 = dir.path().join("git4");
+        std::fs::write(
+            &stub4,
+            format!("#!/bin/sh\ncase \"$*\" in *--show-toplevel*) echo {repo_s};; *) exec sleep 30;; esac\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub4, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut cache = Cache {
+            program: Some((stub4, std::time::Duration::from_millis(300))),
+            ..Default::default()
+        };
+        let sub_s = "/tmp".to_string();
+        assert_ne!(stall_scope(&sub_s), stall_scope(&repo_s));
+        assert!(
+            cache
+                .outcome(
+                    &sub_s,
+                    Some("main"),
+                    "2026-11-01T00:00:00Z",
+                    "2026-11-01T01:00:00Z"
+                )
+                .is_none()
+        );
+        assert!(cache.last_stalled());
+        assert!(
+            cache
+                .outcome(
+                    &sub_s,
+                    Some("main"),
+                    "2026-11-02T00:00:00Z",
+                    "2026-11-02T01:00:00Z"
+                )
+                .is_none()
+        );
+        assert!(cache.last_stalled());
     }
 
     use super::*;

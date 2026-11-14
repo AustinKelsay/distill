@@ -284,10 +284,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 {
                     let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
                 }
-                entry.git_stalled = meta
-                    .cwd
-                    .as_deref()
-                    .is_some_and(|c| git_cache.stalled_for(c));
+                entry.git_stalled = meta.cwd.is_some() && git_cache.last_stalled();
                 entry.session = Some(meta.session_id);
             }
             // A sizable capture that parses to nothing almost always means the harness changed
@@ -412,7 +409,7 @@ fn normalize_one(
     };
     // When git couldn't be asked this run, the join from an earlier run still stands.
     let git = match (git, &parsed.cwd) {
-        (None, Some(cwd)) if git_cache.stalled_for(cwd) => find(home, rec.source, &session_id)
+        (None, Some(_)) if git_cache.last_stalled() => find(home, rec.source, &session_id)
             .ok()
             .flatten()
             .filter(|m| m.raw.origin == rec.origin)
