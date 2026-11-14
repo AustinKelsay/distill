@@ -75,7 +75,8 @@ pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     }
     Ok(hashes
         .into_iter()
-        .map(|(session_id, h)| Candidate::GooseSession {
+        .map(|(session_id, h)| Candidate::DbSession {
+            kind: crate::source::SourceKind::Goose,
             db: db.to_path_buf(),
             session_id,
             updated: hex::encode(h.finalize())[..16].to_string(),

@@ -38,7 +38,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Pi => Some(1),
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
-        SourceKind::Hermes => Some(1),
+        SourceKind::Hermes => Some(2),
         SourceKind::T3Code => Some(7),
         SourceKind::Cursor => Some(4),
         SourceKind::Goose => Some(2),
@@ -141,6 +141,9 @@ pub struct NormalizeReport {
     /// Of the failures, captures that parsed cleanly to nothing (see [`DRIFT_BYTES`]).
     #[serde(default)]
     pub drift: u64,
+    /// Git commands that hung and were killed; those sessions have no git outcome.
+    #[serde(default)]
+    pub git_timeouts: u64,
     pub sessions: u64,
 }
 
@@ -297,6 +300,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         }
         state.insert(origin.clone(), entry);
     }
+    report.git_timeouts = git_cache.timeouts;
     write_json_pretty(&state_path(home), &state)?;
     report.sessions = rebuild_index(home)? as u64;
 
@@ -305,7 +309,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         "normalize",
         ok,
         format!(
-            "Normalized {} ({} unchanged, {} empty, {} failed, {} without a parser){}",
+            "Normalized {} ({} unchanged, {} empty, {} failed, {} without a parser){}{}",
             crate::util::count(report.normalized, "session"),
             report.skipped,
             report.empty,
@@ -313,6 +317,11 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             report.no_parser,
             if report.drift > 0 {
                 format!("; {} look like format drift", report.drift)
+            } else {
+                String::new()
+            },
+            if report.git_timeouts > 0 {
+                "; git hung and was skipped (on macOS, give distill Full Disk Access)".to_string()
             } else {
                 String::new()
             }
@@ -378,6 +387,15 @@ fn normalize_one(
             ended_at.as_deref().unwrap_or(start),
         ),
         _ => None,
+    };
+    // When git couldn't be asked this run, the join from an earlier run still stands.
+    let git = match (git, &parsed.cwd) {
+        (None, Some(cwd)) if git_cache.stalled_for(cwd) => find(home, rec.source, &session_id)
+            .ok()
+            .flatten()
+            .filter(|m| m.raw.origin == rec.origin)
+            .and_then(|m| m.git),
+        (git, _) => git,
     };
     let meta = SessionMeta {
         source: rec.source,

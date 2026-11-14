@@ -135,6 +135,7 @@ impl SourceKind {
             SourceKind::Hermes => {
                 name.ends_with(".jsonl")
                     || (name.starts_with("session_") && name.ends_with(".json"))
+                    || origin.contains("#session=")
             }
             SourceKind::Cursor => name == "store.db" || cursor_transcript(origin),
             SourceKind::Goose => true,
@@ -177,8 +178,10 @@ pub enum Candidate {
         thread_id: String,
         updated: String,
     },
-    /// One Goose session exported from its database as JSONL rows.
-    GooseSession {
+    /// One session of a harness that keeps them all in one database (Goose, Hermes), exported
+    /// as JSONL rows. `updated` is a hash of what the export holds.
+    DbSession {
+        kind: SourceKind,
         db: PathBuf,
         session_id: String,
         updated: String,
@@ -191,7 +194,7 @@ impl Candidate {
             Candidate::File { kind, .. } | Candidate::Sqlite { kind, .. } => *kind,
             Candidate::OpenCodeSession { .. } => SourceKind::OpenCode,
             Candidate::T3Thread { .. } => SourceKind::T3Code,
-            Candidate::GooseSession { .. } => SourceKind::Goose,
+            Candidate::DbSession { kind, .. } => *kind,
         }
     }
 
@@ -207,7 +210,7 @@ impl Candidate {
             Candidate::T3Thread { db, thread_id, .. } => {
                 format!("{}#thread={}", db.to_string_lossy(), thread_id)
             }
-            Candidate::GooseSession { db, session_id, .. } => {
+            Candidate::DbSession { db, session_id, .. } => {
                 format!("{}#session={}", db.to_string_lossy(), session_id)
             }
         }
@@ -220,7 +223,7 @@ impl Candidate {
                 format!("{size}:{mtime_ns}")
             }
             Candidate::OpenCodeSession { updated, .. } => format!("updated:{updated}"),
-            Candidate::T3Thread { updated, .. } | Candidate::GooseSession { updated, .. } => {
+            Candidate::T3Thread { updated, .. } | Candidate::DbSession { updated, .. } => {
                 format!("updated:{updated}")
             }
         }
@@ -299,6 +302,11 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                 if root.is_file() {
                     out.extend(crate::normalize::goose::list_sessions(root)?);
                 }
+            }
+            // Hermes keeps every session in `state.db` too (more of them than it writes out as
+            // files); it is exported one session at a time, not copied whole.
+            SourceKind::Hermes if root.is_file() => {
+                out.extend(crate::normalize::hermes::list_sessions(root)?);
             }
             _ => {
                 for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
