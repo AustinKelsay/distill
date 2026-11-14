@@ -15,7 +15,7 @@ As of 2026-11-14. Milestones are from `docs/plan.md`. "Built" means implemented 
 ## Known gaps
 
 - Format drift is caught only when a capture parses to nothing: a change that drops some record types while others still parse is not detected.
-- A slugged address at a non-provider domain (`jdoe-example-org`) is not redacted: a rule broad enough to catch it also rewrites ordinary names like `my-github-org`.
+- A slugged address at a non-provider domain (`jdoe-example-org`) is redacted only when the address itself follows it (a contact list); alone it is kept, because a rule broad enough to catch it also rewrites ordinary names like `my-github-org`.
 - Recipe proposals can use only the filter fields recipes have (sources, card quality, outcomes and tags, date, tool calls).
 - Commits are attributed only when the session recorded its branch and that branch still exists (on this machine, 276 of 1,863 sessions in a git repo); other work on the same branch in the window is counted too.
 - First normalize runs git once or twice per session (about 75 s for 2,000 sessions); later runs skip unchanged captures.
