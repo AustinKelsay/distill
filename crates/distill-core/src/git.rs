@@ -169,8 +169,13 @@ impl Cache {
         (!stalled).then_some(outcome).flatten()
     }
 
-    /// Whether the last [`Cache::outcome`] couldn't ask git (as opposed to git answering that
-    /// there was nothing).
+    /// Start a new session: what the previous one's lookup ran into says nothing about it.
+    pub fn begin_session(&mut self) {
+        self.last_stalled = false;
+    }
+
+    /// Whether this session's [`Cache::outcome`] couldn't ask git (as opposed to git answering
+    /// that there was nothing). False when no lookup ran for it.
     pub fn last_stalled(&self) -> bool {
         self.last_stalled
     }
@@ -333,6 +338,9 @@ mod tests {
         );
         assert!(cache.stalled_for(&cwd));
         assert!(cache.last_stalled());
+        // The next session may not look git up at all (a steward session): no stall is carried.
+        cache.begin_session();
+        assert!(!cache.last_stalled());
         // Later sessions there, with the repository top cached, get no partial outcome either.
         assert!(
             cache

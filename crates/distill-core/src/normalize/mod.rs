@@ -358,6 +358,7 @@ fn normalize_one(
     version: u32,
     git_cache: &mut crate::git::Cache,
 ) -> Result<Option<SessionMeta>> {
+    git_cache.begin_session();
     let bytes = archive.read_blob(&rec.sha256)?;
     let mut parsed = parse(rec.source, &rec.origin, &bytes)?;
     // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
