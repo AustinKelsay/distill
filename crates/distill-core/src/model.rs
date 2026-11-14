@@ -159,6 +159,10 @@ pub struct SessionMeta {
     /// The exact sessions a mirror copies (`source/session id`), when the harness named them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mirror_refs: Vec<String>,
+    /// Sources of a mirror's runs that name no original; those count as copied when the
+    /// source has sessions at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_unresolved: Vec<SourceKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitOutcome>,
 }
@@ -176,11 +180,15 @@ impl SessionMeta {
         if !self.mirror {
             return false;
         }
-        if self.mirror_refs.is_empty() {
-            self.mirror_of.iter().all(|k| originals.sources.contains(k))
+        // Runs whose original isn't named count as copied when their source has sessions.
+        // Metas from before originals were recorded name none, so they check every source.
+        let unresolved = if self.mirror_refs.is_empty() && self.mirror_unresolved.is_empty() {
+            &self.mirror_of
         } else {
-            self.mirror_refs.iter().all(|k| originals.keys.contains(k))
-        }
+            &self.mirror_unresolved
+        };
+        self.mirror_refs.iter().all(|k| originals.keys.contains(k))
+            && unresolved.iter().all(|k| originals.sources.contains(k))
     }
 }
 
@@ -217,6 +225,8 @@ pub struct Parsed {
     pub mirror_of: Vec<SourceKind>,
     /// And the originals themselves (`source/session id`), when known.
     pub mirror_refs: Vec<String>,
+    /// Sources of runs whose original isn't known.
+    pub mirror_unresolved: Vec<SourceKind>,
 }
 
 impl Parsed {
@@ -270,5 +280,19 @@ mod tests {
         assert!(!exact.is_duplicate(&codex));
         codex.keys.insert("codex/c-1".into());
         assert!(exact.is_duplicate(&codex));
+
+        // A named original that's missing keeps the mirror, whatever the other runs say.
+        let partial = mirror(
+            r#","mirror_of":["codex"],"mirror_refs":["codex/c-2"],"mirror_unresolved":["codex"]"#,
+        );
+        assert!(!partial.is_duplicate(&codex));
+        codex.keys.insert("codex/c-2".into());
+        assert!(partial.is_duplicate(&codex));
+        // The unresolved run's source must have sessions too.
+        let keys_only = Originals {
+            sources: Default::default(),
+            keys: codex.keys.clone(),
+        };
+        assert!(!partial.is_duplicate(&keys_only));
     }
 }

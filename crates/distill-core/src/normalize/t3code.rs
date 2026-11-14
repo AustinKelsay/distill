@@ -7,6 +7,7 @@
 //! that session: archived and searchable, but left out of datasets and steward cards so nothing
 //! is counted twice. Threads from harnesses with no local store of their own are the only copy.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -34,50 +35,81 @@ fn native(driver: &str) -> Option<SourceKind> {
 /// [`export_native_refs`]), archived beside the thread's own export.
 pub const NATIVE_SUFFIX: &str = "#native";
 
-/// The harness session behind each of a thread's runs (`nativeThreadRef.nativeId`), one JSON
-/// line per run in order. Kept apart from the thread's export so that export keeps growing by
-/// appending; this is what matches a mirror to its original.
-pub fn export_native_refs(db: &Path, thread_id: &str) -> Result<Vec<u8>> {
+/// The harness session behind each run of every thread (`nativeThreadRef.nativeId`), one JSON
+/// line per run in order, keyed by thread. Read in one query each sweep, so a native id that is
+/// filled in later is picked up even when the thread itself didn't change. Kept apart from the
+/// thread's export so that export keeps growing by appending; this is what matches a mirror to
+/// its original.
+pub fn export_native_refs(db: &Path) -> Result<HashMap<String, Vec<u8>>> {
     let conn = open(db)?;
     let mut stmt = conn.prepare(
-        "SELECT pt.driver, pt.payload_json
+        "SELECT r.thread_id, pt.driver, pt.payload_json
          FROM orchestration_v2_projection_runs r
          LEFT JOIN orchestration_v2_projection_provider_threads pt
            ON pt.provider_thread_id = r.provider_thread_id
-         WHERE r.thread_id = ?1
-         ORDER BY r.ordinal, r.run_id",
+         ORDER BY r.thread_id, r.ordinal, r.run_id",
     )?;
-    let rows = stmt.query_map([thread_id], |r| {
+    let rows = stmt.query_map([], |r| {
         Ok((
-            r.get::<_, Option<String>>(0)?,
+            r.get::<_, String>(0)?,
             r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?,
         ))
     })?;
-    let mut out = Vec::new();
+    let mut out: HashMap<String, Vec<u8>> = HashMap::new();
     for row in rows {
-        let (driver, payload) = row?;
+        let (thread_id, driver, payload) = row?;
         let native_id = payload
             .and_then(|p| serde_json::from_str::<Value>(&p).ok())
             .and_then(|p| s(p.get("nativeThreadRef")?, "nativeId"));
-        serde_json::to_writer(&mut out, &json!({"driver": driver, "native_id": native_id}))?;
-        out.push(b'\n');
+        let buf = out.entry(thread_id).or_default();
+        serde_json::to_writer(
+            &mut *buf,
+            &json!({"driver": driver, "native_id": native_id}),
+        )?;
+        buf.push(b'\n');
     }
     Ok(out)
 }
 
-/// The sessions (as `source/session id` keys) a mirror copies, from [`export_native_refs`]
-/// output. Empty unless every run names a native session.
-pub fn native_keys(refs: &[u8]) -> Vec<String> {
-    let mut keys = Vec::new();
+/// Where a thread ran, for privacy exclusions: its worktree, else its project's root.
+pub fn thread_cwd(db: &Path, thread_id: &str) -> Result<Option<String>> {
+    let conn = open(db)?;
+    let (payload, root): (String, Option<String>) = conn.query_row(
+        "SELECT t.payload_json, p.workspace_root
+         FROM orchestration_v2_projection_threads t
+         LEFT JOIN projection_projects p ON p.project_id = t.project_id
+         WHERE t.thread_id = ?1",
+        [thread_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let t: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+    Ok(s(&t, "worktreePath").or(root))
+}
+
+/// What a thread's native references say about the sessions it copies.
+#[derive(Debug, Default, PartialEq)]
+pub struct NativeRefs {
+    /// Named originals, as `source/session id` keys.
+    pub keys: Vec<String>,
+    /// Sources of runs that name no original.
+    pub unresolved: Vec<SourceKind>,
+}
+
+/// Read [`export_native_refs`] output for one thread. Runs on harnesses Distill doesn't read
+/// are skipped: such a thread is not a mirror at all.
+pub fn native_refs(refs: &[u8]) -> NativeRefs {
+    let mut out = NativeRefs::default();
     for line in String::from_utf8_lossy(refs).lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
-            return Vec::new();
+            continue;
         };
-        let (Some(kind), Some(id)) = (
-            s(&v, "driver").as_deref().and_then(native),
-            s(&v, "native_id").filter(|i| !i.is_empty()),
-        ) else {
-            return Vec::new();
+        let Some(kind) = s(&v, "driver").as_deref().and_then(native) else {
+            continue;
+        };
+        let Some(id) = s(&v, "native_id").filter(|i| !i.is_empty()) else {
+            out.unresolved.push(kind);
+            continue;
         };
         // Pi names its session by file (`…/<time>_<session id>.jsonl`).
         let id = match kind {
@@ -89,11 +121,13 @@ pub fn native_keys(refs: &[u8]) -> Vec<String> {
                 .unwrap_or(id),
             _ => id,
         };
-        keys.push(format!("{}/{id}", kind.id()));
+        out.keys.push(format!("{}/{id}", kind.id()));
     }
-    keys.sort();
-    keys.dedup();
-    keys
+    out.keys.sort();
+    out.keys.dedup();
+    out.unresolved.sort_by_key(|k| k.id());
+    out.unresolved.dedup();
+    out
 }
 
 /// How long a thread must be idle before it is captured.
@@ -469,9 +503,66 @@ mod tests {
     fn exports_the_native_session_behind_each_run() {
         let dir = tempfile::tempdir().unwrap();
         let db = fixture(dir.path(), "claudeAgent_2", "claudeAgent");
-        let refs = export_native_refs(&db, "t1").unwrap();
-        assert_eq!(native_keys(&refs), vec!["claude-code/native-1"]);
-        assert!(export_native_refs(&db, "t3").unwrap().is_empty());
+        let refs = export_native_refs(&db).unwrap();
+        assert_eq!(native_refs(&refs["t1"]).keys, vec!["claude-code/native-1"]);
+        assert!(
+            !refs.contains_key("t3"),
+            "a thread with no runs has no references"
+        );
+        assert_eq!(thread_cwd(&db, "t1").unwrap().as_deref(), Some("/work/app"));
+    }
+
+    #[test]
+    fn sweeps_refresh_references_but_not_for_excluded_threads() {
+        use crate::archive::Archive;
+        let dir = tempfile::tempdir().unwrap();
+        let db = fixture(dir.path(), "codex", "codex");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute(
+            "UPDATE orchestration_v2_projection_provider_threads SET payload_json = '{}'",
+            [],
+        )
+        .unwrap();
+        let home = crate::Home::new(dir.path().join("home"));
+        let mut config = crate::Config::default();
+        for s in &mut config.sources {
+            s.enabled = s.kind == SourceKind::T3Code;
+            s.roots = vec![db.clone()];
+        }
+        let refs_of = |home: &crate::Home| {
+            let a = Archive::open(home).unwrap();
+            let r = a
+                .latest()
+                .iter()
+                .find(|(o, _)| o.ends_with(NATIVE_SUFFIX))
+                .map(|(_, r)| r.sha256.clone())
+                .unwrap();
+            native_refs(&a.read_blob(&r).unwrap())
+        };
+        crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(refs_of(&home).unresolved, vec![SourceKind::Codex]);
+
+        // The native id is filled in later; the thread itself doesn't change.
+        conn.execute(
+            r#"UPDATE orchestration_v2_projection_provider_threads
+               SET payload_json = '{"nativeThreadRef":{"nativeId":"n-1"}}'"#,
+            [],
+        )
+        .unwrap();
+        let r = crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(refs_of(&home).keys, vec!["codex/n-1"]);
+        assert!(r.bytes_written > 0, "the reference capture is counted");
+
+        // Excluded after it was captured: nothing new is written for it.
+        conn.execute(
+            r#"UPDATE orchestration_v2_projection_provider_threads
+               SET payload_json = '{"nativeThreadRef":{"nativeId":"n-2"}}'"#,
+            [],
+        )
+        .unwrap();
+        config.privacy.exclude_paths = vec!["/work/app".into()];
+        crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(refs_of(&home).keys, vec!["codex/n-1"]);
     }
 
     #[test]
@@ -482,13 +573,17 @@ mod tests {
 {"driver":"codex","native_id":"01a1-c"}
 "#;
         assert_eq!(
-            native_keys(refs),
+            native_refs(refs).keys,
             vec!["claude-code/c-1", "codex/01a1-c", "pi/01a1-p"]
         );
-        // A run with no native session, or on a harness Distill doesn't read: no exact match.
-        assert!(native_keys(br#"{"driver":"codex","native_id":null}"#).is_empty());
-        assert!(native_keys(br#"{"driver":"cursor","native_id":"x"}"#).is_empty());
-        assert!(native_keys(b"").is_empty());
+        // A run that names no session leaves the others' names in place.
+        let partial = native_refs(
+            br#"{"driver":"claudeAgent","native_id":"c-1"}
+{"driver":"claudeAgent","native_id":null}"#,
+        );
+        assert_eq!(partial.keys, vec!["claude-code/c-1"]);
+        assert_eq!(partial.unresolved, vec![SourceKind::ClaudeCode]);
+        assert_eq!(native_refs(b""), NativeRefs::default());
     }
 
     #[test]

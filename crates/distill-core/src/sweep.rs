@@ -1,9 +1,12 @@
 //! The sweep: copy new and changed session data into the archive. Deterministic, no model.
 
+use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::archive::{Archive, CaptureKind, copy_sqlite};
 use crate::config::Config;
@@ -124,12 +127,14 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
                 continue;
             }
         };
+        // T3 Code's native references, read once per database.
+        let mut refs: HashMap<PathBuf, HashMap<String, Vec<u8>>> = HashMap::new();
         for c in candidates {
             report.seen += 1;
             if let Err(e) = capture_one(home, config, &mut archive, &c, &mut report) {
                 report.errors.push(format!("{}: {e:#}", c.origin()));
             }
-            if let Err(e) = capture_native_refs(&mut archive, &c) {
+            if let Err(e) = capture_native_refs(config, &mut archive, &c, &mut refs, &mut report) {
                 report
                     .errors
                     .push(format!("{}: native refs: {e:#}", c.origin()));
@@ -143,27 +148,48 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
 }
 
 /// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
-/// normalize can tell which originals a mirror copies. Refreshed when the thread changes.
-fn capture_native_refs(archive: &mut Archive, c: &Candidate) -> Result<()> {
+/// normalize can tell which originals a mirror copies. Written whenever they change, which can
+/// happen without the thread changing (a native id filled in later).
+fn capture_native_refs(
+    config: &Config,
+    archive: &mut Archive,
+    c: &Candidate,
+    refs: &mut HashMap<PathBuf, HashMap<String, Vec<u8>>>,
+    report: &mut SweepReport,
+) -> Result<()> {
     let Candidate::T3Thread { db, thread_id, .. } = c else {
         return Ok(());
     };
     let origin = c.origin();
-    // Excluded threads are never archived; neither are their references.
+    // Only for threads in the archive, and only while they still pass the exclusions: a
+    // thread excluded after it was first captured gets nothing new.
     if !archive.latest().contains_key(&origin) {
         return Ok(());
     }
-    let refs_origin = format!("{origin}{}", t3code::NATIVE_SUFFIX);
-    let fingerprint = c.fingerprint();
-    if archive
-        .latest()
-        .get(&refs_origin)
-        .is_some_and(|r| r.fingerprint == fingerprint)
+    if !config.privacy.exclude_paths.is_empty()
+        && t3code::thread_cwd(db, thread_id)?.is_some_and(|cwd| config.is_excluded(&cwd))
     {
         return Ok(());
     }
-    let bytes = t3code::export_native_refs(db, thread_id)?;
-    archive.put(SourceKind::T3Code, &refs_origin, &fingerprint, &bytes[..])?;
+    if !refs.contains_key(db) {
+        refs.insert(db.clone(), t3code::export_native_refs(db)?);
+    }
+    let bytes = refs[db]
+        .get(thread_id.as_str())
+        .cloned()
+        .unwrap_or_default();
+    let refs_origin = format!("{origin}{}", t3code::NATIVE_SUFFIX);
+    let sha = hex::encode(Sha256::digest(&bytes));
+    if archive
+        .latest()
+        .get(&refs_origin)
+        .is_some_and(|r| r.sha256 == sha)
+    {
+        return Ok(());
+    }
+    if let Some(r) = archive.put(SourceKind::T3Code, &refs_origin, "refs", &bytes[..])? {
+        report.bytes_written += r.size;
+    }
     Ok(())
 }
 

@@ -8,7 +8,7 @@
 //! Only captures whose rebuilt bytes match their recorded hash are imported, and only for
 //! origins the archive has never seen; anything the new sweep already captured stays as it is.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -96,7 +96,6 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
 
     let _lock = home.lock_archive()?;
     let mut archive = Archive::open(home)?;
-    let known: HashSet<String> = archive.records().iter().map(|r| r.sha256.clone()).collect();
     let claude_on = config
         .sources
         .iter()
@@ -105,13 +104,27 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         dry_run,
         ..Default::default()
     };
-    // Where each capture falls in the old app's order, so a retry never lays an older
-    // snapshot over a newer one it already imported.
-    let order: HashMap<(String, String), usize> = captures
+    // Where each capture falls in the old app's order, so a retry resumes after the last one
+    // it imported and never lays an older snapshot over a newer one. Imports record the
+    // capture's id; the hash alone can't place a snapshot that repeats (A, B, A).
+    let position: HashMap<i64, usize> = captures
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id, i))
+        .collect();
+    // Imports from before ids were recorded name only the hash: their latest occurrence.
+    let by_sha: HashMap<(String, String), usize> = captures
         .iter()
         .enumerate()
         .filter_map(|(i, c)| Some(((c.path.clone()?, c.sha.clone()), i)))
         .collect();
+    let imported_at = |path: &str, fingerprint: &str| -> Option<usize> {
+        let rest = fingerprint.strip_prefix(FINGERPRINT_PREFIX)?;
+        match rest.split_once(':') {
+            Some((id, _)) => position.get(&id.parse().ok()?).copied(),
+            None => by_sha.get(&(path.to_string(), rest.to_string())).copied(),
+        }
+    };
     for (i, c) in captures.iter().enumerate() {
         report.seen += 1;
         // Codex and OpenCode captures were kept as summaries of files the sweep reads
@@ -130,10 +143,9 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         let latest = archive.latest().get(path);
         let swept = latest.is_some_and(|r| !r.fingerprint.starts_with(FINGERPRINT_PREFIX));
         let behind = latest
-            .and_then(|r| r.fingerprint.strip_prefix(FINGERPRINT_PREFIX))
-            .and_then(|sha| order.get(&(path.to_string(), sha.to_string())))
-            .is_some_and(|&newest| newest >= i);
-        if known.contains(&c.sha) || swept || behind {
+            .and_then(|r| imported_at(path, &r.fingerprint))
+            .is_some_and(|newest| newest >= i);
+        if swept || behind {
             report.already_archived += 1;
             continue;
         }
@@ -149,7 +161,7 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         report.imported += 1;
         report.bytes += bytes.len() as u64;
         if !dry_run {
-            let fingerprint = format!("{FINGERPRINT_PREFIX}{}", c.sha);
+            let fingerprint = format!("{FINGERPRINT_PREFIX}{}:{}", c.id, c.sha);
             archive.put(SourceKind::ClaudeCode, path, &fingerprint, &bytes[..])?;
         }
     }
@@ -322,6 +334,42 @@ mod tests {
             archive.latest()["/u/.claude/projects/-w-app/s1.jsonl"].size,
             grown.len() as u64
         );
+    }
+
+    #[test]
+    fn a_snapshot_that_repeats_keeps_the_history_between() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let db = dir.path().join("legacy.db");
+        // A (one line), then B (two lines), then A again: the file was rewritten back.
+        legacy_db(&db, &LINES[..1], None);
+        let a = format!("{}\n", LINES[0]);
+        let b: String = LINES.iter().map(|l| format!("{l}\n")).collect();
+        let conn = Connection::open(&db).unwrap();
+        for (id, day, lines, body) in [(3, "02", LINES, &b), (4, "03", &LINES[..1], &a)] {
+            conn.execute(
+                "INSERT INTO captures VALUES (?1, 1, '/u/.claude/projects/-w-app/s1.jsonl', ?2, ?3)",
+                rusqlite::params![id, hex::encode(Sha256::digest(body.as_bytes())), format!("2026-03-{day}")],
+            )
+            .unwrap();
+            for (i, l) in lines.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO capture_records (capture_id, line_no, content_json) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, i as i64 + 1, l],
+                )
+                .unwrap();
+            }
+        }
+        let r = import(&home, &config(&[]), &db, false).unwrap();
+        assert_eq!(r.imported, 3);
+        let archive = Archive::open(&home).unwrap();
+        // B's bytes are kept, and the latest is A again, as in the old app.
+        assert!(archive.records().iter().any(|r| r.size == b.len() as u64));
+        let latest = &archive.latest()["/u/.claude/projects/-w-app/s1.jsonl"];
+        assert_eq!(latest.size, a.len() as u64);
+        drop(archive);
+        let again = import(&home, &config(&[]), &db, false).unwrap();
+        assert_eq!((again.imported, again.already_archived), (0, 3));
     }
 
     #[test]

@@ -38,7 +38,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(5),
+        SourceKind::T3Code => Some(6),
         SourceKind::Cursor => Some(2),
     }
 }
@@ -326,15 +326,20 @@ fn normalize_one(
 ) -> Result<Option<SessionMeta>> {
     let bytes = archive.read_blob(&rec.sha256)?;
     let mut parsed = parse(rec.source, &rec.origin, &bytes)?;
-    // A T3 mirror's originals are named in a capture beside it.
-    if rec.source == SourceKind::T3Code
-        && parsed.is_mirror()
-        && let Some(refs) =
-            archive
-                .latest()
-                .get(&format!("{}{}", rec.origin, t3code::NATIVE_SUFFIX))
-    {
-        parsed.mirror_refs = t3code::native_keys(&archive.read_blob(&refs.sha256)?);
+    // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
+    // threads captured before references were kept) fall back to their sources.
+    if rec.source == SourceKind::T3Code && parsed.is_mirror() {
+        let refs_origin = format!("{}{}", rec.origin, t3code::NATIVE_SUFFIX);
+        let refs = match archive.latest().get(&refs_origin) {
+            Some(r) => t3code::native_refs(&archive.read_blob(&r.sha256)?),
+            None => Default::default(),
+        };
+        parsed.mirror_unresolved = if refs.keys.is_empty() && refs.unresolved.is_empty() {
+            parsed.mirror_of.clone()
+        } else {
+            refs.unresolved
+        };
+        parsed.mirror_refs = refs.keys;
     }
     if parsed.events.is_empty() {
         return Ok(None);
@@ -393,6 +398,7 @@ fn normalize_one(
         mirror: !parsed.mirror_of.is_empty(),
         mirror_of: parsed.mirror_of,
         mirror_refs: parsed.mirror_refs,
+        mirror_unresolved: parsed.mirror_unresolved,
         git,
     };
     let dir = session_dir(home, &meta);
