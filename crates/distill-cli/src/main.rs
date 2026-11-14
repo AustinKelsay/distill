@@ -142,6 +142,8 @@ enum StewardCmd {
 enum RecipeCmd {
     /// Recipes, and the steward's pending proposals
     List,
+    /// The steward's pending proposals
+    Proposals,
     /// Ask the steward to propose new recipes
     Propose,
     /// Turn a proposal into a recipe
@@ -354,7 +356,14 @@ fn run(cli: Cli) -> Result<()> {
                 if r.imported > 0 && !dry_run {
                     println!("Run `distill normalize` (or wait for the next tick) to index them.");
                 }
-            })
+            })?;
+            if !r.mismatched.is_empty() {
+                bail!(
+                    "{} legacy captures failed hash verification and were not imported",
+                    r.mismatched.len()
+                );
+            }
+            Ok(())
         }
         Cmd::Normalize { force } => {
             let r = normalize::normalize(&home, force)?;
@@ -525,6 +534,17 @@ fn run(cli: Cli) -> Result<()> {
                     }
                 })
             }
+            RecipeCmd::Proposals => {
+                let proposals = propose::list(&home)?;
+                out(json, &proposals, || {
+                    for p in &proposals {
+                        println!(
+                            "{}  {} sessions  {}",
+                            p.name, p.matches, p.recipe.description
+                        );
+                    }
+                })
+            }
             RecipeCmd::Propose => {
                 let r = propose::propose(&home, &config()?)?;
                 out(json, &r, || {
@@ -545,13 +565,15 @@ fn run(cli: Cli) -> Result<()> {
             }
             RecipeCmd::Accept { name } => {
                 propose::accept(&home, &name)?;
-                println!("{name} is now a recipe; the next tick builds it.");
-                Ok(())
+                out(json, &serde_json::json!({"accepted": name}), || {
+                    println!("{name} is now a recipe; the next tick builds it.")
+                })
             }
             RecipeCmd::Dismiss { name } => {
                 propose::dismiss(&home, &name)?;
-                println!("Dropped proposal {name}.");
-                Ok(())
+                out(json, &serde_json::json!({"dismissed": name}), || {
+                    println!("Dropped proposal {name}.")
+                })
             }
             RecipeCmd::New { name } => {
                 let path = export::recipe_path(&home, &name);

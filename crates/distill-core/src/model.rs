@@ -187,16 +187,38 @@ impl SessionMeta {
         } else {
             &self.mirror_unresolved
         };
-        self.mirror_refs.iter().all(|k| originals.keys.contains(k))
+        // A named original must also reach (nearly) as far as the mirror: T3 can carry a
+        // native session on after its source stopped being captured.
+        let covers = |k: &String| {
+            originals.keys.get(k).is_some_and(|ended| {
+                match (
+                    ended.as_deref().and_then(ts),
+                    self.ended_at.as_deref().and_then(ts),
+                ) {
+                    (Some(orig), Some(mirror)) => orig + COVER_SLACK >= mirror,
+                    _ => true,
+                }
+            })
+        };
+        self.mirror_refs.iter().all(covers)
             && unresolved.iter().all(|k| originals.sources.contains(k))
     }
+}
+
+/// How much later a mirror may end than its original and still count as a copy of it: T3
+/// records a turn a little after the harness does.
+const COVER_SLACK: chrono::Duration = chrono::Duration::minutes(15);
+
+fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(s).ok()
 }
 
 /// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`].
 #[derive(Debug, Default)]
 pub struct Originals {
     pub sources: std::collections::HashSet<SourceKind>,
-    pub keys: std::collections::HashSet<String>,
+    /// Each original's key, with when it ended.
+    pub keys: std::collections::HashMap<String, Option<String>>,
 }
 
 impl Originals {
@@ -204,7 +226,7 @@ impl Originals {
         let mut o = Originals::default();
         for m in metas.iter().filter(|m| !m.mirror) {
             o.sources.insert(m.source);
-            o.keys.insert(m.key());
+            o.keys.insert(m.key(), m.ended_at.clone());
         }
         o
     }
@@ -278,7 +300,7 @@ mod tests {
         // Named originals must each be present; another session of the source isn't enough.
         let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
         assert!(!exact.is_duplicate(&codex));
-        codex.keys.insert("codex/c-1".into());
+        codex.keys.insert("codex/c-1".into(), None);
         assert!(exact.is_duplicate(&codex));
 
         // A named original that's missing keeps the mirror, whatever the other runs say.
@@ -286,7 +308,7 @@ mod tests {
             r#","mirror_of":["codex"],"mirror_refs":["codex/c-2"],"mirror_unresolved":["codex"]"#,
         );
         assert!(!partial.is_duplicate(&codex));
-        codex.keys.insert("codex/c-2".into());
+        codex.keys.insert("codex/c-2".into(), None);
         assert!(partial.is_duplicate(&codex));
         // The unresolved run's source must have sessions too.
         let keys_only = Originals {
@@ -294,5 +316,17 @@ mod tests {
             keys: codex.keys.clone(),
         };
         assert!(!partial.is_duplicate(&keys_only));
+
+        // T3 carried the session on after the original was last captured: keep the mirror.
+        let mut later = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
+        later.ended_at = Some("2026-11-01T12:00:00Z".into());
+        codex
+            .keys
+            .insert("codex/c-1".into(), Some("2026-11-01T11:00:00Z".into()));
+        assert!(!later.is_duplicate(&codex));
+        codex
+            .keys
+            .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
+        assert!(later.is_duplicate(&codex));
     }
 }

@@ -118,12 +118,21 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         .enumerate()
         .filter_map(|(i, c)| Some(((c.path.clone()?, c.sha.clone()), i)))
         .collect();
+    // Capture ids mean something only within one database, so imports name theirs.
+    let canonical = db.canonicalize().unwrap_or_else(|_| db.to_path_buf());
+    let tag = hex::encode(Sha256::digest(canonical.to_string_lossy().as_bytes()))[..12].to_string();
+    // Where the origin's latest import falls in this database's order. One this database
+    // can't place (made from another database) counts as past the end: that origin is done.
     let imported_at = |path: &str, fingerprint: &str| -> Option<usize> {
         let rest = fingerprint.strip_prefix(FINGERPRINT_PREFIX)?;
-        match rest.split_once(':') {
-            Some((id, _)) => position.get(&id.parse().ok()?).copied(),
-            None => by_sha.get(&(path.to_string(), rest.to_string())).copied(),
-        }
+        let found = match rest.splitn(3, ':').collect::<Vec<_>>()[..] {
+            [from, id, _] if from == tag => {
+                id.parse().ok().and_then(|id| position.get(&id).copied())
+            }
+            [_, _, _] => None,
+            _ => by_sha.get(&(path.to_string(), rest.to_string())).copied(),
+        };
+        Some(found.unwrap_or(usize::MAX))
     };
     for (i, c) in captures.iter().enumerate() {
         report.seen += 1;
@@ -161,7 +170,7 @@ pub fn import(home: &Home, config: &Config, db: &Path, dry_run: bool) -> Result<
         report.imported += 1;
         report.bytes += bytes.len() as u64;
         if !dry_run {
-            let fingerprint = format!("{FINGERPRINT_PREFIX}{}:{}", c.id, c.sha);
+            let fingerprint = format!("{FINGERPRINT_PREFIX}{tag}:{}:{}", c.id, c.sha);
             archive.put(SourceKind::ClaudeCode, path, &fingerprint, &bytes[..])?;
         }
     }
@@ -370,6 +379,24 @@ mod tests {
         drop(archive);
         let again = import(&home, &config(&[]), &db, false).unwrap();
         assert_eq!((again.imported, again.already_archived), (0, 3));
+    }
+
+    #[test]
+    fn another_legacy_database_never_rolls_an_import_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let x = dir.path().join("x.db");
+        legacy_db(&x, LINES, None);
+        assert_eq!(import(&home, &config(&[]), &x, false).unwrap().imported, 1);
+        // Another database with an older snapshot of the same session, under another id.
+        let y = dir.path().join("y.db");
+        legacy_db(&y, &LINES[..1], None);
+        Connection::open(&y)
+            .unwrap()
+            .execute_batch("UPDATE captures SET id = 7 WHERE id = 1; UPDATE capture_records SET capture_id = 7;")
+            .unwrap();
+        let r = import(&home, &config(&[]), &y, false).unwrap();
+        assert_eq!((r.imported, r.already_archived), (0, 1));
     }
 
     #[test]

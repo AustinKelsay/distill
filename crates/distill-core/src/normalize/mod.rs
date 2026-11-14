@@ -39,7 +39,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
         SourceKind::T3Code => Some(6),
-        SourceKind::Cursor => Some(2),
+        SourceKind::Cursor => Some(3),
     }
 }
 
@@ -143,6 +143,9 @@ pub struct NormalizeReport {
 
 pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     home.ensure()?;
+    // Two runs at once (the timer and a manual run) would each read the state, rewrite
+    // sessions from it and save their own copy, losing the other's work.
+    let _lock = home.lock("normalize")?;
     let archive = Archive::open(home)?;
     let mut state = load_state(home);
     let mut report = NormalizeReport::default();

@@ -90,12 +90,14 @@ fn valid_name(name: &str) -> bool {
 
 /// Pending proposals, by name.
 pub fn list(home: &Home) -> Result<Vec<Proposal>> {
-    let Ok(rd) = fs::read_dir(proposals_dir(home)) else {
-        return Ok(Vec::new());
+    let rd = match fs::read_dir(proposals_dir(home)) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).context("read recipes/proposed"),
     };
     let mut out = Vec::new();
-    for e in rd.filter_map(Result::ok) {
-        let path = e.path();
+    for e in rd {
+        let path = e.context("read recipes/proposed")?.path();
         let Some(name) = path
             .file_name()
             .and_then(|n| n.to_str())

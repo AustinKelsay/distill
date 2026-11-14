@@ -102,7 +102,9 @@ fn parse_store(origin: &str, conn: &Connection) -> Result<Parsed> {
         .and_then(Value::as_i64)
         .map(millis_to_rfc3339);
     for id in message_ids {
-        let Some(bytes) = blob(&id)? else { continue };
+        // A message the root lists but the store lacks would leave a hole in the conversation
+        // (an answer with no prompt); better to fail than to keep it.
+        let bytes = blob(&id)?.with_context(|| format!("message blob {id} missing"))?;
         // Field 1 also lists non-message blobs in some versions; only JSON messages count.
         let Ok(m) = serde_json::from_slice::<Value>(&bytes) else {
             continue;
@@ -202,6 +204,14 @@ fn push_user_text(out: &mut Parsed, text: &str, at: &mut Option<String>) {
     }
     let queries: Vec<&str> = all_between(text, "<user_query>", "</user_query>");
     if !queries.is_empty() {
+        // Context sent in the same text as the query (a reminder, the time) stays, as system.
+        let mut rest = text.to_string();
+        for q in &queries {
+            rest = rest.replacen(&format!("<user_query>{q}</user_query>"), "", 1);
+        }
+        if !rest.trim().is_empty() {
+            out.push(Event::text(EventKind::System, rest.trim()).at(at.clone()));
+        }
         let q = queries
             .iter()
             .map(|q| q.trim())
@@ -408,6 +418,7 @@ mod tests {
                 EventKind::System,
                 EventKind::System,
                 EventKind::System,
+                EventKind::System,
                 EventKind::User,
                 EventKind::Reasoning,
                 EventKind::Assistant,
@@ -415,16 +426,36 @@ mod tests {
                 EventKind::ToolResult,
             ]
         );
-        assert_eq!(p.events[3].text.as_deref(), Some("fix the build"));
+        // The timestamp sent with the query stays, as context.
+        assert!(
+            p.events[3]
+                .text
+                .as_deref()
+                .unwrap()
+                .starts_with("<timestamp>")
+        );
+        assert_eq!(p.events[4].text.as_deref(), Some("fix the build"));
         // The chat's creation time dates events until a turn's own timestamp.
         assert_eq!(
             p.events[0].ts.as_deref(),
             Some(millis_to_rfc3339(1783328040000).as_str())
         );
-        assert_eq!(p.events[3].ts.as_deref(), Some("2026-07-06T13:54:00.000Z"));
-        assert_eq!(p.events[6].input.as_ref().unwrap()["command"], "make");
-        assert_eq!(p.events[7].text.as_deref(), Some("ok"));
-        assert_eq!(p.events[7].call_id.as_deref(), Some("c1"));
+        assert_eq!(p.events[4].ts.as_deref(), Some("2026-07-06T13:54:00.000Z"));
+        assert_eq!(p.events[7].input.as_ref().unwrap()["command"], "make");
+        assert_eq!(p.events[8].text.as_deref(), Some("ok"));
+        assert_eq!(p.events[8].call_id.as_deref(), Some("c1"));
+
+        // A message the root lists but the store lacks fails the parse.
+        let conn = Connection::open(&db).unwrap();
+        conn.execute("DELETE FROM blobs WHERE id = ?1", [hex::encode([3u8; 32])])
+            .unwrap();
+        drop(conn);
+        let err = parse(
+            "/u/.cursor/chats/h/a-1/store.db",
+            &std::fs::read(&db).unwrap(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("missing"), "{err:#}");
     }
 
     #[test]

@@ -37,7 +37,7 @@ fn rules() -> &'static [Rule] {
             // (`my-github-org`) is far more often a name than an address.
             r(
                 "email_slug",
-                r"\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)\b",
+                r"(?i)\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)\b",
             ),
             r("tailnet_host", r"(?i)\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
             // A tailnet name on its own (`tail0c0ffe`), left after output was cut short
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn catches_slugged_addresses_and_cut_off_tailnet_names() {
         let mut f = Findings::default();
-        let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, j-doe-outlook-com; \
+        let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, J-Doe-OUTLOOK-com; \
                     ssh -L 1:2 me@box-a1b2.tail0c0f\nshot-gateway-tail0c0ffe-ts-net.png; \
                     on tailnet `tailbe9c07`, tailed and tailing stay; \
                     keep 2026-01-01-help-me, alice-drink-me, sys-subsystem-net, detail-view, \
@@ -250,7 +250,7 @@ mod tests {
         for leaked in [
             "jane-roe",
             "user123",
-            "j-doe",
+            "J-Doe",
             "tail0c0f",
             "a1b2",
             "tailbe9c07",
