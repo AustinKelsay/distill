@@ -383,6 +383,39 @@ mod tests {
     }
 
     #[test]
+    fn old_bytes_returning_to_an_old_codex_file_do_not_outrank_newer_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let session = |turns: usize| {
+            let mut s = String::from(
+                r#"{"timestamp":"2026-11-01T00:00:00Z","type":"session_meta","payload":{"id":"c1","cwd":"/w"}}"#,
+            );
+            for i in 0..turns {
+                s.push_str(&format!("\n{{\"timestamp\":\"2026-11-01T00:00:0{i}Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"t{i}\"}}]}}}}"));
+            }
+            s
+        };
+        let (a, b) = ("/s/rollout-c1.jsonl", "/arch/rollout-c1.jsonl.zst");
+        let zst = |t: usize| zstd::stream::encode_all(session(t).as_bytes(), 3).unwrap();
+        let mut ar = crate::archive::Archive::open(&home).unwrap();
+        ar.put(SourceKind::Codex, a, "1", session(1).as_bytes())
+            .unwrap(); // A: X
+        ar.put(SourceKind::Codex, a, "2", session(2).as_bytes())
+            .unwrap(); // A: Y
+        ar.put(SourceKind::Codex, b, "3", &zst(3)[..]).unwrap(); //           B: Z (newest content)
+        ar.put(SourceKind::Codex, a, "4", session(1).as_bytes())
+            .unwrap(); // A: X again
+        for force in [false, true] {
+            crate::normalize::normalize(&home, force).unwrap();
+            let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
+                .unwrap()
+                .unwrap();
+            assert_eq!(meta.counts.user, 3, "force={force}");
+        }
+    }
+
+    #[test]
     fn distinct_files_with_the_same_name_stay_separate_outside_codex() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();

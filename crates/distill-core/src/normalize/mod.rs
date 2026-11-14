@@ -37,7 +37,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(1),
+        SourceKind::T3Code => Some(2),
         SourceKind::Cursor => None,
     }
 }
@@ -136,19 +136,20 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     // incremental runs and full rebuilds agree.
     // Ranked by when each origin's current bytes first entered the manifest: append order,
     // not timestamps (one-second resolution) and not fingerprint refreshes (a touched file).
-    let mut arrival: std::collections::HashMap<&str, (usize, &str)> = Default::default();
+    let mut first_seen: std::collections::HashMap<(&str, &str), usize> = Default::default();
     for (idx, r) in archive.records().iter().enumerate() {
-        let e = arrival
-            .entry(r.origin.as_str())
-            .or_insert((idx, r.sha256.as_str()));
-        if e.1 != r.sha256 {
-            *e = (idx, r.sha256.as_str());
-        }
+        first_seen
+            .entry((r.origin.as_str(), r.sha256.as_str()))
+            .or_insert(idx);
     }
     let mut groups: std::collections::HashMap<String, Vec<(usize, &str)>> = Default::default();
     for (origin, rec) in archive.latest() {
         if rec.source == SourceKind::Codex && rec.source.is_primary(origin) {
-            let at = arrival.get(origin.as_str()).map_or(0, |a| a.0);
+            // Old bytes coming back rank where they first arrived, not where they returned.
+            let at = first_seen
+                .get(&(origin.as_str(), rec.sha256.as_str()))
+                .copied()
+                .unwrap_or(0);
             groups
                 .entry(codex_file(origin))
                 .or_default()
