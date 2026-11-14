@@ -41,7 +41,7 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Hermes => Some(1),
         SourceKind::T3Code => Some(7),
         SourceKind::Cursor => Some(4),
-        SourceKind::Goose => Some(1),
+        SourceKind::Goose => Some(2),
     }
 }
 

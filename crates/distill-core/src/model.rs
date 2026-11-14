@@ -190,19 +190,23 @@ impl SessionMeta {
             &self.mirror_unresolved
         };
         // A named original must also reach (nearly) as far as the mirror: T3 can carry a
-        // native session on after its source stopped being captured. Cursor's times mark only
-        // when each turn began, which a T3 thread's (when each item finished) can't be compared
-        // with; a Cursor transcript keeps the same turn times as its store, so it is compared.
+        // native session on after its source stopped being captured. Cursor dates a turn by
+        // when it began and T3 by when each item finished, so a T3 thread can end a whole turn
+        // after its Cursor store's last time; that pair gets a turn's worth of slack.
+        let slack = |k: &String| {
+            if k.starts_with("cursor/") && self.source == SourceKind::T3Code {
+                CURSOR_TURN_SLACK
+            } else {
+                COVER_SLACK
+            }
+        };
         let covers = |k: &String| {
             originals.keys.get(k).is_some_and(|ended| {
-                if k.starts_with("cursor/") && self.source == SourceKind::T3Code {
-                    return true;
-                }
                 match (
                     ended.as_deref().and_then(ts),
                     self.ended_at.as_deref().and_then(ts),
                 ) {
-                    (Some(orig), Some(mirror)) => orig + COVER_SLACK >= mirror,
+                    (Some(orig), Some(mirror)) => orig + slack(k) >= mirror,
                     _ => true,
                 }
             })
@@ -215,6 +219,11 @@ impl SessionMeta {
 /// How much later a mirror may end than its original and still count as a copy of it: T3
 /// records a turn a little after the harness does.
 const COVER_SLACK: chrono::Duration = chrono::Duration::minutes(15);
+
+/// The same for a T3 thread against a Cursor store, whose times mark when each turn began. A
+/// store is captured hourly while its agent runs, so a thread ending later than this ran on
+/// after the store stopped being captured.
+const CURSOR_TURN_SLACK: chrono::Duration = chrono::Duration::hours(2);
 
 fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok()
@@ -370,5 +379,12 @@ mod tests {
         let mut ahead = transcript.clone();
         ahead.ended_at = Some("2026-11-01T11:00:00Z".into());
         assert!(!ahead.is_duplicate(&o));
+        // A T3 thread may end a long turn after the store's last turn began, but not days.
+        let mut long_turn = thread.clone();
+        long_turn.ended_at = Some("2026-11-01T11:30:00Z".into());
+        assert!(long_turn.is_duplicate(&o));
+        let mut continued = thread.clone();
+        continued.ended_at = Some("2026-11-03T09:00:00Z".into());
+        assert!(!continued.is_duplicate(&o));
     }
 }

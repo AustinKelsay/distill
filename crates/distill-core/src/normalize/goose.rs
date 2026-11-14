@@ -33,23 +33,33 @@ fn open(db: &Path) -> Result<Connection> {
 pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     let conn = open(db)?;
     let mut hashes: std::collections::BTreeMap<String, Sha256> = Default::default();
+    // Each value is hashed with whether it is NULL and its length, as the export tells them
+    // apart.
+    fn field(h: &mut Sha256, v: Option<String>) {
+        match v {
+            None => h.update([0]),
+            Some(s) => {
+                h.update([1]);
+                h.update((s.len() as u64).to_le_bytes());
+                h.update(s.as_bytes());
+            }
+        }
+    }
     let mut stmt = conn.prepare(
-        "SELECT id, COALESCE(working_dir, ''), COALESCE(created_at, ''), session_type,
-                COALESCE(provider_name, ''), COALESCE(model_config_json, ''),
-                COALESCE(parent_session_id, '')
+        "SELECT id, working_dir, created_at, session_type, provider_name, model_config_json,
+                parent_session_id
          FROM sessions",
     )?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let mut h = Sha256::new();
         for i in 1..7 {
-            h.update(r.get::<_, String>(i)?.as_bytes());
-            h.update([0]);
+            field(&mut h, r.get::<_, Option<String>>(i)?);
         }
         hashes.insert(r.get(0)?, h);
     }
     let mut stmt = conn.prepare(
-        "SELECT session_id, id, COALESCE(message_id, ''), role, content_json, created_timestamp
+        "SELECT session_id, id, message_id, role, content_json, created_timestamp
          FROM messages ORDER BY session_id, created_timestamp, id",
     )?;
     let mut rows = stmt.query([])?;
@@ -59,8 +69,7 @@ pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
         };
         h.update(r.get::<_, i64>(1)?.to_le_bytes());
         for i in 2..5 {
-            h.update(r.get::<_, String>(i)?.as_bytes());
-            h.update([0]);
+            field(h, r.get::<_, Option<String>>(i)?);
         }
         h.update(r.get::<_, i64>(5)?.to_le_bytes());
     }
@@ -333,6 +342,13 @@ mod tests {
                 r#"UPDATE messages SET content_json = '[{"type":"text","text":"run all tests"}]' WHERE message_id = 'a'"#,
                 [],
             )
+            .unwrap();
+        assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
+        // NULL and an empty value are different exports, so different fingerprints.
+        let before = list_sessions(&db).unwrap()[0].fingerprint();
+        Connection::open(&db)
+            .unwrap()
+            .execute("UPDATE sessions SET parent_session_id = ''", [])
             .unwrap();
         assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
         let sessions = list_sessions(&db).unwrap();
