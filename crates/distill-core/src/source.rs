@@ -18,16 +18,26 @@ pub enum SourceKind {
     Droid,
     Pi,
     Cursor,
+    Grok,
+    Antigravity,
+    Hermes,
+    /// T3 Code's own thread database: which harness, model and worktree each thread used.
+    #[serde(rename = "t3code")]
+    T3Code,
 }
 
 impl SourceKind {
-    pub const ALL: [SourceKind; 6] = [
+    pub const ALL: [SourceKind; 10] = [
         SourceKind::ClaudeCode,
         SourceKind::Codex,
         SourceKind::OpenCode,
         SourceKind::Droid,
         SourceKind::Pi,
         SourceKind::Cursor,
+        SourceKind::Grok,
+        SourceKind::Antigravity,
+        SourceKind::Hermes,
+        SourceKind::T3Code,
     ];
 
     pub fn id(self) -> &'static str {
@@ -38,6 +48,10 @@ impl SourceKind {
             SourceKind::Droid => "droid",
             SourceKind::Pi => "pi",
             SourceKind::Cursor => "cursor",
+            SourceKind::Grok => "grok",
+            SourceKind::Antigravity => "antigravity",
+            SourceKind::Hermes => "hermes",
+            SourceKind::T3Code => "t3code",
         }
     }
 
@@ -49,6 +63,10 @@ impl SourceKind {
             SourceKind::Droid => "Droid",
             SourceKind::Pi => "Pi",
             SourceKind::Cursor => "Cursor",
+            SourceKind::Grok => "Grok",
+            SourceKind::Antigravity => "Antigravity",
+            SourceKind::Hermes => "Hermes",
+            SourceKind::T3Code => "T3 Code",
         }
     }
 
@@ -78,6 +96,34 @@ impl SourceKind {
             SourceKind::Droid => vec![home.join(".factory/sessions")],
             SourceKind::Pi => vec![home.join(".pi/agent/sessions")],
             SourceKind::Cursor => vec![home.join(".cursor/chats")],
+            SourceKind::Grok => vec![home.join(".grok/sessions")],
+            SourceKind::Antigravity => vec![
+                home.join(".t3/userdata/providers/antigravity"),
+                home.join(".gemini/antigravity"),
+            ],
+            SourceKind::Hermes => {
+                vec![home.join(".hermes/sessions"), home.join(".hermes/state.db")]
+            }
+            SourceKind::T3Code => vec![home.join(".t3/userdata/statev2.sqlite")],
+        }
+    }
+
+    /// Whether a captured file is a session this source's parser reads. Everything else under
+    /// a source's roots (tool-result files, attachments, settings, databases) is archived as a
+    /// sidecar so nothing is lost, but not parsed on its own.
+    pub fn is_primary(self, origin: &str) -> bool {
+        let name = origin.rsplit('/').next().unwrap_or(origin);
+        match self {
+            SourceKind::ClaudeCode | SourceKind::Droid | SourceKind::Pi => name.ends_with(".jsonl"),
+            SourceKind::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
+            SourceKind::OpenCode | SourceKind::T3Code => true,
+            SourceKind::Grok => name == "chat_history.jsonl",
+            SourceKind::Antigravity => name == "transcript_full.jsonl",
+            SourceKind::Hermes => {
+                name.ends_with(".jsonl")
+                    || (name.starts_with("session_") && name.ends_with(".json"))
+            }
+            SourceKind::Cursor => false,
         }
     }
 }
@@ -111,6 +157,12 @@ pub enum Candidate {
         session_id: String,
         updated: i64,
     },
+    /// One T3 Code thread exported from its database as JSONL rows.
+    T3Thread {
+        db: PathBuf,
+        thread_id: String,
+        updated: String,
+    },
 }
 
 impl Candidate {
@@ -118,6 +170,7 @@ impl Candidate {
         match self {
             Candidate::File { kind, .. } | Candidate::Sqlite { kind, .. } => *kind,
             Candidate::OpenCodeSession { .. } => SourceKind::OpenCode,
+            Candidate::T3Thread { .. } => SourceKind::T3Code,
         }
     }
 
@@ -130,6 +183,9 @@ impl Candidate {
             Candidate::OpenCodeSession { db, session_id, .. } => {
                 format!("{}#session={}", db.to_string_lossy(), session_id)
             }
+            Candidate::T3Thread { db, thread_id, .. } => {
+                format!("{}#thread={}", db.to_string_lossy(), thread_id)
+            }
         }
     }
 
@@ -140,6 +196,7 @@ impl Candidate {
                 format!("{size}:{mtime_ns}")
             }
             Candidate::OpenCodeSession { updated, .. } => format!("updated:{updated}"),
+            Candidate::T3Thread { updated, .. } => format!("updated:{updated}"),
         }
     }
 }
@@ -207,6 +264,11 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                     out.extend(crate::normalize::opencode::list_sessions(&db)?);
                 }
             }
+            SourceKind::T3Code => {
+                if root.is_file() {
+                    out.extend(crate::normalize::t3code::list_threads(root)?);
+                }
+            }
             _ => {
                 for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
                     if !entry.file_type().is_file() {
@@ -216,19 +278,30 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let Ok(meta) = entry.metadata() else { continue };
                     let (size, mtime_ns) = (meta.len(), mtime_ns(&meta));
-                    if kind == SourceKind::Cursor {
-                        if name == "store.db" {
-                            // Committed writes can land only in the WAL, so it is part of the
-                            // change signal.
-                            let wal = fs::metadata(path.with_file_name("store.db-wal")).ok();
-                            out.push(Candidate::Sqlite {
-                                kind,
-                                path: path.to_path_buf(),
-                                size: size + wal.as_ref().map_or(0, |m| m.len()),
-                                mtime_ns: mtime_ns.max(wal.as_ref().map_or(0, self::mtime_ns)),
-                            });
-                        }
-                    } else if name.ends_with(".jsonl") {
+                    // SQLite's journal files are read through the database itself; lock files
+                    // are noise.
+                    if name.ends_with("-wal")
+                        || name.ends_with("-shm")
+                        || name.ends_with("-journal")
+                        || name.ends_with(".lock")
+                        || name == ".DS_Store"
+                    {
+                        continue;
+                    }
+                    let is_sqlite = [".db", ".sqlite", ".sqlite3"]
+                        .iter()
+                        .any(|e| name.ends_with(e));
+                    if is_sqlite {
+                        // Committed writes can land only in the WAL, so it is part of the
+                        // change signal.
+                        let wal = fs::metadata(format!("{}-wal", path.display())).ok();
+                        out.push(Candidate::Sqlite {
+                            kind,
+                            path: path.to_path_buf(),
+                            size: size + wal.as_ref().map_or(0, |m| m.len()),
+                            mtime_ns: mtime_ns.max(wal.as_ref().map_or(0, self::mtime_ns)),
+                        });
+                    } else {
                         out.push(Candidate::File {
                             kind,
                             path: path.to_path_buf(),
@@ -244,15 +317,79 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
     Ok(out)
 }
 
+/// Working directory encoded in a file's path, for sources that name folders after it:
+/// Claude Code and Droid (`-Users-me-repo`, lossy: `/` and `.` both become `-`) and Grok
+/// (percent-encoded). Returns the folder's cwd text and whether it is the lossy encoding.
+pub fn path_cwd(kind: SourceKind, path: &Path) -> Option<(String, bool)> {
+    let s = path.to_string_lossy();
+    let after = |marker: &str| {
+        s.split(marker)
+            .nth(1)
+            .and_then(|r| r.split('/').next())
+            .map(str::to_string)
+    };
+    match kind {
+        SourceKind::ClaudeCode => after("/projects/").map(|d| (d, true)),
+        SourceKind::Droid => after("/sessions/")
+            .filter(|d| d.starts_with('-'))
+            .map(|d| (d, true)),
+        SourceKind::Grok => after("/sessions/").map(|d| (percent_decode(&d), false)),
+        _ => None,
+    }
+}
+
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether an excluded path matches a cwd taken from `path_cwd`.
+pub fn path_cwd_excluded(encoded: &str, lossy: bool, exclude: &[String]) -> bool {
+    exclude.iter().any(|p| {
+        let p = p.trim_end_matches('/');
+        if p.is_empty() {
+            return false;
+        }
+        if lossy {
+            let enc: String = p
+                .chars()
+                .map(|c| if c == '/' || c == '.' { '-' } else { c })
+                .collect();
+            encoded == enc || encoded.starts_with(&format!("{enc}-"))
+        } else {
+            encoded == p || encoded.starts_with(&format!("{p}/"))
+        }
+    })
+}
+
 /// Best-effort working directory of a session file, read from its first records, so excluded
 /// repos can be skipped before anything is copied.
 pub fn peek_cwd(kind: SourceKind, path: &Path) -> Option<String> {
     let mut buf = Vec::new();
-    fs::File::open(path)
-        .ok()?
-        .take(256 * 1024)
-        .read_to_end(&mut buf)
-        .ok()?;
+    let file = fs::File::open(path).ok()?;
+    // Compressed Codex sessions: read the head of the decompressed stream.
+    if path.to_string_lossy().ends_with(".zst") {
+        let _ = zstd::stream::read::Decoder::new(file)
+            .ok()?
+            .take(256 * 1024)
+            .read_to_end(&mut buf);
+    } else {
+        file.take(256 * 1024).read_to_end(&mut buf).ok()?;
+    }
     let text = String::from_utf8_lossy(&buf);
     for line in text.lines().take(50) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {

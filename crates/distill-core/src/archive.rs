@@ -278,14 +278,34 @@ pub fn copy_sqlite(path: &Path) -> Result<Vec<u8>> {
     fs::create_dir_all(&dir)?;
     let dest_path = dir.join("copy.db");
     let _ = fs::remove_file(&dest_path);
-    {
+    let result = (|| -> Result<Vec<u8>> {
         let mut dest = rusqlite::Connection::open(&dest_path)?;
         let backup = rusqlite::backup::Backup::new(&src, &mut dest)?;
-        backup.run_to_completion(256, std::time::Duration::from_millis(0), None)?;
-    }
-    let bytes = fs::read(&dest_path)?;
+        // Copy every page in one step, under one read lock, so a writer can't force the copy to
+        // restart. A database another process holds locked is retried briefly, then reported;
+        // the next sweep tries again. (Stepping in small chunks with no pause retried a busy
+        // database forever.)
+        use rusqlite::backup::StepResult;
+        for _ in 0..50 {
+            match backup.step(-1)? {
+                StepResult::Done => {
+                    drop(backup);
+                    drop(dest);
+                    return Ok(fs::read(&dest_path)?);
+                }
+                StepResult::More | StepResult::Busy | StepResult::Locked => {
+                    std::thread::sleep(std::time::Duration::from_millis(100))
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+        bail!(
+            "{} stayed locked by another process; will retry next sweep",
+            path.display()
+        )
+    })();
     let _ = fs::remove_dir_all(&dir);
-    Ok(bytes)
+    result
 }
 
 #[cfg(test)]
@@ -331,6 +351,33 @@ mod tests {
         let v = reopened.verify().unwrap();
         assert!(v.ok(), "{v:?}");
         assert_eq!(v.checked, 2);
+    }
+
+    #[test]
+    fn copying_a_locked_database_fails_instead_of_hanging() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("live.db");
+        let writer = rusqlite::Connection::open(&db).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode=DELETE; CREATE TABLE t(x); INSERT INTO t VALUES (1);",
+            )
+            .unwrap();
+        assert!(
+            !copy_sqlite(&db).unwrap().is_empty(),
+            "an idle database copies"
+        );
+        writer
+            .execute_batch("BEGIN EXCLUSIVE; INSERT INTO t VALUES (2);")
+            .unwrap();
+        let started = std::time::Instant::now();
+        let err = copy_sqlite(&db).unwrap_err();
+        assert!(
+            err.to_string().contains("locked") || err.to_string().contains("busy"),
+            "{err:#}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        writer.execute_batch("COMMIT;").unwrap();
     }
 
     #[test]

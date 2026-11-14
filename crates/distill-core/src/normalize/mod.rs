@@ -1,17 +1,22 @@
 //! Turn raw captures into `meta.json` and `events.jsonl`. Everything written here can be deleted
 //! and rebuilt from the archive.
 
+pub mod antigravity;
 pub mod blocks;
+pub mod chat;
 pub mod claude;
 pub mod codex;
 pub mod droid;
+pub mod grok;
+pub mod hermes;
 pub mod opencode;
 pub mod pi;
+pub mod t3code;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{Archive, CaptureRecord};
@@ -29,6 +34,10 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::OpenCode => Some(1),
         SourceKind::Droid => Some(1),
         SourceKind::Pi => Some(1),
+        SourceKind::Grok => Some(1),
+        SourceKind::Antigravity => Some(1),
+        SourceKind::Hermes => Some(1),
+        SourceKind::T3Code => Some(1),
         SourceKind::Cursor => None,
     }
 }
@@ -36,13 +45,20 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
 pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
     let parsed = match kind {
         SourceKind::ClaudeCode => claude::parse(bytes)?,
+        // Codex compresses older sessions; the archive keeps the compressed bytes as they were.
+        SourceKind::Codex if origin.ends_with(".zst") => {
+            codex::parse(&zstd::stream::decode_all(bytes).context("decompress zstd")?)?
+        }
         SourceKind::Codex => codex::parse(bytes)?,
         SourceKind::OpenCode => opencode::parse(bytes)?,
         SourceKind::Droid => droid::parse(bytes)?,
         SourceKind::Pi => pi::parse(bytes)?,
+        SourceKind::Grok => grok::parse(origin, bytes)?,
+        SourceKind::Antigravity => antigravity::parse(origin, bytes)?,
+        SourceKind::Hermes => hermes::parse(origin, bytes)?,
+        SourceKind::T3Code => t3code::parse(bytes)?,
         SourceKind::Cursor => bail!("no parser for {kind}"),
     };
-    let _ = origin;
     Ok(parsed)
 }
 
@@ -99,6 +115,9 @@ pub struct NormalizeReport {
     pub no_parser: u64,
     /// Captures with no conversation in them; not failures.
     pub empty: u64,
+    /// Archived files that belong to a session but aren't one (attachments, tool output).
+    #[serde(default)]
+    pub sidecars: u64,
     pub sessions: u64,
 }
 
@@ -110,6 +129,12 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     let mut git_cache = crate::git::Cache::default();
 
     for (origin, rec) in archive.latest() {
+        // Sidecars (tool-result files, attachments, settings, databases) stay in the archive
+        // but are not sessions on their own.
+        if !rec.source.is_primary(origin) {
+            report.sidecars += 1;
+            continue;
+        }
         let Some(version) = parser_version(rec.source) else {
             report.no_parser += 1;
             continue;
@@ -227,6 +252,7 @@ fn normalize_one(
             version,
         },
         steward,
+        mirror: parsed.mirror,
         git,
     };
     let dir = session_dir(home, &meta);
@@ -242,7 +268,11 @@ fn normalize_one(
 
 fn fallback_id(origin: &str) -> Option<String> {
     let name = origin.rsplit('/').next()?;
-    Some(name.trim_end_matches(".jsonl").to_string())
+    Some(
+        name.trim_end_matches(".zst")
+            .trim_end_matches(".jsonl")
+            .to_string(),
+    )
 }
 
 fn first_user_line(events: &[Event]) -> Option<String> {

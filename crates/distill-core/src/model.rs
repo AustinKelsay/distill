@@ -148,6 +148,10 @@ pub struct SessionMeta {
     /// True for sessions Distill's own steward ran. Datasets leave them out.
     #[serde(default)]
     pub steward: bool,
+    /// A copy of a session Distill also captures from the harness's own files (a T3 Code
+    /// thread run on Codex, say). Searchable, but left out of datasets and steward cards.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitOutcome>,
 }
@@ -169,6 +173,7 @@ pub struct Parsed {
     pub harness_version: Option<String>,
     pub parent_session: Option<String>,
     pub events: Vec<Event>,
+    pub mirror: bool,
 }
 
 impl Parsed {
