@@ -572,6 +572,7 @@ mod tests {
                 error: Some("unexpected record".into()),
                 empty: false,
                 refs: None,
+                git_stalled: false,
             },
         );
         crate::util::write_json_pretty(&home.state_dir().join("normalize.json"), &state).unwrap();

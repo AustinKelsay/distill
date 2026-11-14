@@ -100,6 +100,9 @@ pub struct NormalizeState {
     /// For a T3 thread, the native references capture it was normalized with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs: Option<String>,
+    /// Git couldn't be asked about this session's folder; the next run tries again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub git_stalled: bool,
 }
 
 fn first_meta_version() -> u32 {
@@ -236,6 +239,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && let Some(s) = state.get(origin)
             && s.sha256 == rec.sha256
             && s.refs == refs
+            && !s.git_stalled
             && s.version == version
             && s.meta_version == META_VERSION
             // An empty result recorded before drift was checked gets the check now.
@@ -265,6 +269,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             error: None,
             empty: false,
             refs,
+            git_stalled: false,
         };
         match result {
             Ok(Some(meta)) => {
@@ -279,6 +284,10 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 {
                     let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
                 }
+                entry.git_stalled = meta
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|c| git_cache.stalled_for(c));
                 entry.session = Some(meta.session_id);
             }
             // A sizable capture that parses to nothing almost always means the harness changed
@@ -599,6 +608,7 @@ mod tests {
                     error: None,
                     empty: true,
                     refs: None,
+                    git_stalled: false,
                 },
             );
         }

@@ -151,9 +151,14 @@ impl Cache {
     ) -> Option<GitOutcome> {
         // A command that hung leaves the outcome partial; then there is none, so the caller can
         // keep what an earlier run found.
+        // A folder given up on earlier in the run answers nothing at all, which would read as
+        // "no such branch"; that is no outcome either.
         let timeouts = self.timeouts;
         let outcome = self.outcome_inner(cwd, branch, started, ended);
-        (self.timeouts == timeouts).then_some(outcome).flatten()
+        let stalled = self.timeouts != timeouts
+            || self.stalled_for(cwd)
+            || outcome.as_ref().is_some_and(|o| self.stalled_for(&o.repo));
+        (!stalled).then_some(outcome).flatten()
     }
 
     fn outcome_inner(
@@ -313,6 +318,17 @@ mod tests {
                 .is_none()
         );
         assert!(cache.stalled_for(&cwd));
+        // Later sessions there, with the repository top cached, get no partial outcome either.
+        assert!(
+            cache
+                .outcome(
+                    &cwd,
+                    Some("main"),
+                    "2026-11-02T00:00:00Z",
+                    "2026-11-02T01:00:00Z"
+                )
+                .is_none()
+        );
     }
 
     use super::*;
