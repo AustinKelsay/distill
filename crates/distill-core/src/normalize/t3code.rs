@@ -27,6 +27,8 @@ fn native(driver: &str) -> Option<SourceKind> {
         "grok" => SourceKind::Grok,
         "antigravity" => SourceKind::Antigravity,
         "droid" => SourceKind::Droid,
+        // Its agents run through Cursor's SDK, whose stores Distill reads.
+        "cursor" => SourceKind::Cursor,
         _ => return None,
     })
 }
@@ -624,7 +626,7 @@ mod tests {
             parse(mirror.as_bytes()).unwrap().mirror_of,
             vec![SourceKind::ClaudeCode]
         );
-        let own = r#"{"row":"thread","thread_id":"t7","provider_instance":"cursor"}
+        let own = r#"{"row":"thread","thread_id":"t7","provider_instance":"fragment"}
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
         assert!(!parse(own.as_bytes()).unwrap().is_mirror());
     }

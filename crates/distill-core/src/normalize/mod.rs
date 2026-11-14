@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod droid;
+pub mod goose;
 pub mod grok;
 pub mod hermes;
 pub mod opencode;
@@ -38,8 +39,9 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(6),
-        SourceKind::Cursor => Some(3),
+        SourceKind::T3Code => Some(7),
+        SourceKind::Cursor => Some(4),
+        SourceKind::Goose => Some(2),
     }
 }
 
@@ -58,6 +60,7 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
         SourceKind::Antigravity => antigravity::parse(origin, bytes)?,
         SourceKind::Hermes => hermes::parse(origin, bytes)?,
         SourceKind::T3Code => t3code::parse(bytes)?,
+        SourceKind::Goose => goose::parse(bytes)?,
         SourceKind::Cursor => cursor::parse(origin, bytes)?,
     };
     Ok(parsed)

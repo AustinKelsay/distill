@@ -20,6 +20,9 @@ use crate::model::{Event, EventKind, Parsed};
 use crate::source::percent_decode;
 
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
+    if crate::source::cursor_transcript(origin) {
+        return Ok(parse_transcript(origin, bytes));
+    }
     // SQLite reads from a file; the copy lives only as long as the parse.
     let mut tmp = tempfile::NamedTempFile::new()?;
     tmp.write_all(bytes)?;
@@ -30,6 +33,76 @@ pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
     )
     .context("open Cursor chat store")?;
     parse_store(origin, &conn)
+}
+
+/// Cursor's plain transcript of an agent (`projects/<project>/agent-transcripts/<id>.jsonl`):
+/// `{"role", "message": {"content": [text | tool_use]}}` lines, plus run status lines. It holds
+/// less than the agent's store (no tool results, no models), so it is a copy of that store
+/// when the store is archived, and the only record of the agent when it isn't.
+pub fn parse_transcript(origin: &str, bytes: &[u8]) -> Parsed {
+    let stem = origin
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.strip_suffix(".jsonl"))
+        .unwrap_or(origin);
+    let mut out = Parsed {
+        // Its own id, so it never takes the store's place.
+        session_id: Some(format!("transcript-{stem}")),
+        mirror_of: vec![crate::source::SourceKind::Cursor],
+        mirror_refs: vec![format!("cursor/{stem}")],
+        ..Default::default()
+    };
+    let mut at = None;
+    for line in String::from_utf8_lossy(bytes).lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let role = v.get("role").and_then(Value::as_str).unwrap_or("");
+        let content = v.pointer("/message/content");
+        let blocks: Vec<Value> = match content {
+            Some(Value::Array(b)) => b.clone(),
+            Some(Value::String(t)) => vec![serde_json::json!({"type": "text", "text": t})],
+            _ => Vec::new(),
+        };
+        if blocks.is_empty() {
+            // A run that ended in an error says so; other status lines are bookkeeping.
+            if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
+                let mut e = Event::new(EventKind::ToolResult).at(at.clone());
+                e.tool = Some("error".into());
+                e.text = Some(match err {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                });
+                e.is_error = Some(true);
+                out.push(e);
+            }
+            continue;
+        }
+        for b in &blocks {
+            match (role, b.get("type").and_then(Value::as_str).unwrap_or("")) {
+                ("user", "text") => push_user_text(
+                    &mut out,
+                    b.get("text").and_then(Value::as_str).unwrap_or(""),
+                    &mut at,
+                ),
+                ("assistant", "text") => {
+                    let t = b.get("text").and_then(Value::as_str).unwrap_or("");
+                    if !t.is_empty() {
+                        out.push(Event::text(EventKind::Assistant, t).at(at.clone()));
+                    }
+                }
+                ("assistant", "tool_use") => {
+                    let mut e = Event::new(EventKind::ToolCall).at(at.clone());
+                    e.tool = b.get("name").and_then(Value::as_str).map(str::to_string);
+                    e.call_id = b.get("id").and_then(Value::as_str).map(str::to_string);
+                    e.input = b.get("input").cloned();
+                    out.push(e);
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 fn parse_store(origin: &str, conn: &Connection) -> Result<Parsed> {
@@ -456,6 +529,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("missing"), "{err:#}");
+    }
+
+    #[test]
+    fn transcripts_are_copies_of_their_agent_store() {
+        let src = r#"{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Monday, Jul 6, 2026, 8:54 AM (UTC-5)</timestamp>\n<user_query>\nlist the docs\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Looking."},{"type":"tool_use","name":"Glob","input":{"glob_pattern":"**/*.md"}}]}}
+{"type":"status","status":"error","error":"rate limited"}
+{"type":"status","status":"done"}"#;
+        let p = parse(
+            "/u/.cursor/projects/w/agent-transcripts/agent-1/agent-1.jsonl",
+            src.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(p.session_id.as_deref(), Some("transcript-agent-1"));
+        assert_eq!(p.mirror_refs, vec!["cursor/agent-1"]);
+        let kinds: Vec<_> = p.events.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                EventKind::System,
+                EventKind::User,
+                EventKind::Assistant,
+                EventKind::ToolCall,
+                EventKind::ToolResult
+            ]
+        );
+        assert_eq!(p.events[1].text.as_deref(), Some("list the docs"));
+        assert_eq!(p.events[1].ts.as_deref(), Some("2026-07-06T13:54:00.000Z"));
+        assert_eq!(p.events[4].is_error, Some(true));
     }
 
     #[test]

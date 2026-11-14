@@ -172,14 +172,16 @@ impl SessionMeta {
         format!("{}/{}", self.source.id(), self.session_id)
     }
 
-    /// A mirror whose originals are in the archive. With the originals named, each must be
+    /// A mirror whose originals are in the archive and cover it.
+    pub fn is_duplicate(&self, originals: &Originals) -> bool {
+        self.mirror && self.copied_in(originals)
+    }
+
+    /// Whether `originals` hold what this mirror copies. With the originals named, each must be
     /// there; otherwise their sources must have sessions at all. A mirror of sessions that were
     /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
     /// session of its own.
-    pub fn is_duplicate(&self, originals: &Originals) -> bool {
-        if !self.mirror {
-            return false;
-        }
+    fn copied_in(&self, originals: &Originals) -> bool {
         // Runs whose original isn't named count as copied when their source has sessions.
         // Metas from before originals were recorded name none, so they check every source.
         let unresolved = if self.mirror_refs.is_empty() && self.mirror_unresolved.is_empty() {
@@ -188,14 +190,23 @@ impl SessionMeta {
             &self.mirror_unresolved
         };
         // A named original must also reach (nearly) as far as the mirror: T3 can carry a
-        // native session on after its source stopped being captured.
+        // native session on after its source stopped being captured. Cursor dates a turn by
+        // when it began and T3 by when each item finished, so a T3 thread can end a whole turn
+        // after its Cursor store's last time; that pair gets a turn's worth of slack.
+        let slack = |k: &String| {
+            if k.starts_with("cursor/") && self.source == SourceKind::T3Code {
+                CURSOR_TURN_SLACK
+            } else {
+                COVER_SLACK
+            }
+        };
         let covers = |k: &String| {
             originals.keys.get(k).is_some_and(|ended| {
                 match (
                     ended.as_deref().and_then(ts),
                     self.ended_at.as_deref().and_then(ts),
                 ) {
-                    (Some(orig), Some(mirror)) => orig + COVER_SLACK >= mirror,
+                    (Some(orig), Some(mirror)) => orig + slack(k) >= mirror,
                     _ => true,
                 }
             })
@@ -209,11 +220,19 @@ impl SessionMeta {
 /// records a turn a little after the harness does.
 const COVER_SLACK: chrono::Duration = chrono::Duration::minutes(15);
 
+/// The same for a T3 thread against a Cursor store, whose times mark when each turn began. A
+/// store is captured hourly while its agent runs, so a thread ending later than this ran on
+/// after the store stopped being captured.
+const CURSOR_TURN_SLACK: chrono::Duration = chrono::Duration::hours(2);
+
 fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok()
 }
 
-/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`].
+/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`]. Only a
+/// harness's own sessions count: a mirror is never taken as proof for another mirror, since it
+/// may hold less (or more) than the session it copies. When the original is gone, two copies of
+/// it both stay.
 #[derive(Debug, Default)]
 pub struct Originals {
     pub sources: std::collections::HashSet<SourceKind>,
@@ -284,38 +303,44 @@ mod tests {
         .unwrap()
     }
 
+    fn session(source: &str, id: &str, extra: &str) -> SessionMeta {
+        serde_json::from_str(&format!(
+            r#"{{"source":"{source}","session_id":"{id}","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+                "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"x","version":1}}{extra}}}"#
+        ))
+        .unwrap()
+    }
+
     #[test]
-    fn a_mirror_is_a_duplicate_only_when_its_originals_are_archived() {
+    fn what_a_mirror_needs_to_count_as_copied() {
         let m = mirror(r#","mirror_of":["codex"]"#);
         let mut codex = Originals::default();
         codex.sources.insert(SourceKind::Codex);
-        assert!(m.is_duplicate(&codex));
+        assert!(m.copied_in(&codex));
         // Codex never captured: the mirror is the only copy.
-        assert!(!m.is_duplicate(&Originals::default()));
-        // Metas from before `mirror_of` was recorded stay duplicates.
-        assert!(mirror("").is_duplicate(&Originals::default()));
-        // A mirror doesn't count as an original of its own source.
-        assert!(Originals::of(&[m]).sources.is_empty());
+        assert!(!m.copied_in(&Originals::default()));
+        // Metas from before `mirror_of` was recorded count as copied.
+        assert!(mirror("").copied_in(&Originals::default()));
 
         // Named originals must each be present; another session of the source isn't enough.
         let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
-        assert!(!exact.is_duplicate(&codex));
+        assert!(!exact.copied_in(&codex));
         codex.keys.insert("codex/c-1".into(), None);
-        assert!(exact.is_duplicate(&codex));
+        assert!(exact.copied_in(&codex));
 
         // A named original that's missing keeps the mirror, whatever the other runs say.
         let partial = mirror(
             r#","mirror_of":["codex"],"mirror_refs":["codex/c-2"],"mirror_unresolved":["codex"]"#,
         );
-        assert!(!partial.is_duplicate(&codex));
+        assert!(!partial.copied_in(&codex));
         codex.keys.insert("codex/c-2".into(), None);
-        assert!(partial.is_duplicate(&codex));
+        assert!(partial.copied_in(&codex));
         // The unresolved run's source must have sessions too.
         let keys_only = Originals {
-            sources: Default::default(),
             keys: codex.keys.clone(),
+            ..Default::default()
         };
-        assert!(!partial.is_duplicate(&keys_only));
+        assert!(!partial.copied_in(&keys_only));
 
         // T3 carried the session on after the original was last captured: keep the mirror.
         let mut later = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
@@ -323,10 +348,43 @@ mod tests {
         codex
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:00:00Z".into()));
-        assert!(!later.is_duplicate(&codex));
+        assert!(!later.copied_in(&codex));
         codex
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
-        assert!(later.is_duplicate(&codex));
+        assert!(later.copied_in(&codex));
+    }
+
+    #[test]
+    fn only_a_harnesss_own_sessions_prove_a_copy() {
+        // A Cursor agent whose store is gone: its transcript and the T3 thread that ran it.
+        let transcript = session(
+            "cursor",
+            "transcript-agent-1",
+            r#","mirror":true,"mirror_of":["cursor"],"mirror_refs":["cursor/agent-1"]"#,
+        );
+        let thread = session(
+            "t3code",
+            "t1",
+            r#","mirror":true,"mirror_of":["cursor"],"mirror_refs":["cursor/agent-1"]"#,
+        );
+        let o = Originals::of(&[thread.clone(), transcript.clone()]);
+        assert!(!transcript.is_duplicate(&o) && !thread.is_duplicate(&o));
+        // With the store archived, both are copies.
+        let store = session("cursor", "agent-1", r#","ended_at":"2026-11-01T10:00:00Z""#);
+        let o = Originals::of(&[thread.clone(), transcript.clone(), store.clone()]);
+        assert!(transcript.is_duplicate(&o) && thread.is_duplicate(&o));
+        assert!(!store.is_duplicate(&o));
+        // A transcript with a turn the store doesn't have (same turn clock) is kept.
+        let mut ahead = transcript.clone();
+        ahead.ended_at = Some("2026-11-01T11:00:00Z".into());
+        assert!(!ahead.is_duplicate(&o));
+        // A T3 thread may end a long turn after the store's last turn began, but not days.
+        let mut long_turn = thread.clone();
+        long_turn.ended_at = Some("2026-11-01T11:30:00Z".into());
+        assert!(long_turn.is_duplicate(&o));
+        let mut continued = thread.clone();
+        continued.ended_at = Some("2026-11-03T09:00:00Z".into());
+        assert!(!continued.is_duplicate(&o));
     }
 }
