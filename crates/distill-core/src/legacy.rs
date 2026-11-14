@@ -308,6 +308,23 @@ mod tests {
         legacy_db(&db, LINES, None);
         let r = import(&home, &config(&["/w/app"]), &db, false).unwrap();
         assert_eq!((r.imported, r.excluded), (0, 1));
+        // A session that says nothing about where it ran, from outside the source's roots,
+        // is kept out while any exclusion is set.
+        let db_nocwd = dir.path().join("nocwd.db");
+        legacy_db(
+            &db_nocwd,
+            &[r#"{"type":"user","message":{"role":"user","content":"hi"}}"#],
+            None,
+        );
+        let r = import(&home, &config(&["/elsewhere"]), &db_nocwd, false).unwrap();
+        assert_eq!((r.imported, r.excluded), (0, 1));
+        // With Claude Code turned off nothing is imported.
+        let mut off = config(&[]);
+        for s in &mut off.sources {
+            s.enabled = s.kind != SourceKind::ClaudeCode;
+        }
+        let r = import(&home, &off, &db, false).unwrap();
+        assert_eq!((r.imported, r.excluded), (0, 1));
 
         let db2 = dir.path().join("bad.db");
         legacy_db(&db2, LINES, Some(&"0".repeat(64)));

@@ -61,7 +61,9 @@ fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, orig
     excluded(config, kind, path, origin, cwd)
 }
 
-/// [`file_excluded`] for bytes that are no longer (or never were) a file at `path`.
+/// [`file_excluded`] for bytes that are no longer (or never were) a file at `path`. Stricter:
+/// such bytes come from somewhere other than a sweep (an import), so when neither the records
+/// nor the folder say where the session ran, they are kept out.
 pub(crate) fn bytes_excluded(
     config: &Config,
     kind: SourceKind,
@@ -71,8 +73,12 @@ pub(crate) fn bytes_excluded(
     if config.privacy.exclude_paths.is_empty() {
         return false;
     }
+    let recorded = source::cwd_in(kind, bytes);
+    if recorded.is_none() && source::path_cwd(kind, &config.roots_for(kind), path).is_none() {
+        return true;
+    }
     let origin = path.to_string_lossy();
-    excluded(config, kind, path, &origin, || source::cwd_in(kind, bytes))
+    excluded(config, kind, path, &origin, || recorded)
 }
 
 fn excluded(
