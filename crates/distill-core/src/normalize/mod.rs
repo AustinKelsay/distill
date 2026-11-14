@@ -391,16 +391,18 @@ pub fn rebuild_index(home: &Home) -> Result<usize> {
                 // A folder left under an older naming of its session is stale; the session
                 // lives in its current folder. Derived data, so it is removed.
                 if entry.file_name().to_str() != Some(safe_component(&m.session_id).as_str()) {
-                    // Keep a steward card the session already paid for.
+                    // Keep a steward card the session already paid for: the old folder goes only
+                    // once it has no card or its card is in the current folder. Until then it
+                    // stays on disk, out of the index.
                     let current = session_dir(home, &m);
                     let card = entry.path().join("card.json");
-                    if card.exists()
-                        && current.join("meta.json").exists()
-                        && !current.join("card.json").exists()
-                    {
-                        let _ = std::fs::rename(&card, current.join("card.json"));
+                    let card_safe = !card.exists()
+                        || current.join("card.json").exists()
+                        || (current.join("meta.json").exists()
+                            && std::fs::rename(&card, current.join("card.json")).is_ok());
+                    if card_safe {
+                        let _ = std::fs::remove_dir_all(entry.path());
                     }
-                    let _ = std::fs::remove_dir_all(entry.path());
                     continue;
                 }
                 metas.push(m);
