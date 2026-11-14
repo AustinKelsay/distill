@@ -82,6 +82,12 @@ pub enum NeedsYou {
     NoParser { source: SourceKind },
     /// Captures failed to normalize; a parser may need repair.
     ParserFailures { source: SourceKind, failures: u64 },
+    /// The steward proposed a dataset recipe; accepting it makes the next tick build it.
+    ProposedRecipe {
+        name: String,
+        description: String,
+        matches: u64,
+    },
     /// The last steward run failed.
     StewardFailed { at: String, summary: String },
     /// Setup has not been run.
@@ -103,6 +109,9 @@ impl NeedsYou {
                     failures,
                     source.label()
                 )
+            }
+            NeedsYou::ProposedRecipe { name, matches, .. } => {
+                format!("The steward proposes a dataset \"{name}\" ({matches} sessions)")
             }
             NeedsYou::StewardFailed { summary, .. } => format!("Steward run failed: {summary}"),
             NeedsYou::NotConfigured => "Distill is not set up yet".to_string(),
@@ -214,6 +223,13 @@ pub fn dashboard(home: &Home) -> Result<Dashboard> {
                 failures: s.failures,
             });
         }
+    }
+    for p in crate::propose::list(home)? {
+        needs_you.push(NeedsYou::ProposedRecipe {
+            name: p.name,
+            description: p.recipe.description,
+            matches: p.matches,
+        });
     }
     if let Some(last) = recent_runs.iter().find(|r| r.step == "steward")
         && !last.ok

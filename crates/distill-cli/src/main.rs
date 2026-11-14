@@ -9,7 +9,8 @@ use distill_core::export::{self, Recipe};
 use distill_core::search::{self, ListFilter};
 use distill_core::steward::{self, RunOptions};
 use distill_core::{
-    Config, Home, SourceKind, archive, normalize, runlog, schedule, source, stats, sweep, tick,
+    Config, Home, SourceKind, archive, legacy, normalize, propose, runlog, schedule, source, stats,
+    sweep, tick,
 };
 
 #[derive(Parser)]
@@ -46,6 +47,15 @@ enum Cmd {
     },
     /// Check every archived blob against its hash
     Verify,
+    /// Recover sessions kept only by the Distill this one replaced (~/.distill)
+    ImportLegacy {
+        /// The old app's database (default: ~/.distill/distill.db)
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// Report what would be imported without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Rebuild meta.json and events.jsonl from the archive
     Normalize {
         /// Re-run parsers even for unchanged captures
@@ -130,7 +140,18 @@ enum StewardCmd {
 
 #[derive(Subcommand)]
 enum RecipeCmd {
+    /// Recipes, and the steward's pending proposals
     List,
+    /// Ask the steward to propose new recipes
+    Propose,
+    /// Turn a proposal into a recipe
+    Accept {
+        name: String,
+    },
+    /// Drop a proposal
+    Dismiss {
+        name: String,
+    },
     /// Write the default recipe under a name
     New {
         name: String,
@@ -319,6 +340,22 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
+        Cmd::ImportLegacy { from, dry_run } => {
+            let db = match from {
+                Some(p) => p,
+                None => legacy::default_db()?,
+            };
+            let r = legacy::import(&home, &config()?, &db, dry_run)?;
+            out(json, &r, || {
+                println!("{} ({})", r.summary(), human_bytes(r.bytes));
+                for p in r.mismatched.iter().take(10) {
+                    eprintln!("  hash mismatch, skipped: {p}");
+                }
+                if r.imported > 0 && !dry_run {
+                    println!("Run `distill normalize` (or wait for the next tick) to index them.");
+                }
+            })
+        }
         Cmd::Normalize { force } => {
             let r = normalize::normalize(&home, force)?;
             out(json, &r, || {
@@ -477,7 +514,44 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Recipe { cmd } => match cmd {
             RecipeCmd::List => {
                 let names = export::list_recipes(&home)?;
-                out(json, &names, || names.iter().for_each(|n| println!("{n}")))
+                let proposals = propose::list(&home)?;
+                out(json, &names, || {
+                    names.iter().for_each(|n| println!("{n}"));
+                    for p in &proposals {
+                        println!(
+                            "{}  (proposed, {} sessions: {})",
+                            p.name, p.matches, p.recipe.description
+                        );
+                    }
+                })
+            }
+            RecipeCmd::Propose => {
+                let r = propose::propose(&home, &config()?)?;
+                out(json, &r, || {
+                    println!("{}", r.summary());
+                    for p in &r.proposed {
+                        println!(
+                            "  {}  {} sessions  {}",
+                            p.name, p.matches, p.recipe.description
+                        );
+                    }
+                    for w in &r.rejected {
+                        println!("  turned down: {w}");
+                    }
+                    if !r.proposed.is_empty() {
+                        println!("Accept one with `distill recipe accept <name>`.");
+                    }
+                })
+            }
+            RecipeCmd::Accept { name } => {
+                propose::accept(&home, &name)?;
+                println!("{name} is now a recipe; the next tick builds it.");
+                Ok(())
+            }
+            RecipeCmd::Dismiss { name } => {
+                propose::dismiss(&home, &name)?;
+                println!("Dropped proposal {name}.");
+                Ok(())
             }
             RecipeCmd::New { name } => {
                 let path = export::recipe_path(&home, &name);

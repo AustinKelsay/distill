@@ -139,6 +139,11 @@ impl Config {
         write_atomic(path, text.as_bytes())
     }
 
+    /// Whether a source is configured and switched on.
+    pub fn enabled(&self, kind: SourceKind) -> bool {
+        self.source(kind).is_some_and(|s| s.enabled)
+    }
+
     pub fn source(&self, kind: SourceKind) -> Option<&SourceConfig> {
         self.sources.iter().find(|s| s.kind == kind)
     }

@@ -152,6 +152,10 @@ pub struct SessionMeta {
     /// thread run on Codex, say). Searchable, but left out of datasets and steward cards.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mirror: bool,
+    /// The sources holding the originals of a mirror. Empty on metas written before this was
+    /// recorded, which count as mirrors of enabled sources.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirror_of: Vec<SourceKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitOutcome>,
 }
@@ -159,6 +163,12 @@ pub struct SessionMeta {
 impl SessionMeta {
     pub fn key(&self) -> String {
         format!("{}/{}", self.source.id(), self.session_id)
+    }
+
+    /// A mirror whose originals Distill is still capturing. With one of those sources turned
+    /// off, the mirror is the only copy left, so it counts as a session of its own.
+    pub fn is_duplicate(&self, config: &crate::config::Config) -> bool {
+        self.mirror && self.mirror_of.iter().all(|&k| config.enabled(k))
     }
 }
 
@@ -173,10 +183,15 @@ pub struct Parsed {
     pub harness_version: Option<String>,
     pub parent_session: Option<String>,
     pub events: Vec<Event>,
-    pub mirror: bool,
+    /// For a copy of sessions captured natively elsewhere: the sources holding the originals.
+    pub mirror_of: Vec<SourceKind>,
 }
 
 impl Parsed {
+    pub fn is_mirror(&self) -> bool {
+        !self.mirror_of.is_empty()
+    }
+
     pub fn add_model(&mut self, m: &str) {
         if !m.is_empty() && !self.models.iter().any(|x| x == m) {
             self.models.push(m.to_string());
@@ -189,5 +204,35 @@ impl Parsed {
         }
         e.seq = self.events.len() as u64;
         self.events.push(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn mirror(of: &str) -> SessionMeta {
+        serde_json::from_str(&format!(
+            r#"{{"source":"t3code","session_id":"t1","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+                "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"t3code","version":4}},
+                "mirror":true{of}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_mirror_stops_being_a_duplicate_when_its_source_is_off() {
+        let mut config = Config::default();
+        let m = mirror(r#","mirror_of":["codex"]"#);
+        assert!(m.is_duplicate(&config));
+        // Metas from before `mirror_of` was recorded stay duplicates.
+        assert!(mirror("").is_duplicate(&config));
+        for s in &mut config.sources {
+            if s.kind == SourceKind::Codex {
+                s.enabled = false;
+            }
+        }
+        assert!(!m.is_duplicate(&config));
     }
 }

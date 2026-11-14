@@ -14,18 +14,21 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::Candidate;
+use crate::source::{Candidate, SourceKind};
 
-/// Providers whose sessions Distill also reads from their own files.
-const NATIVE: [&str; 7] = [
-    "codex",
-    "claudeAgent",
-    "opencode",
-    "pi",
-    "grok",
-    "antigravity",
-    "droid",
-];
+/// The source Distill reads a T3 Code driver's sessions from directly, if any.
+fn native(driver: &str) -> Option<SourceKind> {
+    Some(match driver {
+        "codex" => SourceKind::Codex,
+        "claudeAgent" => SourceKind::ClaudeCode,
+        "opencode" => SourceKind::OpenCode,
+        "pi" => SourceKind::Pi,
+        "grok" => SourceKind::Grok,
+        "antigravity" => SourceKind::Antigravity,
+        "droid" => SourceKind::Droid,
+        _ => return None,
+    })
+}
 
 /// How long a thread must be idle before it is captured.
 const SETTLE_MINUTES: i64 = 10;
@@ -303,7 +306,12 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             out.harness_version = Some(inst.clone());
         }
     }
-    out.mirror = !drivers.is_empty() && drivers.iter().all(|d| NATIVE.contains(&d.as_str()));
+    let natives: Option<Vec<SourceKind>> = drivers.iter().map(|d| native(d)).collect();
+    if let Some(mut kinds) = natives.filter(|k| !k.is_empty()) {
+        kinds.sort_by_key(|k| k.id());
+        kinds.dedup();
+        out.mirror_of = kinds;
+    }
     Ok(out)
 }
 
@@ -355,7 +363,7 @@ mod tests {
         assert_eq!(p.session_id.as_deref(), Some("t1"));
         assert_eq!(p.models, vec!["m1"]);
         assert!(
-            !p.mirror,
+            !p.is_mirror(),
             "an ACP agent has no native store: this is the only copy"
         );
         let kinds: Vec<_> = p.events.iter().map(|e| e.kind).collect();
@@ -394,10 +402,13 @@ mod tests {
     fn threads_without_runs_fall_back_to_their_provider_instance() {
         let mirror = r#"{"row":"thread","thread_id":"t8","provider_instance":"claudeAgent_2"}
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
-        assert!(parse(mirror.as_bytes()).unwrap().mirror);
+        assert_eq!(
+            parse(mirror.as_bytes()).unwrap().mirror_of,
+            vec![SourceKind::ClaudeCode]
+        );
         let own = r#"{"row":"thread","thread_id":"t7","provider_instance":"cursor"}
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
-        assert!(!parse(own.as_bytes()).unwrap().mirror);
+        assert!(!parse(own.as_bytes()).unwrap().is_mirror());
     }
 
     #[test]
@@ -405,7 +416,8 @@ mod tests {
         let old = r#"{"row":"thread","thread_id":"t9","title":"Old","provider":"codex","model":"gpt-6","project_root":"/w"}
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
         let p = parse(old.as_bytes()).unwrap();
-        assert!(p.mirror);
+        assert!(p.is_mirror());
+        assert_eq!(p.mirror_of, vec![SourceKind::Codex]);
         assert_eq!(p.models, vec!["gpt-6"]);
         assert_eq!(p.title.as_deref(), Some("Old"));
     }
@@ -417,14 +429,14 @@ mod tests {
         assert!(
             parse(&export_thread(&db, "t1").unwrap().bytes)
                 .unwrap()
-                .mirror
+                .is_mirror()
         );
         let dir = tempfile::tempdir().unwrap();
         let db = fixture(dir.path(), "maple", "pi");
         assert!(
             parse(&export_thread(&db, "t1").unwrap().bytes)
                 .unwrap()
-                .mirror
+                .is_mirror()
         );
     }
 }

@@ -32,7 +32,19 @@ fn rules() -> &'static [Rule] {
             r("bearer", r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}"),
             // Personal data and private network names, not only credentials.
             r("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+            // Addresses turned into slugs (`alice-smith-gmail-com`), as contact tools and file
+            // names write them: a common mail provider, or any domain under com, org, edu or gov.
+            r(
+                "email_slug",
+                r"\b[a-z0-9]+(?:[._-][a-z0-9]+)*-(?:(?:gmail|googlemail|protonmail|proton|pm|icloud|outlook|hotmail|live|yahoo|ymail|aol|fastmail|gmx|zoho|hey|tutanota)-(?:com|me|net|ch|de)|[a-z0-9]+-(?:com|org|edu|gov))\b",
+            ),
             r("tailnet_host", r"(?i)\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b"),
+            // A tailnet name on its own (`tail0c0ffe`), left after output was cut short
+            // (`box.tail0c0f`), or slugged (`box-tail0c0ffe-ts-net`).
+            r(
+                "tailnet_name",
+                r"(?i)\b(?:[A-Za-z0-9-]+[.-])?tail[0-9a-f]{4,8}(?:[.-]ts[.-]net)?\b",
+            ),
             r(
                 "tailscale_ip",
                 r"\b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b",
@@ -223,6 +235,36 @@ mod tests {
         assert_eq!(f.by_rule["email"], 2);
         assert_eq!(f.by_rule["tailnet_host"], 2);
         assert_eq!(f.by_rule["tailscale_ip"], 1);
+    }
+
+    #[test]
+    fn catches_slugged_addresses_and_cut_off_tailnet_names() {
+        let mut f = Findings::default();
+        let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, jdoe-example-org; \
+                    ssh -L 1:2 me@box-a1b2.tail0c0f\nshot-gateway-tail0c0ffe-ts-net.png; \
+                    on tailnet `tailbe9c07`, tailed and tailing stay; \
+                    keep 2026-01-01-help-me, alice-drink-me, sys-subsystem-net, detail-view";
+        let out = redact(text, None, &mut f);
+        for leaked in [
+            "jane-roe",
+            "user123",
+            "jdoe",
+            "tail0c0f",
+            "a1b2",
+            "tailbe9c07",
+        ] {
+            assert!(!out.contains(leaked), "{leaked} survived: {out}");
+        }
+        for kept in [
+            "2026-01-01-help-me",
+            "alice-drink-me",
+            "sys-subsystem-net",
+            "detail-view",
+            "tailed and tailing",
+        ] {
+            assert!(out.contains(kept), "{kept} was redacted: {out}");
+        }
+        assert_eq!(f.by_rule["email_slug"], 3);
     }
 
     #[test]

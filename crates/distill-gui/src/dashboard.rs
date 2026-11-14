@@ -429,6 +429,19 @@ fn need_row(s: &State, i: usize, item: &NeedsYou, p: &Paint) -> El {
                 .key(format!("approve-{i}"));
             (detail, Some(button), p.k.c.info.icon)
         }
+        NeedsYou::ProposedRecipe {
+            name, description, ..
+        } => {
+            let busy = s.dash.accepting.contains(name);
+            let name = name.clone();
+            let button = Button::new(if busy { "Accepting…" } else { "Accept" })
+                .control_size(ControlSize::Regular)
+                .disabled(busy)
+                .on_press(move |s: &mut State| s.accept_recipe(name.clone()))
+                .build(&p.k)
+                .key(format!("accept-{i}"));
+            (description.clone(), Some(button), p.k.c.info.icon)
+        }
         NeedsYou::NoParser { .. } => (
             "Archived as raw bytes; it is read once a parser exists.".to_string(),
             None,

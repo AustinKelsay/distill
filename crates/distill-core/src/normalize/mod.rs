@@ -6,6 +6,7 @@ pub mod blocks;
 pub mod chat;
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 pub mod droid;
 pub mod grok;
 pub mod hermes;
@@ -16,7 +17,7 @@ pub mod t3code;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{Archive, CaptureRecord};
@@ -37,8 +38,8 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::Grok => Some(1),
         SourceKind::Antigravity => Some(1),
         SourceKind::Hermes => Some(1),
-        SourceKind::T3Code => Some(3),
-        SourceKind::Cursor => None,
+        SourceKind::T3Code => Some(4),
+        SourceKind::Cursor => Some(1),
     }
 }
 
@@ -57,10 +58,13 @@ pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
         SourceKind::Antigravity => antigravity::parse(origin, bytes)?,
         SourceKind::Hermes => hermes::parse(origin, bytes)?,
         SourceKind::T3Code => t3code::parse(bytes)?,
-        SourceKind::Cursor => bail!("no parser for {kind}"),
+        SourceKind::Cursor => cursor::parse(origin, bytes)?,
     };
     Ok(parsed)
 }
+
+/// Captures larger than this that yield no events are treated as format drift.
+const DRIFT_BYTES: u64 = 16 * 1024;
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
 pub const META_VERSION: u32 = 3;
@@ -121,6 +125,9 @@ pub struct NormalizeReport {
     /// Older captures of a Codex file that was since compressed or moved.
     #[serde(default)]
     pub superseded: u64,
+    /// Of the failures, captures that parsed cleanly to nothing (see [`DRIFT_BYTES`]).
+    #[serde(default)]
+    pub drift: u64,
     pub sessions: u64,
 }
 
@@ -240,6 +247,19 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 }
                 entry.session = Some(meta.session_id);
             }
+            // A sizable capture that parses to nothing almost always means the harness changed
+            // its format and the parser now skips everything. Report it as a failure, so it
+            // shows on the dashboard and in repair briefs, rather than as an empty session.
+            // Not for Cursor: its chats are SQLite files whose size is mostly empty pages, and
+            // its parser fails outright when the store's layout is not what it expects.
+            Ok(None) if rec.size > DRIFT_BYTES && rec.source != SourceKind::Cursor => {
+                report.failed += 1;
+                report.drift += 1;
+                entry.error = Some(format!(
+                    "{} bytes parsed to no events; the format may have changed",
+                    rec.size
+                ));
+            }
             Ok(None) => {
                 report.empty += 1;
                 entry.empty = true;
@@ -259,8 +279,17 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         "normalize",
         ok,
         format!(
-            "Normalized {} sessions ({} unchanged, {} empty, {} failed, {} without a parser)",
-            report.normalized, report.skipped, report.empty, report.failed, report.no_parser
+            "Normalized {} sessions ({} unchanged, {} empty, {} failed, {} without a parser){}",
+            report.normalized,
+            report.skipped,
+            report.empty,
+            report.failed,
+            report.no_parser,
+            if report.drift > 0 {
+                format!("; {} look like format drift", report.drift)
+            } else {
+                String::new()
+            }
         ),
     );
     entry.details = serde_json::to_value(&report)?;
@@ -331,7 +360,8 @@ fn normalize_one(
             version,
         },
         steward,
-        mirror: parsed.mirror,
+        mirror: !parsed.mirror_of.is_empty(),
+        mirror_of: parsed.mirror_of,
         git,
     };
     let dir = session_dir(home, &meta);
@@ -454,5 +484,37 @@ pub fn find(home: &Home, source: SourceKind, session_id: &str) -> Result<Option<
     match std::fs::read_to_string(p) {
         Ok(t) => Ok(Some(serde_json::from_str(&t)?)),
         Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_large_capture_that_parses_to_nothing_is_reported_as_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        // Records in a shape the parser doesn't know: what a format change looks like.
+        let line = r#"{"type":"turn.v2","payload":{"role":"user","text":"hello there"}}"#;
+        let big: String = std::iter::repeat_n(format!("{line}\n"), 400).collect();
+        let small = format!("{line}\n");
+        {
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            for (name, body) in [("big", &big), ("small", &small)] {
+                let origin = format!("/u/.claude/projects/-w/{name}.jsonl");
+                archive
+                    .put(SourceKind::ClaudeCode, &origin, "f", body.as_bytes())
+                    .unwrap();
+            }
+        }
+        let r = normalize(&home, false).unwrap();
+        assert_eq!((r.failed, r.drift, r.empty), (1, 1, 1));
+        let fails = failure_list(&home, SourceKind::ClaudeCode);
+        assert_eq!(fails.len(), 1);
+        assert!(fails[0].0.ends_with("big.jsonl"));
+        assert!(fails[0].1.contains("format may have changed"));
     }
 }

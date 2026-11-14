@@ -8,6 +8,7 @@ use crate::config::{Config, Harness};
 use crate::export;
 use crate::home::Home;
 use crate::normalize::{self, NormalizeReport};
+use crate::propose;
 use crate::runlog;
 use crate::steward::{self, RunOptions, StewardReport};
 use crate::sweep::{self, SweepReport};
@@ -17,6 +18,9 @@ pub struct TickReport {
     pub sweep: SweepReport,
     pub normalize: NormalizeReport,
     pub steward: Option<StewardReport>,
+    /// Recipes the steward proposed this tick, waiting to be accepted.
+    #[serde(default)]
+    pub proposed: Vec<String>,
     pub builds: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -45,6 +49,13 @@ pub fn tick(home: &Home, config: &Config, force_steward: bool) -> Result<TickRep
         match steward::run(home, config, &RunOptions::default()) {
             Ok(r) => report.steward = Some(r),
             Err(e) => report.errors.push(format!("steward: {e:#}")),
+        }
+        // Weekly, after cards are fresh: ask which datasets are worth making.
+        if report.steward.is_some() && propose::due(home, config) {
+            match propose::propose(home, config) {
+                Ok(r) => report.proposed = r.proposed.into_iter().map(|p| p.name).collect(),
+                Err(e) => report.errors.push(format!("propose: {e:#}")),
+            }
         }
     }
     for name in export::list_recipes(home)? {

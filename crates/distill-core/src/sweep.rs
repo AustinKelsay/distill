@@ -54,6 +54,34 @@ impl SweepReport {
 /// records or from the folder it sits in; a sidecar whose session can't be placed is kept out
 /// whenever any exclusion is set.
 fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, origin: &str) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    let cwd = || source::peek_cwd(kind, path);
+    excluded(config, kind, path, origin, cwd)
+}
+
+/// [`file_excluded`] for bytes that are no longer (or never were) a file at `path`.
+pub(crate) fn bytes_excluded(
+    config: &Config,
+    kind: SourceKind,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    let origin = path.to_string_lossy();
+    excluded(config, kind, path, &origin, || source::cwd_in(kind, bytes))
+}
+
+fn excluded(
+    config: &Config,
+    kind: SourceKind,
+    path: &std::path::Path,
+    origin: &str,
+    recorded_cwd: impl FnOnce() -> Option<String>,
+) -> bool {
     let exclude = &config.privacy.exclude_paths;
     if exclude.is_empty() {
         return false;
@@ -61,7 +89,7 @@ fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, orig
     let primary = kind.is_primary(origin);
     // A recorded cwd is exact; the folder name is lossy (`-work-private-tools` also looks like
     // a child of `-work-private`), so it is only the fallback.
-    if primary && let Some(cwd) = source::peek_cwd(kind, path) {
+    if primary && let Some(cwd) = recorded_cwd() {
         return config.is_excluded(&cwd);
     }
     match source::path_cwd(kind, &config.roots_for(kind), path) {
