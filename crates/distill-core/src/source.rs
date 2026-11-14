@@ -328,21 +328,24 @@ pub enum PathEncoding {
     Exact,
 }
 
-/// Working directory encoded in a file's path, for harnesses that name folders after it.
-pub fn path_cwd(kind: SourceKind, path: &Path) -> Option<(String, PathEncoding)> {
-    let s = path.to_string_lossy();
-    let after = |marker: &str| {
-        s.split(marker)
-            .nth(1)
-            .and_then(|r| r.split('/').next())
-            .map(str::to_string)
-    };
+/// Working directory encoded in a file's path, for harnesses that name folders after it: the
+/// first folder below the source root it was found under.
+pub fn path_cwd(
+    kind: SourceKind,
+    roots: &[PathBuf],
+    path: &Path,
+) -> Option<(String, PathEncoding)> {
+    let rel = roots.iter().find_map(|r| path.strip_prefix(r).ok())?;
+    let mut parts = rel.components();
+    let first = parts.next()?.as_os_str().to_str()?.to_string();
+    // A file directly in the root has no folder to read.
+    parts.next()?;
     match kind {
-        SourceKind::ClaudeCode => after("/projects/").map(|d| (d, PathEncoding::DashSlashDot)),
-        SourceKind::Droid => after("/sessions/")
-            .filter(|d| d.starts_with('-'))
-            .map(|d| (d, PathEncoding::DashSlash)),
-        SourceKind::Grok => after("/sessions/").map(|d| (percent_decode(&d), PathEncoding::Exact)),
+        SourceKind::ClaudeCode => Some((first, PathEncoding::DashSlashDot)),
+        SourceKind::Droid => first
+            .starts_with('-')
+            .then_some((first, PathEncoding::DashSlash)),
+        SourceKind::Grok => Some((percent_decode(&first), PathEncoding::Exact)),
         _ => None,
     }
 }
@@ -357,11 +360,14 @@ pub fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        // Hex digits are ASCII, so checking bytes never splits a multibyte character.
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
         {
-            out.push(b);
+            let hex = |b: u8| (b as char).to_digit(16).unwrap_or(0) as u8;
+            out.push(hex(bytes[i + 1]) * 16 + hex(bytes[i + 2]));
             i += 3;
             continue;
         }

@@ -177,8 +177,17 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         if let Some((winner, _)) = alias
             && winner != origin
         {
-            // Forget it, so it is parsed again if it ever becomes the newest.
-            state.remove(origin);
+            // Forget it, so it is parsed again if it ever becomes the newest. If an earlier run
+            // gave it a copy of its own (an `<id>-<hash>` session), that copy goes too.
+            if let Some(old) = state.remove(origin)
+                && let Some(id) = old.session
+                && id.ends_with(&format!(
+                    "-{}",
+                    &crate::util::sha256_hex(origin.as_bytes())[..8]
+                ))
+            {
+                let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &id));
+            }
             report.superseded += 1;
             continue;
         }
@@ -191,14 +200,21 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && s.sha256 == rec.sha256
             && s.version == version
             && s.meta_version == META_VERSION
-            // When several captures share a session, skip only if this one wrote it.
+            // When several captures share a session, skip only if this one wrote it, under the
+            // session's own id rather than a collision suffix from before they were grouped.
             && (!alias.is_some_and(|(_, shared)| shared)
-                || s.session.as_deref().and_then(|id| find(home, rec.source, id).ok().flatten())
-                    .is_some_and(|m| m.raw.origin == *origin))
+                || s.session.as_deref().is_some_and(|id| {
+                    !id.ends_with(&format!("-{}", &crate::util::sha256_hex(origin.as_bytes())[..8]))
+                        && find(home, rec.source, id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|m| m.raw.origin == *origin)
+                }))
         {
             report.skipped += 1;
             continue;
         }
+        let previous = state.get(origin).and_then(|s| s.session.clone());
         let result = normalize_one(home, &archive, rec, version, &mut git_cache);
         let mut entry = NormalizeState {
             source: rec.source,
@@ -212,6 +228,16 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         match result {
             Ok(Some(meta)) => {
                 report.normalized += 1;
+                // This capture now lives under another id: its old folder is gone from the index.
+                if let Some(old) = previous
+                    && old != meta.session_id
+                    && find(home, rec.source, &old)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| m.raw.origin == *origin)
+                {
+                    let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
+                }
                 entry.session = Some(meta.session_id);
             }
             Ok(None) => {
@@ -365,6 +391,15 @@ pub fn rebuild_index(home: &Home) -> Result<usize> {
                 // A folder left under an older naming of its session is stale; the session
                 // lives in its current folder. Derived data, so it is removed.
                 if entry.file_name().to_str() != Some(safe_component(&m.session_id).as_str()) {
+                    // Keep a steward card the session already paid for.
+                    let current = session_dir(home, &m);
+                    let card = entry.path().join("card.json");
+                    if card.exists()
+                        && current.join("meta.json").exists()
+                        && !current.join("card.json").exists()
+                    {
+                        let _ = std::fs::rename(&card, current.join("card.json"));
+                    }
                     let _ = std::fs::remove_dir_all(entry.path());
                     continue;
                 }

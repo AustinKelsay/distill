@@ -59,13 +59,12 @@ fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, orig
         return false;
     }
     let primary = kind.is_primary(origin);
-    if primary
-        && let Some(cwd) = source::peek_cwd(kind, path)
-        && config.is_excluded(&cwd)
-    {
-        return true;
+    // A recorded cwd is exact; the folder name is lossy (`-work-private-tools` also looks like
+    // a child of `-work-private`), so it is only the fallback.
+    if primary && let Some(cwd) = source::peek_cwd(kind, path) {
+        return config.is_excluded(&cwd);
     }
-    match source::path_cwd(kind, path) {
+    match source::path_cwd(kind, &config.roots_for(kind), path) {
         Some((cwd, enc)) => source::path_cwd_excluded(&cwd, enc, exclude),
         // Antigravity and Hermes never say where they ran, so with any exclusion set nothing
         // from them is archived; elsewhere a session without a recorded cwd is kept.
@@ -416,6 +415,42 @@ mod tests {
     }
 
     #[test]
+    fn a_codex_copy_suffixed_by_an_earlier_run_is_merged_into_one_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let body = r#"{"timestamp":"2026-11-01T00:00:00Z","type":"session_meta","payload":{"id":"c1","cwd":"/w"}}
+{"timestamp":"2026-11-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#;
+        let (a, b) = ("/s/rollout-c1.jsonl", "/arch/rollout-c1.jsonl");
+        let mut ar = crate::archive::Archive::open(&home).unwrap();
+        ar.put(SourceKind::Codex, a, "1", body.as_bytes()).unwrap();
+        ar.put(SourceKind::Codex, b, "2", body.as_bytes()).unwrap();
+        // What an earlier version left: `a` as c1 and `b` as a suffixed copy.
+        crate::normalize::normalize(&home, false).unwrap();
+        let suffixed = format!("c1-{}", &crate::util::sha256_hex(b.as_bytes())[..8]);
+        let src = crate::normalize::session_dir_for(&home, SourceKind::Codex, "c1");
+        let dst = crate::normalize::session_dir_for(&home, SourceKind::Codex, &suffixed);
+        std::fs::create_dir_all(&dst).unwrap();
+        let mut meta: crate::model::SessionMeta =
+            serde_json::from_str(&std::fs::read_to_string(src.join("meta.json")).unwrap()).unwrap();
+        meta.session_id = suffixed.clone();
+        meta.raw.origin = b.to_string();
+        crate::util::write_json_pretty(&dst.join("meta.json"), &meta).unwrap();
+        std::fs::copy(src.join("events.jsonl"), dst.join("events.jsonl")).unwrap();
+        let state_path = home.state_dir().join("normalize.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        state[b]["session"] = serde_json::Value::String(suffixed.clone());
+        crate::util::write_json_pretty(&state_path, &state).unwrap();
+        crate::normalize::rebuild_index(&home).unwrap();
+        assert_eq!(crate::normalize::read_index(&home).unwrap().len(), 2);
+
+        let n = crate::normalize::normalize(&home, false).unwrap();
+        assert_eq!(n.sessions, 1, "{n:?}");
+        assert!(!dst.exists(), "the suffixed copy is gone");
+    }
+
+    #[test]
     fn distinct_files_with_the_same_name_stay_separate_outside_codex() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -439,6 +474,37 @@ mod tests {
         sweep(&home, &config, None).unwrap();
         let n = crate::normalize::normalize(&home, false).unwrap();
         assert_eq!(n.sessions, 2, "{n:?}");
+    }
+
+    #[test]
+    fn folder_cwd_is_read_below_the_source_root_and_recorded_cwd_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("backup/projects/snap/.claude/projects");
+        std::fs::create_dir_all(root.join("-work-secret/s1")).unwrap();
+        std::fs::create_dir_all(root.join("-work-private-tools")).unwrap();
+        std::fs::write(root.join("-work-secret/s1/out.txt"), "tool output").unwrap();
+        std::fs::write(
+            root.join("-work-private-tools/s2.jsonl"),
+            r#"{"type":"user","cwd":"/work/private-tools","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}"#,
+        )
+        .unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let mut config = Config {
+            sources: vec![],
+            ..Default::default()
+        };
+        let c = config.source_mut(SourceKind::ClaudeCode);
+        c.enabled = true;
+        c.roots = vec![root.clone()];
+        config.privacy.exclude_paths = vec!["/work/secret".into(), "/work/private".into()];
+        let r = sweep(&home, &config, None).unwrap();
+        // The sidecar under -work-secret is excluded even though an ancestor folder is also
+        // called "projects"; the sibling repo /work/private-tools is kept.
+        assert_eq!((r.new, r.excluded), (1, 1), "{r:?}");
+        assert!(
+            source::percent_decode("%€%2Fa").ends_with("/a"),
+            "no panic on non-ASCII"
+        );
     }
 
     #[test]

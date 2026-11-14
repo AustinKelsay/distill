@@ -58,7 +58,12 @@ pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
             step => {
                 let mut e = Event::new(EventKind::ToolResult).at(at);
                 e.tool = Some(step.to_ascii_lowercase());
-                e.text = Some(text_of(v.get("content").or_else(|| v.get("error"))));
+                let content = text_of(v.get("content"));
+                e.text = Some(if content.is_empty() {
+                    text_of(v.get("error"))
+                } else {
+                    content
+                });
                 let failed = step == "ERROR_MESSAGE"
                     || v.get("error").is_some_and(|x| !x.is_null())
                     || v.get("exit_code")
@@ -102,5 +107,6 @@ mod tests {
         assert_eq!(p.events[3].tool.as_deref(), Some("run_command"));
         assert_eq!(p.events[3].is_error, Some(true));
         assert_eq!(p.events[4].is_error, Some(true));
+        assert_eq!(p.events[4].text.as_deref(), Some("quota"));
     }
 }
