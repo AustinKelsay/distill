@@ -7,7 +7,9 @@ sources ──sweep──▶ raw archive ──steward──▶ derived files �
 (Claude Code,      append-only,             meta, events,
  Codex, OpenCode,  content-addressed,       cards; rebuildable
  Droid, Pi,        no model                 at any time
- Cursor)
+ Cursor, Grok,
+ Antigravity,
+ Hermes, T3 Code)
 ```
 
 ![Dashboard](docs/images/dashboard.png)
@@ -29,7 +31,7 @@ cargo build --release
 
 | Piece | What it does |
 | --- | --- |
-| `distill sweep` | Copies new and changed session files into `raw/`. A file that only grew replaces its old copy; a rewritten file keeps both. SQLite sources are read through SQLite's backup API (Cursor) or exported per session (OpenCode). Excluded repos are never copied. |
+| `distill sweep` | Copies new and changed session files into `raw/`. A file that only grew replaces its old copy; a rewritten file keeps both. Every file under a source's roots is kept (tool-result files, attachments, settings), compressed Codex sessions included. SQLite files are read through SQLite's backup API; OpenCode sessions and T3 Code threads are exported one per session. Excluded repos are never copied. |
 | `distill normalize` | Turns raw captures into `sessions/<source>/<id>/meta.json` and `events.jsonl`: prompts, replies, reasoning, tool calls and tool results. Joins each session to git: commit at start, commits made during it, later reverts. |
 | `distill steward run` | Asks an installed harness (`claude -p` or `codex exec`, no tools) to read a digest of each session and answer with a card: task, outcome, quality 1–5, corrections, tags. Distill writes the card; the agent never touches the archive. Stops at the daily budget. |
 | `distill export build` | Builds each recipe in `recipes/` into `exports/<recipe>/<build>/data.jsonl` with secrets redacted. Same inputs give the same build id and bytes. Builds wait for approval. |
