@@ -343,7 +343,9 @@ mod tests {
         c.enabled = true;
         c.roots = vec![root.join("codex")];
         sweep(&home, &config, None).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100)); // captured_at has 1 s resolution
+        crate::normalize::normalize(&home, false).unwrap();
+        // No sleep: both captures land in the same second, so order must come from the manifest.
+        let old_bytes = std::fs::read(live.join("rollout-c1.jsonl")).unwrap();
         std::fs::remove_file(live.join("rollout-c1.jsonl")).unwrap();
         let both = format!("{head}{}{}", turn("one"), turn("two"));
         std::fs::write(
@@ -352,17 +354,32 @@ mod tests {
         )
         .unwrap();
         sweep(&home, &config, None).unwrap();
-        for force in [false, true] {
-            let n = crate::normalize::normalize(&home, force).unwrap();
-            assert_eq!(n.sessions, 1, "{n:?}");
-            let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                meta.counts.user, 2,
-                "force={force}: the newer capture is kept"
-            );
-        }
+        let check = |label: &str| {
+            for force in [false, true] {
+                let n = crate::normalize::normalize(&home, force).unwrap();
+                assert_eq!(n.sessions, 1, "{label}: {n:?}");
+                let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    meta.counts.user, 2,
+                    "{label}, force={force}: newer capture kept"
+                );
+            }
+        };
+        check("moved and compressed");
+        // The old file reappears with its old bytes and a new mtime: a fingerprint refresh,
+        // not newer content.
+        std::fs::write(live.join("rollout-c1.jsonl"), &old_bytes).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(live.join("rollout-c1.jsonl"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        sweep(&home, &config, None).unwrap();
+        check("old file touched");
     }
 
     #[test]

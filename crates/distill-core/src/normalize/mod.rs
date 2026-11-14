@@ -134,22 +134,31 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     // Codex compresses or moves a session file (`x.jsonl` → `archived_sessions/x.jsonl.zst`).
     // Every capture stays in the archive, but only the newest one of a file is the session, so
     // incremental runs and full rebuilds agree.
-    let mut newest: std::collections::HashMap<String, (&str, &str)> = Default::default();
-    for (origin, rec) in archive.latest() {
-        if rec.source == SourceKind::Codex {
-            let e = newest
-                .entry(codex_file(origin))
-                .or_insert((origin, &rec.captured_at));
-            if rec.captured_at.as_str() > e.1 {
-                *e = (origin, &rec.captured_at);
-            }
+    // Ranked by when each origin's current bytes first entered the manifest: append order,
+    // not timestamps (one-second resolution) and not fingerprint refreshes (a touched file).
+    let mut arrival: std::collections::HashMap<&str, (usize, &str)> = Default::default();
+    for (idx, r) in archive.records().iter().enumerate() {
+        let e = arrival
+            .entry(r.origin.as_str())
+            .or_insert((idx, r.sha256.as_str()));
+        if e.1 != r.sha256 {
+            *e = (idx, r.sha256.as_str());
         }
     }
-    let superseded = |origin: &str, rec: &CaptureRecord| {
-        rec.source == SourceKind::Codex
-            && newest
-                .get(&codex_file(origin))
-                .is_some_and(|(o, _)| *o != origin)
+    let mut groups: std::collections::HashMap<String, Vec<(usize, &str)>> = Default::default();
+    for (origin, rec) in archive.latest() {
+        if rec.source == SourceKind::Codex && rec.source.is_primary(origin) {
+            let at = arrival.get(origin.as_str()).map_or(0, |a| a.0);
+            groups
+                .entry(codex_file(origin))
+                .or_default()
+                .push((at, origin.as_str()));
+        }
+    }
+    let newest = |origin: &str| -> Option<(&str, bool)> {
+        let g = groups.get(&codex_file(origin))?;
+        let winner = g.iter().max_by_key(|(at, _)| *at)?.1;
+        Some((winner, g.len() > 1))
     };
 
     for (origin, rec) in archive.latest() {
@@ -159,7 +168,16 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             report.sidecars += 1;
             continue;
         }
-        if superseded(origin, rec) {
+        let alias = if rec.source == SourceKind::Codex {
+            newest(origin)
+        } else {
+            None
+        };
+        if let Some((winner, _)) = alias
+            && winner != origin
+        {
+            // Forget it, so it is parsed again if it ever becomes the newest.
+            state.remove(origin);
             report.superseded += 1;
             continue;
         }
@@ -172,6 +190,10 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && s.sha256 == rec.sha256
             && s.version == version
             && s.meta_version == META_VERSION
+            // When several captures share a session, skip only if this one wrote it.
+            && (!alias.is_some_and(|(_, shared)| shared)
+                || s.session.as_deref().and_then(|id| find(home, rec.source, id).ok().flatten())
+                    .is_some_and(|m| m.raw.origin == *origin))
         {
             report.skipped += 1;
             continue;

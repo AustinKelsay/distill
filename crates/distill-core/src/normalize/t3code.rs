@@ -188,6 +188,18 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     .pointer("/lineage/parentThreadId")
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                // Exports made before per-run lines kept the provider and model in the header.
+                // They stay in the archive until the thread changes, so read them too.
+                if let Some(p) = s(&v, "provider") {
+                    drivers.push(p);
+                }
+                if let Some(m) = s(&v, "model") {
+                    model = Some(m.clone());
+                    out.add_model(&m);
+                }
+                if out.title.is_none() {
+                    out.title = s(&v, "title");
+                }
                 continue;
             }
             Some("run") => {
@@ -358,6 +370,16 @@ mod tests {
         assert!(after.starts_with(&before), "the export grew by appending");
         let p = parse(&after).unwrap();
         assert_eq!(p.models, vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn exports_in_the_earlier_header_format_still_classify() {
+        let old = r#"{"row":"thread","thread_id":"t9","title":"Old","provider":"codex","model":"gpt-6","project_root":"/w"}
+{"row":"item","item":{"type":"user_message","text":"hi"}}"#;
+        let p = parse(old.as_bytes()).unwrap();
+        assert!(p.mirror);
+        assert_eq!(p.models, vec!["gpt-6"]);
+        assert_eq!(p.title.as_deref(), Some("Old"));
     }
 
     #[test]
