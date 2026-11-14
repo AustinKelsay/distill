@@ -305,8 +305,8 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         "normalize",
         ok,
         format!(
-            "Normalized {} sessions ({} unchanged, {} empty, {} failed, {} without a parser){}",
-            report.normalized,
+            "Normalized {} ({} unchanged, {} empty, {} failed, {} without a parser){}",
+            crate::util::count(report.normalized, "session"),
             report.skipped,
             report.empty,
             report.failed,

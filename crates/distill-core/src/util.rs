@@ -126,6 +126,15 @@ pub fn clip(s: &str, max: usize) -> String {
     out
 }
 
+/// `1 session`, `2 sessions`.
+pub fn count(n: u64, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

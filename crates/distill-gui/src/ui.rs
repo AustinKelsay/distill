@@ -72,7 +72,8 @@ impl Paint {
         match h {
             Health::Ok => self.k.c.success.icon,
             Health::Warn => self.k.c.warning.icon,
-            Health::Missing => self.k.c.danger.icon,
+            // Not installed here: nothing is wrong, so no alarm colour.
+            Health::Missing => self.t.control_off,
             Health::Disabled => self.t.control_off,
         }
     }
