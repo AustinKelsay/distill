@@ -225,6 +225,7 @@ pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
 }
 
 fn parse_export(id: &str, bytes: &[u8]) -> Parsed {
+    let mut messages = 0;
     let mut out = Parsed {
         // Apart from the files' ids, which predate reading the database.
         session_id: Some(format!("db-{id}")),
@@ -262,6 +263,11 @@ fn parse_export(id: &str, bytes: &[u8]) -> Parsed {
             continue;
         }
         push_message(&mut out, role, &m, ts(&m));
+        messages += 1;
+    }
+    // A session that never got a message holds only its system prompt: nothing to keep.
+    if messages == 0 {
+        out.events.clear();
     }
     out
 }
@@ -403,6 +409,15 @@ mod tests {
         assert_eq!(p.events[2].input.as_ref().unwrap()["q"], "weather");
         // The system prompt stored by hash is resolved.
         assert_eq!(p.events[0].text.as_deref(), Some("be brief"));
+        // A session with nothing but its prompt is empty.
+        let bare =
+            br#"{"role":"session_meta","platform":"cli","id":"x","system_prompt":"be brief"}"#;
+        assert!(
+            parse("/h/state.db#session=x", bare)
+                .unwrap()
+                .events
+                .is_empty()
+        );
         assert_eq!(p.events[1].ts.as_deref(), Some("2026-11-01T10:00:01.000Z"));
 
         // A new message appends; compaction (an in-place update) changes the fingerprint.
