@@ -1,17 +1,22 @@
 //! Turn raw captures into `meta.json` and `events.jsonl`. Everything written here can be deleted
 //! and rebuilt from the archive.
 
+pub mod antigravity;
 pub mod blocks;
+pub mod chat;
 pub mod claude;
 pub mod codex;
 pub mod droid;
+pub mod grok;
+pub mod hermes;
 pub mod opencode;
 pub mod pi;
+pub mod t3code;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{Archive, CaptureRecord};
@@ -29,6 +34,10 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
         SourceKind::OpenCode => Some(1),
         SourceKind::Droid => Some(1),
         SourceKind::Pi => Some(1),
+        SourceKind::Grok => Some(1),
+        SourceKind::Antigravity => Some(1),
+        SourceKind::Hermes => Some(1),
+        SourceKind::T3Code => Some(3),
         SourceKind::Cursor => None,
     }
 }
@@ -36,18 +45,25 @@ pub fn parser_version(kind: SourceKind) -> Option<u32> {
 pub fn parse(kind: SourceKind, origin: &str, bytes: &[u8]) -> Result<Parsed> {
     let parsed = match kind {
         SourceKind::ClaudeCode => claude::parse(bytes)?,
+        // Codex compresses older sessions; the archive keeps the compressed bytes as they were.
+        SourceKind::Codex if origin.ends_with(".zst") => {
+            codex::parse(&zstd::stream::decode_all(bytes).context("decompress zstd")?)?
+        }
         SourceKind::Codex => codex::parse(bytes)?,
         SourceKind::OpenCode => opencode::parse(bytes)?,
         SourceKind::Droid => droid::parse(bytes)?,
         SourceKind::Pi => pi::parse(bytes)?,
+        SourceKind::Grok => grok::parse(origin, bytes)?,
+        SourceKind::Antigravity => antigravity::parse(origin, bytes)?,
+        SourceKind::Hermes => hermes::parse(origin, bytes)?,
+        SourceKind::T3Code => t3code::parse(bytes)?,
         SourceKind::Cursor => bail!("no parser for {kind}"),
     };
-    let _ = origin;
     Ok(parsed)
 }
 
 /// Bump when what normalize derives beyond the parsers (git outcomes, flags) changes.
-pub const META_VERSION: u32 = 2;
+pub const META_VERSION: u32 = 3;
 
 /// Per-origin result of the last normalize, so unchanged captures are skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,6 +115,12 @@ pub struct NormalizeReport {
     pub no_parser: u64,
     /// Captures with no conversation in them; not failures.
     pub empty: u64,
+    /// Archived files that belong to a session but aren't one (attachments, tool output).
+    #[serde(default)]
+    pub sidecars: u64,
+    /// Older captures of a Codex file that was since compressed or moved.
+    #[serde(default)]
+    pub superseded: u64,
     pub sessions: u64,
 }
 
@@ -109,7 +131,66 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     let mut report = NormalizeReport::default();
     let mut git_cache = crate::git::Cache::default();
 
+    // Codex compresses or moves a session file (`x.jsonl` → `archived_sessions/x.jsonl.zst`).
+    // Every capture stays in the archive, but only the newest one of a file is the session, so
+    // incremental runs and full rebuilds agree.
+    // Ranked by when each origin's current bytes first entered the manifest: append order,
+    // not timestamps (one-second resolution) and not fingerprint refreshes (a touched file).
+    let mut first_seen: std::collections::HashMap<(&str, &str), usize> = Default::default();
+    for (idx, r) in archive.records().iter().enumerate() {
+        first_seen
+            .entry((r.origin.as_str(), r.sha256.as_str()))
+            .or_insert(idx);
+    }
+    let mut groups: std::collections::HashMap<String, Vec<(usize, &str)>> = Default::default();
     for (origin, rec) in archive.latest() {
+        if rec.source == SourceKind::Codex && rec.source.is_primary(origin) {
+            // Old bytes coming back rank where they first arrived, not where they returned.
+            let at = first_seen
+                .get(&(origin.as_str(), rec.sha256.as_str()))
+                .copied()
+                .unwrap_or(0);
+            groups
+                .entry(codex_file(origin))
+                .or_default()
+                .push((at, origin.as_str()));
+        }
+    }
+    let newest = |origin: &str| -> Option<(&str, bool)> {
+        let g = groups.get(&codex_file(origin))?;
+        let winner = g.iter().max_by_key(|(at, _)| *at)?.1;
+        Some((winner, g.len() > 1))
+    };
+
+    for (origin, rec) in archive.latest() {
+        // Sidecars (tool-result files, attachments, settings, databases) stay in the archive
+        // but are not sessions on their own.
+        if !rec.source.is_primary(origin) {
+            report.sidecars += 1;
+            continue;
+        }
+        let alias = if rec.source == SourceKind::Codex {
+            newest(origin)
+        } else {
+            None
+        };
+        if let Some((winner, _)) = alias
+            && winner != origin
+        {
+            // Forget it, so it is parsed again if it ever becomes the newest. If an earlier run
+            // gave it a copy of its own (an `<id>-<hash>` session), that copy goes too.
+            if let Some(old) = state.remove(origin)
+                && let Some(id) = old.session
+                && id.ends_with(&format!(
+                    "-{}",
+                    &crate::util::sha256_hex(origin.as_bytes())[..8]
+                ))
+            {
+                let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &id));
+            }
+            report.superseded += 1;
+            continue;
+        }
         let Some(version) = parser_version(rec.source) else {
             report.no_parser += 1;
             continue;
@@ -119,10 +200,21 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && s.sha256 == rec.sha256
             && s.version == version
             && s.meta_version == META_VERSION
+            // When several captures share a session, skip only if this one wrote it, under the
+            // session's own id rather than a collision suffix from before they were grouped.
+            && (!alias.is_some_and(|(_, shared)| shared)
+                || s.session.as_deref().is_some_and(|id| {
+                    !id.ends_with(&format!("-{}", &crate::util::sha256_hex(origin.as_bytes())[..8]))
+                        && find(home, rec.source, id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|m| m.raw.origin == *origin)
+                }))
         {
             report.skipped += 1;
             continue;
         }
+        let previous = state.get(origin).and_then(|s| s.session.clone());
         let result = normalize_one(home, &archive, rec, version, &mut git_cache);
         let mut entry = NormalizeState {
             source: rec.source,
@@ -136,6 +228,16 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         match result {
             Ok(Some(meta)) => {
                 report.normalized += 1;
+                // This capture now lives under another id: its old folder is gone from the index.
+                if let Some(old) = previous
+                    && old != meta.session_id
+                    && find(home, rec.source, &old)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| m.raw.origin == *origin)
+                {
+                    let _ = std::fs::remove_dir_all(session_dir_for(home, rec.source, &old));
+                }
                 entry.session = Some(meta.session_id);
             }
             Ok(None) => {
@@ -186,6 +288,8 @@ fn normalize_one(
     // Two captures can claim one session id (a copied or forked file). Keep both.
     if let Ok(Some(existing)) = find(home, rec.source, &session_id)
         && existing.raw.origin != rec.origin
+        && !(rec.source == SourceKind::Codex
+            && codex_file(&existing.raw.origin) == codex_file(&rec.origin))
     {
         session_id = format!(
             "{session_id}-{}",
@@ -227,6 +331,7 @@ fn normalize_one(
             version,
         },
         steward,
+        mirror: parsed.mirror,
         git,
     };
     let dir = session_dir(home, &meta);
@@ -240,9 +345,24 @@ fn normalize_one(
     Ok(Some(meta))
 }
 
+/// A Codex session file's name without the compression suffix: the same file whether it is
+/// live under `sessions/` or compressed under `archived_sessions/`.
+fn codex_file(origin: &str) -> String {
+    origin
+        .rsplit('/')
+        .next()
+        .unwrap_or(origin)
+        .trim_end_matches(".zst")
+        .to_string()
+}
+
 fn fallback_id(origin: &str) -> Option<String> {
     let name = origin.rsplit('/').next()?;
-    Some(name.trim_end_matches(".jsonl").to_string())
+    Some(
+        name.trim_end_matches(".zst")
+            .trim_end_matches(".jsonl")
+            .to_string(),
+    )
 }
 
 fn first_user_line(events: &[Event]) -> Option<String> {
@@ -268,6 +388,23 @@ pub fn rebuild_index(home: &Home) -> Result<usize> {
             if let Ok(text) = std::fs::read_to_string(&p)
                 && let Ok(m) = serde_json::from_str::<SessionMeta>(&text)
             {
+                // A folder left under an older naming of its session is stale; the session
+                // lives in its current folder. Derived data, so it is removed.
+                if entry.file_name().to_str() != Some(safe_component(&m.session_id).as_str()) {
+                    // Keep a steward card the session already paid for: the old folder goes only
+                    // once it has no card or its card is in the current folder. Until then it
+                    // stays on disk, out of the index.
+                    let current = session_dir(home, &m);
+                    let card = entry.path().join("card.json");
+                    let card_safe = !card.exists()
+                        || current.join("card.json").exists()
+                        || (current.join("meta.json").exists()
+                            && std::fs::rename(&card, current.join("card.json")).is_ok());
+                    if card_safe {
+                        let _ = std::fs::remove_dir_all(entry.path());
+                    }
+                    continue;
+                }
                 metas.push(m);
             }
         }

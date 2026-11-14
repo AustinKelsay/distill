@@ -290,7 +290,7 @@ pub struct RunOptions {
 pub fn pending(home: &Home) -> Result<Vec<SessionMeta>> {
     Ok(normalize::read_index(home)?
         .into_iter()
-        .filter(|m| !m.steward && m.counts.user > 0)
+        .filter(|m| !m.steward && !m.mirror && m.counts.user > 0)
         .filter(|m| {
             card::load(&normalize::session_dir(home, m))
                 .is_none_or(|c| !card::is_current(&c, &m.raw.sha256))

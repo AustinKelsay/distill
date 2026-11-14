@@ -22,6 +22,7 @@ sha2 = "0.10"
 tempfile = "3"
 toml = "0.8"
 walkdir = "2"
+zstd = "0.13"
 distill-core = { path = "crates/distill-core" }
 
 # Rune patches these crates in its own workspace, and a dependency's [patch] does not apply to the

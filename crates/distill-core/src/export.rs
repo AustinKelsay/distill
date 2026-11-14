@@ -70,7 +70,7 @@ impl Filter {
 
     pub fn accepts(&self, meta: &SessionMeta, card: Option<&Card>) -> bool {
         // Steward sessions are always left out, so Distill never trains on its own runs.
-        if meta.steward {
+        if meta.steward || meta.mirror {
             return false;
         }
         if !self.sources.is_empty() && !self.sources.contains(&meta.source) {

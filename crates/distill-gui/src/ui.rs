@@ -57,7 +57,15 @@ impl Paint {
     /// One colour per source, in `SourceKind::ALL` order.
     pub fn source_color(&self, kind: SourceKind) -> Color {
         let i = SourceKind::ALL.iter().position(|&k| k == kind).unwrap_or(0);
-        tok::accent(i, self.dark)
+        // Rune has six accents and repeats them; sources past the sixth get their own hues.
+        const EXTRA_HUES: [f32; 4] = [195.0, 25.0, 110.0, 330.0];
+        match i.checked_sub(6) {
+            None => tok::accent(i, self.dark),
+            Some(j) => {
+                let l = if self.dark { 0.68 } else { 0.6 };
+                rune::oklch(l, 0.15, EXTRA_HUES[j % EXTRA_HUES.len()])
+            }
+        }
     }
 
     pub fn health_color(&self, h: Health) -> Color {
