@@ -36,14 +36,15 @@ fn native(driver: &str) -> Option<SourceKind> {
 pub const NATIVE_SUFFIX: &str = "#native";
 
 /// The harness session behind each run of every thread (`nativeThreadRef.nativeId`), one JSON
-/// line per run in order, keyed by thread. Read in one query each sweep, so a native id that is
+/// line per run in order, keyed by thread. A run with no provider-thread row names its
+/// provider, as `export_thread` does, so it still counts (as unresolved). Read in one query each sweep, so a native id that is
 /// filled in later is picked up even when the thread itself didn't change. Kept apart from the
 /// thread's export so that export keeps growing by appending; this is what matches a mirror to
 /// its original.
 pub fn export_native_refs(db: &Path) -> Result<HashMap<String, Vec<u8>>> {
     let conn = open(db)?;
     let mut stmt = conn.prepare(
-        "SELECT r.thread_id, pt.driver, pt.payload_json
+        "SELECT r.thread_id, COALESCE(pt.driver, r.provider), pt.payload_json
          FROM orchestration_v2_projection_runs r
          LEFT JOIN orchestration_v2_projection_provider_threads pt
            ON pt.provider_thread_id = r.provider_thread_id
@@ -84,7 +85,15 @@ pub fn thread_cwd(db: &Path, thread_id: &str) -> Result<Option<String>> {
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let t: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
-    Ok(s(&t, "worktreePath").or(root))
+    Ok(where_ran(&t, root))
+}
+
+/// A thread's worktree, else its project's root: whichever is a usable absolute path.
+fn where_ran(thread: &Value, project_root: Option<String>) -> Option<String> {
+    s(thread, "worktreePath")
+        .into_iter()
+        .chain(project_root)
+        .find(|p| p.starts_with('/'))
 }
 
 /// What a thread's native references say about the sessions it copies.
@@ -185,11 +194,7 @@ pub fn export_thread(db: &Path, thread_id: &str) -> Result<Export> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
     let t: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
-    let cwd = t
-        .get("worktreePath")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or(project_root.clone());
+    let cwd = where_ran(&t, project_root.clone());
     // Only fields set when the thread is made, so the export grows by appending. Title and
     // model change while a thread lives; the model is recorded per run below.
     let header = json!({
@@ -563,6 +568,31 @@ mod tests {
         config.privacy.exclude_paths = vec!["/work/app".into()];
         crate::sweep::sweep(&home, &config, None).unwrap();
         assert_eq!(refs_of(&home).keys, vec!["codex/n-1"]);
+
+        // Nor once it no longer says where it ran (project gone, relative worktree).
+        config.privacy.exclude_paths = vec!["/elsewhere".into()];
+        conn.execute_batch(
+            r#"DELETE FROM projection_projects;
+               UPDATE orchestration_v2_projection_threads SET payload_json = '{"worktreePath":"rel/dir"}';"#,
+        )
+        .unwrap();
+        crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(refs_of(&home).keys, vec!["codex/n-1"]);
+    }
+
+    #[test]
+    fn a_run_without_a_provider_thread_still_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fixture(dir.path(), "codex", "codex");
+        Connection::open(&db)
+            .unwrap()
+            .execute_batch(
+                r#"INSERT INTO orchestration_v2_projection_runs VALUES ('r2', 't1', 2, 'claudeAgent', NULL, '{}');"#,
+            )
+            .unwrap();
+        let refs = native_refs(&export_native_refs(&db).unwrap()["t1"]);
+        assert_eq!(refs.keys, vec!["codex/native-1"]);
+        assert_eq!(refs.unresolved, vec![SourceKind::ClaudeCode]);
     }
 
     #[test]

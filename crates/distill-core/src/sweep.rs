@@ -147,6 +147,15 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
     Ok(report)
 }
 
+/// Whether exclusions keep a T3 Code thread out. One that doesn't say where it ran is kept out
+/// while any exclusion is set, like the other databases.
+fn t3_excluded(config: &Config, cwd: Option<&str>) -> bool {
+    if config.privacy.exclude_paths.is_empty() {
+        return false;
+    }
+    cwd.is_none_or(|c| config.is_excluded(c))
+}
+
 /// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
 /// normalize can tell which originals a mirror copies. Written whenever they change, which can
 /// happen without the thread changing (a native id filled in later).
@@ -167,7 +176,7 @@ fn capture_native_refs(
         return Ok(());
     }
     if !config.privacy.exclude_paths.is_empty()
-        && t3code::thread_cwd(db, thread_id)?.is_some_and(|cwd| config.is_excluded(&cwd))
+        && t3_excluded(config, t3code::thread_cwd(db, thread_id)?.as_deref())
     {
         return Ok(());
     }
@@ -232,9 +241,7 @@ fn capture_one(
         }
         Candidate::T3Thread { db, thread_id, .. } => {
             let export = t3code::export_thread(db, thread_id)?;
-            if let Some(cwd) = &export.cwd
-                && config.is_excluded(cwd)
-            {
+            if t3_excluded(config, export.cwd.as_deref()) {
                 report.excluded += 1;
                 return Ok(());
             }

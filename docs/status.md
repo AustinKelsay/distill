@@ -22,5 +22,6 @@ As of 2026-11-14. Milestones are from `docs/plan.md`. "Built" means implemented 
 - No t3code join: its database was locked when checked and its contents are unverified.
 - T3 thread titles aren't in the archive (they change while a thread lives); titles fall back to the first user message.
 - With any privacy exclusion set, Antigravity and Hermes are not archived at all: their sessions don't record a working directory.
+- With any privacy exclusion set, a T3 Code thread whose worktree and project root are unknown is not archived, and neither are new native references for it.
 - Cursor chat stores are SQLite files, so like other databases they are not archived at all while any privacy exclusion is set (the sweep can't check where they ran before copying them). Cursor's IDE chat history (`state.vscdb`) is not read; only the agent's `~/.cursor/chats`.
 - Each new capture costs two directory fsyncs (about 18 ms), so a first sweep of a large machine takes a few minutes.
