@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::archive::{Archive, CaptureKind, copy_sqlite};
 use crate::config::Config;
 use crate::home::Home;
-use crate::normalize::{opencode, t3code};
+use crate::normalize::{goose, opencode, t3code};
 use crate::runlog::{self, RunEntry};
 use crate::source::{self, Candidate, SourceKind};
 
@@ -147,9 +147,10 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
     Ok(report)
 }
 
-/// Whether exclusions keep a T3 Code thread out. One that doesn't say where it ran is kept out
+/// Whether exclusions keep a session exported from a database (a T3 Code thread, a Goose
+/// session) out. One that doesn't say where it ran is kept out
 /// while any exclusion is set, like the other databases.
-fn t3_excluded(config: &Config, cwd: Option<&str>) -> bool {
+fn db_session_excluded(config: &Config, cwd: Option<&str>) -> bool {
     if config.privacy.exclude_paths.is_empty() {
         return false;
     }
@@ -176,7 +177,7 @@ fn capture_native_refs(
         return Ok(());
     }
     if !config.privacy.exclude_paths.is_empty()
-        && t3_excluded(config, t3code::thread_cwd(db, thread_id)?.as_deref())
+        && db_session_excluded(config, t3code::thread_cwd(db, thread_id)?.as_deref())
     {
         return Ok(());
     }
@@ -241,11 +242,19 @@ fn capture_one(
         }
         Candidate::T3Thread { db, thread_id, .. } => {
             let export = t3code::export_thread(db, thread_id)?;
-            if t3_excluded(config, export.cwd.as_deref()) {
+            if db_session_excluded(config, export.cwd.as_deref()) {
                 report.excluded += 1;
                 return Ok(());
             }
             archive.put(SourceKind::T3Code, &origin, &fingerprint, &export.bytes[..])?
+        }
+        Candidate::GooseSession { db, session_id, .. } => {
+            let export = goose::export_session(db, session_id)?;
+            if db_session_excluded(config, export.working_dir.as_deref()) {
+                report.excluded += 1;
+                return Ok(());
+            }
+            archive.put(SourceKind::Goose, &origin, &fingerprint, &export.bytes[..])?
         }
         Candidate::OpenCodeSession { db, session_id, .. } => {
             let export = opencode::export_session(db, session_id)?;

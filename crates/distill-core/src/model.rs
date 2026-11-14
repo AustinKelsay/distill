@@ -172,14 +172,17 @@ impl SessionMeta {
         format!("{}/{}", self.source.id(), self.session_id)
     }
 
-    /// A mirror whose originals are in the archive. With the originals named, each must be
+    /// A mirror whose originals are in the archive: see [`Originals::of`], which settles every
+    /// mirror in an index.
+    pub fn is_duplicate(&self, originals: &Originals) -> bool {
+        self.mirror && !originals.survivors.contains(&self.key())
+    }
+
+    /// Whether `originals` hold what this mirror copies. With the originals named, each must be
     /// there; otherwise their sources must have sessions at all. A mirror of sessions that were
     /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
     /// session of its own.
-    pub fn is_duplicate(&self, originals: &Originals) -> bool {
-        if !self.mirror {
-            return false;
-        }
+    fn copied_in(&self, originals: &Originals) -> bool {
         // Runs whose original isn't named count as copied when their source has sessions.
         // Metas from before originals were recorded name none, so they check every source.
         let unresolved = if self.mirror_refs.is_empty() && self.mirror_unresolved.is_empty() {
@@ -188,9 +191,13 @@ impl SessionMeta {
             &self.mirror_unresolved
         };
         // A named original must also reach (nearly) as far as the mirror: T3 can carry a
-        // native session on after its source stopped being captured.
+        // native session on after its source stopped being captured. Cursor's times mark only
+        // when each turn began, so they can't say how far a session went.
         let covers = |k: &String| {
             originals.keys.get(k).is_some_and(|ended| {
+                if k.starts_with("cursor/") {
+                    return true;
+                }
                 match (
                     ended.as_deref().and_then(ts),
                     self.ended_at.as_deref().and_then(ts),
@@ -213,12 +220,17 @@ fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok()
 }
 
-/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`].
+/// The sessions in an index that hold content: every one that isn't a mirror, and every mirror
+/// whose originals are missing (it is then the only copy). Mirrors are settled one at a time,
+/// Cursor's transcripts before T3 Code's threads (which may copy them), each counting as an
+/// original for the ones after it, so two copies of a lost session keep exactly one.
 #[derive(Debug, Default)]
 pub struct Originals {
     pub sources: std::collections::HashSet<SourceKind>,
     /// Each original's key, with when it ended.
     pub keys: std::collections::HashMap<String, Option<String>>,
+    /// Mirrors that are the only copy of what they hold.
+    pub survivors: std::collections::HashSet<String>,
 }
 
 impl Originals {
@@ -227,6 +239,25 @@ impl Originals {
         for m in metas.iter().filter(|m| !m.mirror) {
             o.sources.insert(m.source);
             o.keys.insert(m.key(), m.ended_at.clone());
+        }
+        let mut mirrors: Vec<&SessionMeta> = metas.iter().filter(|m| m.mirror).collect();
+        mirrors.sort_by_key(|m| (m.source == SourceKind::T3Code, m.key()));
+        for m in mirrors {
+            if m.copied_in(&o) {
+                continue;
+            }
+            // The only copy: it stands for itself and for the sessions it names.
+            o.survivors.insert(m.key());
+            o.sources.insert(m.source);
+            o.keys.insert(m.key(), m.ended_at.clone());
+            for k in &m.mirror_refs {
+                o.keys
+                    .entry(k.clone())
+                    .or_insert_with(|| m.ended_at.clone());
+            }
+            for k in m.mirror_of.iter().chain(&m.mirror_unresolved) {
+                o.sources.insert(*k);
+            }
         }
         o
     }
@@ -284,38 +315,44 @@ mod tests {
         .unwrap()
     }
 
+    fn session(source: &str, id: &str, extra: &str) -> SessionMeta {
+        serde_json::from_str(&format!(
+            r#"{{"source":"{source}","session_id":"{id}","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+                "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"x","version":1}}{extra}}}"#
+        ))
+        .unwrap()
+    }
+
     #[test]
-    fn a_mirror_is_a_duplicate_only_when_its_originals_are_archived() {
+    fn what_a_mirror_needs_to_count_as_copied() {
         let m = mirror(r#","mirror_of":["codex"]"#);
         let mut codex = Originals::default();
         codex.sources.insert(SourceKind::Codex);
-        assert!(m.is_duplicate(&codex));
+        assert!(m.copied_in(&codex));
         // Codex never captured: the mirror is the only copy.
-        assert!(!m.is_duplicate(&Originals::default()));
-        // Metas from before `mirror_of` was recorded stay duplicates.
-        assert!(mirror("").is_duplicate(&Originals::default()));
-        // A mirror doesn't count as an original of its own source.
-        assert!(Originals::of(&[m]).sources.is_empty());
+        assert!(!m.copied_in(&Originals::default()));
+        // Metas from before `mirror_of` was recorded count as copied.
+        assert!(mirror("").copied_in(&Originals::default()));
 
         // Named originals must each be present; another session of the source isn't enough.
         let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
-        assert!(!exact.is_duplicate(&codex));
+        assert!(!exact.copied_in(&codex));
         codex.keys.insert("codex/c-1".into(), None);
-        assert!(exact.is_duplicate(&codex));
+        assert!(exact.copied_in(&codex));
 
         // A named original that's missing keeps the mirror, whatever the other runs say.
         let partial = mirror(
             r#","mirror_of":["codex"],"mirror_refs":["codex/c-2"],"mirror_unresolved":["codex"]"#,
         );
-        assert!(!partial.is_duplicate(&codex));
+        assert!(!partial.copied_in(&codex));
         codex.keys.insert("codex/c-2".into(), None);
-        assert!(partial.is_duplicate(&codex));
+        assert!(partial.copied_in(&codex));
         // The unresolved run's source must have sessions too.
         let keys_only = Originals {
-            sources: Default::default(),
             keys: codex.keys.clone(),
+            ..Default::default()
         };
-        assert!(!partial.is_duplicate(&keys_only));
+        assert!(!partial.copied_in(&keys_only));
 
         // T3 carried the session on after the original was last captured: keep the mirror.
         let mut later = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
@@ -323,10 +360,36 @@ mod tests {
         codex
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:00:00Z".into()));
-        assert!(!later.is_duplicate(&codex));
+        assert!(!later.copied_in(&codex));
         codex
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
-        assert!(later.is_duplicate(&codex));
+        assert!(later.copied_in(&codex));
+    }
+
+    #[test]
+    fn of_two_copies_of_a_lost_session_one_survives() {
+        // A Cursor agent whose store is gone: its transcript and the T3 thread that ran it.
+        let transcript = session(
+            "cursor",
+            "transcript-agent-1",
+            r#","mirror":true,"mirror_of":["cursor"],"mirror_refs":["cursor/agent-1"]"#,
+        );
+        let thread = session(
+            "t3code",
+            "t1",
+            r#","mirror":true,"mirror_of":["cursor"],"mirror_refs":["cursor/agent-1"]"#,
+        );
+        let o = Originals::of(&[thread.clone(), transcript.clone()]);
+        assert!(
+            !transcript.is_duplicate(&o),
+            "the transcript is the copy kept"
+        );
+        assert!(thread.is_duplicate(&o));
+        // With the store archived, both are copies.
+        let store = session("cursor", "agent-1", "");
+        let o = Originals::of(&[thread.clone(), transcript.clone(), store.clone()]);
+        assert!(transcript.is_duplicate(&o) && thread.is_duplicate(&o));
+        assert!(!store.is_duplicate(&o));
     }
 }

@@ -107,6 +107,9 @@ fn yes() -> bool {
     true
 }
 
+/// Sources added after config files were first written, newest last.
+const ADDED_LATER: &[SourceKind] = &[SourceKind::Goose];
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -129,7 +132,24 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("no config at {} (run `distill init`)", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
+        let mut config: Config =
+            toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+        // A file that lists every source Distill knew when it was written (setup and `init`
+        // write them all) gets the sources added since, switched on like the rest. A file that
+        // lists only some sources means exactly those.
+        let earlier = SourceKind::ALL.iter().filter(|k| !ADDED_LATER.contains(k));
+        if earlier.clone().all(|&k| config.source(k).is_some()) {
+            for &kind in ADDED_LATER {
+                if config.source(kind).is_none() {
+                    config.sources.push(SourceConfig {
+                        kind,
+                        enabled: true,
+                        roots: Vec::new(),
+                    });
+                }
+            }
+        }
+        Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -184,6 +204,24 @@ mod tests {
         c.source_mut(SourceKind::Cursor).enabled = false;
         c.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), c);
+    }
+
+    #[test]
+    fn sources_added_since_the_file_was_written_are_collected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut c = Config::default();
+        c.sources.retain(|s| s.kind != SourceKind::Goose);
+        c.sources[0].enabled = false;
+        c.save(&path).unwrap();
+        let back = Config::load(&path).unwrap();
+        assert!(back.source(SourceKind::Goose).is_some_and(|s| s.enabled));
+        assert!(!back.sources[0].enabled, "a source turned off stays off");
+
+        // A file naming only some sources means just those.
+        c.sources.truncate(2);
+        c.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().sources.len(), 2);
     }
 
     #[test]

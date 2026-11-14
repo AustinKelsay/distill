@@ -58,7 +58,7 @@ impl Paint {
     pub fn source_color(&self, kind: SourceKind) -> Color {
         let i = SourceKind::ALL.iter().position(|&k| k == kind).unwrap_or(0);
         // Rune has six accents and repeats them; sources past the sixth get their own hues.
-        const EXTRA_HUES: [f32; 4] = [195.0, 25.0, 110.0, 330.0];
+        const EXTRA_HUES: [f32; 5] = [195.0, 25.0, 110.0, 330.0, 270.0];
         match i.checked_sub(6) {
             None => tok::accent(i, self.dark),
             Some(j) => {

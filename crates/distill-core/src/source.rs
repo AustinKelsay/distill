@@ -24,10 +24,11 @@ pub enum SourceKind {
     /// T3 Code's own thread database: which harness, model and worktree each thread used.
     #[serde(rename = "t3code")]
     T3Code,
+    Goose,
 }
 
 impl SourceKind {
-    pub const ALL: [SourceKind; 10] = [
+    pub const ALL: [SourceKind; 11] = [
         SourceKind::ClaudeCode,
         SourceKind::Codex,
         SourceKind::OpenCode,
@@ -38,6 +39,7 @@ impl SourceKind {
         SourceKind::Antigravity,
         SourceKind::Hermes,
         SourceKind::T3Code,
+        SourceKind::Goose,
     ];
 
     pub fn id(self) -> &'static str {
@@ -52,6 +54,7 @@ impl SourceKind {
             SourceKind::Antigravity => "antigravity",
             SourceKind::Hermes => "hermes",
             SourceKind::T3Code => "t3code",
+            SourceKind::Goose => "goose",
         }
     }
 
@@ -67,6 +70,7 @@ impl SourceKind {
             SourceKind::Antigravity => "Antigravity",
             SourceKind::Hermes => "Hermes",
             SourceKind::T3Code => "T3 Code",
+            SourceKind::Goose => "Goose",
         }
     }
 
@@ -95,7 +99,13 @@ impl SourceKind {
             SourceKind::OpenCode => vec![home.join(".local/share/opencode/opencode.db")],
             SourceKind::Droid => vec![home.join(".factory/sessions")],
             SourceKind::Pi => vec![home.join(".pi/agent/sessions")],
-            SourceKind::Cursor => vec![home.join(".cursor/chats")],
+            // Chats from the agent CLI and IDE, sessions run over ACP, agents run through the SDK
+            // (`projects/*/sdk-agent-store`), and the plain transcripts it keeps per project.
+            SourceKind::Cursor => vec![
+                home.join(".cursor/chats"),
+                home.join(".cursor/acp-sessions"),
+                home.join(".cursor/projects"),
+            ],
             SourceKind::Grok => vec![home.join(".grok/sessions")],
             SourceKind::Antigravity => vec![
                 home.join(".t3/userdata/providers/antigravity"),
@@ -105,6 +115,7 @@ impl SourceKind {
                 vec![home.join(".hermes/sessions"), home.join(".hermes/state.db")]
             }
             SourceKind::T3Code => vec![home.join(".t3/userdata/statev2.sqlite")],
+            SourceKind::Goose => vec![home.join(".local/share/goose/sessions/sessions.db")],
         }
     }
 
@@ -125,7 +136,8 @@ impl SourceKind {
                 name.ends_with(".jsonl")
                     || (name.starts_with("session_") && name.ends_with(".json"))
             }
-            SourceKind::Cursor => name == "store.db",
+            SourceKind::Cursor => name == "store.db" || cursor_transcript(origin),
+            SourceKind::Goose => true,
         }
     }
 }
@@ -165,6 +177,12 @@ pub enum Candidate {
         thread_id: String,
         updated: String,
     },
+    /// One Goose session exported from its database as JSONL rows.
+    GooseSession {
+        db: PathBuf,
+        session_id: String,
+        updated: String,
+    },
 }
 
 impl Candidate {
@@ -173,6 +191,7 @@ impl Candidate {
             Candidate::File { kind, .. } | Candidate::Sqlite { kind, .. } => *kind,
             Candidate::OpenCodeSession { .. } => SourceKind::OpenCode,
             Candidate::T3Thread { .. } => SourceKind::T3Code,
+            Candidate::GooseSession { .. } => SourceKind::Goose,
         }
     }
 
@@ -188,6 +207,9 @@ impl Candidate {
             Candidate::T3Thread { db, thread_id, .. } => {
                 format!("{}#thread={}", db.to_string_lossy(), thread_id)
             }
+            Candidate::GooseSession { db, session_id, .. } => {
+                format!("{}#session={}", db.to_string_lossy(), session_id)
+            }
         }
     }
 
@@ -198,7 +220,9 @@ impl Candidate {
                 format!("{size}:{mtime_ns}")
             }
             Candidate::OpenCodeSession { updated, .. } => format!("updated:{updated}"),
-            Candidate::T3Thread { updated, .. } => format!("updated:{updated}"),
+            Candidate::T3Thread { updated, .. } | Candidate::GooseSession { updated, .. } => {
+                format!("updated:{updated}")
+            }
         }
     }
 }
@@ -271,6 +295,11 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                     out.extend(crate::normalize::t3code::list_threads(root)?);
                 }
             }
+            SourceKind::Goose => {
+                if root.is_file() {
+                    out.extend(crate::normalize::goose::list_sessions(root)?);
+                }
+            }
             _ => {
                 for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
                     if !entry.file_type().is_file() {
@@ -287,6 +316,15 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                         || name.ends_with("-journal")
                         || name.ends_with(".lock")
                         || name == ".DS_Store"
+                    {
+                        continue;
+                    }
+                    // Cursor makes an ACP session folder for every connection; only the ones
+                    // that held a conversation have a store beside their `meta.json`.
+                    if kind == SourceKind::Cursor
+                        && name == "meta.json"
+                        && path.components().any(|c| c.as_os_str() == "acp-sessions")
+                        && !path.with_file_name("store.db").exists()
                     {
                         continue;
                     }
@@ -353,8 +391,17 @@ pub fn path_cwd(
 }
 
 /// Sources whose sessions record no working directory at all, so exclusions can't be checked.
+/// (Cursor's transcripts don't; its chat stores are databases, which fail closed anyway.)
 pub fn records_no_cwd(kind: SourceKind) -> bool {
-    matches!(kind, SourceKind::Antigravity | SourceKind::Hermes)
+    matches!(
+        kind,
+        SourceKind::Antigravity | SourceKind::Hermes | SourceKind::Cursor
+    )
+}
+
+/// A Cursor agent transcript: `projects/<project>/agent-transcripts/[…/]<agent id>.jsonl`.
+pub fn cursor_transcript(origin: &str) -> bool {
+    origin.contains("/agent-transcripts/") && origin.ends_with(".jsonl")
 }
 
 pub fn percent_decode(s: &str) -> String {

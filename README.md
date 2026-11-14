@@ -9,7 +9,8 @@ sources ──sweep──▶ raw archive ──steward──▶ derived files �
  Droid, Pi,        no model                 at any time
  Cursor, Grok,
  Antigravity,
- Hermes, T3 Code)
+ Hermes, T3 Code,
+ Goose)
 ```
 
 ![Dashboard](docs/images/dashboard.png)
