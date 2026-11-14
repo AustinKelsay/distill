@@ -206,7 +206,8 @@ pub fn dashboard(home: &Home) -> Result<Dashboard> {
     let newest = builds
         .iter()
         .filter(|b| seen_recipes.insert(b.recipe.clone()));
-    for b in newest.filter(|b| !b.approved) {
+    // An empty build has nothing to leave the machine, so it asks for nothing.
+    for b in newest.filter(|b| !b.approved && b.records > 0) {
         needs_you.push(NeedsYou::ApproveExport {
             recipe: b.recipe.clone(),
             build: b.build.clone(),
@@ -285,4 +286,30 @@ pub fn week_buckets(metas: &[crate::model::SessionMeta], now: DateTime<Utc>) -> 
 /// Load the config, or the defaults with detected sources, for the setup screens.
 pub fn config_or_default(home: &Home) -> Config {
     home.load_config().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_build_asks_for_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let mut config = crate::Config::default();
+        for s in &mut config.sources {
+            s.enabled = false;
+        }
+        crate::setup::initialize(&home, &config).unwrap();
+        let b = export::build(&home, "good-sessions").unwrap();
+        assert_eq!(b.records, 0);
+        let d = dashboard(&home).unwrap();
+        assert!(
+            !d.needs_you
+                .iter()
+                .any(|n| matches!(n, NeedsYou::ApproveExport { .. })),
+            "{:?}",
+            d.needs_you
+        );
+    }
 }

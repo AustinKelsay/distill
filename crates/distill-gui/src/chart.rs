@@ -130,18 +130,18 @@ fn plot(p: &Paint, weeks: &[WeekBucket]) -> El {
                 .key(format!("week-{i}"))
                 .role("img")
                 .label(format!(
-                    "Week of {}: {} sessions",
+                    "Week of {}: {}",
                     short_date(&w.week_start),
-                    w.total
+                    sessions(w.total)
                 ))
                 .grow(1.0)
                 .h_full()
                 .justify_end()
                 .items_center()
                 .help(format!(
-                    "{} · {} sessions",
+                    "{} · {}",
                     short_date(&w.week_start),
-                    w.total
+                    sessions(w.total)
                 ))
                 .child(stack.a11y_hidden()),
         );
@@ -199,6 +199,14 @@ fn axis_label(p: &Paint, v: u64) -> El {
         .color(p.faint())
         .align(rune::Align::End)
         .w_full()
+}
+
+fn sessions(n: u64) -> String {
+    if n == 1 {
+        "1 session".to_string()
+    } else {
+        format!("{n} sessions")
+    }
 }
 
 #[cfg(test)]

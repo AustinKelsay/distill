@@ -33,8 +33,8 @@ impl SweepReport {
     }
     pub fn summary(&self) -> String {
         format!(
-            "Swept {} sources: {} new, {} grew, {} rewritten, {} unchanged{}{}",
-            self.seen,
+            "Swept {}: {} new, {} grew, {} rewritten, {} unchanged{}{}",
+            crate::util::count(self.seen, "source"),
             self.new,
             self.appended,
             self.rewritten,

@@ -58,6 +58,12 @@ fn header(s: &State, p: &Paint) -> El {
         .w_full()
         .h(68.0)
         .px(28.0)
+        // The window's own buttons sit over the top-left corner on macOS.
+        .pl(if cfg!(target_os = "macos") {
+            96.0
+        } else {
+            28.0
+        })
         .center_y()
         .justify_between()
         .child(
@@ -238,14 +244,23 @@ fn tile(p: &Paint, key: &str, label: &str, value: String, sub: El) -> El {
 
 fn sources(d: &Dashboard, p: &Paint) -> El {
     let ok = d.sources.iter().filter(|s| s.health == Health::Ok).count();
+    // A source that isn't installed isn't unhealthy; it is counted apart.
     let on = d
         .sources
         .iter()
-        .filter(|s| s.health != Health::Disabled)
+        .filter(|s| !matches!(s.health, Health::Disabled | Health::Missing))
         .count();
-    let trailing = text(format!("{ok} of {on} healthy"))
-        .font(p.caption())
-        .color(p.muted());
+    let missing = d
+        .sources
+        .iter()
+        .filter(|s| s.health == Health::Missing)
+        .count();
+    let summary = if missing > 0 {
+        format!("{ok} of {on} healthy · {missing} not installed")
+    } else {
+        format!("{ok} of {on} healthy")
+    };
+    let trailing = text(summary).font(p.caption()).color(p.muted());
     let mut card = p.section("sources", "Sources", Some(trailing)).gap(8.0);
     let mut list = col().key("list").role("list").label("Sources");
     for (i, src) in d.sources.iter().enumerate() {
@@ -263,6 +278,7 @@ fn source_row(p: &Paint, s: &SourceHealth) -> El {
     let note = match (&s.note, s.health) {
         (Some(n), _) => n.clone(),
         (None, Health::Disabled) => "off".to_string(),
+        (None, _) if s.sessions == 1 => "1 session".to_string(),
         (None, _) => format!("{} sessions", thousands(s.sessions)),
     };
     let size = if s.archive_bytes > 0 {
