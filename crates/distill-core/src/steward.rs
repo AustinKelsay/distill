@@ -319,14 +319,18 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
     }
     drop(tx);
     let deadline = Instant::now() + timeout;
-    let stop = |child: &mut std::process::Child| {
+    // Returns whether the whole group was signalled.
+    let stop = |child: &mut std::process::Child| -> bool {
         // The group first (a wrapper's children), then the child itself. `/bin/kill` by path,
         // so a narrow PATH can't make the group signal quietly fail.
         #[cfg(unix)]
-        let _ = Command::new("/bin/kill")
+        let group = Command::new("/bin/kill")
             .args(["-KILL", "--", &format!("-{pid}")])
             .stderr(Stdio::null())
-            .status();
+            .status()
+            .is_ok_and(|s| s.success());
+        #[cfg(not(unix))]
+        let group = false;
         let _ = child.kill();
         let _ = child.wait();
         // With the group gone its pipes close; give the reader threads a moment to finish.
@@ -335,12 +339,18 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
             .recv_timeout(until.saturating_duration_since(Instant::now()))
             .is_ok()
         {}
+        group
     };
-    let timed_out = || {
+    let timed_out = |group: bool| {
         anyhow::anyhow!(
-            "{:?} did not finish within {} s and was stopped",
+            "{:?} did not finish within {} s and was stopped{}",
             cmd.get_program(),
-            timeout.as_secs()
+            timeout.as_secs(),
+            if group {
+                ""
+            } else {
+                " (its process group could not be signalled; processes it started may still run)"
+            }
         )
     };
     let status = loop {
@@ -348,8 +358,8 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
             break status;
         }
         if Instant::now() >= deadline {
-            stop(&mut child);
-            return Err(timed_out());
+            let group = stop(&mut child);
+            return Err(timed_out(group));
         }
         std::thread::sleep(Duration::from_millis(50));
     };
@@ -362,8 +372,8 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
             Ok((true, buf)) => stdout = Some(buf),
             Ok((false, buf)) => stderr = Some(buf),
             Err(_) => {
-                stop(&mut child);
-                return Err(timed_out());
+                let group = stop(&mut child);
+                return Err(timed_out(group));
             }
         }
     }
