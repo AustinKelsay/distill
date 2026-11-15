@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 21;
+const ASSIGNMENT_SCANNER: u32 = 22;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -109,8 +109,10 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let (mut line_start, mut seen) = (0, 0);
     // The current line's leading run of indent, measured once per line.
     let mut indent_of: Option<(usize, usize)> = None;
-    // The body of the last YAML block read (its header line is not part of it).
-    let mut block = (0, 0);
+    // Scanning normally reads each byte a few times. Only adversarial text (thousands of
+    // nested or chained candidates) costs more; past this budget, everything from the next
+    // assignment on is redacted whole, which can over-redact but never leak.
+    let budget = 64 * text.len() + 4096;
     let mut cur = assignment_head().captures_at(text, 0);
     while let Some(c) = cur {
         let whole = c.get(0).expect("whole match");
@@ -142,23 +144,11 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
             json_key: nq.is_some_and(|q| q.ends_with('"')),
             key_indent: indent.min(head_start - line_start),
         };
-        // Inside a YAML block body a name is only text, and a bare value there ends on its
-        // line, inside the body: such a candidate is not read again (which would rescan the
-        // rest of the block). A quoted one is, since its quote can run past the block.
-        let found = if quote.is_none() && (block.0..block.1).contains(&head_start) {
-            None
-        } else {
-            scan_value(text, head_end, quote, &ctx, &mut memo)
-        };
-        if let Some((s, e)) = found
-            && quote.is_none()
-            && s > head_end
-            && matches!(text.as_bytes()[head_end], b'|' | b'>')
-            && e > block.1
-        {
-            block = (if s < block.1 { block.0 } else { s }, e);
+        if memo.work > budget {
+            ranges.push((head_end, text.len(), String::new()));
+            break;
         }
-        if let Some((s, e)) = found
+        if let Some((s, e)) = scan_value(text, head_end, quote, &ctx, &mut memo)
             && s <= e
             && e <= text.len()
             && text.is_char_boundary(s)
@@ -217,21 +207,16 @@ struct Memo {
     newline: Option<(usize, Option<usize>)>,
     /// The last YAML block read, for candidates that share its header line.
     block: Option<Block>,
-    /// (start, end, after a JSON key) of the last bare word read: a candidate inside it
-    /// (`token=x,password=y,…`) ends where it does.
-    word: Option<(usize, usize, bool)>,
+    /// Bytes scanned so far, against the budget in `redact_assignments`.
+    work: usize,
 }
 
 impl Memo {
+    /// The end of the bare word at `at`.
     fn word_end(&mut self, b: &[u8], at: usize, ctx: &Context) -> usize {
-        match self.word {
-            Some((from, end, k)) if k == ctx.json_key && from <= at && at < end => end,
-            _ => {
-                let end = at + bare_end(&b[at..], ctx);
-                self.word = Some((at, end, ctx.json_key));
-                end
-            }
-        }
+        let len = bare_end(&b[at..], ctx);
+        self.work += len + 1;
+        at + len
     }
     fn next_newline(&mut self, b: &[u8], at: usize) -> Option<usize> {
         match self.newline {
@@ -330,6 +315,7 @@ fn scan_value(
             let mut i = at;
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
+                memo.work += m + 1;
                 let Some(&x) = b.get(i + m) else { break };
                 if x == b'\''
                     && mark == b'\''
@@ -390,6 +376,7 @@ fn scan_value(
             .map_or(b.len(), |i| {
                 i - b[at..i].iter().rev().take_while(|&&x| x == b'\\').count()
             });
+        memo.work += brk - at;
         memo.line_break = Some((at, brk));
         return Some((at, brk));
     }
@@ -431,6 +418,7 @@ fn scan_value(
         let body = text[start..end].trim_end();
         let indent = body.len() - body.trim_start().len();
         let block = (!body.trim().is_empty()).then_some((start + indent, start + body.len()));
+        memo.work += end - start;
         memo.block = Some((nl, ctx.key_indent, block));
         return block;
     }
@@ -477,11 +465,13 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
             // that is on this line.
             q @ (b'"' | b'\'') if continues_word(b.get(i + 1).copied(), ctx) => {
                 // In double quotes a backslash escapes the next character (`"a\"b"`); in
-                // single quotes it does not.
+                // single quotes it does not. An escaped `\n` ends the line, as in text that is
+                // itself escaped, so the piece never runs on across lines.
                 let mut j = i + 1;
                 let close = loop {
                     match b.get(j) {
                         None | Some(b'\n') => break None,
+                        Some(b'\\') if b.get(j + 1) == Some(&b'n') => break None,
                         Some(b'\\') if q == b'"' => j += 2,
                         Some(&c) if c == q => break Some(j),
                         _ => j += 1,
@@ -1499,6 +1489,8 @@ mod tests {
             r"password=\'a\\\''' token='synthetic-secret'",
             "password=abc\"x token=synthetic-secret\" y",
             "password=token=token=synthetic",
+            "password=a\"token=x\"\",synthetic-secret\"",
+            "password='x token: |\n  a'\n  token=\nsynthetic-secret",
             "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x",
             "password==synthetic-token=x",
             r"password=\nsynthetic-token=x",
@@ -1570,6 +1562,14 @@ mod tests {
             &mut f,
         );
         assert!(!out.contains("synthetic"), "{out}");
+        // In escaped text (`\"`, `\n`), a quoted piece of a value ends at the escaped line
+        // break: it does not swallow the code after it.
+        let out = redact(
+            r#"let api_key = abcdefgh"read key\")?;\n    let other = keep-this-text;"#,
+            None,
+            &mut f,
+        );
+        assert!(out.contains("keep-this-text"), "{out}");
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
@@ -1608,6 +1608,26 @@ mod tests {
                 redact(s, None, &mut f),
                 "password: '[REDACTED:assigned_secret]' x"
             );
+        }
+    }
+
+    #[test]
+    fn adversarial_text_is_redacted_whole_past_the_budget() {
+        // Thousands of chained or nested candidates: past the scan budget the rest of the text
+        // is redacted whole, so time stays linear and nothing leaks.
+        let mut f = Findings::default();
+        let chain = format!("{}synthetic-secret", "token=x,token\"=x,".repeat(20_000));
+        let mut nested: String = (0..1500).map(|i| " ".repeat(i) + "token: |\n").collect();
+        nested += &(" ".repeat(1500) + "synthetic-secret\n");
+        for text in [chain, nested] {
+            let start = std::time::Instant::now();
+            let out = redact(&text, None, &mut f);
+            assert!(
+                !out.contains("synthetic"),
+                "{}",
+                &out[out.len().saturating_sub(80)..]
+            );
+            assert!(start.elapsed() < std::time::Duration::from_secs(5));
         }
     }
 
