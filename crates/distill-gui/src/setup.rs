@@ -58,7 +58,7 @@ impl SetupDraft {
             }
         }
         let model = TextEdit::new(config.steward.model.clone().unwrap_or_default());
-        let command = TextEdit::new(config.steward.command.join(" "));
+        let command = TextEdit::new(config.steward.command_text());
         SetupDraft {
             step: 0,
             config,
@@ -123,16 +123,7 @@ impl SetupDraft {
         } else {
             Some(model.to_string())
         };
-        // An argument with a space in it (`/models/My Model.gguf`, `sh -c '…'`) can't be typed
-        // into a one-line field, so the saved list is kept as is unless the field was edited.
-        if self.command.text != self.config.steward.command.join(" ") {
-            c.steward.command = self
-                .command
-                .text
-                .split_whitespace()
-                .map(str::to_string)
-                .collect();
-        }
+        c.steward.set_command_text(&self.command.text);
         c
     }
 }

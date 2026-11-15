@@ -127,6 +127,22 @@ pub struct StewardConfig {
     pub command: Vec<String>,
 }
 
+impl StewardConfig {
+    /// The custom command as one line of text, for a settings field.
+    pub fn command_text(&self) -> String {
+        self.command.join(" ")
+    }
+
+    /// Set the custom command from a settings field. Arguments are split on spaces; one with a
+    /// space in it (`/models/My Model.gguf`) can't be typed that way, so text that still reads
+    /// as the saved command keeps the saved argument list exactly.
+    pub fn set_command_text(&mut self, text: &str) {
+        if text != self.command_text() {
+            self.command = text.split_whitespace().map(str::to_string).collect();
+        }
+    }
+}
+
 impl Default for StewardConfig {
     fn default() -> Self {
         Self {
