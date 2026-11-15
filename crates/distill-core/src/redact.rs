@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 7;
+const ASSIGNMENT_SCANNER: u32 = 8;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -109,7 +109,8 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         let quote = c.name("q").map(|q| q.as_str());
         let head_start = c.get(0).expect("whole match").start();
         let line = &text[text[..head_start].rfind('\n').map_or(0, |i| i + 1)..head_start];
-        let key_indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        // A YAML sequence entry's `- ` counts as indent: its fields line up after it.
+        let key_indent = line.len() - line.trim_start_matches([' ', '\t', '-']).len();
         let nq = c.name("nq").map(|q| q.as_str());
         let ctx = Context {
             at: head_end,
@@ -753,6 +754,10 @@ mod tests {
             (
                 "password: |2\n    more-indented\n  synthetic-secret\nnext: 1",
                 "password: |2\n    [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "- password: |\n    synthetic-secret\n  user: alice",
+                "- password: |\n    [REDACTED:assigned_secret]\n  user: alice",
             ),
             (
                 "password = 'unclosed synthetic\nnext line",
