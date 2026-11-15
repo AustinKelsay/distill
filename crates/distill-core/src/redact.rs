@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 15;
+const ASSIGNMENT_SCANNER: u32 = 17;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -101,7 +101,6 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let json_text = (t.starts_with('{') || t.starts_with('['))
         && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok();
     let mut out = String::with_capacity(text.len());
-    let mut unclosed = Unclosed::default();
     let mut pos = 0;
     // The start of the current line, found incrementally so a long line is read once.
     let (mut line_start, mut seen) = (0, 0);
@@ -109,7 +108,13 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let mut indent_of: Option<(usize, usize)> = None;
     while let Some(c) = assignment_head().captures_at(text, pos) {
         let head_end = c.get(0).expect("whole match").end();
-        let rest = &text[head_end..];
+        // A value never runs into the next assignment (`token=x,password='…'`): it is read
+        // only up to where another name starts, and that assignment is read on its own. This
+        // also bounds every scan by the distance to the next name, so the pass is linear.
+        let next = assignment_head()
+            .find_at(text, head_end)
+            .map_or(text.len(), |m| m.start());
+        let rest = &text[head_end..next];
         let quote = c.name("q").map(|q| q.as_str());
         let head_start = c.get(0).expect("whole match").start();
         if let Some(nl) = text[seen..head_start].rfind('\n') {
@@ -131,12 +136,12 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         let key_indent = indent.min(head_start - line_start);
         let nq = c.name("nq").map(|q| q.as_str());
         let ctx = Context {
-            at: head_end,
+            bounded: next < text.len(),
             json_text,
             json_key: nq.is_some_and(|q| q.ends_with('"')),
             key_indent,
         };
-        let found = scan_value(rest, quote, &ctx, &mut unclosed).filter(|&(skip, len)| {
+        let found = scan_value(rest, quote, &ctx).filter(|&(skip, len)| {
             skip + len <= rest.len()
                 && rest.is_char_boundary(skip)
                 && rest.is_char_boundary(skip + len)
@@ -148,7 +153,10 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         };
         let v = &rest[skip..skip + len];
         let value_end = head_end + skip + len;
-        if v.chars().count() < MIN_SECRET_CHARS || is_marker(v) {
+        let interrupted = quote.is_some() && ctx.bounded && skip + len == rest.len();
+        if (v.chars().count() < MIN_SECRET_CHARS && !(interrupted && !v.trim().is_empty()))
+            || is_marker(v)
+        {
             // Too short to be a secret, or already redacted whole. Step past it, so a long
             // run of these is scanned once.
             out.push_str(&text[pos..value_end]);
@@ -180,45 +188,6 @@ fn is_marker(v: &str) -> bool {
         .is_some_and(|name| {
             !name.is_empty() && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
         })
-}
-
-/// For each kind of opening quote, the earliest offset from which a scan found no closing
-/// quote anywhere after it. A later scan of the same kind cannot find one either, so it skips
-/// the search (a text full of unclosed quotes is then scanned once, not once per quote).
-/// Also the last line break found for an unclosed value, which every later unclosed value
-/// before it shares.
-#[derive(Default)]
-struct Unclosed {
-    quotes: Vec<(String, usize)>,
-    /// (searched from, the break's offset) in the whole text.
-    line_break: Option<(usize, usize)>,
-    /// (searched from, the next `\n`'s offset, or `None` if there is none) in the whole text.
-    newline: Option<(usize, Option<usize>)>,
-}
-
-impl Unclosed {
-    /// Where the first `\n` in `rest` is, `rest` starting at `at` in the whole text. Kept as a
-    /// whole-text offset, so a run of candidates on one long line searches it once.
-    fn next_newline(&mut self, rest: &[u8], at: usize) -> Option<usize> {
-        let found = match self.newline {
-            Some((searched, found)) if searched <= at && found.is_none_or(|f| at <= f) => found,
-            _ => {
-                let found = rest.iter().position(|&c| c == b'\n').map(|p| at + p);
-                self.newline = Some((at, found));
-                found
-            }
-        };
-        found.map(|f| f - at)
-    }
-    fn known(&self, q: &str, at: usize) -> bool {
-        self.quotes.iter().any(|(k, from)| k == q && *from <= at)
-    }
-    fn record(&mut self, q: &str, at: usize) {
-        match self.quotes.iter_mut().find(|(k, _)| k == q) {
-            Some((_, from)) => *from = (*from).min(at),
-            None => self.quotes.push((q.to_string(), at)),
-        }
-    }
 }
 
 /// Whether an escaped double quote followed by `after` ends a JSON string: JSON punctuation (or the end
@@ -261,8 +230,8 @@ fn level(mut m: usize) -> u32 {
 
 /// Where an assignment sits in the text being redacted.
 struct Context {
-    /// Offset of the value (the text after the separator) in the whole text.
-    at: usize,
+    /// `rest` stops where the next assignment's name starts, not at the end of the text.
+    bounded: bool,
     /// The whole text is valid JSON.
     json_text: bool,
     /// The name was a quoted JSON key, so a bare value is a JSON number, literal or container.
@@ -273,13 +242,7 @@ struct Context {
 
 /// Where the value starts and how long it is, in `rest` (the text after the separator).
 /// `quote` is the opening quote with the backslashes that escape it.
-fn scan_value(
-    rest: &str,
-    quote: Option<&str>,
-    ctx: &Context,
-    unclosed: &mut Unclosed,
-) -> Option<(usize, usize)> {
-    let at = ctx.at;
+fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, usize)> {
     let b = rest.as_bytes();
     if let Some(q) = quote {
         let escapes = q.len() - 1;
@@ -288,7 +251,7 @@ fn scan_value(
         // Backslashes before the opening quote that are escaped backslashes, not the quote's
         // own escapes (`\\"`), say nothing about the value; only the level counts.
         let own = own_escapes(escapes);
-        if !unclosed.known(q, at) {
+        {
             // Closed by the same quote at the same level; a shallower one means the string
             // around it closed first (the text was cut). A deeper one is part of the value, and
             // so are line breaks: a quoted secret may span lines.
@@ -335,15 +298,13 @@ fn scan_value(
                 }
                 i += m + 1;
             }
-            unclosed.record(q, at);
+        }
+        // Another assignment starts before the quote closes: everything up to it is this
+        // value, however short (`password='abc token=…'`), and that one is read on its own.
+        if ctx.bounded {
+            return Some((0, b.len()));
         }
         // Never closed: the text was cut mid-value, so the value is the rest of its line.
-        if let Some((from, brk)) = unclosed.line_break
-            && from <= at
-            && at <= brk
-        {
-            return Some((0, brk - at));
-        }
         let end = (0..b.len())
             .find(|&i| {
                 b[i] == b'\n'
@@ -353,7 +314,6 @@ fn scan_value(
             .map_or(b.len(), |i| {
                 i - b[..i].iter().rev().take_while(|&&x| x == b'\\').count()
             });
-        unclosed.line_break = Some((at, at + end));
         return Some((0, end));
     }
     // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
@@ -375,7 +335,7 @@ fn scan_value(
     if matches!(b.first(), Some(b'|' | b'>'))
         && let h = 1 + indicators(1)
         && matches!(b.get(h + spaces(h)), Some(b'#' | b'\r' | b'\n'))
-        && let Some(nl) = unclosed.next_newline(b, at)
+        && let Some(nl) = b.iter().position(|&c| c == b'\n')
     {
         let start = nl + 1;
         let (mut end, mut off) = (start, start);
@@ -1439,6 +1399,38 @@ mod tests {
         ] {
             assert_eq!(redact(input, None, &mut f), want);
         }
+        // A value never swallows the next assignment's name.
+        for (input, want) in [
+            (
+                "token=x,password='synthetic-secret'",
+                "token=x,password='[REDACTED:assigned_secret]'",
+            ),
+            (
+                "token=x,password=\"synthetic-secret\"",
+                "token=x,password=\"[REDACTED:assigned_secret]\"",
+            ),
+            (
+                r"password=\'a\\\''' token='synthetic-secret'",
+                r"password=\'[REDACTED:assigned_secret]token='[REDACTED:assigned_secret]'",
+            ),
+            (
+                "password=abc\"x token=synthetic-secret\" y",
+                "password=abc\"x token=[REDACTED:assigned_secret]\" y",
+            ),
+        ] {
+            assert_eq!(redact(input, None, &mut f), want, "{input}");
+        }
+        // A quoted value that another assignment interrupts is redacted up to it, however short.
+        assert_eq!(
+            redact("password='abc token=synthetic-secret' x", None, &mut f),
+            "password='[REDACTED:assigned_secret]token=[REDACTED:assigned_secret]' x"
+        );
+        let out = redact(
+            r#"{"cmd":"token=x,password='synthetic-secret'"}"#,
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("synthetic"), "{out}");
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
