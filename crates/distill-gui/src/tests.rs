@@ -278,3 +278,19 @@ fn setup_offers_local_providers_with_a_privacy_note() {
         ["llama-cli", "-m", "/models/a.gguf", "-no-cnv"]
     );
 }
+
+#[test]
+fn saving_settings_keeps_command_arguments_with_spaces() {
+    let mut config = Config::default();
+    config.steward.harness = Harness::Command;
+    config.steward.command = vec![
+        "llama-cli".into(),
+        "-m".into(),
+        "/models/My Model.gguf".into(),
+    ];
+    let s = State::new(
+        distill_core::home::Home::new("/tmp/none"),
+        Some(config.clone()),
+    );
+    assert_eq!(s.setup.finish().steward.command, config.steward.command);
+}

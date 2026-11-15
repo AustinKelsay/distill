@@ -123,12 +123,16 @@ impl SetupDraft {
         } else {
             Some(model.to_string())
         };
-        c.steward.command = self
-            .command
-            .text
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
+        // An argument with a space in it (`/models/My Model.gguf`, `sh -c '…'`) can't be typed
+        // into a one-line field, so the saved list is kept as is unless the field was edited.
+        if self.command.text != self.config.steward.command.join(" ") {
+            c.steward.command = self
+                .command
+                .text
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+        }
         c
     }
 }
@@ -571,7 +575,7 @@ fn agent(d: &SetupDraft, p: &Paint) -> El {
             p,
             "command",
             "Command",
-            "Program and arguments, split on spaces. It gets the prompt on stdin and prints the card on stdout.",
+            "Program and arguments, split on spaces (for an argument with a space, point this at a script). It gets the prompt on stdin and prints the card on stdout.",
             command,
         ));
     }

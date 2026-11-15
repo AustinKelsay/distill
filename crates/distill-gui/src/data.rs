@@ -30,6 +30,8 @@ pub enum Request {
     /// Turn a proposed recipe into a recipe.
     AcceptRecipe(String),
     CheckSchedule,
+    /// The models the local Ollama server has stored, for the steward step.
+    OllamaModels,
 }
 
 /// What the worker found. Errors arrive as their display text.
@@ -48,6 +50,7 @@ pub enum Reply {
         result: Result<(), String>,
     },
     Schedule(bool),
+    OllamaModels(Vec<String>),
 }
 
 /// The two ends of the worker's channels, held in state while a window runs.
@@ -82,6 +85,7 @@ fn run(home: &Home, req: Request) -> Reply {
                 .map(Box::new)
                 .map_err(|e| format!("{e:#}")),
         ),
+        Request::OllamaModels => Reply::OllamaModels(distill_core::steward::ollama_models()),
         Request::Detect(sources) => Reply::Detected(
             sources
                 .into_iter()

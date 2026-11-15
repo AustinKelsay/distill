@@ -5,6 +5,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -81,12 +82,19 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
                 .map(str::trim)
                 .filter(|m| !m.is_empty())
                 .context("steward.model must name an installed Ollama model (see `ollama list`)")?;
+            // Only a model stored on this machine: a cloud model would send the excerpts to
+            // Ollama's servers, and a missing one would be downloaded on the spot.
+            if !ollama_models().iter().any(|m| m == model) {
+                bail!(
+                    "\"{model}\" is not a model stored on this machine (see `ollama list`; cloud models are not used)"
+                );
+            }
             // The prompt goes in on stdin and the answer comes back on stdout, so Distill itself
             // never opens a connection. Ollama's server must be running (its app, or `ollama
             // serve`).
-            let mut cmd = Command::new("ollama");
+            let mut cmd = ollama();
             cmd.args(["run", model, "--hidethinking", "--nowordwrap"]);
-            let text = exec(cmd.current_dir(&dir), prompt)?;
+            let text = exec_bounded(cmd.current_dir(&dir), prompt, LOCAL_CALL_TIMEOUT)?;
             Ok(Answer {
                 text,
                 cost_usd: None,
@@ -100,7 +108,7 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
                 .context("steward.command is empty")?;
             let mut cmd = Command::new(prog);
             cmd.args(args);
-            let text = exec(cmd.current_dir(&dir), prompt)?;
+            let text = exec_bounded(cmd.current_dir(&dir), prompt, LOCAL_CALL_TIMEOUT)?;
             Ok(Answer {
                 text,
                 cost_usd: None,
@@ -110,20 +118,32 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
     }
 }
 
-/// The models Ollama has installed (`ollama list`), for setup to offer. Empty when Ollama is
-/// not installed or its server is not running.
+/// The models stored on this machine by the local Ollama server (`ollama list`), for setup to
+/// offer and for the steward to check against. Cloud models (listed with no size, or named
+/// `…-cloud` / `…:cloud`) are left out: they run on Ollama's servers. Empty when Ollama is not
+/// installed, its server is not running, or it doesn't answer within a few seconds.
 pub fn ollama_models() -> Vec<String> {
-    let Ok(out) = Command::new("ollama").arg("list").output() else {
+    let mut cmd = ollama();
+    cmd.arg("list");
+    let Ok(out) = exec_bounded(&mut cmd, "", Duration::from_secs(5)) else {
         return Vec::new();
     };
-    if !out.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
+    parse_ollama_list(&out)
+}
+
+fn parse_ollama_list(out: &str) -> Vec<String> {
+    out.lines()
         .skip(1)
-        .filter_map(|l| l.split_whitespace().next())
-        .map(str::to_string)
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split_whitespace().collect();
+            let name = *cols.first()?;
+            // NAME, ID, SIZE (number and unit), MODIFIED: a stored model has a size.
+            let stored = cols
+                .get(2)
+                .is_some_and(|s| s.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            let cloud = name.ends_with("-cloud") || name.ends_with(":cloud");
+            (stored && !cloud).then(|| name.to_string())
+        })
         .collect()
 }
 
@@ -193,6 +213,78 @@ fn exec(cmd: &mut Command, stdin: &str) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// How long one local model call may take before it is stopped. A card is a few hundred tokens
+/// from a prompt of at most about 20,000 characters.
+const LOCAL_CALL_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Run `cmd` with `stdin`, and stop it if it is still running after `timeout`, so a stalled
+/// model server can't hold the steward (and the hourly tick) forever. Input and output are
+/// handled on their own threads: a program that exits early still reports its error rather
+/// than a broken pipe.
+fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<String> {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("start {:?}", cmd.get_program()))?;
+    let mut input = child.stdin.take().expect("piped");
+    let prompt = stdin.to_string();
+    let writer = std::thread::spawn(move || {
+        let _ = input.write_all(prompt.as_bytes());
+    });
+    let read = |mut r: Box<dyn std::io::Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = r.read_to_end(&mut buf);
+            buf
+        })
+    };
+    let out = read(Box::new(child.stdout.take().expect("piped")));
+    let err = read(Box::new(child.stderr.take().expect("piped")));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "{:?} did not finish within {} s and was stopped",
+                cmd.get_program(),
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let _ = writer.join();
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    if !status.success() {
+        bail!(
+            "{:?} exited with {}: {}",
+            cmd.get_program(),
+            status,
+            clip(String::from_utf8_lossy(&stderr).trim(), 400)
+        );
+    }
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
+/// Ollama's CLI, also where launchd's PATH may not reach it.
+fn ollama() -> Command {
+    let bin = ["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap_or("ollama");
+    let mut cmd = Command::new(bin);
+    // Only the server on this machine: `OLLAMA_HOST` could otherwise point the CLI at another
+    // one, and the excerpts would leave the machine.
+    cmd.env("OLLAMA_HOST", "127.0.0.1:11434");
+    cmd
 }
 
 pub const CARD_PROMPT: &str = r#"You are Distill's steward. You review one coding-agent session so it can be used as training data and for personal analysis.
@@ -590,6 +682,29 @@ mod tests {
     use crate::archive::Archive;
     use crate::normalize::NormalizeState;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn only_models_stored_on_this_machine_are_offered() {
+        let list = "NAME                  ID              SIZE      MODIFIED\n\
+                    qwen3.6:35b-a3b       0a1b2c3d4e5f    22 GB     2 days ago\n\
+                    gpt-oss:120b-cloud    1b2c3d4e5f6a    -         3 days ago\n\
+                    kimi-k3:cloud         2c3d4e5f6a7b    -         1 week ago\n";
+        assert_eq!(parse_ollama_list(list), ["qwen3.6:35b-a3b"]);
+    }
+
+    #[test]
+    fn a_local_call_is_stopped_at_its_deadline_and_early_exits_keep_their_error() {
+        let mut slow = Command::new("sh");
+        slow.args(["-c", "sleep 5"]);
+        let err = exec_bounded(&mut slow, "", Duration::from_millis(300)).unwrap_err();
+        assert!(format!("{err:#}").contains("did not finish"), "{err:#}");
+        // A program that exits before reading a large prompt reports its own error.
+        let mut early = Command::new("sh");
+        early.args(["-c", "echo model not found >&2; exit 3"]);
+        let err =
+            exec_bounded(&mut early, &"x".repeat(1 << 20), Duration::from_secs(10)).unwrap_err();
+        assert!(format!("{err:#}").contains("model not found"), "{err:#}");
+    }
 
     #[test]
     fn repair_writes_a_brief_and_runs_the_agent_on_its_own_branch() {
