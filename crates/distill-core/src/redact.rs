@@ -1,6 +1,6 @@
 //! Secret scanning for exports. Raw captures are never edited; this runs on the way out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 9;
+const ASSIGNMENT_SCANNER: u32 = 10;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -103,12 +103,18 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let mut out = String::with_capacity(text.len());
     let mut unclosed = Unclosed::default();
     let mut pos = 0;
+    // The start of the current line, found incrementally so a long line is read once.
+    let (mut line_start, mut seen) = (0, 0);
     while let Some(c) = assignment_head().captures_at(text, pos) {
         let head_end = c.get(0).expect("whole match").end();
         let rest = &text[head_end..];
         let quote = c.name("q").map(|q| q.as_str());
         let head_start = c.get(0).expect("whole match").start();
-        let line = &text[text[..head_start].rfind('\n').map_or(0, |i| i + 1)..head_start];
+        if let Some(nl) = text[seen..head_start].rfind('\n') {
+            line_start = seen + nl + 1;
+        }
+        seen = head_start;
+        let line = &text[line_start..head_start];
         // A YAML sequence entry's `- ` counts as indent: its fields line up after it.
         let key_indent = line.len() - line.trim_start_matches([' ', '\t', '-']).len();
         let nq = c.name("nq").map(|q| q.as_str());
@@ -257,6 +263,12 @@ fn scan_value(
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                 let Some(&x) = b.get(i + m) else { break };
+                if x == b'\'' && mark == b'\'' && m == 0 && b.get(i + 1) == Some(&b'\'') {
+                    // `''` is an apostrophe inside a YAML single-quoted string, and joins two
+                    // quoted pieces in a shell: either way the value goes on.
+                    i += 2;
+                    continue;
+                }
                 if x == mark {
                     match level(m).cmp(&lvl) {
                         std::cmp::Ordering::Equal => return Some((0, i + m - own)),
@@ -367,34 +379,309 @@ fn is_service_address(m: &str) -> bool {
     matches!(local.as_str(), "git" | "noreply" | "no-reply")
 }
 
+/// How many levels of JSON inside JSON strings are read token by token; deeper text goes to the
+/// text scanner rather than risk the stack.
+const MAX_JSON_DEPTH: u32 = 64;
+
 pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> String {
-    redact_json_text(text, home_dir, findings)
-        .unwrap_or_else(|| redact_text(text, home_dir, findings))
+    thread_local!(static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) });
+    let depth = DEPTH.with(|d| d.replace(d.get() + 1));
+    let json = (depth < MAX_JSON_DEPTH)
+        .then(|| redact_json_text(text, home_dir, findings))
+        .flatten();
+    DEPTH.with(|d| d.set(depth));
+    json.unwrap_or_else(|| redact_text(text, home_dir, findings))
 }
 
-/// Text that is a JSON object or array (tool arguments, a tool's JSON output) is parsed,
-/// redacted field by field, and written back, so no pattern has to read escaped JSON, at any
-/// depth. Untouched text is returned as it was; changed text is re-serialized (compact, or
-/// pretty when it spanned lines).
+/// Text that is JSON (an object, array or string: tool arguments, a tool's JSON output) is
+/// redacted token by token, so no pattern has to read escaped JSON. Each string is decoded,
+/// redacted (a string that is JSON itself recurses) and re-encoded only if it changed; a value
+/// under a credential-named key is replaced whole. Every other byte stays as it was: numbers,
+/// key order, whitespace, and every occurrence of a duplicate key.
 fn redact_json_text(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> Option<String> {
-    let t = text.trim_start();
-    if !(t.starts_with('{') || t.starts_with('[')) {
+    if !text.trim_start().starts_with(['{', '[', '"']) {
         return None;
     }
-    let mut v: serde_json::Value = serde_json::from_str(text).ok()?;
-    let mut found = Findings::default();
-    redact_value(&mut v, home_dir, &mut found);
-    findings.merge(&found);
-    let home_hit = home_dir.is_some_and(|h| h.len() > 1 && text.contains(h));
-    if found.total() == 0 && !home_hit {
+    let tokens = json_tokens(text)?;
+    // Per object, the keys already in use, and the next suffix to try for each redacted key.
+    // Built in one pass, the first time a key is redacted.
+    let mut taken: Option<HashMap<usize, KeyNames>> = None;
+    let mut out = String::new();
+    let mut pos = 0;
+    for tok in &tokens {
+        let raw = &text[tok.start..tok.end];
+        let new = match &tok.role {
+            Role::Key { obj, name } => {
+                let base = redact(name, home_dir, findings);
+                (base != *name).then(|| {
+                    let taken = taken.get_or_insert_with(|| {
+                        let mut by_obj: HashMap<usize, KeyNames> = HashMap::new();
+                        for t in &tokens {
+                            if let Role::Key { obj, name } = &t.role {
+                                by_obj.entry(*obj).or_default().0.insert(name.clone());
+                            }
+                        }
+                        by_obj
+                    });
+                    let (used, next) = taken.entry(*obj).or_default();
+                    encode(&unique_key(base, used, next))
+                })
+            }
+            Role::Secret => {
+                *findings
+                    .by_rule
+                    .entry("credential_field".into())
+                    .or_default() += 1;
+                Some(encode("[REDACTED:credential_field]"))
+            }
+            Role::Str => {
+                let s: String = serde_json::from_str(raw).ok()?;
+                let r = redact(&s, home_dir, findings);
+                (r != s).then(|| encode(&r))
+            }
+        };
+        if let Some(new) = new {
+            out.push_str(&text[pos..tok.start]);
+            out.push_str(&new);
+            pos = tok.end;
+        }
+    }
+    if pos == 0 {
         return Some(text.to_string());
     }
-    let out = if text.trim().contains('\n') {
-        serde_json::to_string_pretty(&v)
-    } else {
-        serde_json::to_string(&v)
+    out.push_str(&text[pos..]);
+    Some(out)
+}
+
+/// An object's keys in use, and the next suffix to try for each redacted key.
+type KeyNames = (HashSet<String>, HashMap<String, usize>);
+
+fn encode(s: &str) -> String {
+    serde_json::to_string(s).expect("a string serializes")
+}
+
+/// `base`, or `base #2`, `base #3`, … when two keys redact to the same placeholder, so no value
+/// is dropped. `next` remembers where each base's numbering got to.
+fn unique_key(
+    base: String,
+    used: &mut HashSet<String>,
+    next: &mut HashMap<String, usize>,
+) -> String {
+    let mut key = base.clone();
+    if used.contains(&key) {
+        let n = next.entry(base.clone()).or_insert(2);
+        loop {
+            key = format!("{base} #{n}");
+            *n += 1;
+            if !used.contains(&key) {
+                break;
+            }
+        }
+    }
+    used.insert(key.clone());
+    key
+}
+
+/// A JSON token that may need replacing.
+struct Tok {
+    start: usize,
+    end: usize,
+    role: Role,
+}
+
+enum Role {
+    /// An object key, decoded, and which object it belongs to.
+    Key { obj: usize, name: String },
+    /// A non-empty string, or a number of 1e7 or more, under a credential-named key.
+    Secret,
+    /// Any other string.
+    Str,
+}
+
+/// The strings (and secret numbers) of a JSON document, with their byte ranges; `None` unless
+/// the whole text is valid JSON. Iterative, so nesting depth costs no stack.
+fn json_tokens(text: &str) -> Option<Vec<Tok>> {
+    enum Frame {
+        Obj { id: usize, secret: bool },
+        Arr,
+    }
+    #[derive(PartialEq)]
+    enum Want {
+        Value,
+        ValueOrEnd,
+        Key,
+        KeyOrEnd,
+        Colon,
+        CommaOrEnd,
+    }
+    let b = text.as_bytes();
+    let (mut toks, mut stack, mut objs) = (Vec::new(), Vec::new(), 0);
+    let (mut want, mut i) = (Want::Value, 0);
+    loop {
+        while matches!(b.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            i += 1;
+        }
+        let Some(&c) = b.get(i) else {
+            return (stack.is_empty() && want == Want::CommaOrEnd).then_some(toks);
+        };
+        match want {
+            Want::Value | Want::ValueOrEnd => {
+                if want == Want::ValueOrEnd && c == b']' {
+                    stack.pop();
+                    i += 1;
+                    want = Want::CommaOrEnd;
+                    continue;
+                }
+                let secret = matches!(stack.last(), Some(Frame::Obj { secret: true, .. }));
+                match c {
+                    b'"' => {
+                        let end = string_end(b, i)?;
+                        let role = if secret && end - i > 2 {
+                            Role::Secret
+                        } else {
+                            Role::Str
+                        };
+                        toks.push(Tok {
+                            start: i,
+                            end,
+                            role,
+                        });
+                        i = end;
+                    }
+                    b'{' => {
+                        objs += 1;
+                        stack.push(Frame::Obj {
+                            id: objs,
+                            secret: false,
+                        });
+                        i += 1;
+                        want = Want::KeyOrEnd;
+                        continue;
+                    }
+                    b'[' => {
+                        stack.push(Frame::Arr);
+                        i += 1;
+                        want = Want::ValueOrEnd;
+                        continue;
+                    }
+                    b't' | b'f' | b'n' => {
+                        let lit = [&b"true"[..], b"false", b"null"]
+                            .into_iter()
+                            .find(|l| b[i..].starts_with(l))?;
+                        i += lit.len();
+                    }
+                    b'-' | b'0'..=b'9' => {
+                        let end = number_end(b, i)?;
+                        if secret && text[i..end].parse::<f64>().is_ok_and(|f| f.abs() >= 1e7) {
+                            toks.push(Tok {
+                                start: i,
+                                end,
+                                role: Role::Secret,
+                            });
+                        }
+                        i = end;
+                    }
+                    _ => return None,
+                }
+                want = Want::CommaOrEnd;
+            }
+            Want::Key | Want::KeyOrEnd => {
+                if want == Want::KeyOrEnd && c == b'}' {
+                    stack.pop();
+                    i += 1;
+                    want = Want::CommaOrEnd;
+                    continue;
+                }
+                if c != b'"' {
+                    return None;
+                }
+                let end = string_end(b, i)?;
+                let name: String = serde_json::from_str(&text[i..end]).ok()?;
+                let Some(Frame::Obj { id, secret }) = stack.last_mut() else {
+                    return None;
+                };
+                // Classified by the key as written, before the key itself is redacted.
+                *secret = is_credential_key(&name);
+                toks.push(Tok {
+                    start: i,
+                    end,
+                    role: Role::Key { obj: *id, name },
+                });
+                i = end;
+                want = Want::Colon;
+            }
+            Want::Colon => {
+                if c != b':' {
+                    return None;
+                }
+                i += 1;
+                want = Want::Value;
+            }
+            Want::CommaOrEnd => {
+                match (stack.last(), c) {
+                    (Some(Frame::Obj { .. }), b',') => want = Want::Key,
+                    (Some(Frame::Arr), b',') => want = Want::Value,
+                    (Some(Frame::Obj { .. }), b'}') | (Some(Frame::Arr), b']') => {
+                        stack.pop();
+                    }
+                    _ => return None,
+                }
+                i += 1;
+            }
+        }
+    }
+}
+
+/// The end (past the closing quote) of the JSON string starting at `b[i]`.
+fn string_end(b: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 1;
+    loop {
+        match *b.get(j)? {
+            b'"' => return Some(j + 1),
+            b'\\' => match *b.get(j + 1)? {
+                b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => j += 2,
+                b'u' if b.get(j + 2..j + 6)?.iter().all(u8::is_ascii_hexdigit) => j += 6,
+                _ => return None,
+            },
+            0..0x20 => return None,
+            _ => j += 1,
+        }
+    }
+}
+
+/// The end of the JSON number starting at `b[i]`.
+fn number_end(b: &[u8], i: usize) -> Option<usize> {
+    let digits = |j: &mut usize| {
+        let s = *j;
+        while b.get(*j).is_some_and(u8::is_ascii_digit) {
+            *j += 1;
+        }
+        *j > s
     };
-    Some(out.expect("a JSON value serializes"))
+    let mut j = i + usize::from(b[i] == b'-');
+    match *b.get(j)? {
+        b'0' => j += 1,
+        b'1'..=b'9' => {
+            digits(&mut j);
+        }
+        _ => return None,
+    }
+    if b.get(j) == Some(&b'.') {
+        j += 1;
+        if !digits(&mut j) {
+            return None;
+        }
+    }
+    if matches!(b.get(j), Some(b'e' | b'E')) {
+        j += 1;
+        if matches!(b.get(j), Some(b'+' | b'-')) {
+            j += 1;
+        }
+        if !digits(&mut j) {
+            return None;
+        }
+    }
+    Some(j)
 }
 
 /// Redact text that is not JSON, or JSON that does not parse (a truncated snippet).
@@ -465,41 +752,36 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
             .iter_mut()
             .for_each(|x| redact_value(x, home_dir, findings)),
         serde_json::Value::Object(o) => {
-            // Keys can carry identifiers too (`{"alice@proton.me": "active"}`).
-            if o.keys()
-                .any(|k| redact(k, home_dir, &mut Findings::default()) != *k)
-            {
-                let old = std::mem::take(o);
-                for (k, x) in old {
-                    let base = redact(&k, home_dir, findings);
-                    // Two keys can redact to the same placeholder; number the rest so no value
-                    // is dropped.
-                    let mut key = base.clone();
-                    let mut n = 2;
-                    while o.contains_key(&key) {
-                        key = format!("{base} #{n}");
-                        n += 1;
-                    }
-                    o.insert(key, x);
-                }
-            }
-            for (k, x) in o.iter_mut() {
-                // A string under a credential-named key, or a number long enough to be one
-                // (`"DB_PASSWORD": 12345678`), is replaced whole.
-                let secret = match &*x {
+            // Values are classified by their keys as written, before the keys are redacted:
+            // keys can carry identifiers too (`{"alice@proton.me": "active"}`).
+            let old = std::mem::take(o);
+            let originals: Vec<String> = old.keys().cloned().collect();
+            let mut used: Option<HashSet<String>> = None;
+            let mut next = HashMap::new();
+            for (k, mut x) in old {
+                let secret = match &x {
                     serde_json::Value::String(s) => !s.is_empty(),
-                    serde_json::Value::Number(n) => n.to_string().len() >= MIN_SECRET_CHARS,
+                    serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f.abs() >= 1e7),
                     _ => false,
                 };
-                if secret && is_credential_key(k) {
+                if secret && is_credential_key(&k) {
                     *findings
                         .by_rule
                         .entry("credential_field".into())
                         .or_default() += 1;
-                    *x = serde_json::Value::String("[REDACTED:credential_field]".to_string());
+                    x = serde_json::Value::String("[REDACTED:credential_field]".to_string());
                 } else {
-                    redact_value(x, home_dir, findings);
+                    redact_value(&mut x, home_dir, findings);
                 }
+                let base = redact(&k, home_dir, findings);
+                let key = if base == k {
+                    k
+                } else {
+                    // A redacted key never takes an original key's name, or that value is lost.
+                    let used = used.get_or_insert_with(|| originals.iter().cloned().collect());
+                    unique_key(base, used, &mut next)
+                };
+                o.insert(key, x);
             }
         }
         _ => {}
@@ -843,6 +1125,86 @@ mod tests {
         let pretty = "{\n  \"z\": 1,\n  \"token\": \"synthetic-value\"\n}";
         let out = redact(pretty, None, &mut f);
         assert!(out.contains('\n') && !out.contains("synthetic"), "{out}");
+    }
+
+    #[test]
+    fn json_is_redacted_token_by_token_and_keeps_its_bytes() {
+        let mut f = Findings::default();
+        let mut r = |s: &str| redact(s, Some("/Users/me"), &mut f);
+        // Every occurrence of a duplicate key, also in JSON inside a string.
+        assert_eq!(
+            r(r#"{"password":"synthetic-secret","password":null}"#),
+            r#"{"password":"[REDACTED:credential_field]","password":null}"#
+        );
+        let nested = serde_json::json!({"a": r#"{"password":"synthetic-secret","password":null}"#})
+            .to_string();
+        assert!(!r(&nested).contains("synthetic"));
+        // Classified by the key as written, before the key is redacted.
+        let out = r(r#"{"tail0c0ffe-password":"synthetic-secret"}"#);
+        assert!(
+            !out.contains("synthetic") && !out.contains("tail0c0ffe"),
+            "{out}"
+        );
+        // Numbers: a long one under a credential key is redacted, whatever its notation;
+        // every other number keeps its exact token, and key order and spacing stay.
+        assert_eq!(
+            r(r#"{"password":1000000000000000000000}"#),
+            r#"{"password":"[REDACTED:credential_field]"}"#
+        );
+        assert_eq!(
+            r(
+                r#"{ "password": "synthetic-secret", "id": 18446744073709551617, "f": 1.0000000000000001 }"#
+            ),
+            r#"{ "password": "[REDACTED:credential_field]", "id": 18446744073709551617, "f": 1.0000000000000001 }"#
+        );
+        // An escaped home path is decoded, so it is found.
+        assert_eq!(r(r#"{"p":"\/Users\/me\/project"}"#), r#"{"p":"~/project"}"#);
+        // A top-level JSON string is decoded too, and stays a valid JSON string.
+        let out = r(r#""password='synthetic-secret""#);
+        assert_eq!(
+            serde_json::from_str::<String>(&out).unwrap(),
+            "password='[REDACTED:assigned_secret]"
+        );
+        let out = r(r#""DB_PASSWORD: |\n  synthetic-secret""#);
+        assert!(!out.contains("synthetic"), "{out}");
+        // Nesting deeper than serde_json's recursion limit.
+        let deep = format!(
+            "{}{}{}",
+            "[".repeat(1000),
+            r#"{"password":"synthetic-secret"}"#,
+            "]".repeat(1000)
+        );
+        let out = r(&deep);
+        assert!(
+            !out.contains("synthetic") && out.len() > 2000,
+            "{}",
+            &out[990..1060]
+        );
+        // Not JSON: left to the text scanner.
+        assert!(json_tokens(r#"{"a":1,}"#).is_none() && json_tokens("[01]").is_none());
+        assert!(json_tokens(r#"{"a":"\x"}"#).is_none() && json_tokens("nul").is_none());
+
+        // YAML doubled apostrophes, as text and inside JSON.
+        let mut f = Findings::default();
+        assert_eq!(
+            redact("DB_PASSWORD: 'abc''synthetic-secret' x", None, &mut f),
+            "DB_PASSWORD: '[REDACTED:assigned_secret]' x"
+        );
+        let out = redact(
+            r#"{"content":"DB_PASSWORD: 'abc''synthetic-secret'"}"#,
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("synthetic"), "{out}");
+        // redact_value classifies by the key as written, and redacts long numbers in any form.
+        let mut v =
+            serde_json::json!({"tail0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12});
+        redact_value(&mut v, None, &mut f);
+        let out = v.to_string();
+        assert!(
+            !out.contains("synthetic") && !out.contains("1e21") && out.contains("12"),
+            "{out}"
+        );
     }
 
     #[test]
