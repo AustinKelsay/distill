@@ -25,6 +25,7 @@ fn rules() -> &'static [Rule] {
             r("github_token", r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
             r("aws_access_key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
             r("slack_token", r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"),
+            r("tinfoil_key", r"\btk_[A-Za-z0-9]{40,}\b"),
             r("google_api_key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
             r("stripe_key", r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}\b"),
             r("jwt", r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
@@ -60,7 +61,10 @@ fn rules() -> &'static [Rule] {
             r(
                 "assigned_secret",
                 // Only the value is replaced (the `keep` group stays), so JSON stays valid.
-                r#"(?i)(?P<keep>\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?token|auth[_-]?token)\b["']?\s*[:=]\s*["']?)[^\s"',}]{8,}"#,
+                // The name may carry a prefix (`TINFOIL_API_KEY=`, `db-password:`); a bare `\b` would
+                // stop at the `_` and miss every prefixed variable. Quotes may be escaped (`\"KEY\": \"v\"`)
+                // when the text is JSON inside a string.
+                r#"(?i)(?P<keep>\b(?:[A-Za-z0-9]+[_-])*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b\\*["']?\s*[:=]\s*\\*["']?)[^\s"',}\\]{8,}"#,
             ),
         ]
     })
@@ -129,7 +133,7 @@ pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> St
 fn is_credential_key(key: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:password|passwd|pass|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key|authorization|credentials?)$")
+        Regex::new(r"(?i)^(?:[A-Za-z0-9]+[_-])*(?:password|passwd|pass|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key|authorization|credentials?)$")
             .expect("valid key regex")
     })
     .is_match(key)
@@ -223,6 +227,34 @@ mod tests {
         assert_eq!(parsed["n"], 1);
         assert_eq!(parsed["token"], "[REDACTED:assigned_secret]");
         assert_eq!(f.total(), 3);
+    }
+
+    #[test]
+    fn catches_prefixed_secret_names() {
+        let mut f = Findings::default();
+        let text = "TINFOIL_API_KEY=synthetic-value-0001 DB_PASSWORD: synthetic-value-0002 \
+                    \"GH_TOKEN\": \"synthetic-value-0003\" SSH_PRIVATE_KEY=synthetic-value-0004 \
+                    MAX_TOKENS=4096 csrf_token=short {\\\"LLM_API_KEY\\\": \\\"synthetic-value-0005\\\"}";
+        let out = redact(text, None, &mut f);
+        assert!(!out.contains("synthetic-value"), "{out}");
+        assert!(
+            out.contains("TINFOIL_API_KEY=[REDACTED:assigned_secret]"),
+            "{out}"
+        );
+        assert!(
+            out.contains("MAX_TOKENS=4096") && out.contains("csrf_token=short"),
+            "{out}"
+        );
+        assert_eq!(f.by_rule["assigned_secret"], 5);
+
+        let key = format!("tk_{}", "Ab1".repeat(16));
+        let out = redact(&format!("bare {key} here"), None, &mut f);
+        assert_eq!(out, "bare [REDACTED:tinfoil_key] here");
+
+        let mut v = serde_json::json!({"TINFOIL_API_KEY": "short", "max_tokens": 10});
+        redact_value(&mut v, None, &mut f);
+        assert_eq!(v["TINFOIL_API_KEY"], "[REDACTED:credential_field]");
+        assert_eq!(v["max_tokens"], 10);
     }
 
     #[test]
