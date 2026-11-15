@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 10;
+const ASSIGNMENT_SCANNER: u32 = 11;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -105,6 +105,8 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let mut pos = 0;
     // The start of the current line, found incrementally so a long line is read once.
     let (mut line_start, mut seen) = (0, 0);
+    // The current line's leading run of indent, measured once per line.
+    let mut indent_of: Option<(usize, usize)> = None;
     while let Some(c) = assignment_head().captures_at(text, pos) {
         let head_end = c.get(0).expect("whole match").end();
         let rest = &text[head_end..];
@@ -114,9 +116,19 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
             line_start = seen + nl + 1;
         }
         seen = head_start;
-        let line = &text[line_start..head_start];
         // A YAML sequence entry's `- ` counts as indent: its fields line up after it.
-        let key_indent = line.len() - line.trim_start_matches([' ', '\t', '-']).len();
+        let indent = match indent_of {
+            Some((at, n)) if at == line_start => n,
+            _ => {
+                let n = text.as_bytes()[line_start..]
+                    .iter()
+                    .take_while(|c| matches!(c, b' ' | b'\t' | b'-'))
+                    .count();
+                indent_of = Some((line_start, n));
+                n
+            }
+        };
+        let key_indent = indent.min(head_start - line_start);
         let nq = c.name("nq").map(|q| q.as_str());
         let ctx = Context {
             at: head_end,
@@ -173,17 +185,23 @@ fn is_marker(v: &str) -> bool {
 /// For each kind of opening quote, the earliest offset from which a scan found no closing
 /// quote anywhere after it. A later scan of the same kind cannot find one either, so it skips
 /// the search (a text full of unclosed quotes is then scanned once, not once per quote).
+/// Also the last line break found for an unclosed value, which every later unclosed value
+/// before it shares.
 #[derive(Default)]
-struct Unclosed(Vec<(String, usize)>);
+struct Unclosed {
+    quotes: Vec<(String, usize)>,
+    /// (searched from, the break's offset) in the whole text.
+    line_break: Option<(usize, usize)>,
+}
 
 impl Unclosed {
     fn known(&self, q: &str, at: usize) -> bool {
-        self.0.iter().any(|(k, from)| k == q && *from <= at)
+        self.quotes.iter().any(|(k, from)| k == q && *from <= at)
     }
     fn record(&mut self, q: &str, at: usize) {
-        match self.0.iter_mut().find(|(k, _)| k == q) {
+        match self.quotes.iter_mut().find(|(k, _)| k == q) {
             Some((_, from)) => *from = (*from).min(at),
-            None => self.0.push((q.to_string(), at)),
+            None => self.quotes.push((q.to_string(), at)),
         }
     }
 }
@@ -263,10 +281,11 @@ fn scan_value(
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                 let Some(&x) = b.get(i + m) else { break };
-                if x == b'\'' && mark == b'\'' && m == 0 && b.get(i + 1) == Some(&b'\'') {
-                    // `''` is an apostrophe inside a YAML single-quoted string, and joins two
-                    // quoted pieces in a shell: either way the value goes on.
-                    i += 2;
+                if x == b'\'' && mark == b'\'' && lvl == 0 && b.get(i + m + 1) == Some(&b'\'') {
+                    // `''` is an apostrophe inside a YAML single-quoted string (where a backslash
+                    // before it is a plain character), and joins two quoted pieces in a shell:
+                    // either way the value goes on.
+                    i += m + 2;
                     continue;
                 }
                 if x == mark {
@@ -291,6 +310,12 @@ fn scan_value(
             unclosed.record(q, at);
         }
         // Never closed: the text was cut mid-value, so the value is the rest of its line.
+        if let Some((from, brk)) = unclosed.line_break
+            && from <= at
+            && at <= brk
+        {
+            return Some((0, brk - at));
+        }
         let end = (0..b.len())
             .find(|&i| {
                 b[i] == b'\n'
@@ -300,12 +325,14 @@ fn scan_value(
             .map_or(b.len(), |i| {
                 i - b[..i].iter().rev().take_while(|&&x| x == b'\\').count()
             });
+        unclosed.line_break = Some((at, at + end));
         return Some((0, end));
     }
     // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
     // lines among them included, are the value.
+    // The header is short, so a missing line break is looked for only a little way ahead.
     if matches!(b.first(), Some(b'|' | b'>'))
-        && let Some(nl) = rest.find('\n')
+        && let Some(nl) = b.iter().take(256).position(|&c| c == b'\n')
         && let header = rest[1..nl]
             .trim_start_matches(|c: char| c == '-' || c == '+' || c.is_ascii_digit())
             .trim()
@@ -435,7 +462,7 @@ fn redact_json_text(text: &str, home_dir: Option<&str>, findings: &mut Findings)
                 Some(encode("[REDACTED:credential_field]"))
             }
             Role::Str => {
-                let s: String = serde_json::from_str(raw).ok()?;
+                let s = decode(raw);
                 let r = redact(&s, home_dir, findings);
                 (r != s).then(|| encode(&r))
             }
@@ -455,6 +482,57 @@ fn redact_json_text(text: &str, home_dir: Option<&str>, findings: &mut Findings)
 
 /// An object's keys in use, and the next suffix to try for each redacted key.
 type KeyNames = (HashSet<String>, HashMap<String, usize>);
+
+/// Decode a JSON string token (quotes included, already checked by `string_end`). A lone
+/// surrogate (`\ud800`), which no Rust string can hold, becomes U+FFFD instead of failing, so
+/// one odd escape does not send a whole document to the text scanner.
+fn decode(raw: &str) -> String {
+    let inner = &raw[1..raw.len() - 1];
+    if !inner.contains('\\') {
+        return inner.to_string();
+    }
+    let b = inner.as_bytes();
+    let hex = |i: usize| {
+        inner
+            .get(i..i + 4)
+            .and_then(|h| u32::from_str_radix(h, 16).ok())
+    };
+    let (mut out, mut i, mut run) = (String::with_capacity(inner.len()), 0, 0);
+    while i < b.len() {
+        if b[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        out.push_str(&inner[run..i]);
+        let c = match b[i + 1] {
+            b'b' => '\u{8}',
+            b'f' => '\u{c}',
+            b'n' => '\n',
+            b'r' => '\r',
+            b't' => '\t',
+            b'u' => {
+                let hi = hex(i + 2).unwrap_or(0xFFFD);
+                let pair = (0xD800..0xDC00).contains(&hi)
+                    && b.get(i + 6..i + 8) == Some(b"\\u")
+                    && hex(i + 8).is_some_and(|lo| (0xDC00..0xE000).contains(&lo));
+                if pair {
+                    let lo = hex(i + 8).expect("checked");
+                    i += 6;
+                    char::from_u32(0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00))
+                } else {
+                    char::from_u32(hi)
+                }
+                .unwrap_or('\u{FFFD}')
+            }
+            other => other as char,
+        };
+        out.push(c);
+        i += if b[i + 1] == b'u' { 6 } else { 2 };
+        run = i;
+    }
+    out.push_str(&inner[run..]);
+    out
+}
 
 fn encode(s: &str) -> String {
     serde_json::to_string(s).expect("a string serializes")
@@ -501,9 +579,12 @@ enum Role {
 /// The strings (and secret numbers) of a JSON document, with their byte ranges; `None` unless
 /// the whole text is valid JSON. Iterative, so nesting depth costs no stack.
 fn json_tokens(text: &str) -> Option<Vec<Tok>> {
+    // `secret`: the value being read sits under a credential-named key. Arrays pass that on
+    // (`"password": ["…"]`); objects do not, since a tool schema's `"password": {"type": …}`
+    // describes a field rather than holding one.
     enum Frame {
         Obj { id: usize, secret: bool },
-        Arr,
+        Arr { secret: bool },
     }
     #[derive(PartialEq)]
     enum Want {
@@ -532,7 +613,10 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                     want = Want::CommaOrEnd;
                     continue;
                 }
-                let secret = matches!(stack.last(), Some(Frame::Obj { secret: true, .. }));
+                let secret = matches!(
+                    stack.last(),
+                    Some(Frame::Obj { secret: true, .. } | Frame::Arr { secret: true })
+                );
                 match c {
                     b'"' => {
                         let end = string_end(b, i)?;
@@ -559,7 +643,7 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                         continue;
                     }
                     b'[' => {
-                        stack.push(Frame::Arr);
+                        stack.push(Frame::Arr { secret });
                         i += 1;
                         want = Want::ValueOrEnd;
                         continue;
@@ -596,7 +680,7 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                     return None;
                 }
                 let end = string_end(b, i)?;
-                let name: String = serde_json::from_str(&text[i..end]).ok()?;
+                let name = decode(&text[i..end]);
                 let Some(Frame::Obj { id, secret }) = stack.last_mut() else {
                     return None;
                 };
@@ -620,8 +704,8 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
             Want::CommaOrEnd => {
                 match (stack.last(), c) {
                     (Some(Frame::Obj { .. }), b',') => want = Want::Key,
-                    (Some(Frame::Arr), b',') => want = Want::Value,
-                    (Some(Frame::Obj { .. }), b'}') | (Some(Frame::Arr), b']') => {
+                    (Some(Frame::Arr { .. }), b',') => want = Want::Value,
+                    (Some(Frame::Obj { .. }), b'}') | (Some(Frame::Arr { .. }), b']') => {
                         stack.pop();
                     }
                     _ => return None,
@@ -759,17 +843,8 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
             let mut used: Option<HashSet<String>> = None;
             let mut next = HashMap::new();
             for (k, mut x) in old {
-                let secret = match &x {
-                    serde_json::Value::String(s) => !s.is_empty(),
-                    serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f.abs() >= 1e7),
-                    _ => false,
-                };
-                if secret && is_credential_key(&k) {
-                    *findings
-                        .by_rule
-                        .entry("credential_field".into())
-                        .or_default() += 1;
-                    x = serde_json::Value::String("[REDACTED:credential_field]".to_string());
+                if is_credential_key(&k) {
+                    redact_credential(&mut x, home_dir, findings);
                 } else {
                     redact_value(&mut x, home_dir, findings);
                 }
@@ -785,6 +860,31 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
             }
         }
         _ => {}
+    }
+}
+
+/// A value under a credential-named key: a non-empty string or a number of 1e7 or more is
+/// replaced whole, and so is each one in an array (`"password": ["…"]`). An object is
+/// redacted as usual: a tool schema's `"password": {"type": "string"}` holds no secret.
+fn redact_credential(x: &mut serde_json::Value, home_dir: Option<&str>, findings: &mut Findings) {
+    let secret = match x {
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f.abs() >= 1e7),
+        serde_json::Value::Array(a) => {
+            a.iter_mut()
+                .for_each(|y| redact_credential(y, home_dir, findings));
+            return;
+        }
+        _ => false,
+    };
+    if secret {
+        *findings
+            .by_rule
+            .entry("credential_field".into())
+            .or_default() += 1;
+        *x = serde_json::Value::String("[REDACTED:credential_field]".to_string());
+    } else {
+        redact_value(x, home_dir, findings);
     }
 }
 
@@ -905,7 +1005,7 @@ mod tests {
         let inner: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
         assert_eq!(inner["password"], marker);
         // A bare value that starts with an escape is removed with it.
-        let v = json(r#"{"command":"password=synthetic-value-1234 next"}"#);
+        let v = json(r#"{"command":"password=\u0073ynthetic-value-1234 next"}"#);
         assert_eq!(v["command"], format!("password={marker} next"));
         // A bare JSON number under a quoted name gets a quoted marker.
         let v = json(r#"{"DB_PASSWORD":12345678901,"ok":true}"#);
@@ -1171,7 +1271,7 @@ mod tests {
         let deep = format!(
             "{}{}{}",
             "[".repeat(1000),
-            r#"{"password":"synthetic-secret"}"#,
+            r#"{"p\u0061ssword":"synthetic-secret"}"#,
             "]".repeat(1000)
         );
         let out = r(&deep);
@@ -1183,6 +1283,27 @@ mod tests {
         // Not JSON: left to the text scanner.
         assert!(json_tokens(r#"{"a":1,}"#).is_none() && json_tokens("[01]").is_none());
         assert!(json_tokens(r#"{"a":"\x"}"#).is_none() && json_tokens("nul").is_none());
+
+        // A lone surrogate elsewhere does not undo the document's redactions.
+        let out = r(r#"{"\u0070assword":"synthetic-secret","x":"\ud800","t":"\/Users\/me"}"#);
+        assert!(!out.contains("synthetic") && out.contains("~"), "{out}");
+        assert!(
+            out.contains(r#""x":"\ud800""#),
+            "the odd token is kept as written: {out}"
+        );
+        let out = r(r#"{"token":1e21,"x":"\ud800"}"#);
+        assert!(!out.contains("1e21"), "{out}");
+        // Arrays under a credential key are secret too; objects are redacted as usual, so a
+        // tool schema survives.
+        let out = r(r#"{"password":["synthetic-secret",[12345678901]],"n":[1]}"#);
+        assert!(
+            !out.contains("synthetic")
+                && !out.contains("12345678901")
+                && out.contains(r#""n":[1]"#),
+            "{out}"
+        );
+        let schema = r#"{"password":{"type":"string","description":"Account password"}}"#;
+        assert_eq!(r(schema), schema);
 
         // YAML doubled apostrophes, as text and inside JSON.
         let mut f = Findings::default();
@@ -1197,14 +1318,24 @@ mod tests {
         );
         assert!(!out.contains("synthetic"), "{out}");
         // redact_value classifies by the key as written, and redacts long numbers in any form.
-        let mut v =
-            serde_json::json!({"tail0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12});
+        let mut v = serde_json::json!({"tail0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12, "secret": ["synthetic-a"], "api_key": {"type": "string"}});
         redact_value(&mut v, None, &mut f);
         let out = v.to_string();
         assert!(
             !out.contains("synthetic") && !out.contains("1e21") && out.contains("12"),
             "{out}"
         );
+        assert_eq!(v["api_key"]["type"], "string");
+        // A backslash before a doubled apostrophe is a plain character in YAML.
+        for s in [
+            r"password: 'abc''synthetic-secret' x",
+            r"password: 'synthetic-head''synthetic-tail' x",
+        ] {
+            assert_eq!(
+                redact(s, None, &mut f),
+                "password: '[REDACTED:assigned_secret]' x"
+            );
+        }
     }
 
     #[test]
