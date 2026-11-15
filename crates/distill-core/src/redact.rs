@@ -70,7 +70,7 @@ fn rules() -> &'static [Rule] {
 /// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 4;
+const ASSIGNMENT_SCANNER: u32 = 5;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -157,6 +157,26 @@ impl Unclosed {
     }
 }
 
+/// Whether a double quote followed by `after` ends a JSON string: JSON punctuation (or the end
+/// of the text) comes next, possibly after whitespace or escaped whitespace.
+fn closes_json_string(after: &[u8]) -> bool {
+    let mut i = 0;
+    loop {
+        match after.get(i) {
+            None | Some(b',' | b'}' | b']' | b':') => return true,
+            Some(b' ' | b'\t' | b'\r' | b'\n') => i += 1,
+            Some(b'\\') => {
+                let m = after[i..].iter().take_while(|&&x| x == b'\\').count();
+                match after.get(i + m) {
+                    Some(b'n' | b'r' | b't') => i += m + 1,
+                    _ => return false,
+                }
+            }
+            Some(_) => return false,
+        }
+    }
+}
+
 /// The nesting level a quote sits at after `m` backslashes. Each level of JSON inside a string
 /// doubles the backslashes before it and adds one (`"`, `\"`, `\\\"`), so `\\"` is an
 /// escaped backslash and then a level-0 quote, not an escaped quote.
@@ -197,9 +217,10 @@ fn scan_value(
                         std::cmp::Ordering::Less => return Some((0, i)),
                         std::cmp::Ordering::Greater => {}
                     }
-                } else if x == b'"' && mark == b'\'' {
-                    // A single-quoted value ends at any double quote: in JSON text, that quote
-                    // closes the string around it, at whatever depth.
+                } else if x == b'"' && mark == b'\'' && closes_json_string(&b[i + m + 1..]) {
+                    // In JSON text, a double quote followed by JSON punctuation closes the
+                    // string around the single-quoted value, at whatever depth. Any other
+                    // double quote is part of it (`'abc"def'`).
                     return Some((0, i));
                 }
                 i += m + 1;
@@ -228,13 +249,15 @@ fn scan_value(
         && (header.is_empty() || header.starts_with('#'))
     {
         let start = nl + 1;
-        let (mut end, mut off) = (start, start);
+        let (mut end, mut off, mut block_indent) = (start, start, None);
         for line in rest[start..].split_inclusive('\n') {
             off += line.len();
             if line.trim().is_empty() {
                 continue;
             }
-            if !line.starts_with([' ', '\t']) {
+            // The first line sets the block's indent; a line indented less is a sibling key.
+            let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+            if indent == 0 || indent < *block_indent.get_or_insert(indent) {
                 break;
             }
             end = off;
@@ -611,6 +634,14 @@ mod tests {
             (
                 "DB_PASSWORD: |\n  synthetic-first\n\n  synthetic-second\nnext: 1",
                 "DB_PASSWORD: |\n  [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "DB_PASSWORD='abc\"synthetic-secret-tail' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "config:\n  password: |\n    synthetic-secret\n  user: alice",
+                "config:\n  password: |\n    [REDACTED:assigned_secret]\n  user: alice",
             ),
             (
                 "password = 'unclosed synthetic\nnext line",
