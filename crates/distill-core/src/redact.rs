@@ -70,9 +70,9 @@ fn rules() -> &'static [Rule] {
 /// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
 /// any prefix, since a bare `\b` would stop at the `_`, and may follow an escaped newline
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
-const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrtbf])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
+const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrtbf])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrtf])*[:=](?:\s|\\+[nrtf])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 25;
+const ASSIGNMENT_SCANNER: u32 = 26;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -1600,6 +1600,9 @@ mod tests {
             !out.contains("synthetic") && out.contains("user=alice"),
             "{out}"
         );
+        // And around the separator.
+        let out = redact(r"cut a\fpassword=\f synthetic-value", None, &mut f);
+        assert!(!out.contains("synthetic"), "{out}");
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
