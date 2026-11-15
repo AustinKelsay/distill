@@ -70,7 +70,7 @@ fn rules() -> &'static [Rule] {
 /// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 2;
+const ASSIGNMENT_SCANNER: u32 = 3;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 /// How far a quoted value is followed before giving up on its closing quote.
@@ -125,6 +125,18 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     out
 }
 
+/// The nesting level a quote sits at after `m` backslashes. Each level of JSON inside a string
+/// doubles the backslashes before it and adds one (`"`, `\"`, `\\\"`), so `\\"` is an
+/// escaped backslash and then a level-0 quote, not an escaped quote.
+fn level(mut m: usize) -> u32 {
+    let mut l = 0;
+    while m % 2 == 1 {
+        m = (m - 1) / 2;
+        l += 1;
+    }
+    l
+}
+
 /// Where the value starts and how long it is, in `rest` (the text after the separator).
 /// `quote` is the opening quote with any backslashes that escape it.
 fn scan_value(rest: &str, quote: Option<&str>) -> Option<(usize, usize)> {
@@ -140,10 +152,17 @@ fn scan_value(rest: &str, quote: Option<&str>) -> Option<(usize, usize)> {
                 b'\\' => {
                     let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                     match b.get(i + m) {
-                        Some(&x) if x == mark && m <= depth => return Some((0, i)),
+                        // The quote's own escapes stay; the escaped backslashes before them
+                        // are the end of the value.
+                        Some(&x) if x == mark && level(m) == level(depth) => {
+                            return Some((0, i + m - depth));
+                        }
+                        Some(&x) if x == mark && level(m) < level(depth) => return Some((0, i)),
                         // A single-quoted value never runs past the double quote that closes
                         // the string around it.
-                        Some(b'"') if mark == b'\'' && m <= depth => return Some((0, i)),
+                        Some(b'"') if mark == b'\'' && level(m) <= level(depth) => {
+                            return Some((0, i));
+                        }
                         // An escaped newline at the string's own depth: the value was cut off.
                         Some(b'n') if depth > 0 && m == depth => return Some((0, i)),
                         _ => i += m + 1,
@@ -424,6 +443,22 @@ mod tests {
             json(r#"{"password":"ab\"c synthetic-value"}"#)["password"],
             marker
         );
+        // A value ending in an escaped backslash still ends at its quote, at any depth.
+        let v = json(r#"{"password":"abcdefgh\\","n":1}"#);
+        assert_eq!(
+            (v["password"].as_str(), v["n"].as_i64()),
+            (Some(marker), Some(1))
+        );
+        let v = json(r#"{"a":"{\"password\":\"abcdefgh\\\\\",\"n\":1}"}"#);
+        let inner: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            (inner["password"].as_str(), inner["n"].as_i64()),
+            (Some(marker), Some(1))
+        );
+        // A more deeply escaped quote is part of the value.
+        let v = json(r#"{"a":"{\"password\":\"abc\\\"synthetic\"}"}"#);
+        let inner: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["password"], marker);
         // A bare value that starts with an escape is removed with it.
         let v = json(r#"{"command":"password=synthetic-value-1234 next"}"#);
         assert_eq!(v["command"], format!("password={marker} next"));
