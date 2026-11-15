@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 13;
+const ASSIGNMENT_SCANNER: u32 = 14;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -296,10 +296,15 @@ fn scan_value(
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                 let Some(&x) = b.get(i + m) else { break };
-                if x == b'\'' && mark == b'\'' && b.get(i + m + 1) == Some(&b'\'') {
+                if x == b'\''
+                    && mark == b'\''
+                    && (lvl == 0 || m == 0)
+                    && b.get(i + m + 1) == Some(&b'\'')
+                {
                     // `''` is an apostrophe inside a YAML single-quoted string (where a backslash
                     // before it is a plain character), and joins two quoted pieces in a shell:
-                    // either way the value goes on.
+                    // either way the value goes on. After an escaped opening quote (`\'`), a
+                    // `\''` is that quote closing, then the next one opening.
                     i += m + 2;
                     continue;
                 }
@@ -345,12 +350,24 @@ fn scan_value(
     }
     // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
     // lines among them included, are the value.
+    // The header is the indicator, its chomping and indent digits, spaces, then a comment or
+    // the line break; checked byte by byte, so a long line is not re-read per candidate.
+    let indicators = |from: usize| {
+        b[from..]
+            .iter()
+            .take_while(|c| matches!(c, b'-' | b'+' | b'0'..=b'9'))
+            .count()
+    };
+    let spaces = |from: usize| {
+        b[from..]
+            .iter()
+            .take_while(|c| matches!(c, b' ' | b'\t'))
+            .count()
+    };
     if matches!(b.first(), Some(b'|' | b'>'))
+        && let h = 1 + indicators(1)
+        && matches!(b.get(h + spaces(h)), Some(b'#' | b'\r' | b'\n'))
         && let Some(nl) = unclosed.next_newline(b, at)
-        && let header = rest[1..nl]
-            .trim_start_matches(|c: char| c == '-' || c == '+' || c.is_ascii_digit())
-            .trim()
-        && (header.is_empty() || header.starts_with('#'))
     {
         let start = nl + 1;
         let (mut end, mut off) = (start, start);
@@ -1368,6 +1385,21 @@ mod tests {
             ),
             r"password=\'[REDACTED:assigned_secret]\' x"
         );
+        // After an escaped opening quote, `\''` closes it: the next assignment is its own.
+        assert_eq!(
+            redact(
+                r"password=\'synthetic-first\'' token=\'synthetic-tail\' x",
+                None,
+                &mut f
+            ),
+            r"password=\'[REDACTED:assigned_secret]\'' token=\'[REDACTED:assigned_secret]\' x"
+        );
+        let out = redact(
+            "password=\\'synthetic-head\nsynthetic-tail\\'' x",
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("synthetic"), "{out}");
         // A backslash before a doubled apostrophe is a plain character in YAML.
         for s in [
             r"password: 'abc''synthetic-secret' x",
