@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 12;
+const ASSIGNMENT_SCANNER: u32 = 13;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -380,8 +380,10 @@ fn scan_value(
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'}' => break,
-            b']' if ctx.json_key => break,
+            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' => break,
+            // JSON punctuation ends a value only after a quoted JSON key; in a shell or config
+            // line it is part of the value (`DB_PASSWORD=abc}def`).
+            b',' | b'}' | b']' if ctx.json_key => break,
             b'\\' => match b.get(i + 1) {
                 None | Some(b'"' | b'\'' | b'n' | b'r' | b't') => break,
                 Some(_) => i += 2,
@@ -1340,6 +1342,18 @@ mod tests {
             "{out}"
         );
         assert_eq!(v["api_key"]["type"], "string");
+        // Braces and commas are part of a bare value outside JSON, also when the command
+        // sits in a JSON string.
+        assert_eq!(
+            redact("DB_PASSWORD=abc}synthetic-secret-tail x", None, &mut f),
+            "DB_PASSWORD=[REDACTED:assigned_secret] x"
+        );
+        let out = redact(
+            r#"{"cmd":"DB_PASSWORD=abc},synthetic-secret-tail"}"#,
+            None,
+            &mut f,
+        );
+        assert_eq!(out, r#"{"cmd":"DB_PASSWORD=[REDACTED:assigned_secret]"}"#);
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
