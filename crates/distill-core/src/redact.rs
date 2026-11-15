@@ -417,6 +417,10 @@ mod tests {
             marker
         );
         assert_eq!(
+            json(r#"{"password":"abcdefghij\\synthetic-tail"}"#)["password"],
+            marker
+        );
+        assert_eq!(
             json(r#"{"password":"ab\"c synthetic-value"}"#)["password"],
             marker
         );
