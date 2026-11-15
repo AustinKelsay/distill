@@ -1585,6 +1585,15 @@ mod tests {
             let out = redact(&format!("cut {{\"x\":\"a{esc}{pat} b"), None, &mut f);
             assert!(!out.contains("github_pat_"), "{esc}: {out}");
         }
+        // Credential names after those escapes too.
+        for esc in [r"\b", r"\f"] {
+            let out = redact(
+                &format!("cut {{\"x\":\"a{esc}password=synthetic-value b"),
+                None,
+                &mut f,
+            );
+            assert!(!out.contains("synthetic"), "{esc}: {out}");
+        }
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
