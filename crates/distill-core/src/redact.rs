@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 8;
+const ASSIGNMENT_SCANNER: u32 = 9;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -265,15 +265,13 @@ fn scan_value(
                     }
                 } else if x == b'"'
                     && mark == b'\''
-                    && if m == 0 {
-                        ctx.json_text
-                    } else {
-                        closes_json_string(&b[i + m + 1..])
-                    }
+                    && ctx.json_text
+                    && (m == 0 || closes_json_string(&b[i + m + 1..]))
                 {
-                    // A double quote that closes the string around the single-quoted value:
-                    // an unescaped one in JSON text, or an escaped one followed by JSON
-                    // punctuation (JSON inside a string). Any other is part of the value.
+                    // In valid JSON, a double quote that closes the string around the
+                    // single-quoted value: an unescaped one, or an escaped one followed by JSON
+                    // punctuation (JSON inside a string). Outside JSON a backslash and a double
+                    // quote are characters of the value (`'abc\",def'` in a shell).
                     return Some((0, i));
                 }
                 i += m + 1;
@@ -754,6 +752,10 @@ mod tests {
             (
                 "password: |2\n    more-indented\n  synthetic-secret\nnext: 1",
                 "password: |2\n    [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "DB_PASSWORD='abc\\\",synthetic-secret-tail' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
             ),
             (
                 "- password: |\n    synthetic-secret\n  user: alice",
