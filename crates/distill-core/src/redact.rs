@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 20;
+const ASSIGNMENT_SCANNER: u32 = 21;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -349,8 +349,10 @@ fn scan_value(
                             let close = i + m - own;
                             // In a shell, `"abc"def` is one word: the value goes on.
                             if own == 0 && continues_word(b.get(close + 1).copied(), ctx) {
+                                // The whole word goes, opening quote included, so no quote is
+                                // left unmatched.
                                 let end = memo.word_end(b, close + 1, ctx);
-                                return Some((at, char_end(text, end)));
+                                return Some((at - q.len(), char_end(text, end)));
                             }
                             return Some((at, close));
                         }
@@ -474,9 +476,20 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
             // A quoted piece of the same shell word (`abc"def"`): through its closing quote, if
             // that is on this line.
             q @ (b'"' | b'\'') if continues_word(b.get(i + 1).copied(), ctx) => {
-                match b[i + 1..].iter().position(|&c| c == q || c == b'\n') {
-                    Some(p) if b[i + 1 + p] == q => i += p + 2,
-                    _ => break,
+                // In double quotes a backslash escapes the next character (`"a\"b"`); in
+                // single quotes it does not.
+                let mut j = i + 1;
+                let close = loop {
+                    match b.get(j) {
+                        None | Some(b'\n') => break None,
+                        Some(b'\\') if q == b'"' => j += 2,
+                        Some(&c) if c == q => break Some(j),
+                        _ => j += 1,
+                    }
+                };
+                match close {
+                    Some(j) => i = j + 1,
+                    None => break,
                 }
             }
             b'"' | b'\'' => break,
@@ -1458,11 +1471,15 @@ mod tests {
             ),
             (
                 "DB_PASSWORD=\"abc\"synthetic-secret-tail x",
-                "DB_PASSWORD=\"[REDACTED:assigned_secret] x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
             ),
             (
                 "DB_PASSWORD='abc'\"synthetic-tail\" x",
-                "DB_PASSWORD='[REDACTED:assigned_secret] x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
             ),
             (
                 "say \"password=abcdefgh\" now",
@@ -1482,6 +1499,7 @@ mod tests {
             r"password=\'a\\\''' token='synthetic-secret'",
             "password=abc\"x token=synthetic-secret\" y",
             "password=token=token=synthetic",
+            "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x",
             "password==synthetic-token=x",
             r"password=\nsynthetic-token=x",
             "password: |\n  token='x\nsynthetic-secret'",
