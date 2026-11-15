@@ -320,14 +320,18 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
     drop(tx);
     let deadline = Instant::now() + timeout;
     let stop = |child: &mut std::process::Child| {
-        // The group first (a wrapper's children), then the child itself.
+        // The group first (a wrapper's children), then the child itself. `/bin/kill` by path,
+        // so a narrow PATH can't make the group signal quietly fail.
         #[cfg(unix)]
-        let _ = Command::new("kill")
+        let _ = Command::new("/bin/kill")
             .args(["-KILL", "--", &format!("-{pid}")])
             .stderr(Stdio::null())
             .status();
         let _ = child.kill();
         let _ = child.wait();
+        // With the group gone its pipes close; give the reader threads a moment to finish.
+        let until = Instant::now() + Duration::from_secs(1);
+        while rx.recv_timeout(until.saturating_duration_since(Instant::now())).is_ok() {}
     };
     let timed_out = || {
         anyhow::anyhow!(
