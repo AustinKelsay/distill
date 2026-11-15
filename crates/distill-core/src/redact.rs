@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 11;
+const ASSIGNMENT_SCANNER: u32 = 12;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -192,9 +192,24 @@ struct Unclosed {
     quotes: Vec<(String, usize)>,
     /// (searched from, the break's offset) in the whole text.
     line_break: Option<(usize, usize)>,
+    /// (searched from, the next `\n`'s offset, or `None` if there is none) in the whole text.
+    newline: Option<(usize, Option<usize>)>,
 }
 
 impl Unclosed {
+    /// Where the first `\n` in `rest` is, `rest` starting at `at` in the whole text. Kept as a
+    /// whole-text offset, so a run of candidates on one long line searches it once.
+    fn next_newline(&mut self, rest: &[u8], at: usize) -> Option<usize> {
+        let found = match self.newline {
+            Some((searched, found)) if searched <= at && found.is_none_or(|f| at <= f) => found,
+            _ => {
+                let found = rest.iter().position(|&c| c == b'\n').map(|p| at + p);
+                self.newline = Some((at, found));
+                found
+            }
+        };
+        found.map(|f| f - at)
+    }
     fn known(&self, q: &str, at: usize) -> bool {
         self.quotes.iter().any(|(k, from)| k == q && *from <= at)
     }
@@ -281,7 +296,7 @@ fn scan_value(
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                 let Some(&x) = b.get(i + m) else { break };
-                if x == b'\'' && mark == b'\'' && lvl == 0 && b.get(i + m + 1) == Some(&b'\'') {
+                if x == b'\'' && mark == b'\'' && b.get(i + m + 1) == Some(&b'\'') {
                     // `''` is an apostrophe inside a YAML single-quoted string (where a backslash
                     // before it is a plain character), and joins two quoted pieces in a shell:
                     // either way the value goes on.
@@ -330,9 +345,8 @@ fn scan_value(
     }
     // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
     // lines among them included, are the value.
-    // The header is short, so a missing line break is looked for only a little way ahead.
     if matches!(b.first(), Some(b'|' | b'>'))
-        && let Some(nl) = b.iter().take(256).position(|&c| c == b'\n')
+        && let Some(nl) = unclosed.next_newline(b, at)
         && let header = rest[1..nl]
             .trim_start_matches(|c: char| c == '-' || c == '+' || c.is_ascii_digit())
             .trim()
@@ -1326,6 +1340,20 @@ mod tests {
             "{out}"
         );
         assert_eq!(v["api_key"]["type"], "string");
+        // A long header comment, and doubled apostrophes after an escaped opening quote.
+        let long = format!(
+            "password: | #{}\n  synthetic-secret\nnext: 1",
+            "x".repeat(300)
+        );
+        assert!(!redact(&long, None, &mut f).contains("synthetic"));
+        assert_eq!(
+            redact(
+                r"password=\'synthetic-head''synthetic-tail\' x",
+                None,
+                &mut f
+            ),
+            r"password=\'[REDACTED:assigned_secret]\' x"
+        );
         // A backslash before a doubled apostrophe is a plain character in YAML.
         for s in [
             r"password: 'abc''synthetic-secret' x",
