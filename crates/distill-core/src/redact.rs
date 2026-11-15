@@ -14,9 +14,10 @@ fn rules() -> &'static [Rule] {
     static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
     RULES.get_or_init(|| {
         let r = |name, pat: &str| Rule { name, re: Regex::new(pat).expect("valid redaction regex") };
-        // A key's start: a word boundary, or an escaped newline or tab (`\ntk_…` in JSON inside
-        // a string, where `\b` finds no boundary between the `n` and the key).
-        let k = |name, pat: &str| r(name, &format!(r"(?:\b|(?P<keep>\\[nrt])){pat}"));
+        // A key's start: a word boundary, or an escaped newline, tab, backspace or form feed
+        // (`\ntk_…` in JSON inside a string, where `\b` finds no boundary between the `n` and
+        // the key).
+        let k = |name, pat: &str| r(name, &format!(r"(?:\b|(?P<keep>\\[nrtbf])){pat}"));
         vec![
             // A whole key, or a truncated one (tool output often shows only the head).
             r(
@@ -69,9 +70,9 @@ fn rules() -> &'static [Rule] {
 /// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
 /// any prefix, since a bare `\b` would stop at the `_`, and may follow an escaped newline
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
-const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
+const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrtbf])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 23;
+const ASSIGNMENT_SCANNER: u32 = 24;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -1578,6 +1579,12 @@ mod tests {
             &mut f,
         );
         assert!(out.contains("keep-this-text"), "{out}");
+        // A key right after any JSON whitespace-like escape, in text that is not JSON.
+        let pat = format!("github_pat_{}", "Ab1".repeat(15));
+        for esc in [r"\n", r"\t", r"\r", r"\b", r"\f"] {
+            let out = redact(&format!("cut {{\"x\":\"a{esc}{pat} b"), None, &mut f);
+            assert!(!out.contains("github_pat_"), "{esc}: {out}");
+        }
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
