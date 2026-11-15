@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 14;
+const ASSIGNMENT_SCANNER: u32 = 15;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -310,7 +310,15 @@ fn scan_value(
                 }
                 if x == mark {
                     match level(m).cmp(&lvl) {
-                        std::cmp::Ordering::Equal => return Some((0, i + m - own)),
+                        std::cmp::Ordering::Equal => {
+                            let close = i + m - own;
+                            // In a shell, `"abc"def` is one word: the value goes on.
+                            if own == 0 && continues_word(b.get(close + 1).copied(), ctx) {
+                                let tail = bare_end(&b[close + 1..], ctx);
+                                return Some((0, char_end(rest, close + 1 + tail)));
+                            }
+                            return Some((0, close));
+                        }
                         std::cmp::Ordering::Less => return Some((0, i)),
                         std::cmp::Ordering::Greater => {}
                     }
@@ -394,10 +402,48 @@ fn scan_value(
     if ctx.json_key && matches!(b.first(), Some(b'[' | b'{')) {
         return None;
     }
+    Some((0, char_end(rest, bare_end(b, ctx))))
+}
+
+/// `i`, or the next char boundary after it.
+fn char_end(s: &str, i: usize) -> usize {
+    let mut end = i.min(s.len());
+    while !s.is_char_boundary(end) {
+        end += 1;
+    }
+    end
+}
+
+/// Whether a quote followed by `next` sits inside a shell word (`abc"def"`, `"abc"def`) rather
+/// than ending it (`say "password=abcdefgh" now`, `"…".`). Never in JSON, where a raw quote
+/// delimits a string.
+fn continues_word(next: Option<u8>, ctx: &Context) -> bool {
+    !ctx.json_text
+        && !ctx.json_key
+        && next.is_some_and(|c| {
+            !c.is_ascii_whitespace()
+                && !matches!(
+                    c,
+                    b'.' | b',' | b';' | b':' | b'!' | b'?' | b')' | b']' | b'}' | b'>'
+                )
+        })
+}
+
+/// The end of a bare token in `b`.
+fn bare_end(b: &[u8], ctx: &Context) -> usize {
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' => break,
+            b' ' | b'\t' | b'\n' | b'\r' => break,
+            // A quoted piece of the same shell word (`abc"def"`): through its closing quote, if
+            // that is on this line.
+            q @ (b'"' | b'\'') if continues_word(b.get(i + 1).copied(), ctx) => {
+                match b[i + 1..].iter().position(|&c| c == q || c == b'\n') {
+                    Some(p) if b[i + 1 + p] == q => i += p + 2,
+                    _ => break,
+                }
+            }
+            b'"' | b'\'' => break,
             // JSON punctuation ends a value only after a quoted JSON key; in a shell or config
             // line it is part of the value (`DB_PASSWORD=abc}def`).
             b',' | b'}' | b']' if ctx.json_key => break,
@@ -408,11 +454,7 @@ fn scan_value(
             _ => i += 1,
         }
     }
-    let mut end = i.min(b.len());
-    while !rest.is_char_boundary(end) {
-        end += 1;
-    }
-    Some((0, end))
+    i.min(b.len())
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -1371,6 +1413,32 @@ mod tests {
             &mut f,
         );
         assert_eq!(out, r#"{"cmd":"DB_PASSWORD=[REDACTED:assigned_secret]"}"#);
+        // Quotes inside one shell word keep the value together; a quote that ends a quoted
+        // phrase in prose stays.
+        for (input, want) in [
+            (
+                "DB_PASSWORD=abc\"synthetic-secret-tail\" x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD=\"abc\"synthetic-secret-tail x",
+                "DB_PASSWORD=\"[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD='abc'\"synthetic-tail\" x",
+                "DB_PASSWORD='[REDACTED:assigned_secret] x",
+            ),
+            (
+                "say \"password=abcdefgh\" now",
+                "say \"password=[REDACTED:assigned_secret]\" now",
+            ),
+            (
+                "say \"password=abcdefgh\". Then",
+                "say \"password=[REDACTED:assigned_secret]\". Then",
+            ),
+        ] {
+            assert_eq!(redact(input, None, &mut f), want);
+        }
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
