@@ -70,7 +70,7 @@ fn rules() -> &'static [Rule] {
 /// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 5;
+const ASSIGNMENT_SCANNER: u32 = 6;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -94,6 +94,11 @@ pub fn fingerprint() -> String {
 /// Replace the value of every secret assignment, keeping its name, quotes and escapes, so
 /// redacted JSON (at any nesting depth) stays valid.
 fn redact_assignments(text: &str, n: &mut u64) -> String {
+    // In valid JSON, every unescaped `"` delimits a string. In other text it may be a
+    // character of the value (`DB_PASSWORD='abc"def'`).
+    let t = text.trim_start();
+    let json_text = (t.starts_with('{') || t.starts_with('['))
+        && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok();
     let mut out = String::with_capacity(text.len());
     let mut unclosed = Unclosed::default();
     let mut pos = 0;
@@ -101,7 +106,15 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         let head_end = c.get(0).expect("whole match").end();
         let rest = &text[head_end..];
         let quote = c.name("q").map(|q| q.as_str());
-        let Some((skip, len)) = scan_value(rest, head_end, quote, &mut unclosed) else {
+        let head_start = c.get(0).expect("whole match").start();
+        let line = &text[text[..head_start].rfind('\n').map_or(0, |i| i + 1)..head_start];
+        let key_indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let ctx = Context {
+            at: head_end,
+            json_text,
+            key_indent,
+        };
+        let Some((skip, len)) = scan_value(rest, quote, &ctx, &mut unclosed) else {
             out.push_str(&text[pos..head_end]);
             pos = head_end;
             continue;
@@ -157,7 +170,7 @@ impl Unclosed {
     }
 }
 
-/// Whether a double quote followed by `after` ends a JSON string: JSON punctuation (or the end
+/// Whether an escaped double quote followed by `after` ends a JSON string: JSON punctuation (or the end
 /// of the text) comes next, possibly after whitespace or escaped whitespace.
 fn closes_json_string(after: &[u8]) -> bool {
     let mut i = 0;
@@ -189,15 +202,25 @@ fn level(mut m: usize) -> u32 {
     l
 }
 
-/// Where the value starts and how long it is, in `rest` (the text after the separator, which
-/// starts at `at` in the whole text). `quote` is the opening quote with the backslashes that
-/// escape it.
+/// Where an assignment sits in the text being redacted.
+struct Context {
+    /// Offset of the value (the text after the separator) in the whole text.
+    at: usize,
+    /// The whole text is valid JSON.
+    json_text: bool,
+    /// Indent of the line the name is on; a YAML block's lines are indented more.
+    key_indent: usize,
+}
+
+/// Where the value starts and how long it is, in `rest` (the text after the separator).
+/// `quote` is the opening quote with the backslashes that escape it.
 fn scan_value(
     rest: &str,
-    at: usize,
     quote: Option<&str>,
+    ctx: &Context,
     unclosed: &mut Unclosed,
 ) -> Option<(usize, usize)> {
+    let at = ctx.at;
     let b = rest.as_bytes();
     if let Some(q) = quote {
         let depth = q.len() - 1;
@@ -217,10 +240,17 @@ fn scan_value(
                         std::cmp::Ordering::Less => return Some((0, i)),
                         std::cmp::Ordering::Greater => {}
                     }
-                } else if x == b'"' && mark == b'\'' && closes_json_string(&b[i + m + 1..]) {
-                    // In JSON text, a double quote followed by JSON punctuation closes the
-                    // string around the single-quoted value, at whatever depth. Any other
-                    // double quote is part of it (`'abc"def'`).
+                } else if x == b'"'
+                    && mark == b'\''
+                    && if m == 0 {
+                        ctx.json_text
+                    } else {
+                        closes_json_string(&b[i + m + 1..])
+                    }
+                {
+                    // A double quote that closes the string around the single-quoted value:
+                    // an unescaped one in JSON text, or an escaped one followed by JSON
+                    // punctuation (JSON inside a string). Any other is part of the value.
                     return Some((0, i));
                 }
                 i += m + 1;
@@ -249,15 +279,16 @@ fn scan_value(
         && (header.is_empty() || header.starts_with('#'))
     {
         let start = nl + 1;
-        let (mut end, mut off, mut block_indent) = (start, start, None);
+        let (mut end, mut off) = (start, start);
         for line in rest[start..].split_inclusive('\n') {
             off += line.len();
             if line.trim().is_empty() {
                 continue;
             }
-            // The first line sets the block's indent; a line indented less is a sibling key.
+            // A block's lines are indented more than its key; the first line that is not is
+            // the next key.
             let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
-            if indent == 0 || indent < *block_indent.get_or_insert(indent) {
+            if indent <= ctx.key_indent {
                 break;
             }
             end = off;
@@ -642,6 +673,19 @@ mod tests {
             (
                 "config:\n  password: |\n    synthetic-secret\n  user: alice",
                 "config:\n  password: |\n    [REDACTED:assigned_secret]\n  user: alice",
+            ),
+            (
+                "DB_PASSWORD='abc\",synthetic-secret-tail' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            ("password: |\nuser: alice", "password: |\nuser: alice"),
+            (
+                "  password: |\n  user: alice",
+                "  password: |\n  user: alice",
+            ),
+            (
+                "password: |2\n    more-indented\n  synthetic-secret\nnext: 1",
+                "password: |2\n    [REDACTED:assigned_secret]\nnext: 1",
             ),
             (
                 "password = 'unclosed synthetic\nnext line",
