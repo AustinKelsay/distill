@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 18;
+const ASSIGNMENT_SCANNER: u32 = 19;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -109,6 +109,10 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
     let (mut line_start, mut seen) = (0, 0);
     // The current line's leading run of indent, measured once per line.
     let mut indent_of: Option<(usize, usize)> = None;
+    // The body of the last YAML block read. Inside a block scalar a name is only text, so a
+    // candidate there is not read again (which would rescan the rest of the block). Its header
+    // line is not part of the body.
+    let mut block = (0, 0);
     let mut cur = assignment_head().captures_at(text, 0);
     while let Some(c) = cur {
         let whole = c.get(0).expect("whole match");
@@ -117,11 +121,21 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         // looked for from the end of this name.
         let name_end = c.name("name").expect("name group").end();
         let next_c = assignment_head().captures_at(text, name_end);
-        // A bare value never runs into the next assignment (`token=x,password='…'`).
-        let bound = next_c
-            .as_ref()
-            .map_or(text.len(), |m| m.get(0).expect("whole match").start())
-            .max(head_end);
+        // A bare value never runs into the next assignment (`token=x,password='…'`). A name
+        // that starts right where the value does is the value (`password=abc-token=x`), so
+        // the one after it bounds the value instead.
+        let start_of = |c: &Option<regex::Captures>| {
+            c.as_ref()
+                .map_or(text.len(), |m| m.get(0).expect("whole match").start())
+        };
+        let mut bound = start_of(&next_c);
+        if bound == head_end
+            && let Some(c) = &next_c
+        {
+            let after = c.name("name").expect("name group").end();
+            bound = start_of(&assignment_head().captures_at(text, after));
+        }
+        let bound = bound.max(head_end);
         if let Some(nl) = text[seen..head_start].rfind('\n') {
             line_start = seen + nl + 1;
         }
@@ -145,7 +159,20 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
             json_key: nq.is_some_and(|q| q.ends_with('"')),
             key_indent: indent.min(head_start - line_start),
         };
-        if let Some((s, e)) = scan_value(text, head_end, bound, quote, &ctx, &mut memo)
+        let found = if (block.0..block.1).contains(&head_start) {
+            None
+        } else {
+            scan_value(text, head_end, bound, quote, &ctx, &mut memo)
+        };
+        if let Some((s, e)) = found
+            && quote.is_none()
+            && s > head_end
+            && matches!(text.as_bytes()[head_end], b'|' | b'>')
+            && e > block.1
+        {
+            block = (if s < block.1 { block.0 } else { s }, e);
+        }
+        if let Some((s, e)) = found
             && s <= e
             && e <= text.len()
             && text.is_char_boundary(s)
@@ -1475,6 +1502,24 @@ mod tests {
         ] {
             assert_eq!(redact(input, None, &mut f), want, "{input}");
         }
+        // A name in a YAML block's header comment is still read.
+        let out = redact(
+            "x token=\n  |# token=synthetic-secret p\n  body-line\nnext",
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("synthetic"), "{out}");
+        // A value that starts like a name is still the value.
+        for input in [
+            "password=synthetic-token=x",
+            "password=synthetic_api_key=y z",
+        ] {
+            let out = redact(input, None, &mut f);
+            assert!(!out.contains("synthetic"), "{input} -> {out}");
+        }
+        assert!(
+            !redact(r#"{"cmd":"password=synthetic-token=x"}"#, None, &mut f).contains("synthetic")
+        );
         // An assignment inside a quoted value hides neither value.
         for (input, want) in [
             (
