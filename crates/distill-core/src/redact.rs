@@ -68,13 +68,11 @@ fn rules() -> &'static [Rule] {
 /// The name and separator of a secret assignment: `TINFOIL_API_KEY=`, `"db-password": "`,
 /// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
 /// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
-const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*(?P<q>\\*["'])?"#;
+const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 3;
+const ASSIGNMENT_SCANNER: u32 = 4;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
-/// How far a quoted value is followed before giving up on its closing quote.
-const MAX_QUOTED_BYTES: usize = 8192;
 
 fn assignment_head() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -97,32 +95,66 @@ pub fn fingerprint() -> String {
 /// redacted JSON (at any nesting depth) stays valid.
 fn redact_assignments(text: &str, n: &mut u64) -> String {
     let mut out = String::with_capacity(text.len());
+    let mut unclosed = Unclosed::default();
     let mut pos = 0;
     while let Some(c) = assignment_head().captures_at(text, pos) {
         let head_end = c.get(0).expect("whole match").end();
         let rest = &text[head_end..];
-        let found = scan_value(rest, c.name("q").map(|q| q.as_str())).filter(|&(skip, len)| {
-            let v = &rest[skip..skip + len];
-            v.chars().count() >= MIN_SECRET_CHARS && !v.starts_with("[REDACTED:")
-        });
-        let Some((skip, len)) = found else {
+        let quote = c.name("q").map(|q| q.as_str());
+        let Some((skip, len)) = scan_value(rest, head_end, quote, &mut unclosed) else {
             out.push_str(&text[pos..head_end]);
             pos = head_end;
             continue;
         };
+        let v = &rest[skip..skip + len];
+        let value_end = head_end + skip + len;
+        if v.chars().count() < MIN_SECRET_CHARS || is_marker(v) {
+            // Too short to be a secret, or already redacted whole. Step past it, so a long
+            // run of these is scanned once.
+            out.push_str(&text[pos..value_end]);
+            pos = value_end;
+            continue;
+        }
         *n += 1;
         out.push_str(&text[pos..head_end + skip]);
         // A bare value after a quoted name is a JSON number or literal; quote the marker the
         // same way the name is quoted, or the JSON breaks.
-        let wrap = match (c.name("q"), c.name("nq")) {
+        let wrap = match (quote, c.name("nq")) {
             (None, Some(nq)) if nq.as_str().ends_with('"') && skip == 0 => nq.as_str(),
             _ => "",
         };
         out.push_str(&format!("{wrap}[REDACTED:assigned_secret]{wrap}"));
-        pos = head_end + skip + len;
+        pos = value_end;
     }
     out.push_str(&text[pos..]);
     out
+}
+
+/// A whole marker (`[REDACTED:email]`), not a value that only starts with one.
+fn is_marker(v: &str) -> bool {
+    v.strip_prefix("[REDACTED:")
+        .and_then(|r| r.strip_suffix(']'))
+        .is_some_and(|name| {
+            !name.is_empty() && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+        })
+}
+
+/// For each kind of opening quote, the earliest offset from which a scan found no closing
+/// quote anywhere after it. A later scan of the same kind cannot find one either, so it skips
+/// the search (a text full of unclosed quotes is then scanned once, not once per quote).
+#[derive(Default)]
+struct Unclosed(Vec<(String, usize)>);
+
+impl Unclosed {
+    fn known(&self, q: &str, at: usize) -> bool {
+        self.0.iter().any(|(k, from)| k == q && *from <= at)
+    }
+    fn record(&mut self, q: &str, at: usize) {
+        match self.0.iter_mut().find(|(k, _)| k == q) {
+            Some((_, from)) => *from = (*from).min(at),
+            None => self.0.push((q.to_string(), at)),
+        }
+    }
 }
 
 /// The nesting level a quote sits at after `m` backslashes. Each level of JSON inside a string
@@ -137,76 +169,87 @@ fn level(mut m: usize) -> u32 {
     l
 }
 
-/// Where the value starts and how long it is, in `rest` (the text after the separator).
-/// `quote` is the opening quote with any backslashes that escape it.
-fn scan_value(rest: &str, quote: Option<&str>) -> Option<(usize, usize)> {
+/// Where the value starts and how long it is, in `rest` (the text after the separator, which
+/// starts at `at` in the whole text). `quote` is the opening quote with the backslashes that
+/// escape it.
+fn scan_value(
+    rest: &str,
+    at: usize,
+    quote: Option<&str>,
+    unclosed: &mut Unclosed,
+) -> Option<(usize, usize)> {
     let b = rest.as_bytes();
     if let Some(q) = quote {
-        // Closed by the same quote at the same escape depth (or shallower, if the text is cut).
-        // A more deeply escaped quote is part of the value.
         let depth = q.len() - 1;
         let mark = q.as_bytes()[depth];
-        let mut i = 0;
-        while i < b.len() && i < MAX_QUOTED_BYTES {
-            match b[i] {
-                b'\\' => {
-                    let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
-                    match b.get(i + m) {
-                        // The quote's own escapes stay; the escaped backslashes before them
-                        // are the end of the value.
-                        Some(&x) if x == mark && level(m) == level(depth) => {
-                            return Some((0, i + m - depth));
-                        }
-                        Some(&x) if x == mark && level(m) < level(depth) => return Some((0, i)),
-                        // A single-quoted value never runs past the double quote that closes
-                        // the string around it.
-                        Some(b'"') if mark == b'\'' && level(m) <= level(depth) => {
-                            return Some((0, i));
-                        }
-                        // An escaped newline at the string's own depth: the value was cut off.
-                        Some(b'n') if depth > 0 && m == depth => return Some((0, i)),
-                        _ => i += m + 1,
+        let lvl = level(depth);
+        if !unclosed.known(q, at) {
+            // Closed by the same quote at the same level; a shallower one means the string
+            // around it closed first (the text was cut). A deeper one is part of the value, and
+            // so are line breaks: a quoted secret may span lines.
+            let mut i = 0;
+            while i < b.len() {
+                let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
+                let Some(&x) = b.get(i + m) else { break };
+                if x == mark {
+                    match level(m).cmp(&lvl) {
+                        std::cmp::Ordering::Equal => return Some((0, i + m - depth)),
+                        std::cmp::Ordering::Less => return Some((0, i)),
+                        std::cmp::Ordering::Greater => {}
                     }
+                } else if x == b'"' && mark == b'\'' {
+                    // A single-quoted value ends at any double quote: in JSON text, that quote
+                    // closes the string around it, at whatever depth.
+                    return Some((0, i));
                 }
-                x if x == mark => return Some((0, i)),
-                b'"' if mark == b'\'' => return Some((0, i)),
-                b'\n' => return Some((0, i)),
-                _ => i += 1,
+                i += m + 1;
             }
+            unclosed.record(q, at);
         }
-        let mut end = i.min(b.len());
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
+        // Never closed: the text was cut mid-value, so the value is the rest of its line.
+        let end = (0..b.len())
+            .find(|&i| {
+                b[i] == b'\n'
+                    || (b[i] == b'n'
+                        && b[..i].iter().rev().take_while(|&&x| x == b'\\').count() % 2 == 1)
+            })
+            .map_or(b.len(), |i| {
+                i - b[..i].iter().rev().take_while(|&&x| x == b'\\').count()
+            });
         return Some((0, end));
     }
-    // A YAML block scalar (`KEY: |`): the indented lines that follow are the value.
-    if matches!(b.first(), Some(b'|' | b'>')) {
-        let header = rest
-            .bytes()
-            .skip(1)
-            .take_while(|x| matches!(x, b'-' | b'+' | b'0'..=b'9' | b' ' | b'\t' | b'\r'))
-            .count();
-        if b.get(1 + header) == Some(&b'\n') {
-            let start = 2 + header;
-            let mut end = start;
-            for line in rest[start..].split_inclusive('\n') {
-                if !line.starts_with([' ', '\t']) {
-                    break;
-                }
-                end += line.len();
+    // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
+    // lines among them included, are the value.
+    if matches!(b.first(), Some(b'|' | b'>'))
+        && let Some(nl) = rest.find('\n')
+        && let header = rest[1..nl]
+            .trim_start_matches(|c: char| c == '-' || c == '+' || c.is_ascii_digit())
+            .trim()
+        && (header.is_empty() || header.starts_with('#'))
+    {
+        let start = nl + 1;
+        let (mut end, mut off) = (start, start);
+        for line in rest[start..].split_inclusive('\n') {
+            off += line.len();
+            if line.trim().is_empty() {
+                continue;
             }
-            let block = rest[start..end].trim_end();
-            let indent = block.len() - block.trim_start().len();
-            return (!block.trim().is_empty()).then_some((start + indent, block.len() - indent));
+            if !line.starts_with([' ', '\t']) {
+                break;
+            }
+            end = off;
         }
+        let block = rest[start..end].trim_end();
+        let indent = block.len() - block.trim_start().len();
+        return (!block.trim().is_empty()).then_some((start + indent, block.len() - indent));
     }
     // A bare token. A backslash ends it only when it escapes a quote or whitespace; any other
-    // escape (`s`, `\\`) is part of the value, so no half of it is left behind.
+    // escape (`s`, `\\`) is part of the value, so no half of it is left behind. Brackets
+    // end it too: `[1234, 5]` is a JSON array, not a scalar to replace.
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'}' => break,
+            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'[' | b']' | b'{' | b'}' => break,
             b'\\' => match b.get(i + 1) {
                 None | Some(b'"' | b'\'' | b'n' | b'r' | b't') => break,
                 Some(_) => i += 2,
@@ -497,6 +540,32 @@ mod tests {
                 .starts_with("export T=$(grep '^BWS_ACCESS_TOKEN='")
         );
 
+        // Escaped whitespace two levels down.
+        let v = json(r#"{"a":"{\"b\":\"{\\\"DB_PASSWORD\\\":\\n\\t\\\"synthetic-value\\\"}\"}"}"#);
+        let b: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
+        let c: serde_json::Value = serde_json::from_str(b["b"].as_str().unwrap()).unwrap();
+        assert_eq!(c["DB_PASSWORD"], marker);
+        // A value ending in a literal backslash, and one past 8 KiB.
+        let v = json(r#"{"password":"synthetic-value\\","ok":true}"#);
+        assert_eq!(
+            (v["password"].as_str(), v["ok"].as_bool()),
+            (Some(marker), Some(true))
+        );
+        let long =
+            serde_json::json!({"private_key": format!("{}synthetic-tail", "a".repeat(9000))});
+        assert_eq!(json(&long.to_string())["private_key"], marker);
+        // A quoted secret spanning lines, in a shell and in JSON.
+        let v = json(r#"{"command":"DB_PASSWORD=\"synthetic-first\nsynthetic-second\" x"}"#);
+        assert_eq!(v["command"], format!("DB_PASSWORD=\"{marker}\" x"));
+        // A single quote inside a nested JSON string stops at that string's closing quote.
+        let v = json(r#"{"a":"{\"cmd\":\"DB_PASSWORD='synthetic-value\",\"ok\":true}"}"#);
+        let inner: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["ok"], true);
+        // A JSON array under a secret name stays an array.
+        let mut f = Findings::default();
+        let out = redact(r#"{"token":[12345678,2],"ok":true}"#, None, &mut f);
+        serde_json::from_str::<serde_json::Value>(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+
         let mut f = Findings::default();
         let cases = [
             (
@@ -522,6 +591,26 @@ mod tests {
             (
                 "token = '[REDACTED:tinfoil_key]'",
                 "token = '[REDACTED:tinfoil_key]'",
+            ),
+            (
+                "DB_PASSWORD='[REDACTED:any]synthetic-secret' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "DB_PASSWORD='alice@example.com synthetic-secret' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "DB_PASSWORD='synthetic-first\nsynthetic-second' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "DB_PASSWORD: | # note\n  synthetic-secret\nnext: 1",
+                "DB_PASSWORD: | # note\n  [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "DB_PASSWORD: |\n  synthetic-first\n\n  synthetic-second\nnext: 1",
+                "DB_PASSWORD: |\n  [REDACTED:assigned_secret]\nnext: 1",
             ),
             (
                 "password = 'unclosed synthetic\nnext line",
