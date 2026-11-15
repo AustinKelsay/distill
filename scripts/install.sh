@@ -19,7 +19,8 @@ BINS=(distill distill-mcp distill-gui)
 ticking() {
   command -v pgrep >/dev/null || return 1
   local rc=0
-  pgrep -f 'distill tick' >/dev/null || rc=$?
+  # `tick` may follow global options (`distill --home ~/x tick`, `distill --json tick`).
+  pgrep -f 'distill( .*)? tick( |$)' >/dev/null || rc=$?
   case $rc in
     0) return 0 ;;
     1) return 1 ;;
