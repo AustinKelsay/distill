@@ -7,7 +7,7 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::Archive;
-use crate::config::Config;
+use crate::config::{Config, Harness};
 use crate::export;
 use crate::home::Home;
 use crate::normalize;
@@ -36,6 +36,12 @@ pub struct Totals {
     pub enriched: f64,
     pub datasets: u64,
     pub spent_today_usd: f64,
+    /// Who writes cards: the provider and model (`Ollama · qwen3.6:35b-a3b`), or `Off`.
+    #[serde(default)]
+    pub steward: String,
+    /// Whether only this machine sees the session excerpts the steward reads.
+    #[serde(default)]
+    pub steward_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,6 +154,16 @@ pub fn dashboard(home: &Home) -> Result<Dashboard> {
         .collect::<std::collections::HashSet<_>>()
         .len() as u64;
     totals.spent_today_usd = runlog::spent_today(home)?;
+    let steward = config.as_ref().map(|c| &c.steward);
+    let harness = steward.map_or(Harness::None, |s| s.harness);
+    totals.steward = match steward
+        .and_then(|s| s.model.as_deref())
+        .filter(|_| harness != Harness::None)
+    {
+        Some(m) if !m.trim().is_empty() => format!("{} · {m}", harness.label()),
+        _ => harness.label().to_string(),
+    };
+    totals.steward_local = harness.local();
 
     let weeks = week_buckets(&metas, Utc::now());
 

@@ -52,14 +52,65 @@ impl Default for Privacy {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Harness {
-    /// Claude Code in print mode (`claude -p`).
+    /// Claude Code in print mode (`claude -p`). Sends session excerpts to Anthropic.
     Claude,
-    /// Codex in exec mode (`codex exec`).
+    /// Codex in exec mode (`codex exec`). Sends session excerpts to OpenAI.
     Codex,
-    /// Any command that reads a prompt on stdin and prints the answer. Used by tests.
+    /// An open model in Ollama on this machine (`ollama run <model>`); nothing leaves it.
+    Ollama,
+    /// Any command that reads a prompt on stdin and prints the answer (`llama-cli -m …`, a
+    /// script); where the excerpts go is up to that command.
     Command,
     /// No steward runs.
     None,
+}
+
+impl Harness {
+    /// Every choice, in the order setup offers them.
+    pub const ALL: [Harness; 5] = [
+        Harness::Ollama,
+        Harness::Command,
+        Harness::Claude,
+        Harness::Codex,
+        Harness::None,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Harness::Claude => "Claude Code",
+            Harness::Codex => "Codex",
+            Harness::Ollama => "Ollama",
+            Harness::Command => "Custom command",
+            Harness::None => "Off",
+        }
+    }
+
+    /// A one-word name, for a picker.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Harness::Claude => "Claude",
+            Harness::Command => "Command",
+            h => h.label(),
+        }
+    }
+
+    /// Where the session excerpts the steward reads end up.
+    pub fn privacy(self) -> &'static str {
+        match self {
+            Harness::Claude => "Sends clipped session excerpts to Anthropic.",
+            Harness::Codex => "Sends clipped session excerpts to OpenAI.",
+            Harness::Ollama => "Runs an open model on this machine; nothing leaves it.",
+            Harness::Command => {
+                "Runs your command; excerpts go wherever it sends them (nowhere, for a local model)."
+            }
+            Harness::None => "No cards are written, and nothing is sent anywhere.",
+        }
+    }
+
+    /// Whether only this machine sees the excerpts (a custom command is the user's call).
+    pub fn local(self) -> bool {
+        matches!(self, Harness::Ollama | Harness::None)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

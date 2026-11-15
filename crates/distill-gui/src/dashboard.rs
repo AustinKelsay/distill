@@ -204,7 +204,12 @@ fn tiles(d: &Dashboard, p: &Paint) -> El {
                 .gap(6.0)
                 .pt(2.0)
                 .child(meter)
-                .child(cap(&format!("{} spent today", dollars(t.spent_today_usd)))),
+                .child(cap(&if t.steward_local {
+                    // Off, or a model on this machine: nothing is spent and nothing leaves.
+                    format!("{} · on this machine", t.steward)
+                } else {
+                    format!("{} · {} today", t.steward, dollars(t.spent_today_usd))
+                })),
         ))
         .child(tile(
             p,

@@ -18,11 +18,8 @@ pub const STEPS: [(&str, &str); 5] = [
     ("Schedule", "How often it runs"),
 ];
 
-pub const HARNESSES: [(Harness, &str); 3] = [
-    (Harness::Claude, "Claude Code"),
-    (Harness::Codex, "Codex"),
-    (Harness::None, "None"),
-];
+/// The steward's providers, local ones first.
+pub const HARNESSES: [Harness; 5] = Harness::ALL;
 pub const BUDGETS: [f64; 5] = [0.5, 1.0, 2.0, 5.0, 10.0];
 pub const SWEEPS: [(u32, &str); 4] = [
     (15, "15 min"),
@@ -42,6 +39,10 @@ pub struct SetupDraft {
     pub step: usize,
     pub config: Config,
     pub model: TextEdit,
+    /// Program and arguments for a custom command, split on whitespace.
+    pub command: TextEdit,
+    /// Models Ollama has installed, read when setup opens.
+    pub ollama_models: Vec<String>,
     pub exclude: TextEdit,
     /// Opened from the dashboard over a saved config, so it can be left without saving.
     pub cancellable: bool,
@@ -57,10 +58,13 @@ impl SetupDraft {
             }
         }
         let model = TextEdit::new(config.steward.model.clone().unwrap_or_default());
+        let command = TextEdit::new(config.steward.command.join(" "));
         SetupDraft {
             step: 0,
             config,
             model,
+            command,
+            ollama_models: Vec::new(),
             exclude: TextEdit::new(""),
             cancellable,
         }
@@ -86,8 +90,10 @@ impl SetupDraft {
 
     /// Pick a harness. A model left at the old harness's default follows to the new one's.
     pub fn set_harness(&mut self, h: Harness) {
+        let first_ollama = self.ollama_models.first().cloned().unwrap_or_default();
         let default_for = |h: Harness| match h {
             Harness::Claude => StewardConfig::default().model.unwrap_or_default(),
+            Harness::Ollama => first_ollama.clone(),
             _ => String::new(),
         };
         if self.model.text.trim() == default_for(self.config.steward.harness) {
@@ -117,6 +123,12 @@ impl SetupDraft {
         } else {
             Some(model.to_string())
         };
+        c.steward.command = self
+            .command
+            .text
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
         c
     }
 }
@@ -470,25 +482,34 @@ fn storage(s: &State, p: &Paint) -> El {
 
 fn agent(d: &SetupDraft, p: &Paint) -> El {
     let h = d.config.steward.harness;
-    let picked = HARNESSES.iter().position(|(x, _)| *x == h);
-    let labels: Vec<&str> = HARNESSES.iter().map(|(_, l)| *l).collect();
+    let picked = HARNESSES.iter().position(|x| *x == h);
+    let labels: Vec<&str> = HARNESSES.iter().map(|x| x.short_label()).collect();
     let harness = SegmentedControl::new(&labels, picked)
-        .label("Steward harness")
-        .width(Some(340.0))
-        .on_pick(|s: &mut State, i, _: &mut Tx| s.setup.set_harness(HARNESSES[i].0))
+        .label("Steward provider")
+        .width(Some(460.0))
+        .on_pick(|s: &mut State, i, _: &mut Tx| s.setup.set_harness(HARNESSES[i]))
         .build(&p.k);
     let off = h == Harness::None;
     let model = TextInput::new(&d.model)
         .label("Model")
-        .placeholder(if h == Harness::Codex {
-            "harness default"
-        } else {
-            "claude-haiku-5-5"
+        .placeholder(match h {
+            Harness::Codex => "harness default",
+            Harness::Ollama => d
+                .ollama_models
+                .first()
+                .map_or("an installed model, e.g. qwen3.6:35b-a3b", String::as_str),
+            _ => "claude-haiku-5-5",
         })
         .width(Some(340.0))
-        .disabled(off)
+        .disabled(off || h == Harness::Command)
         .on_edit(|s: &mut State| &mut s.setup.model)
         .build(&p.k);
+    let model_note = match h {
+        Harness::Ollama if d.ollama_models.is_empty() => "No Ollama models found: start Ollama and pull one (`ollama pull <model>`), then reopen Settings.".to_string(),
+        Harness::Ollama => format!("Installed: {}.", d.ollama_models.join(", ")),
+        Harness::Command => "Used only as a label on cards; the command decides the model.".to_string(),
+        _ => "Leave empty for the provider's default.".to_string(),
+    };
     let budget_labels: Vec<String> = BUDGETS
         .iter()
         .map(|b| {
@@ -517,20 +538,53 @@ fn agent(d: &SetupDraft, p: &Paint) -> El {
         .child(setting(
             p,
             "harness",
-            "Harness",
-            "The steward runs this agent headless to read new sessions and write a card for each: title, summary, outcome, tags.",
+            "Provider",
+            "The steward runs this model headless to read new sessions and write a card for each: task, outcome, quality, tags. Cards are what dataset recipes filter on.",
             harness,
         ))
+        .child(
+            row()
+                .key("privacy-note")
+                .pb(12.0)
+                .gap(8.0)
+                .center_y()
+                .child(dot(
+                    if h.local() {
+                        p.k.c.success.icon
+                    } else {
+                        p.k.c.warning.icon
+                    },
+                    6.0,
+                ))
+                .child(text(h.privacy()).font(p.caption()).color(p.muted())),
+        )
         .child(p.separator())
-        .child(setting(p, "model", "Model", "Leave empty for the harness's default.", model))
-        .child(p.separator())
-        .child(setting(
+        .child(setting(p, "model", "Model", &model_note, model));
+    if h == Harness::Command {
+        let command = TextInput::new(&d.command)
+            .label("Command")
+            .placeholder("llama-cli -m ~/models/model.gguf -no-cnv")
+            .width(Some(340.0))
+            .on_edit(|s: &mut State| &mut s.setup.command)
+            .build(&p.k);
+        card = card.child(p.separator()).child(setting(
+            p,
+            "command",
+            "Command",
+            "Program and arguments, split on spaces. It gets the prompt on stdin and prints the card on stdout.",
+            command,
+        ));
+    }
+    // Only Claude Code costs money; the others are capped by sessions per run.
+    if h == Harness::Claude {
+        card = card.child(p.separator()).child(setting(
             p,
             "budget",
             "Daily budget",
-            "Spending stops for the day at this amount. Only Claude Code reports cost; other harnesses are capped by sessions per run.",
+            "Spending stops for the day at this amount.",
             budget,
         ));
+    }
     if off {
         card = card.child(p.separator()).child(
             row()

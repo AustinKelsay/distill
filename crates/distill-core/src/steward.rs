@@ -74,6 +74,25 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
                 error: None,
             })
         }
+        Harness::Ollama => {
+            let model = s
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .context("steward.model must name an installed Ollama model (see `ollama list`)")?;
+            // The prompt goes in on stdin and the answer comes back on stdout, so Distill itself
+            // never opens a connection. Ollama's server must be running (its app, or `ollama
+            // serve`).
+            let mut cmd = Command::new("ollama");
+            cmd.args(["run", model, "--hidethinking", "--nowordwrap"]);
+            let text = exec(cmd.current_dir(&dir), prompt)?;
+            Ok(Answer {
+                text,
+                cost_usd: None,
+                error: None,
+            })
+        }
         Harness::Command => {
             let (prog, args) = s
                 .command
@@ -89,6 +108,23 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
             })
         }
     }
+}
+
+/// The models Ollama has installed (`ollama list`), for setup to offer. Empty when Ollama is
+/// not installed or its server is not running.
+pub fn ollama_models() -> Vec<String> {
+    let Ok(out) = Command::new("ollama").arg("list").output() else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Read `claude -p --output-format json` output. Its cost is kept even when the call failed.
@@ -304,6 +340,11 @@ pub fn pending(home: &Home) -> Result<Vec<SessionMeta>> {
 pub fn run(home: &Home, config: &Config, opts: &RunOptions) -> Result<StewardReport> {
     // One steward at a time, so two runs can't both spend what is left of the day's budget.
     let _lock = home.lock("steward")?;
+    if config.steward.harness == Harness::None {
+        bail!(
+            "the steward is off: choose a provider in Settings, or set steward.harness in config.toml"
+        );
+    }
     let mut report = StewardReport::default();
     let todo = pending(home)?;
     let limit = opts.limit.unwrap_or(config.steward.max_sessions_per_run);

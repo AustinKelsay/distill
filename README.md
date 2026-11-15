@@ -36,7 +36,7 @@ To install `distill`, `distill-mcp` and `distill-gui` into `~/.cargo/bin`, run `
 | --- | --- |
 | `distill sweep` | Copies new and changed session files into `raw/`. A file that only grew replaces its old copy; a rewritten file keeps both. Every file under a source's roots is kept (tool-result files, attachments, settings), compressed Codex sessions included. SQLite files are read through SQLite's backup API; OpenCode sessions and T3 Code threads are exported one per session. Excluded repos are never copied. |
 | `distill normalize` | Turns raw captures into `sessions/<source>/<id>/meta.json` and `events.jsonl`: prompts, replies, reasoning, tool calls and tool results. Joins each session to git: commit at start, commits made during it, later reverts. |
-| `distill steward run` | Asks an installed harness (`claude -p` or `codex exec`, no tools) to read a digest of each session and answer with a card: task, outcome, quality 1–5, corrections, tags. Distill writes the card; the agent never touches the archive. Stops at the daily budget. |
+| `distill steward run` | Asks the steward's provider to read a digest of each session and answer with a card: task, outcome, quality 1–5, corrections, tags. Providers: an open model in Ollama on this machine (`ollama run <model>`), any command that reads the prompt on stdin (a local `llama-cli`, a script), Claude Code (`claude -p`, no tools) or Codex (`codex exec`). Distill writes the card; the model never touches the archive. Stops at the daily budget (Claude Code) or after `max_sessions_per_run` cards a day. |
 | `distill recipe propose` | Once a week (or on demand, within the same daily budget or call limit as cards) the steward reads counts of what the archive holds and suggests up to three dataset recipes. Distill keeps the ones that match real sessions in `recipes/proposed/`; `distill recipe proposals` lists them; `distill recipe accept <name>` or the dashboard's Accept turns one into a recipe. Redaction is always on. |
 | `distill export build` | Builds each recipe in `recipes/` into `exports/<recipe>/<build>/data.jsonl` with secrets redacted. Same inputs give the same build id and bytes. Builds wait for approval. |
 | `distill export approve` / `publish` | Only approved builds can be copied out. |
@@ -45,6 +45,14 @@ To install `distill`, `distill-mcp` and `distill-gui` into `~/.cargo/bin`, run `
 | `distill-gui` | Native [Rune](https://github.com/anomalyco/rune) window: one-time setup and a dashboard with approvals. |
 
 Add the MCP server to Claude Code with `claude mcp add distill -- /path/to/distill-mcp`.
+
+## Privacy
+
+Distill has no network code: no telemetry, and it never uploads anything itself. The archive (`~/distill`, owner-only permissions) keeps every session as it was, secrets included; only dataset builds are redacted, and none leaves `~/distill` until you approve it and publish it to a folder you choose. What can leave the machine:
+
+- **Steward cards.** The provider reads a clipped digest of each session (prompts, replies, tool errors). With Ollama or a local command it stays on this machine; with Claude Code or Codex it goes to Anthropic or OpenAI. Pick the provider in Settings → Agent, or set `[steward] harness` in `config.toml` (`ollama`, `command`, `claude`, `codex`, `none`); `distill status` and the dashboard show which one writes cards and whether excerpts leave the machine.
+- **Recipe proposals** send the same provider counts only (sources, outcomes, tags), no session text.
+- **The MCP server** is local and read-only, but returns full sessions to whichever agent you connect it to.
 
 On macOS, give the `distill` binary Full Disk Access (System Settings → Privacy & Security), or the timer can't read repositories under `~/Desktop`, `~/Documents` or `~/Downloads` to join sessions to git. A launchd job is never shown the permission prompt; without access its git commands block, and Distill kills them after 15 seconds and skips git for that folder until the next run. Reinstalling resets the grant unless the binary is signed with a stable identity (`scripts/install.sh`, above).
 

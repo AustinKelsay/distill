@@ -113,6 +113,9 @@ impl State {
     pub fn open_settings(&mut self) {
         self.setup = SetupDraft::from_config(&self.config, self.configured);
         self.screen = Screen::Setup;
+        if !self.fixture {
+            self.setup.ollama_models = distill_core::steward::ollama_models();
+        }
         if self.detections.is_none() && !self.fixture {
             self.request(data::detect_request(&self.config));
         }
@@ -207,6 +210,7 @@ fn start(s: &mut State, waker: Waker) {
         return;
     }
     s.link = Some(data::spawn(s.home.clone(), waker));
+    s.setup.ollama_models = distill_core::steward::ollama_models();
     s.request(data::detect_request(&s.config));
     s.request(Request::CheckSchedule);
     if s.configured {
@@ -259,6 +263,7 @@ type Scene = (&'static str, fn(&mut State));
 const SCENES: &[Scene] = &[
     ("setup-sources", fixture::setup_sources),
     ("setup-agent", fixture::setup_agent),
+    ("setup-agent-local", fixture::setup_agent_local),
     ("setup-privacy", fixture::setup_privacy),
     ("setup-schedule", fixture::setup_schedule),
     ("dashboard", fixture::dashboard),

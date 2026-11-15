@@ -67,13 +67,15 @@ fn setup_steps_through_and_finish_queues_the_chosen_config() {
     press(&mut rt, "next");
     assert_eq!(rt.state.setup.step, 2);
 
-    // Step 3: Codex, a model, a $5 budget. The Claude default model doesn't follow to Codex.
-    press(&mut rt, "harness/segment1");
-    assert_eq!(rt.state.setup.config.steward.harness, Harness::Codex);
-    assert_eq!(rt.state.setup.model.text, "");
-    rt.update(|s, _| s.setup.model.replace_text("gpt-5-codex"));
+    // Step 3: a $5 budget (shown only for Claude Code, which reports cost), then Codex and a
+    // model. The Claude default model doesn't follow to Codex.
     press(&mut rt, "budget/segment3");
     assert_eq!(rt.state.setup.config.steward.daily_budget_usd, 5.0);
+    press(&mut rt, "harness/segment3");
+    assert_eq!(rt.state.setup.config.steward.harness, Harness::Codex);
+    assert_eq!(rt.state.setup.model.text, "");
+    assert!(!shows(&rt, "Daily budget"), "no budget for a harness without cost");
+    rt.update(|s, _| s.setup.model.replace_text("gpt-5-codex"));
 
     // Step 4: exclude a path, turn redaction off.
     press(&mut rt, "next");
@@ -247,4 +249,29 @@ fn settings_opens_setup_over_the_saved_config_and_cancel_returns() {
     press(&mut rt, "cancel");
     assert_eq!(rt.state.screen, Screen::Dashboard);
     assert!(rt.state.outbox.is_empty(), "cancel writes nothing");
+}
+
+#[test]
+fn setup_offers_local_providers_with_a_privacy_note() {
+    let mut s = State::new(
+        distill_core::home::Home::new("/tmp/none"),
+        Some(Config::default()),
+    );
+    s.setup.ollama_models = vec!["qwen3.6:35b-a3b".into(), "gpt-oss:20b".into()];
+    // The Claude default model is swapped for Ollama's first installed model.
+    s.setup.set_harness(Harness::Ollama);
+    assert_eq!(s.setup.model.text, "qwen3.6:35b-a3b");
+    assert!(Harness::Ollama.local() && !Harness::Claude.local());
+    let c = s.setup.finish();
+    assert_eq!(c.steward.harness, Harness::Ollama);
+    assert_eq!(c.steward.model.as_deref(), Some("qwen3.6:35b-a3b"));
+    // A custom command is split into program and arguments.
+    s.setup.set_harness(Harness::Command);
+    s.setup
+        .command
+        .replace_text("llama-cli -m /models/a.gguf  -no-cnv");
+    assert_eq!(
+        s.setup.finish().steward.command,
+        ["llama-cli", "-m", "/models/a.gguf", "-no-cnv"]
+    );
 }

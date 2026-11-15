@@ -118,6 +118,8 @@ pub fn dashboard_data() -> Dashboard {
             enriched: 0.83,
             datasets: 3,
             spent_today_usd: 0.42,
+            steward: "Claude Code · claude-haiku-5-5".to_string(),
+            steward_local: false,
         },
         weeks,
         sources: vec![
@@ -249,6 +251,13 @@ pub fn setup_sources(s: &mut State) {
 
 pub fn setup_agent(s: &mut State) {
     setup_at(s, 2);
+}
+
+/// The agent step with a local model picked.
+pub fn setup_agent_local(s: &mut State) {
+    setup_at(s, 2);
+    s.setup.ollama_models = vec!["qwen3.6:35b-a3b".to_string(), "gpt-oss:20b".to_string()];
+    s.setup.set_harness(distill_core::config::Harness::Ollama);
 }
 
 pub fn setup_privacy(s: &mut State) {
