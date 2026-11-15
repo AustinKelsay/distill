@@ -174,24 +174,30 @@ fn ollama_model_is_local(dir: &Path, model: &str) -> bool {
     {
         return false;
     }
-    // Where each store keeps this name: a bare name is in the default namespace of the default
-    // registry, which the two stores spell differently.
-    let candidates: Vec<PathBuf> = match parts.as_slice() {
-        [m] => vec![
-            dir.join("manifests/registry.ollama.ai/library").join(m),
-            dir.join("manifests-v2/ollama.com/library").join(m),
-            dir.join("manifests-v2/registry.ollama.ai/library").join(m),
-        ],
-        [ns, m] => vec![
-            dir.join("manifests/registry.ollama.ai").join(ns).join(m),
-            dir.join("manifests-v2/ollama.com").join(ns).join(m),
-            dir.join("manifests-v2/registry.ollama.ai").join(ns).join(m),
-        ],
-        _ => vec![
-            dir.join("manifests").join(name),
-            dir.join("manifests-v2").join(name),
-        ],
+    // Where each store keeps this name. A bare name is in the `library` namespace of the
+    // default registry, and Ollama spells that registry two ways (`registry.ollama.ai`,
+    // `ollama.com`), treating them as one; every spelling is checked in both stores.
+    const DEFAULT_HOSTS: [&str; 2] = ["registry.ollama.ai", "ollama.com"];
+    let (host, rest): (Option<&str>, Vec<&str>) = match parts.as_slice() {
+        [m] => (None, vec!["library", m]),
+        [ns, m] => (None, vec![ns, m]),
+        [h, more @ ..] => (Some(*h), more.to_vec()),
+        [] => return false,
     };
+    let hosts: Vec<&str> = match host {
+        Some(h) if !DEFAULT_HOSTS.contains(&h) => vec![h],
+        _ => DEFAULT_HOSTS.to_vec(),
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for store in ["manifests", "manifests-v2"] {
+        for h in &hosts {
+            let mut path = dir.join(store).join(h);
+            for part in &rest {
+                path = path.join(part);
+            }
+            candidates.push(path);
+        }
+    }
     let blob = |digest: &str| dir.join("blobs").join(digest.replace(':', "-"));
     let local = |manifest: &Value| {
         let weights = manifest["layers"].as_array().is_some_and(|layers| {
@@ -897,6 +903,15 @@ mod tests {
         )
         .unwrap();
         assert!(!ollama_model_is_local(store, "qwen-local"));
+        // The same holds when the name spells out the registry Ollama treats as `ollama.com`.
+        assert!(!ollama_model_is_local(
+            store,
+            "registry.ollama.ai/library/qwen-local"
+        ));
+        assert!(!ollama_model_is_local(
+            store,
+            "ollama.com/library/qwen-local"
+        ));
         assert!(!ollama_model_is_local(store, "../../etc/passwd"));
     }
 
