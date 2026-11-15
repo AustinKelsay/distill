@@ -82,9 +82,10 @@ pub fn ask(home: &Home, config: &Config, prompt: &str, budget_usd: f64) -> Resul
                 .map(str::trim)
                 .filter(|m| !m.is_empty())
                 .context("steward.model must name an installed Ollama model (see `ollama list`)")?;
-            // Only a model stored on this machine: a cloud model would send the excerpts to
-            // Ollama's servers, and a missing one would be downloaded on the spot.
-            if !ollama_models().iter().any(|m| m == model) {
+            // Only a model whose weights are on this machine: a cloud model (under any name)
+            // would send the excerpts to Ollama's servers, and a missing one would be
+            // downloaded on the spot.
+            if !ollama_model_is_local(&ollama_models_dir(), model) {
                 bail!(
                     "\"{model}\" is not a model stored on this machine (see `ollama list`; cloud models are not used)"
                 );
@@ -128,7 +129,69 @@ pub fn ollama_models() -> Vec<String> {
     let Ok(out) = exec_bounded(&mut cmd, "", Duration::from_secs(5)) else {
         return Vec::new();
     };
+    let dir = ollama_models_dir();
     parse_ollama_list(&out)
+        .into_iter()
+        .filter(|m| ollama_model_is_local(&dir, m))
+        .collect()
+}
+
+/// Where Ollama keeps its models: `$OLLAMA_MODELS`, else `~/.ollama/models`.
+fn ollama_models_dir() -> PathBuf {
+    std::env::var_os("OLLAMA_MODELS")
+        .map(PathBuf::from)
+        .or_else(|| {
+            crate::home::user_home()
+                .ok()
+                .map(|h| h.join(".ollama/models"))
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `model`'s weights are stored on this machine, read from Ollama's model store rather
+/// than from what the CLI prints: its manifest names a weights layer whose file is here at the
+/// recorded size, and its config names no remote host or model (a cloud model copied to a
+/// plain name has those). Anything that can't be verified counts as not local.
+fn ollama_model_is_local(dir: &Path, model: &str) -> bool {
+    let (name, tag) = match model.rsplit_once(':') {
+        Some((n, t)) if !t.contains('/') => (n, t),
+        _ => (model, "latest"),
+    };
+    let parts: Vec<&str> = name.split('/').collect();
+    let path = match parts.as_slice() {
+        [m] => format!("registry.ollama.ai/library/{m}"),
+        [ns, m] => format!("registry.ollama.ai/{ns}/{m}"),
+        _ => name.to_string(),
+    };
+    if path.split('/').any(|p| p.is_empty() || p == "..") || tag.contains("..") {
+        return false;
+    }
+    let blob = |digest: &str| dir.join("blobs").join(digest.replace(':', "-"));
+    let Ok(manifest) = std::fs::read(dir.join("manifests").join(path).join(tag)) else {
+        return false;
+    };
+    let Ok(manifest) = serde_json::from_slice::<Value>(&manifest) else {
+        return false;
+    };
+    let weights = manifest["layers"].as_array().is_some_and(|layers| {
+        layers.iter().any(|l| {
+            l["mediaType"] == "application/vnd.ollama.image.model"
+                && l["digest"].as_str().is_some_and(|d| {
+                    std::fs::metadata(blob(d))
+                        .is_ok_and(|m| Some(m.len()) == l["size"].as_u64() && m.len() > 0)
+                })
+        })
+    });
+    let remote = manifest["config"]["digest"]
+        .as_str()
+        .and_then(|d| std::fs::read(blob(d)).ok())
+        .and_then(|c| serde_json::from_slice::<Value>(&c).ok())
+        .is_none_or(|c| {
+            ["remote_host", "remote_model"]
+                .iter()
+                .any(|k| c.get(*k).is_some_and(|v| !v.is_null() && v != ""))
+        });
+    weights && !remote
 }
 
 fn parse_ollama_list(out: &str) -> Vec<String> {
@@ -219,50 +282,85 @@ fn exec(cmd: &mut Command, stdin: &str) -> Result<String> {
 /// from a prompt of at most about 20,000 characters.
 const LOCAL_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Run `cmd` with `stdin`, and stop it if it is still running after `timeout`, so a stalled
-/// model server can't hold the steward (and the hourly tick) forever. Input and output are
-/// handled on their own threads: a program that exits early still reports its error rather
-/// than a broken pipe.
+/// Run `cmd` with `stdin`, and stop it if it hasn't finished, output included, within
+/// `timeout`, so a stalled model server can't hold the steward (and the hourly tick) forever.
+/// The command runs in its own process group; on a timeout the whole group is killed, so a
+/// wrapper's inference subprocess doesn't outlive it. Input and output run on their own
+/// threads: a program that exits early still reports its error rather than a broken pipe.
 fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<String> {
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(cmd, 0);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start {:?}", cmd.get_program()))?;
+    let pid = child.id();
     let mut input = child.stdin.take().expect("piped");
     let prompt = stdin.to_string();
-    let writer = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         let _ = input.write_all(prompt.as_bytes());
     });
-    let read = |mut r: Box<dyn std::io::Read + Send>| {
+    let (tx, rx) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
+    for (is_out, mut r) in [
+        (
+            true,
+            Box::new(child.stdout.take().expect("piped")) as Box<dyn std::io::Read + Send>,
+        ),
+        (false, Box::new(child.stderr.take().expect("piped"))),
+    ] {
+        let tx = tx.clone();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = r.read_to_end(&mut buf);
-            buf
-        })
-    };
-    let out = read(Box::new(child.stdout.take().expect("piped")));
-    let err = read(Box::new(child.stderr.take().expect("piped")));
+            let _ = tx.send((is_out, buf));
+        });
+    }
+    drop(tx);
     let deadline = Instant::now() + timeout;
+    let stop = |child: &mut std::process::Child| {
+        // The group first (a wrapper's children), then the child itself.
+        #[cfg(unix)]
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+    let timed_out = || {
+        anyhow::anyhow!(
+            "{:?} did not finish within {} s and was stopped",
+            cmd.get_program(),
+            timeout.as_secs()
+        )
+    };
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!(
-                "{:?} did not finish within {} s and was stopped",
-                cmd.get_program(),
-                timeout.as_secs()
-            );
+            stop(&mut child);
+            return Err(timed_out());
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    let _ = writer.join();
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    // The output must also be complete by the deadline: something the command left running
+    // could hold its pipes open.
+    let (mut stdout, mut stderr) = (None, None);
+    while stdout.is_none() || stderr.is_none() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((true, buf)) => stdout = Some(buf),
+            Ok((false, buf)) => stderr = Some(buf),
+            Err(_) => {
+                stop(&mut child);
+                return Err(timed_out());
+            }
+        }
+    }
+    let (stdout, stderr) = (stdout.unwrap_or_default(), stderr.unwrap_or_default());
     if !status.success() {
         bail!(
             "{:?} exited with {}: {}",
@@ -682,6 +780,80 @@ mod tests {
     use crate::archive::Archive;
     use crate::normalize::NormalizeState;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn a_model_counts_as_local_only_when_its_weights_are_here() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path();
+        let put = |name: &str, tag: &str, config: &str, weights: Option<&[u8]>| {
+            let mut layers = Vec::new();
+            if let Some(w) = weights {
+                let d = format!("sha256:{}", crate::util::sha256_hex(w));
+                std::fs::create_dir_all(store.join("blobs")).unwrap();
+                std::fs::write(store.join("blobs").join(d.replace(':', "-")), w).unwrap();
+                layers.push(json!({"mediaType": "application/vnd.ollama.image.model", "digest": d, "size": w.len()}));
+            }
+            let c = format!("sha256:{}", crate::util::sha256_hex(config.as_bytes()));
+            std::fs::create_dir_all(store.join("blobs")).unwrap();
+            std::fs::write(store.join("blobs").join(c.replace(':', "-")), config).unwrap();
+            let m = store
+                .join("manifests/registry.ollama.ai/library")
+                .join(name);
+            std::fs::create_dir_all(&m).unwrap();
+            std::fs::write(
+                m.join(tag),
+                json!({"config": {"digest": c}, "layers": layers}).to_string(),
+            )
+            .unwrap();
+        };
+        put("qwen-local", "latest", "{}", Some(b"weights"));
+        // A cloud model copied to a plain name: no weights, a remote host in its config.
+        put(
+            "reviewer",
+            "latest",
+            r#"{"remote_host":"https://ollama.com","remote_model":"big"}"#,
+            None,
+        );
+        put(
+            "sneaky",
+            "latest",
+            r#"{"remote_host":"https://ollama.com"}"#,
+            Some(b"w"),
+        );
+        assert!(ollama_model_is_local(store, "qwen-local"));
+        assert!(ollama_model_is_local(store, "qwen-local:latest"));
+        assert!(!ollama_model_is_local(store, "reviewer"));
+        assert!(!ollama_model_is_local(store, "sneaky"));
+        assert!(!ollama_model_is_local(store, "missing:7b"));
+        assert!(!ollama_model_is_local(store, "../../etc/passwd"));
+    }
+
+    #[test]
+    fn a_timeout_covers_output_and_stops_the_whole_group() {
+        // Something left running that holds the output open doesn't outlast the deadline.
+        let mut lingering = Command::new("sh");
+        lingering.args(["-c", "sleep 10 & printf done"]);
+        let started = Instant::now();
+        assert!(exec_bounded(&mut lingering, "", Duration::from_millis(300)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // A timed-out wrapper's children are stopped with it.
+        let marker = tempfile::tempdir().unwrap();
+        let pidfile = marker.path().join("pid");
+        let mut wrapper = Command::new("sh");
+        wrapper.args([
+            "-c",
+            &format!("sleep 30 & echo $! > {}; wait", pidfile.display()),
+        ]);
+        assert!(exec_bounded(&mut wrapper, "", Duration::from_millis(300)).is_err());
+        let pid = std::fs::read_to_string(&pidfile).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let alive = Command::new("kill")
+            .args(["-0", pid.trim()])
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "the wrapper's child should be stopped");
+    }
 
     #[test]
     fn only_models_stored_on_this_machine_are_offered() {

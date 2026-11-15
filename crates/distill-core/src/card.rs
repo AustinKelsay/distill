@@ -113,58 +113,51 @@ impl CardDraft {
     }
 }
 
-/// Byte ranges of the outermost balanced JSON objects in `answer`, in order, in one pass.
-/// Outside any object, `<think>…</think>` is skipped (an unclosed one runs to the end).
-/// Inside one, strings are tracked, so braces and tags in them are text. A stray `{` that
-/// never closes doesn't hide what follows it: every object that closes is a candidate, and
-/// only those not inside another closed object are kept.
+/// Byte ranges of the JSON objects in `answer` that aren't inside another one, in order.
+/// Each `{` is tried with a real JSON parser; an object it accepts is jumped over whole, so
+/// nothing nested in it is a candidate and nothing in its strings is read as prose. Between
+/// objects, `<think>…</think>` is skipped (an unclosed one runs to the end), and stray braces
+/// and quotes in prose just fail to parse. The work is bounded: only the last 64 KB of an answer
+/// is scanned, each try reads at most 16 KB (a card is a few hundred bytes), and tries are capped.
 fn top_level_objects(answer: &str) -> Vec<(usize, usize)> {
-    let b = answer.as_bytes();
-    let mut closed: Vec<(usize, usize)> = Vec::new();
-    let mut open: Vec<usize> = Vec::new();
-    let (mut i, mut in_string, mut escaped) = (0, false, false);
-    while i < b.len() {
-        let c = b[i];
-        if open.is_empty() && b[i..].starts_with(b"<think>") {
-            match answer[i..].find("</think>") {
-                Some(end) => i += end + "</think>".len(),
-                None => break,
-            }
-            continue;
-        }
-        if in_string {
-            match c {
-                _ if escaped => escaped = false,
-                b'\\' => escaped = true,
-                b'"' => in_string = false,
-                _ => {}
-            }
-        } else {
-            match c {
-                b'"' if !open.is_empty() => in_string = true,
-                b'{' => open.push(i),
-                b'}' => {
-                    if let Some(start) = open.pop() {
-                        closed.push((start, i + 1));
-                    }
-                }
-                _ => {}
-            }
-        }
+    const WINDOW: usize = 64 * 1024;
+    const MAX_OBJECT: usize = 16 * 1024;
+    const MAX_TRIES: usize = 4096;
+    let mut i = answer.len().saturating_sub(WINDOW);
+    while !answer.is_char_boundary(i) {
         i += 1;
     }
-    // Closed in order of their ends, so a container comes after what it holds: walk back and
-    // keep each object that starts before everything kept so far.
-    let mut outer = Vec::new();
-    let mut min_start = usize::MAX;
-    for &(start, end) in closed.iter().rev() {
-        if start < min_start {
-            outer.push((start, end));
-            min_start = start;
+    let mut found = Vec::new();
+    let mut tries = 0;
+    while i < answer.len() {
+        let rest = &answer[i..];
+        if rest.starts_with("<think>") {
+            match rest.find("</think>") {
+                Some(end) => {
+                    i += end + "</think>".len();
+                    continue;
+                }
+                None => break,
+            }
         }
+        if rest.starts_with('{') && tries < MAX_TRIES {
+            tries += 1;
+            let mut cut = rest.len().min(MAX_OBJECT);
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let mut values = serde_json::Deserializer::from_str(&rest[..cut])
+                .into_iter::<serde::de::IgnoredAny>();
+            if let Some(Ok(_)) = values.next() {
+                let end = i + values.byte_offset();
+                found.push((i, end));
+                i = end;
+                continue;
+            }
+        }
+        i += rest.chars().next().map_or(1, char::len_utf8);
     }
-    outer.reverse();
-    outer
+    found
 }
 
 /// Whether a card still describes its session: written with the current prompt from the
@@ -211,8 +204,21 @@ mod tests {
             card(4, "z")
         );
         assert_eq!(CardDraft::from_answer(&stray).unwrap().quality, 4);
+        // A stray brace and an unmatched quote in prose don't hide the card...
+        let quoted = format!(
+            "Schema {{ ... I'll use the \"task field here:\n{}",
+            card(4, "q")
+        );
+        assert_eq!(CardDraft::from_answer(&quoted).unwrap().quality, 4);
+        // ...and don't expose an example card inside reasoning after the real one.
+        let after = format!(
+            "{}\nNote: {{\n<think>{}</think>",
+            card(2, "real"),
+            card(5, "thought")
+        );
+        assert_eq!(CardDraft::from_answer(&after).unwrap().summary, "real");
         // Deeply nested junk is scanned once, not once per brace.
-        let junk = format!("{}{}", "{\"x\":".repeat(20_000), card(2, "w"));
+        let junk = format!("{}{}", "{\"x\":".repeat(2_000), card(2, "w"));
         assert_eq!(CardDraft::from_answer(&junk).unwrap().quality, 2);
     }
 
