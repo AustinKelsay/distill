@@ -452,6 +452,15 @@ fn run(cli: Cli) -> Result<()> {
                     t.spent_today_usd
                 );
                 println!("last sweep: {}", d.last_sweep.as_deref().unwrap_or("never"));
+                println!(
+                    "steward: {} ({})",
+                    t.steward,
+                    if t.steward_local {
+                        "nothing leaves this machine"
+                    } else {
+                        "session excerpts leave this machine"
+                    }
+                );
                 for s in &d.sources {
                     println!(
                         "  {:<12} {:<8} {:>6} sessions {:>10}  {}",

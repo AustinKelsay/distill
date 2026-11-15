@@ -52,14 +52,69 @@ impl Default for Privacy {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Harness {
-    /// Claude Code in print mode (`claude -p`).
+    /// Claude Code in print mode (`claude -p`). Sends session excerpts to Anthropic.
     Claude,
-    /// Codex in exec mode (`codex exec`).
+    /// Codex in exec mode (`codex exec`). Sends session excerpts to OpenAI.
     Codex,
-    /// Any command that reads a prompt on stdin and prints the answer. Used by tests.
+    /// An open model in Ollama on this machine (`ollama run <model>`); nothing leaves it.
+    Ollama,
+    /// Any command that reads a prompt on stdin and prints the answer (`llama-cli -m …`, a
+    /// script); where the excerpts go is up to that command.
     Command,
     /// No steward runs.
     None,
+}
+
+impl Harness {
+    /// Every choice, in the order setup offers them.
+    pub const ALL: [Harness; 5] = [
+        Harness::Ollama,
+        Harness::Command,
+        Harness::Claude,
+        Harness::Codex,
+        Harness::None,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Harness::Claude => "Claude Code",
+            Harness::Codex => "Codex",
+            Harness::Ollama => "Ollama",
+            Harness::Command => "Custom command",
+            Harness::None => "Off",
+        }
+    }
+
+    /// A one-word name, for a picker.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Harness::Claude => "Claude",
+            Harness::Command => "Command",
+            h => h.label(),
+        }
+    }
+
+    /// Where the session excerpts the steward reads end up.
+    pub fn privacy(self) -> &'static str {
+        match self {
+            Harness::Claude => "Sends clipped session excerpts to Anthropic.",
+            Harness::Codex => "Sends clipped session excerpts to OpenAI.",
+            Harness::Ollama => {
+                "Runs a model stored on this machine through Ollama here; Distill refuses Ollama's cloud models."
+            }
+            Harness::Command => {
+                "Runs your command; excerpts go wherever it sends them (nowhere, for a local model)."
+            }
+            Harness::None => "No cards are written, and nothing is sent anywhere.",
+        }
+    }
+
+    /// Whether only this machine sees the excerpts (a custom command is the user's call). For
+    /// Ollama this holds as far as Distill can check: the server on this machine, a model whose
+    /// weights are stored here, no cloud model.
+    pub fn local(self) -> bool {
+        matches!(self, Harness::Ollama | Harness::None)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,6 +129,22 @@ pub struct StewardConfig {
     /// Program and arguments for `harness = "command"`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
+}
+
+impl StewardConfig {
+    /// The custom command as one line of text, for a settings field.
+    pub fn command_text(&self) -> String {
+        self.command.join(" ")
+    }
+
+    /// Set the custom command from a settings field. Arguments are split on spaces; one with a
+    /// space in it (`/models/My Model.gguf`) can't be typed that way, so text that still reads
+    /// as the saved command keeps the saved argument list exactly.
+    pub fn set_command_text(&mut self, text: &str) {
+        if text != self.command_text() {
+            self.command = text.split_whitespace().map(str::to_string).collect();
+        }
+    }
 }
 
 impl Default for StewardConfig {

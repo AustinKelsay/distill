@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use distill_core::Home;
-use distill_core::config::Config;
+use distill_core::config::{Config, Harness};
 use distill_core::source::Detection;
 use distill_core::stats::Dashboard;
 use rune::{AppSpec, Cx, El, Tx, Waker, col};
@@ -113,6 +113,9 @@ impl State {
     pub fn open_settings(&mut self) {
         self.setup = SetupDraft::from_config(&self.config, self.configured);
         self.screen = Screen::Setup;
+        if !self.fixture {
+            self.request(Request::OllamaModels);
+        }
         if self.detections.is_none() && !self.fixture {
             self.request(data::detect_request(&self.config));
         }
@@ -152,6 +155,16 @@ impl State {
                 self.dash.loading = false;
             }
             Reply::Detected(found) => self.detections = Some(found),
+            Reply::OllamaModels(models) => {
+                self.setup.ollama_models = models;
+                // Picked before the list arrived: suggest the first stored model.
+                if self.setup.config.steward.harness == Harness::Ollama
+                    && self.setup.model.text.trim().is_empty()
+                    && let Some(m) = self.setup.ollama_models.first()
+                {
+                    self.setup.model.replace_text(m.clone());
+                }
+            }
             Reply::Saved(Ok(())) => {
                 self.dash.notice = Some("Settings saved".to_string());
                 self.dash.loading = self.dash.data.is_none();
@@ -207,6 +220,9 @@ fn start(s: &mut State, waker: Waker) {
         return;
     }
     s.link = Some(data::spawn(s.home.clone(), waker));
+    if !s.configured {
+        s.request(Request::OllamaModels);
+    }
     s.request(data::detect_request(&s.config));
     s.request(Request::CheckSchedule);
     if s.configured {
@@ -259,6 +275,7 @@ type Scene = (&'static str, fn(&mut State));
 const SCENES: &[Scene] = &[
     ("setup-sources", fixture::setup_sources),
     ("setup-agent", fixture::setup_agent),
+    ("setup-agent-local", fixture::setup_agent_local),
     ("setup-privacy", fixture::setup_privacy),
     ("setup-schedule", fixture::setup_schedule),
     ("dashboard", fixture::dashboard),
