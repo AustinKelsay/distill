@@ -69,9 +69,9 @@ fn rules() -> &'static [Rule] {
 /// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
 /// any prefix, since a bare `\b` would stop at the `_`, and may follow an escaped newline
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
-const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
+const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 17;
+const ASSIGNMENT_SCANNER: u32 = 18;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -93,30 +93,35 @@ pub fn fingerprint() -> String {
 }
 
 /// Replace the value of every secret assignment, keeping its name, quotes and escapes, so
-/// redacted JSON (at any nesting depth) stays valid.
+/// redacted JSON (at any nesting depth) stays valid. Every assignment is read, also one inside
+/// another's value, and the union of their values is redacted: an assignment inside a quoted
+/// value (`password='token=x abc'`) can neither hide the outer value nor be hidden by it.
 fn redact_assignments(text: &str, n: &mut u64) -> String {
     // In valid JSON, every unescaped `"` delimits a string. In other text it may be a
     // character of the value (`DB_PASSWORD='abc"def'`).
     let t = text.trim_start();
     let json_text = (t.starts_with('{') || t.starts_with('['))
         && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok();
-    let mut out = String::with_capacity(text.len());
-    let mut pos = 0;
+    let mut memo = Memo::default();
+    // Each value to redact, and the quote its marker needs (see below).
+    let mut ranges: Vec<(usize, usize, String)> = Vec::new();
     // The start of the current line, found incrementally so a long line is read once.
     let (mut line_start, mut seen) = (0, 0);
     // The current line's leading run of indent, measured once per line.
     let mut indent_of: Option<(usize, usize)> = None;
-    while let Some(c) = assignment_head().captures_at(text, pos) {
-        let head_end = c.get(0).expect("whole match").end();
-        // A value never runs into the next assignment (`token=x,password='…'`): it is read
-        // only up to where another name starts, and that assignment is read on its own. This
-        // also bounds every scan by the distance to the next name, so the pass is linear.
-        let next = assignment_head()
-            .find_at(text, head_end)
-            .map_or(text.len(), |m| m.start());
-        let rest = &text[head_end..next];
-        let quote = c.name("q").map(|q| q.as_str());
-        let head_start = c.get(0).expect("whole match").start();
+    let mut cur = assignment_head().captures_at(text, 0);
+    while let Some(c) = cur {
+        let whole = c.get(0).expect("whole match");
+        let (head_start, head_end) = (whole.start(), whole.end());
+        // The next name may start inside this one's separator (`token=\npassword:`), so it is
+        // looked for from the end of this name.
+        let name_end = c.name("name").expect("name group").end();
+        let next_c = assignment_head().captures_at(text, name_end);
+        // A bare value never runs into the next assignment (`token=x,password='…'`).
+        let bound = next_c
+            .as_ref()
+            .map_or(text.len(), |m| m.get(0).expect("whole match").start())
+            .max(head_end);
         if let Some(nl) = text[seen..head_start].rfind('\n') {
             line_start = seen + nl + 1;
         }
@@ -133,61 +138,95 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
                 n
             }
         };
-        let key_indent = indent.min(head_start - line_start);
+        let quote = c.name("q").map(|q| q.as_str());
         let nq = c.name("nq").map(|q| q.as_str());
         let ctx = Context {
-            bounded: next < text.len(),
             json_text,
             json_key: nq.is_some_and(|q| q.ends_with('"')),
-            key_indent,
+            key_indent: indent.min(head_start - line_start),
         };
-        let found = scan_value(rest, quote, &ctx).filter(|&(skip, len)| {
-            skip + len <= rest.len()
-                && rest.is_char_boundary(skip)
-                && rest.is_char_boundary(skip + len)
-        });
-        let Some((skip, len)) = found else {
-            out.push_str(&text[pos..head_end]);
-            pos = head_end;
-            continue;
-        };
-        let v = &rest[skip..skip + len];
-        let value_end = head_end + skip + len;
-        let interrupted = quote.is_some() && ctx.bounded && skip + len == rest.len();
-        if (v.chars().count() < MIN_SECRET_CHARS && !(interrupted && !v.trim().is_empty()))
-            || is_marker(v)
+        if let Some((s, e)) = scan_value(text, head_end, bound, quote, &ctx, &mut memo)
+            && s <= e
+            && e <= text.len()
+            && text.is_char_boundary(s)
+            && text.is_char_boundary(e)
+            // Counted only as far as needed: many candidates can share one long value.
+            && text[s..e].chars().nth(MIN_SECRET_CHARS - 1).is_some()
+            && !is_marker(&text[s..e])
         {
-            // Too short to be a secret, or already redacted whole. Step past it, so a long
-            // run of these is scanned once.
-            out.push_str(&text[pos..value_end]);
-            pos = value_end;
-            continue;
+            // A bare value after a quoted name is a JSON number or literal; quote the marker
+            // the same way the name is quoted, or the JSON breaks. Only the backslashes that
+            // escape the quote; any before them belong to the name.
+            let wrap = match (quote, nq) {
+                (None, Some(q)) if ctx.json_key && s == head_end => {
+                    format!("{}\"", "\\".repeat(own_escapes(q.len() - 1)))
+                }
+                _ => String::new(),
+            };
+            ranges.push((s, e, wrap));
         }
+        cur = next_c;
+    }
+    ranges.sort_by_key(|r| r.0);
+    let mut out = String::with_capacity(text.len());
+    let (mut pos, mut i) = (0, 0);
+    while i < ranges.len() {
+        let (s, mut e, wrap) = ranges[i].clone();
+        let mut merged = false;
+        i += 1;
+        while i < ranges.len() && ranges[i].0 < e {
+            e = e.max(ranges[i].1);
+            merged = true;
+            i += 1;
+        }
+        let wrap = if merged { "" } else { wrap.as_str() };
         *n += 1;
-        out.push_str(&text[pos..head_end + skip]);
-        // A bare value after a quoted name is a JSON number or literal; quote the marker the
-        // same way the name is quoted, or the JSON breaks.
-        let wrap = match (quote, nq) {
-            (None, Some(q)) if ctx.json_key && skip == 0 => {
-                // Only the backslashes that escape the quote; any before them belong to the name.
-                format!("{}\"", "\\".repeat(own_escapes(q.len() - 1)))
-            }
-            _ => String::new(),
-        };
+        out.push_str(&text[pos..s]);
         out.push_str(&format!("{wrap}[REDACTED:assigned_secret]{wrap}"));
-        pos = value_end;
+        pos = e;
     }
     out.push_str(&text[pos..]);
     out
 }
 
+/// A YAML block: the line break before it, its key's indent, and its range (if not empty).
+type Block = (usize, usize, Option<(usize, usize)>);
+
+/// What earlier scans of the same text found, so a run of candidates is read once. Every
+/// entry comes from a scan to the end of the text, so it holds for any later offset.
+#[derive(Default)]
+struct Memo {
+    /// For each kind of opening quote, the earliest offset after which no closing quote exists.
+    unclosed: Vec<(String, usize)>,
+    /// (searched from, the first line break at or after it) for unclosed values.
+    line_break: Option<(usize, usize)>,
+    /// (searched from, the next `\n`, if any).
+    newline: Option<(usize, Option<usize>)>,
+    /// The last YAML block read, for candidates that share its header line.
+    block: Option<Block>,
+}
+
+impl Memo {
+    fn next_newline(&mut self, b: &[u8], at: usize) -> Option<usize> {
+        match self.newline {
+            Some((from, found)) if from <= at && found.is_none_or(|f| at <= f) => found,
+            _ => {
+                let found = b[at..].iter().position(|&c| c == b'\n').map(|p| at + p);
+                self.newline = Some((at, found));
+                found
+            }
+        }
+    }
+}
+
 /// A whole marker (`[REDACTED:email]`), not a value that only starts with one.
 fn is_marker(v: &str) -> bool {
-    v.strip_prefix("[REDACTED:")
-        .and_then(|r| r.strip_suffix(']'))
-        .is_some_and(|name| {
-            !name.is_empty() && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
-        })
+    v.len() <= 64
+        && v.strip_prefix("[REDACTED:")
+            .and_then(|r| r.strip_suffix(']'))
+            .is_some_and(|name| {
+                !name.is_empty() && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+            })
 }
 
 /// Whether an escaped double quote followed by `after` ends a JSON string: JSON punctuation (or the end
@@ -230,8 +269,6 @@ fn level(mut m: usize) -> u32 {
 
 /// Where an assignment sits in the text being redacted.
 struct Context {
-    /// `rest` stops where the next assignment's name starts, not at the end of the text.
-    bounded: bool,
     /// The whole text is valid JSON.
     json_text: bool,
     /// The name was a quoted JSON key, so a bare value is a JSON number, literal or container.
@@ -240,10 +277,18 @@ struct Context {
     key_indent: usize,
 }
 
-/// Where the value starts and how long it is, in `rest` (the text after the separator).
-/// `quote` is the opening quote with the backslashes that escape it.
-fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, usize)> {
-    let b = rest.as_bytes();
+/// The value after the separator ending at `at`, as a byte range of `text`. `quote` is the
+/// opening quote with the backslashes that escape it. A quoted value or YAML block runs to its
+/// real end; a bare value stops at `bound`, where the next assignment's name starts.
+fn scan_value(
+    text: &str,
+    at: usize,
+    bound: usize,
+    quote: Option<&str>,
+    ctx: &Context,
+    memo: &mut Memo,
+) -> Option<(usize, usize)> {
+    let b = text.as_bytes();
     if let Some(q) = quote {
         let escapes = q.len() - 1;
         let mark = q.as_bytes()[escapes];
@@ -251,11 +296,12 @@ fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, 
         // Backslashes before the opening quote that are escaped backslashes, not the quote's
         // own escapes (`\\"`), say nothing about the value; only the level counts.
         let own = own_escapes(escapes);
-        {
+        let known_unclosed = memo.unclosed.iter().any(|(k, from)| k == q && *from <= at);
+        if !known_unclosed {
             // Closed by the same quote at the same level; a shallower one means the string
             // around it closed first (the text was cut). A deeper one is part of the value, and
             // so are line breaks: a quoted secret may span lines.
-            let mut i = 0;
+            let mut i = at;
             while i < b.len() {
                 let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
                 let Some(&x) = b.get(i + m) else { break };
@@ -275,14 +321,19 @@ fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, 
                     match level(m).cmp(&lvl) {
                         std::cmp::Ordering::Equal => {
                             let close = i + m - own;
-                            // In a shell, `"abc"def` is one word: the value goes on.
+                            // In a shell, `"abc"def` is one word: the value goes on, up to the
+                            // next assignment's name.
                             if own == 0 && continues_word(b.get(close + 1).copied(), ctx) {
-                                let tail = bare_end(&b[close + 1..], ctx);
-                                return Some((0, char_end(rest, close + 1 + tail)));
+                                let from = close + 1;
+                                let to = assignment_head()
+                                    .find_at(text, from)
+                                    .map_or(b.len(), |m| m.start());
+                                let tail = bare_end(&b[from..to], ctx);
+                                return Some((at, char_end(text, from + tail)));
                             }
-                            return Some((0, close));
+                            return Some((at, close));
                         }
-                        std::cmp::Ordering::Less => return Some((0, i)),
+                        std::cmp::Ordering::Less => return Some((at, i)),
                         std::cmp::Ordering::Greater => {}
                     }
                 } else if x == b'"'
@@ -294,52 +345,54 @@ fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, 
                     // single-quoted value: an unescaped one, or an escaped one followed by JSON
                     // punctuation (JSON inside a string). Outside JSON a backslash and a double
                     // quote are characters of the value (`'abc\",def'` in a shell).
-                    return Some((0, i));
+                    return Some((at, i));
                 }
                 i += m + 1;
             }
-        }
-        // Another assignment starts before the quote closes: everything up to it is this
-        // value, however short (`password='abc token=…'`), and that one is read on its own.
-        if ctx.bounded {
-            return Some((0, b.len()));
+            memo.unclosed.push((q.to_string(), at));
         }
         // Never closed: the text was cut mid-value, so the value is the rest of its line.
-        let end = (0..b.len())
+        if let Some((from, brk)) = memo.line_break
+            && from <= at
+            && at <= brk
+        {
+            return Some((at, brk));
+        }
+        let brk = (at..b.len())
             .find(|&i| {
                 b[i] == b'\n'
                     || (b[i] == b'n'
-                        && b[..i].iter().rev().take_while(|&&x| x == b'\\').count() % 2 == 1)
+                        && b[at..i].iter().rev().take_while(|&&x| x == b'\\').count() % 2 == 1)
             })
             .map_or(b.len(), |i| {
-                i - b[..i].iter().rev().take_while(|&&x| x == b'\\').count()
+                i - b[at..i].iter().rev().take_while(|&&x| x == b'\\').count()
             });
-        return Some((0, end));
+        memo.line_break = Some((at, brk));
+        return Some((at, brk));
     }
     // A YAML block scalar (`KEY: |`, `KEY: >- # note`): the indented lines that follow, blank
-    // lines among them included, are the value.
-    // The header is the indicator, its chomping and indent digits, spaces, then a comment or
-    // the line break; checked byte by byte, so a long line is not re-read per candidate.
-    let indicators = |from: usize| {
-        b[from..]
-            .iter()
-            .take_while(|c| matches!(c, b'-' | b'+' | b'0'..=b'9'))
-            .count()
+    // lines among them included, are the value. The header is the indicator, its chomping and
+    // indent digits, spaces, then a comment or the line break, checked byte by byte.
+    let run = |from: usize, f: fn(&u8) -> bool| {
+        b[from.min(b.len())..].iter().take_while(|c| f(c)).count()
     };
-    let spaces = |from: usize| {
-        b[from..]
-            .iter()
-            .take_while(|c| matches!(c, b' ' | b'\t'))
-            .count()
-    };
-    if matches!(b.first(), Some(b'|' | b'>'))
-        && let h = 1 + indicators(1)
-        && matches!(b.get(h + spaces(h)), Some(b'#' | b'\r' | b'\n'))
-        && let Some(nl) = b.iter().position(|&c| c == b'\n')
+    if b.get(at).is_some_and(|c| matches!(c, b'|' | b'>'))
+        && let h = at + 1 + run(at + 1, |c| matches!(c, b'-' | b'+' | b'0'..=b'9'))
+        && matches!(
+            b.get(h + run(h, |c| matches!(c, b' ' | b'\t'))),
+            Some(b'#' | b'\r' | b'\n')
+        )
+        && let Some(nl) = memo.next_newline(b, at)
     {
+        if let Some((n, k, block)) = memo.block
+            && n == nl
+            && k == ctx.key_indent
+        {
+            return block;
+        }
         let start = nl + 1;
         let (mut end, mut off) = (start, start);
-        for line in rest[start..].split_inclusive('\n') {
+        for line in text[start..].split_inclusive('\n') {
             off += line.len();
             if line.trim().is_empty() {
                 continue;
@@ -352,17 +405,19 @@ fn scan_value(rest: &str, quote: Option<&str>, ctx: &Context) -> Option<(usize, 
             }
             end = off;
         }
-        let block = rest[start..end].trim_end();
-        let indent = block.len() - block.trim_start().len();
-        return (!block.trim().is_empty()).then_some((start + indent, block.len() - indent));
+        let body = text[start..end].trim_end();
+        let indent = body.len() - body.trim_start().len();
+        let block = (!body.trim().is_empty()).then_some((start + indent, start + body.len()));
+        memo.block = Some((nl, ctx.key_indent, block));
+        return block;
     }
     // A bare token. A backslash ends it only when it escapes a quote or whitespace; any other
     // escape (`\u0073`, `\\`) is part of the value, so no half of it is left behind. After a
     // quoted JSON key, a container is not a value to replace, and `]` ends a number in an array.
-    if ctx.json_key && matches!(b.first(), Some(b'[' | b'{')) {
+    if ctx.json_key && matches!(b.get(at), Some(b'[' | b'{')) {
         return None;
     }
-    Some((0, char_end(rest, bare_end(b, ctx))))
+    Some((at, char_end(text, at + bare_end(&b[at..bound], ctx))))
 }
 
 /// `i`, or the next char boundary after it.
@@ -1411,7 +1466,7 @@ mod tests {
             ),
             (
                 r"password=\'a\\\''' token='synthetic-secret'",
-                r"password=\'[REDACTED:assigned_secret]token='[REDACTED:assigned_secret]'",
+                r"password=\'[REDACTED:assigned_secret]'[REDACTED:assigned_secret]'",
             ),
             (
                 "password=abc\"x token=synthetic-secret\" y",
@@ -1420,11 +1475,37 @@ mod tests {
         ] {
             assert_eq!(redact(input, None, &mut f), want, "{input}");
         }
-        // A quoted value that another assignment interrupts is redacted up to it, however short.
-        assert_eq!(
-            redact("password='abc token=synthetic-secret' x", None, &mut f),
-            "password='[REDACTED:assigned_secret]token=[REDACTED:assigned_secret]' x"
+        // An assignment inside a quoted value hides neither value.
+        for (input, want) in [
+            (
+                "password='abc token=synthetic-secret' x",
+                "password='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "password='token=x synthetic-secret' x",
+                "password='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "password=\"token=x synthetic-secret\" x",
+                "password=\"[REDACTED:assigned_secret]\" x",
+            ),
+            (
+                "password: | # token=x\n  synthetic-secret\nnext: 1",
+                "password: | # token=x\n  [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "token=token=\\npassword: synthetic-secret",
+                "token=token=\\npassword: [REDACTED:assigned_secret]",
+            ),
+        ] {
+            assert_eq!(redact(input, None, &mut f), want, "{input}");
+        }
+        let out = redact(
+            r#"{"cmd":"password='token=x synthetic-secret'"}"#,
+            None,
+            &mut f,
         );
+        assert!(!out.contains("synthetic"), "{out}");
         let out = redact(
             r#"{"cmd":"token=x,password='synthetic-secret'"}"#,
             None,
