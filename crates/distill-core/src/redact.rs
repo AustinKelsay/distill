@@ -67,10 +67,11 @@ fn rules() -> &'static [Rule] {
 
 /// The name and separator of a secret assignment: `TINFOIL_API_KEY=`, `"db-password": "`,
 /// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
-/// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
-const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
+/// any prefix, since a bare `\b` would stop at the `_`, and may follow an escaped newline
+/// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
+const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 6;
+const ASSIGNMENT_SCANNER: u32 = 7;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -109,12 +110,19 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         let head_start = c.get(0).expect("whole match").start();
         let line = &text[text[..head_start].rfind('\n').map_or(0, |i| i + 1)..head_start];
         let key_indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let nq = c.name("nq").map(|q| q.as_str());
         let ctx = Context {
             at: head_end,
             json_text,
+            json_key: nq.is_some_and(|q| q.ends_with('"')),
             key_indent,
         };
-        let Some((skip, len)) = scan_value(rest, quote, &ctx, &mut unclosed) else {
+        let found = scan_value(rest, quote, &ctx, &mut unclosed).filter(|&(skip, len)| {
+            skip + len <= rest.len()
+                && rest.is_char_boundary(skip)
+                && rest.is_char_boundary(skip + len)
+        });
+        let Some((skip, len)) = found else {
             out.push_str(&text[pos..head_end]);
             pos = head_end;
             continue;
@@ -132,9 +140,12 @@ fn redact_assignments(text: &str, n: &mut u64) -> String {
         out.push_str(&text[pos..head_end + skip]);
         // A bare value after a quoted name is a JSON number or literal; quote the marker the
         // same way the name is quoted, or the JSON breaks.
-        let wrap = match (quote, c.name("nq")) {
-            (None, Some(nq)) if nq.as_str().ends_with('"') && skip == 0 => nq.as_str(),
-            _ => "",
+        let wrap = match (quote, nq) {
+            (None, Some(q)) if ctx.json_key && skip == 0 => {
+                // Only the backslashes that escape the quote; any before them belong to the name.
+                format!("{}\"", "\\".repeat(own_escapes(q.len() - 1)))
+            }
+            _ => String::new(),
         };
         out.push_str(&format!("{wrap}[REDACTED:assigned_secret]{wrap}"));
         pos = value_end;
@@ -190,6 +201,12 @@ fn closes_json_string(after: &[u8]) -> bool {
     }
 }
 
+/// How many of `m` backslashes before a quote escape the quote itself (the rest are escaped
+/// backslashes): `2^level - 1`.
+fn own_escapes(m: usize) -> usize {
+    1usize.checked_shl(level(m)).map_or(usize::MAX, |x| x - 1)
+}
+
 /// The nesting level a quote sits at after `m` backslashes. Each level of JSON inside a string
 /// doubles the backslashes before it and adds one (`"`, `\"`, `\\\"`), so `\\"` is an
 /// escaped backslash and then a level-0 quote, not an escaped quote.
@@ -208,6 +225,8 @@ struct Context {
     at: usize,
     /// The whole text is valid JSON.
     json_text: bool,
+    /// The name was a quoted JSON key, so a bare value is a JSON number, literal or container.
+    json_key: bool,
     /// Indent of the line the name is on; a YAML block's lines are indented more.
     key_indent: usize,
 }
@@ -223,9 +242,12 @@ fn scan_value(
     let at = ctx.at;
     let b = rest.as_bytes();
     if let Some(q) = quote {
-        let depth = q.len() - 1;
-        let mark = q.as_bytes()[depth];
-        let lvl = level(depth);
+        let escapes = q.len() - 1;
+        let mark = q.as_bytes()[escapes];
+        let lvl = level(escapes);
+        // Backslashes before the opening quote that are escaped backslashes, not the quote's
+        // own escapes (`\\"`), say nothing about the value; only the level counts.
+        let own = own_escapes(escapes);
         if !unclosed.known(q, at) {
             // Closed by the same quote at the same level; a shallower one means the string
             // around it closed first (the text was cut). A deeper one is part of the value, and
@@ -236,7 +258,7 @@ fn scan_value(
                 let Some(&x) = b.get(i + m) else { break };
                 if x == mark {
                     match level(m).cmp(&lvl) {
-                        std::cmp::Ordering::Equal => return Some((0, i + m - depth)),
+                        std::cmp::Ordering::Equal => return Some((0, i + m - own)),
                         std::cmp::Ordering::Less => return Some((0, i)),
                         std::cmp::Ordering::Greater => {}
                     }
@@ -298,12 +320,16 @@ fn scan_value(
         return (!block.trim().is_empty()).then_some((start + indent, block.len() - indent));
     }
     // A bare token. A backslash ends it only when it escapes a quote or whitespace; any other
-    // escape (`s`, `\\`) is part of the value, so no half of it is left behind. Brackets
-    // end it too: `[1234, 5]` is a JSON array, not a scalar to replace.
+    // escape (`\u0073`, `\\`) is part of the value, so no half of it is left behind. After a
+    // quoted JSON key, a container is not a value to replace, and `]` ends a number in an array.
+    if ctx.json_key && matches!(b.first(), Some(b'[' | b'{')) {
+        return None;
+    }
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'[' | b']' | b'{' | b'}' => break,
+            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'}' => break,
+            b']' if ctx.json_key => break,
             b'\\' => match b.get(i + 1) {
                 None | Some(b'"' | b'\'' | b'n' | b'r' | b't') => break,
                 Some(_) => i += 2,
@@ -343,6 +369,37 @@ fn is_service_address(m: &str) -> bool {
 }
 
 pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> String {
+    redact_json_text(text, home_dir, findings)
+        .unwrap_or_else(|| redact_text(text, home_dir, findings))
+}
+
+/// Text that is a JSON object or array (tool arguments, a tool's JSON output) is parsed,
+/// redacted field by field, and written back, so no pattern has to read escaped JSON, at any
+/// depth. Untouched text is returned as it was; changed text is re-serialized (compact, or
+/// pretty when it spanned lines).
+fn redact_json_text(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> Option<String> {
+    let t = text.trim_start();
+    if !(t.starts_with('{') || t.starts_with('[')) {
+        return None;
+    }
+    let mut v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let mut found = Findings::default();
+    redact_value(&mut v, home_dir, &mut found);
+    findings.merge(&found);
+    let home_hit = home_dir.is_some_and(|h| h.len() > 1 && text.contains(h));
+    if found.total() == 0 && !home_hit {
+        return Some(text.to_string());
+    }
+    let out = if text.trim().contains('\n') {
+        serde_json::to_string_pretty(&v)
+    } else {
+        serde_json::to_string(&v)
+    };
+    Some(out.expect("a JSON value serializes"))
+}
+
+/// Redact text that is not JSON, or JSON that does not parse (a truncated snippet).
+fn redact_text(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> String {
     let mut out = text.to_string();
     for rule in rules() {
         let mut n = 0u64;
@@ -428,15 +485,19 @@ pub fn redact_value(v: &mut serde_json::Value, home_dir: Option<&str>, findings:
                 }
             }
             for (k, x) in o.iter_mut() {
-                if is_credential_key(k)
-                    && let serde_json::Value::String(s) = x
-                    && !s.is_empty()
-                {
+                // A string under a credential-named key, or a number long enough to be one
+                // (`"DB_PASSWORD": 12345678`), is replaced whole.
+                let secret = match &*x {
+                    serde_json::Value::String(s) => !s.is_empty(),
+                    serde_json::Value::Number(n) => n.to_string().len() >= MIN_SECRET_CHARS,
+                    _ => false,
+                };
+                if secret && is_credential_key(k) {
                     *findings
                         .by_rule
                         .entry("credential_field".into())
                         .or_default() += 1;
-                    *s = "[REDACTED:credential_field]".to_string();
+                    *x = serde_json::Value::String("[REDACTED:credential_field]".to_string());
                 } else {
                     redact_value(x, home_dir, findings);
                 }
@@ -486,7 +547,7 @@ mod tests {
         assert!(!out.contains("synthetic-"), "{out}");
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("still valid JSON");
         assert_eq!(parsed["n"], 1);
-        assert_eq!(parsed["token"], "[REDACTED:assigned_secret]");
+        assert_eq!(parsed["token"], "[REDACTED:credential_field]");
         assert_eq!(f.total(), 3);
     }
 
@@ -521,11 +582,17 @@ mod tests {
     #[test]
     fn assignment_values_are_removed_whole_and_json_stays_valid() {
         let marker = "[REDACTED:assigned_secret]";
+        // Valid JSON is redacted field by field; the text scanner is the fallback for JSON that
+        // does not parse (a cut-off snippet), so run both and check each. The scanner's result
+        // is returned.
         let json = |s: &str| -> serde_json::Value {
             let mut f = Findings::default();
-            let out = redact(s, None, &mut f);
-            assert!(!out.contains("synthetic"), "{out}");
-            serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+            for out in [redact(s, None, &mut f), redact_text(s, None, &mut f)] {
+                assert!(!out.contains("synthetic"), "{out}");
+                serde_json::from_str::<serde_json::Value>(&out)
+                    .unwrap_or_else(|e| panic!("{e}: {out}"));
+            }
+            serde_json::from_str(&redact_text(s, None, &mut f)).expect("checked above")
         };
         // Escapes inside a quoted value do not end it.
         assert_eq!(
@@ -699,6 +766,76 @@ mod tests {
         redact_value(&mut v, None, &mut f);
         assert_eq!(v["APP__DB_PASSWORD"], "[REDACTED:credential_field]");
         assert_eq!(v["_token"], "[REDACTED:credential_field]");
+    }
+
+    #[test]
+    fn json_text_is_redacted_field_by_field_at_any_depth() {
+        let mut f = Findings::default();
+        // Wrap a command three JSON levels deep; every level must still parse afterwards.
+        let mut s =
+            serde_json::json!({"cmd": "DB_PASSWORD=synthetic-value", "ok": true}).to_string();
+        for _ in 0..2 {
+            s = serde_json::json!({ "a": s }).to_string();
+        }
+        let out = redact(&s, None, &mut f);
+        assert!(!out.contains("synthetic"), "{out}");
+        let l1: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let l2: serde_json::Value = serde_json::from_str(l1["a"].as_str().unwrap()).unwrap();
+        let l3: serde_json::Value = serde_json::from_str(l2["a"].as_str().unwrap()).unwrap();
+        assert_eq!(l3["ok"], true);
+
+        // YAML and escaped newlines inside a JSON string are read decoded.
+        let yaml = r#"{"content":"DB_PASSWORD: | # note\n  synthetic-first\n\n  synthetic-second\nnext: 1"}"#;
+        let line = r#"{"cmd":"echo x\npassword=synthetic-value"}"#;
+        for s in [yaml, line] {
+            let out = redact(s, None, &mut f);
+            assert!(!out.contains("synthetic"), "{out}");
+            serde_json::from_str::<serde_json::Value>(&out).unwrap();
+        }
+        // A name right after an escaped newline, in text that is not valid JSON.
+        let out = redact(
+            r#"cut off: {"cmd":"echo x\npassword=synthetic-value"#,
+            None,
+            &mut f,
+        );
+        assert!(!out.contains("synthetic"), "{out}");
+
+        // Odd escape counts must not panic, on either path, multibyte text included.
+        for s in [
+            r#"{"cmd":"password=\\","z":1}"#,
+            r#"{"cmd":"password=\\","z":"🙂🙂"}"#,
+            r#"{"DB_PASSWORD\\":12345678901,"ok":true}"#,
+        ] {
+            for out in [redact(s, None, &mut f), redact_text(s, None, &mut f)] {
+                serde_json::from_str::<serde_json::Value>(&out)
+                    .unwrap_or_else(|e| panic!("{e}: {out}"));
+            }
+        }
+
+        // Brackets are part of a bare value outside JSON.
+        for (input, want) in [
+            (
+                "DB_PASSWORD=[synthetic-value] x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD=synthetic[value] x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD=[REDACTED:email]synthetic-tail x",
+                "DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+        ] {
+            assert_eq!(redact(input, None, &mut f), want);
+        }
+
+        // Untouched JSON comes back byte for byte; changed JSON keeps its shape.
+        let plain = "{ \"b\": 1,  \"a\": [1, 2] }";
+        assert_eq!(redact(plain, None, &mut f), plain);
+        let pretty = "{\n  \"z\": 1,\n  \"token\": \"synthetic-value\"\n}";
+        let out = redact(pretty, None, &mut f);
+        assert!(out.contains('\n') && !out.contains("synthetic"), "{out}");
     }
 
     #[test]
