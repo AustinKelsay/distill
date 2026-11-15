@@ -74,7 +74,10 @@ fn setup_steps_through_and_finish_queues_the_chosen_config() {
     press(&mut rt, "harness/segment3");
     assert_eq!(rt.state.setup.config.steward.harness, Harness::Codex);
     assert_eq!(rt.state.setup.model.text, "");
-    assert!(!shows(&rt, "Daily budget"), "no budget for a harness without cost");
+    assert!(
+        !shows(&rt, "Daily budget"),
+        "no budget for a harness without cost"
+    );
     rt.update(|s, _| s.setup.model.replace_text("gpt-5-codex"));
 
     // Step 4: exclude a path, turn redaction off.
