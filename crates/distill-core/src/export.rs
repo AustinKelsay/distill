@@ -269,6 +269,9 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
         .to_string();
     let dir = build_dir(home, name, &build_id);
     if dir.join("manifest.json").exists() {
+        // Same output as an existing build: still clear older unapproved ones, such as a build
+        // whose approval was taken back, or they stay on disk until the output changes.
+        prune_superseded(home, name, &build_id)?;
         return summary(home, name, &build_id);
     }
     write_atomic(&dir.join("data.jsonl"), &data)?;
@@ -284,14 +287,7 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
         built_at: now_rfc3339(),
     };
     write_json_pretty(&dir.join("manifest.json"), &manifest)?;
-    // Older builds of this recipe that were never approved are superseded and can be rebuilt,
-    // so they are removed; otherwise every hourly tick on a growing archive leaves one behind.
-    // Approved builds are kept.
-    for old in list_builds(home)? {
-        if old.recipe == name && old.build != build_id && !old.approved {
-            fs::remove_dir_all(&old.path)?;
-        }
-    }
+    prune_superseded(home, name, &build_id)?;
     let mut entry = RunEntry::new(
         "export",
         true,
@@ -304,6 +300,18 @@ pub fn build(home: &Home, name: &str) -> Result<BuildSummary> {
     entry.details = json!({"recipe": name, "build": build_id});
     runlog::record(home, &entry)?;
     summary(home, name, &build_id)
+}
+
+/// Older builds of this recipe that were never approved are superseded and can be rebuilt, so
+/// they are removed; otherwise every hourly tick on a growing archive leaves one behind.
+/// Approved builds are kept.
+fn prune_superseded(home: &Home, recipe: &str, keep: &str) -> Result<()> {
+    for old in list_builds(home)? {
+        if old.recipe == recipe && old.build != keep && !old.approved {
+            fs::remove_dir_all(&old.path)?;
+        }
+    }
+    Ok(())
 }
 
 fn chat_record(meta: &SessionMeta, events: &[Event]) -> Value {
@@ -431,4 +439,38 @@ pub fn publish(home: &Home, recipe: &str, build: &str, dest: &Path) -> Result<Pa
         ),
     )?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_identical_rebuild_still_clears_older_unapproved_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let mut config = crate::Config::default();
+        for s in &mut config.sources {
+            s.enabled = false;
+        }
+        crate::setup::initialize(&home, &config).unwrap();
+        let first = build(&home, "good-sessions").unwrap();
+        approve(&home, "good-sessions", &first.build, "test").unwrap();
+        // An older build whose approval was taken back.
+        let old = build_dir(&home, "good-sessions", "0000000000000000");
+        fs::create_dir_all(&old).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(first.path.join("manifest.json")).unwrap()).unwrap();
+        manifest["build"] = json!("0000000000000000");
+        fs::write(old.join("manifest.json"), manifest.to_string()).unwrap();
+        fs::write(old.join("data.jsonl"), "").unwrap();
+
+        let again = build(&home, "good-sessions").unwrap();
+        assert_eq!(again.build, first.build);
+        assert!(!old.exists(), "the superseded build should be removed");
+        assert!(
+            first.path.join("approval.json").exists(),
+            "the approved one stays"
+        );
+    }
 }
