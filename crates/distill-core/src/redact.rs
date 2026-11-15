@@ -14,6 +14,9 @@ fn rules() -> &'static [Rule] {
     static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
     RULES.get_or_init(|| {
         let r = |name, pat: &str| Rule { name, re: Regex::new(pat).expect("valid redaction regex") };
+        // A key's start: a word boundary, or an escaped newline or tab (`\ntk_…` in JSON inside
+        // a string, where `\b` finds no boundary between the `n` and the key).
+        let k = |name, pat: &str| r(name, &format!(r"(?:\b|(?P<keep>\\[nrt])){pat}"));
         vec![
             // A whole key, or a truncated one (tool output often shows only the head).
             r(
@@ -22,15 +25,15 @@ fn rules() -> &'static [Rule] {
             ),
             r("anthropic_key", r"sk-ant-[A-Za-z0-9_\-]{20,}"),
             r("openai_key", r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
-            r("github_token", r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
-            r("aws_access_key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
-            r("slack_token", r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"),
-            r("tinfoil_key", r"\btk_[A-Za-z0-9]{40,}\b"),
-            r("google_api_key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
-            r("stripe_key", r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}\b"),
-            r("jwt", r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
-            r("nostr_secret", r"\bnsec1[02-9ac-hj-np-z]{58}\b"),
-            r("bearer", r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}"),
+            k("github_token", r"(?:(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b"),
+            k("aws_access_key", r"(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+            k("slack_token", r"xox[abprs]-[A-Za-z0-9\-]{10,}\b"),
+            k("tinfoil_key", r"tk_[A-Za-z0-9]{40,}\b"),
+            k("google_api_key", r"AIza[0-9A-Za-z_\-]{35}\b"),
+            k("stripe_key", r"(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}\b"),
+            k("jwt", r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+            k("nostr_secret", r"nsec1[02-9ac-hj-np-z]{58}\b"),
+            k("bearer", r"(?i:bearer)\s+[A-Za-z0-9_\-\.=]{20,}"),
             // Personal data and private network names, not only credentials.
             r("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
             // Addresses turned into slugs (`alice-smith-gmail-com`), as contact tools and file
@@ -58,25 +61,145 @@ fn rules() -> &'static [Rule] {
                 "tailscale_ip",
                 r"\b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b",
             ),
-            r(
-                "assigned_secret",
-                // Only the value is replaced (the `keep` group stays), so JSON stays valid.
-                // The name may carry a prefix (`TINFOIL_API_KEY=`, `db-password:`); a bare `\b` would
-                // stop at the `_` and miss every prefixed variable. Quotes may be escaped (`\"KEY\": \"v\"`)
-                // when the text is JSON inside a string.
-                r#"(?i)(?P<keep>\b(?:[A-Za-z0-9]+[_-])*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b\\*["']?\s*[:=]\s*\\*["']?)[^\s"',}\\]{8,}"#,
-            ),
         ]
     })
 }
 
+/// The name and separator of a secret assignment: `TINFOIL_API_KEY=`, `"db-password": "`,
+/// `_SECRET: `, or `\"GH_TOKEN\":\n  \"` in JSON that sits inside a string. The name may carry
+/// any prefix, since a bare `\b` would stop at the `_`. `scan_value` finds where the value ends.
+const ASSIGNMENT_HEAD: &str = r#"(?i)\b(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(?P<nq>\\*["'])?(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*(?P<q>\\*["'])?"#;
+/// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
+const ASSIGNMENT_SCANNER: u32 = 2;
+/// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
+const MIN_SECRET_CHARS: usize = 8;
+/// How far a quoted value is followed before giving up on its closing quote.
+const MAX_QUOTED_BYTES: usize = 8192;
+
+fn assignment_head() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(ASSIGNMENT_HEAD).expect("valid assignment regex"))
+}
+
 /// Changes whenever a rule changes, so dataset builds made with old rules are not reused.
 pub fn fingerprint() -> String {
-    let joined: Vec<String> = rules()
+    let mut joined: Vec<String> = rules()
         .iter()
         .map(|r| format!("{}={}", r.name, r.re.as_str()))
         .collect();
+    joined.push(format!(
+        "assigned_secret={ASSIGNMENT_HEAD};scanner={ASSIGNMENT_SCANNER}"
+    ));
     crate::util::sha256_hex(joined.join("\n").as_bytes())
+}
+
+/// Replace the value of every secret assignment, keeping its name, quotes and escapes, so
+/// redacted JSON (at any nesting depth) stays valid.
+fn redact_assignments(text: &str, n: &mut u64) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    while let Some(c) = assignment_head().captures_at(text, pos) {
+        let head_end = c.get(0).expect("whole match").end();
+        let rest = &text[head_end..];
+        let found = scan_value(rest, c.name("q").map(|q| q.as_str())).filter(|&(skip, len)| {
+            let v = &rest[skip..skip + len];
+            v.chars().count() >= MIN_SECRET_CHARS && !v.starts_with("[REDACTED:")
+        });
+        let Some((skip, len)) = found else {
+            out.push_str(&text[pos..head_end]);
+            pos = head_end;
+            continue;
+        };
+        *n += 1;
+        out.push_str(&text[pos..head_end + skip]);
+        // A bare value after a quoted name is a JSON number or literal; quote the marker the
+        // same way the name is quoted, or the JSON breaks.
+        let wrap = match (c.name("q"), c.name("nq")) {
+            (None, Some(nq)) if nq.as_str().ends_with('"') && skip == 0 => nq.as_str(),
+            _ => "",
+        };
+        out.push_str(&format!("{wrap}[REDACTED:assigned_secret]{wrap}"));
+        pos = head_end + skip + len;
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+/// Where the value starts and how long it is, in `rest` (the text after the separator).
+/// `quote` is the opening quote with any backslashes that escape it.
+fn scan_value(rest: &str, quote: Option<&str>) -> Option<(usize, usize)> {
+    let b = rest.as_bytes();
+    if let Some(q) = quote {
+        // Closed by the same quote at the same escape depth (or shallower, if the text is cut).
+        // A more deeply escaped quote is part of the value.
+        let depth = q.len() - 1;
+        let mark = q.as_bytes()[depth];
+        let mut i = 0;
+        while i < b.len() && i < MAX_QUOTED_BYTES {
+            match b[i] {
+                b'\\' => {
+                    let m = b[i..].iter().take_while(|&&x| x == b'\\').count();
+                    match b.get(i + m) {
+                        Some(&x) if x == mark && m <= depth => return Some((0, i)),
+                        // A single-quoted value never runs past the double quote that closes
+                        // the string around it.
+                        Some(b'"') if mark == b'\'' && m <= depth => return Some((0, i)),
+                        // An escaped newline at the string's own depth: the value was cut off.
+                        Some(b'n') if depth > 0 && m == depth => return Some((0, i)),
+                        _ => i += m + 1,
+                    }
+                }
+                x if x == mark => return Some((0, i)),
+                b'"' if mark == b'\'' => return Some((0, i)),
+                b'\n' => return Some((0, i)),
+                _ => i += 1,
+            }
+        }
+        let mut end = i.min(b.len());
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        return Some((0, end));
+    }
+    // A YAML block scalar (`KEY: |`): the indented lines that follow are the value.
+    if matches!(b.first(), Some(b'|' | b'>')) {
+        let header = rest
+            .bytes()
+            .skip(1)
+            .take_while(|x| matches!(x, b'-' | b'+' | b'0'..=b'9' | b' ' | b'\t' | b'\r'))
+            .count();
+        if b.get(1 + header) == Some(&b'\n') {
+            let start = 2 + header;
+            let mut end = start;
+            for line in rest[start..].split_inclusive('\n') {
+                if !line.starts_with([' ', '\t']) {
+                    break;
+                }
+                end += line.len();
+            }
+            let block = rest[start..end].trim_end();
+            let indent = block.len() - block.trim_start().len();
+            return (!block.trim().is_empty()).then_some((start + indent, block.len() - indent));
+        }
+    }
+    // A bare token. A backslash ends it only when it escapes a quote or whitespace; any other
+    // escape (`s`, `\\`) is part of the value, so no half of it is left behind.
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'}' => break,
+            b'\\' => match b.get(i + 1) {
+                None | Some(b'"' | b'\'' | b'n' | b'r' | b't') => break,
+                Some(_) => i += 2,
+            },
+            _ => i += 1,
+        }
+    }
+    let mut end = i.min(b.len());
+    while !rest.is_char_boundary(end) {
+        end += 1;
+    }
+    Some((0, end))
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -107,13 +230,26 @@ pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> St
     let mut out = text.to_string();
     for rule in rules() {
         let mut n = 0u64;
-        let replaced = rule.re.replace_all(&out, |c: &regex::Captures| {
-            let whole = &c[0];
+        let hay = out.as_str();
+        let replaced = rule.re.replace_all(hay, |c: &regex::Captures| {
+            let m = c.get(0).expect("whole match");
+            let mut whole = m.as_str();
+            // A match that starts on the letter of an escape (`\nalice@…`, `\n@router.get`):
+            // keep the letter, or the redacted text ends in a bare `\` and its JSON breaks.
+            let escaped =
+                hay[..m.start()].ends_with('\\') && whole.starts_with(['n', 'r', 't', 'b', 'f']);
+            let lead = if escaped { &whole[..1] } else { "" };
+            if escaped {
+                whole = &whole[1..];
+                if whole.starts_with('@') {
+                    return m.as_str().to_string();
+                }
+            }
             if rule.name == "email" && is_service_address(whole) {
-                return whole.to_string();
+                return m.as_str().to_string();
             }
             n += 1;
-            let keep = c.name("keep").map_or("", |k| k.as_str());
+            let keep = c.name("keep").map_or(lead, |k| k.as_str());
             let after = c.name("after").map_or("", |k| k.as_str());
             format!("{keep}[REDACTED:{}]{after}", rule.name)
         });
@@ -121,6 +257,15 @@ pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> St
             *findings.by_rule.entry(rule.name.to_string()).or_default() += n;
             out = replaced.into_owned();
         }
+    }
+    let mut n = 0u64;
+    let replaced = redact_assignments(&out, &mut n);
+    if n > 0 {
+        *findings
+            .by_rule
+            .entry("assigned_secret".to_string())
+            .or_default() += n;
+        out = replaced;
     }
     if let Some(h) = home_dir
         && h.len() > 1
@@ -133,7 +278,7 @@ pub fn redact(text: &str, home_dir: Option<&str>, findings: &mut Findings) -> St
 fn is_credential_key(key: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:[A-Za-z0-9]+[_-])*(?:password|passwd|pass|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key|authorization|credentials?)$")
+        Regex::new(r"(?i)^(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|pass|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key|authorization|credentials?)$")
             .expect("valid key regex")
     })
     .is_match(key)
@@ -255,6 +400,102 @@ mod tests {
         redact_value(&mut v, None, &mut f);
         assert_eq!(v["TINFOIL_API_KEY"], "[REDACTED:credential_field]");
         assert_eq!(v["max_tokens"], 10);
+    }
+
+    #[test]
+    fn assignment_values_are_removed_whole_and_json_stays_valid() {
+        let marker = "[REDACTED:assigned_secret]";
+        let json = |s: &str| -> serde_json::Value {
+            let mut f = Findings::default();
+            let out = redact(s, None, &mut f);
+            assert!(!out.contains("synthetic"), "{out}");
+            serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+        };
+        // Escapes inside a quoted value do not end it.
+        assert_eq!(
+            json(r#"{"password":"abc\\synthetic-value-1234"}"#)["password"],
+            marker
+        );
+        assert_eq!(
+            json(r#"{"password":"ab\"c synthetic-value"}"#)["password"],
+            marker
+        );
+        // A bare value that starts with an escape is removed with it.
+        let v = json(r#"{"command":"password=synthetic-value-1234 next"}"#);
+        assert_eq!(v["command"], format!("password={marker} next"));
+        // A bare JSON number under a quoted name gets a quoted marker.
+        let v = json(r#"{"DB_PASSWORD":12345678901,"ok":true}"#);
+        assert_eq!(v["DB_PASSWORD"], marker);
+        assert_eq!(v["ok"], true);
+        // JSON inside a string, with escaped whitespace around the colon.
+        let v = json(
+            r#"{"arguments":"{\"DB_PASSWORD\":\n\t \"synthetic-value-1234\", \"n\": \"x\\\\plain\"}"}"#,
+        );
+        let inner: serde_json::Value =
+            serde_json::from_str(v["arguments"].as_str().unwrap()).expect("inner JSON valid");
+        assert_eq!(inner["DB_PASSWORD"], marker);
+        let v = json(r#"{"a":"{\"DB_PASSWORD\":12345678901}"}"#);
+        let inner: serde_json::Value = serde_json::from_str(v["a"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["DB_PASSWORD"], marker);
+
+        // Escapes right before a match: the letter stays, the JSON stays valid.
+        let key = format!("tk_{}", "Ab1".repeat(16));
+        let v = json(&format!(
+            r#"{{"a":"x\n{key}\nalice@proton.me\n@router.get(\"/s\")"}}"#
+        ));
+        assert_eq!(
+            v["a"],
+            "x\n[REDACTED:tinfoil_key]\n[REDACTED:email]\n@router.get(\"/s\")"
+        );
+        // A single-quoted value stops at the double quote closing the string around it.
+        let v = json(r#"{"command":"grep -v 'token:' x | head","n":1}"#);
+        assert_eq!(v["n"], 1);
+        let v = json(r#"{"command":"export T=$(grep '^BWS_ACCESS_TOKEN=' f)"}"#);
+        assert!(
+            v["command"]
+                .as_str()
+                .unwrap()
+                .starts_with("export T=$(grep '^BWS_ACCESS_TOKEN='")
+        );
+
+        let mut f = Findings::default();
+        let cases = [
+            (
+                "export _DB_PASSWORD=synthetic-value-1",
+                "export _DB_PASSWORD=[REDACTED:assigned_secret]",
+            ),
+            (
+                "APP__DB_PASSWORD=synthetic-value-2 x",
+                "APP__DB_PASSWORD=[REDACTED:assigned_secret] x",
+            ),
+            (
+                "DB_PASSWORD='abc synthetic-value-3' x",
+                "DB_PASSWORD='[REDACTED:assigned_secret]' x",
+            ),
+            (
+                "DB_PASSWORD: |\n  synthetic-value-4\n  more-synthetic\nnext: 1",
+                "DB_PASSWORD: |\n  [REDACTED:assigned_secret]\nnext: 1",
+            ),
+            (
+                "--api-key=synthetic-value-5",
+                "--api-key=[REDACTED:assigned_secret]",
+            ),
+            (
+                "token = '[REDACTED:tinfoil_key]'",
+                "token = '[REDACTED:tinfoil_key]'",
+            ),
+            (
+                "password = 'unclosed synthetic\nnext line",
+                "password = '[REDACTED:assigned_secret]\nnext line",
+            ),
+        ];
+        for (input, want) in cases {
+            assert_eq!(redact(input, None, &mut f), want);
+        }
+        let mut v = serde_json::json!({"APP__DB_PASSWORD": "short", "_token": "x"});
+        redact_value(&mut v, None, &mut f);
+        assert_eq!(v["APP__DB_PASSWORD"], "[REDACTED:credential_field]");
+        assert_eq!(v["_token"], "[REDACTED:credential_field]");
     }
 
     #[test]
