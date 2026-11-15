@@ -331,7 +331,10 @@ fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<Str
         let _ = child.wait();
         // With the group gone its pipes close; give the reader threads a moment to finish.
         let until = Instant::now() + Duration::from_secs(1);
-        while rx.recv_timeout(until.saturating_duration_since(Instant::now())).is_ok() {}
+        while rx
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+            .is_ok()
+        {}
     };
     let timed_out = || {
         anyhow::anyhow!(
