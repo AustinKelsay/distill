@@ -71,7 +71,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrt])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 22;
+const ASSIGNMENT_SCANNER: u32 = 23;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -418,7 +418,8 @@ fn scan_value(
         let body = text[start..end].trim_end();
         let indent = body.len() - body.trim_start().len();
         let block = (!body.trim().is_empty()).then_some((start + indent, start + body.len()));
-        memo.work += end - start;
+        // Every line read counts, the one that ended the block included.
+        memo.work += off - start;
         memo.block = Some((nl, ctx.key_indent, block));
         return block;
     }
@@ -479,7 +480,12 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
                 };
                 match close {
                     Some(j) => i = j + 1,
-                    None => break,
+                    // Never closed on this line (the text was cut): the piece is still part of
+                    // the value, up to where the line ends.
+                    None => {
+                        i = j.min(b.len());
+                        break;
+                    }
                 }
             }
             b'"' | b'\'' => break,
@@ -1489,6 +1495,8 @@ mod tests {
             r"password=\'a\\\''' token='synthetic-secret'",
             "password=abc\"x token=synthetic-secret\" y",
             "password=token=token=synthetic",
+            r#"DB_PASSWORD=abc"synthetic-secret\n" x"#,
+            "password=x\"a\\\"synthetic-secret",
             "password=a\"token=x\"\",synthetic-secret\"",
             "password='x token: |\n  a'\n  token=\nsynthetic-secret",
             "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x",
