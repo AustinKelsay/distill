@@ -149,49 +149,86 @@ fn ollama_models_dir() -> PathBuf {
 }
 
 /// Whether `model`'s weights are stored on this machine, read from Ollama's model store rather
-/// than from what the CLI prints: its manifest names a weights layer whose file is here at the
-/// recorded size, and its config names no remote host or model (a cloud model copied to a
-/// plain name has those). Anything that can't be verified counts as not local.
+/// than from what the CLI prints. A model named as a cloud source (a `cloud` or `…-cloud` tag)
+/// is refused outright. Otherwise every manifest Ollama could resolve the name to (its older
+/// `manifests/` store and its newer `manifests-v2/`, which it prefers) must name a weights layer
+/// whose file is here at the recorded size and a config with no remote host or model, and at
+/// least one must exist. Anything that can't be verified counts as not local.
+///
+/// This reads the store at `dir`. Ollama's server decides what actually runs; one started with
+/// a different model directory than Distill sees is outside what this can check.
 fn ollama_model_is_local(dir: &Path, model: &str) -> bool {
     let (name, tag) = match model.rsplit_once(':') {
         Some((n, t)) if !t.contains('/') => (n, t),
         _ => (model, "latest"),
     };
-    let parts: Vec<&str> = name.split('/').collect();
-    let path = match parts.as_slice() {
-        [m] => format!("registry.ollama.ai/library/{m}"),
-        [ns, m] => format!("registry.ollama.ai/{ns}/{m}"),
-        _ => name.to_string(),
-    };
-    if path.split('/').any(|p| p.is_empty() || p == "..") || tag.contains("..") {
+    if tag == "cloud" || tag.ends_with("-cloud") || name.ends_with("-cloud") {
         return false;
     }
+    let parts: Vec<&str> = name.split('/').collect();
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == "." || *p == "..")
+        || tag.is_empty()
+        || tag.contains("..")
+    {
+        return false;
+    }
+    // Where each store keeps this name: a bare name is in the default namespace of the default
+    // registry, which the two stores spell differently.
+    let candidates: Vec<PathBuf> = match parts.as_slice() {
+        [m] => vec![
+            dir.join("manifests/registry.ollama.ai/library").join(m),
+            dir.join("manifests-v2/ollama.com/library").join(m),
+            dir.join("manifests-v2/registry.ollama.ai/library").join(m),
+        ],
+        [ns, m] => vec![
+            dir.join("manifests/registry.ollama.ai").join(ns).join(m),
+            dir.join("manifests-v2/ollama.com").join(ns).join(m),
+            dir.join("manifests-v2/registry.ollama.ai").join(ns).join(m),
+        ],
+        _ => vec![
+            dir.join("manifests").join(name),
+            dir.join("manifests-v2").join(name),
+        ],
+    };
     let blob = |digest: &str| dir.join("blobs").join(digest.replace(':', "-"));
-    let Ok(manifest) = std::fs::read(dir.join("manifests").join(path).join(tag)) else {
-        return false;
-    };
-    let Ok(manifest) = serde_json::from_slice::<Value>(&manifest) else {
-        return false;
-    };
-    let weights = manifest["layers"].as_array().is_some_and(|layers| {
-        layers.iter().any(|l| {
-            l["mediaType"] == "application/vnd.ollama.image.model"
-                && l["digest"].as_str().is_some_and(|d| {
-                    std::fs::metadata(blob(d))
-                        .is_ok_and(|m| Some(m.len()) == l["size"].as_u64() && m.len() > 0)
-                })
-        })
-    });
-    let remote = manifest["config"]["digest"]
-        .as_str()
-        .and_then(|d| std::fs::read(blob(d)).ok())
-        .and_then(|c| serde_json::from_slice::<Value>(&c).ok())
-        .is_none_or(|c| {
-            ["remote_host", "remote_model"]
-                .iter()
-                .any(|k| c.get(*k).is_some_and(|v| !v.is_null() && v != ""))
+    let local = |manifest: &Value| {
+        let weights = manifest["layers"].as_array().is_some_and(|layers| {
+            layers.iter().any(|l| {
+                l["mediaType"] == "application/vnd.ollama.image.model"
+                    && l["digest"].as_str().is_some_and(|d| {
+                        std::fs::metadata(blob(d))
+                            .is_ok_and(|m| Some(m.len()) == l["size"].as_u64() && m.len() > 0)
+                    })
+            })
         });
-    weights && !remote
+        let remote = manifest["config"]["digest"]
+            .as_str()
+            .and_then(|d| std::fs::read(blob(d)).ok())
+            .and_then(|c| serde_json::from_slice::<Value>(&c).ok())
+            .is_none_or(|c| {
+                ["remote_host", "remote_model"]
+                    .iter()
+                    .any(|k| c.get(*k).is_some_and(|v| !v.is_null() && v != ""))
+            });
+        weights && !remote
+    };
+    let mut found = false;
+    for path in candidates.iter().map(|c| c.join(tag)) {
+        if !path.exists() {
+            continue;
+        }
+        found = true;
+        let ok = std::fs::read(&path)
+            .ok()
+            .and_then(|m| serde_json::from_slice::<Value>(&m).ok())
+            .is_some_and(|m| local(&m));
+        if !ok {
+            return false;
+        }
+    }
+    found
 }
 
 fn parse_ollama_list(out: &str) -> Vec<String> {
@@ -285,7 +322,8 @@ const LOCAL_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 /// Run `cmd` with `stdin`, and stop it if it hasn't finished, output included, within
 /// `timeout`, so a stalled model server can't hold the steward (and the hourly tick) forever.
 /// The command runs in its own process group; on a timeout the whole group is killed, so a
-/// wrapper's inference subprocess doesn't outlive it. Input and output run on their own
+/// wrapper's inference subprocess doesn't outlive it (one that moves itself to another group
+/// or session on purpose is outside this). Input and output run on their own
 /// threads: a program that exits early still reports its error rather than a broken pipe.
 fn exec_bounded(cmd: &mut Command, stdin: &str, timeout: Duration) -> Result<String> {
     #[cfg(unix)]
@@ -842,6 +880,23 @@ mod tests {
         assert!(!ollama_model_is_local(store, "reviewer"));
         assert!(!ollama_model_is_local(store, "sneaky"));
         assert!(!ollama_model_is_local(store, "missing:7b"));
+        // Names Ollama treats as cloud sources are refused whatever the store holds.
+        put("qwen-local", "cloud", "{}", Some(b"weights"));
+        put("qwen-local", "8b-cloud", "{}", Some(b"weights"));
+        assert!(!ollama_model_is_local(store, "qwen-local:cloud"));
+        assert!(!ollama_model_is_local(store, "qwen-local:8b-cloud"));
+        // A cloud entry for the same name in the newer store, which Ollama prefers, wins.
+        let v2 = store.join("manifests-v2/ollama.com/library/qwen-local");
+        std::fs::create_dir_all(&v2).unwrap();
+        let cloud_cfg = r#"{"remote_host":"https://ollama.com"}"#;
+        let d = format!("sha256:{}", crate::util::sha256_hex(cloud_cfg.as_bytes()));
+        std::fs::write(store.join("blobs").join(d.replace(':', "-")), cloud_cfg).unwrap();
+        std::fs::write(
+            v2.join("latest"),
+            json!({"config": {"digest": d}, "layers": []}).to_string(),
+        )
+        .unwrap();
+        assert!(!ollama_model_is_local(store, "qwen-local"));
         assert!(!ollama_model_is_local(store, "../../etc/passwd"));
     }
 

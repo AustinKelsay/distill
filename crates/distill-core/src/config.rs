@@ -99,7 +99,9 @@ impl Harness {
         match self {
             Harness::Claude => "Sends clipped session excerpts to Anthropic.",
             Harness::Codex => "Sends clipped session excerpts to OpenAI.",
-            Harness::Ollama => "Runs an open model on this machine; nothing leaves it.",
+            Harness::Ollama => {
+                "Runs a model stored on this machine through Ollama here; Distill refuses Ollama's cloud models."
+            }
             Harness::Command => {
                 "Runs your command; excerpts go wherever it sends them (nowhere, for a local model)."
             }
@@ -107,7 +109,9 @@ impl Harness {
         }
     }
 
-    /// Whether only this machine sees the excerpts (a custom command is the user's call).
+    /// Whether only this machine sees the excerpts (a custom command is the user's call). For
+    /// Ollama this holds as far as Distill can check: the server on this machine, a model whose
+    /// weights are stored here, no cloud model.
     pub fn local(self) -> bool {
         matches!(self, Harness::Ollama | Harness::None)
     }
