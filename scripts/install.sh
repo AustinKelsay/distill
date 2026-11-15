@@ -15,7 +15,17 @@ NAME="Distill Local Code Signing"
 ROOT="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
 BINS=(distill distill-mcp distill-gui)
 
-ticking() { command -v pgrep >/dev/null && pgrep -qf 'distill tick'; }
+# Whether a tick is running. `pgrep` exits 1 for no match; anything else is an error, not "no".
+ticking() {
+  command -v pgrep >/dev/null || return 1
+  local rc=0
+  pgrep -f 'distill tick' >/dev/null || rc=$?
+  case $rc in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) echo "Could not check for a running distill tick (pgrep exited $rc)." >&2; exit 1 ;;
+  esac
+}
 if ticking; then
   echo "A distill tick is running; wait for it to finish, then run this again." >&2
   exit 1

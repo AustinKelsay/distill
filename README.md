@@ -28,7 +28,7 @@ cargo build --release
 
 `DISTILL_HOME` or `--home` moves the home from `~/distill`.
 
-To install `distill`, `distill-mcp` and `distill-gui` into `~/.cargo/bin`, run `scripts/install.sh`. On macOS, run `scripts/setup-signing.sh` once first: it creates a local code-signing certificate in your login keychain (macOS asks for your password to trust it), and `install.sh` signs the binaries with it, so privacy grants like Full Disk Access survive reinstalls. The first signed install still needs the grant once more (the signature changed from cargo's ad-hoc one), and so would a new certificate; keep the one in your keychain.
+To install `distill`, `distill-mcp` and `distill-gui` into `~/.cargo/bin`, run `scripts/install.sh`. On macOS, run `scripts/setup-signing.sh` once first: it creates a local code-signing certificate in your login keychain (macOS asks for your password to trust it), and `install.sh` signs the binaries with it, so privacy grants like Full Disk Access survive reinstalls. The first signed install still needs the grant once more (the signature changed from cargo's ad-hoc one), and so would a new certificate; keep the one in your keychain. If the timer was installed from `target/release/distill` (the quick start), run `~/.cargo/bin/distill schedule install` once so it runs the installed binary, and grant access to that one.
 
 ## What runs where
 

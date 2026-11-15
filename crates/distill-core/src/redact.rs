@@ -72,7 +72,7 @@ fn rules() -> &'static [Rule] {
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrtbf])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrt])*[:=](?:\s|\\+[nrt])*(?P<q>\\*["'])?"#;
 /// Bump when `scan_value` changes, so builds made by the old scanner are not reused.
-const ASSIGNMENT_SCANNER: u32 = 24;
+const ASSIGNMENT_SCANNER: u32 = 25;
 /// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
 const MIN_SECRET_CHARS: usize = 8;
 
@@ -494,7 +494,7 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
             // line it is part of the value (`DB_PASSWORD=abc}def`).
             b',' | b'}' | b']' if ctx.json_key => break,
             b'\\' => match b.get(i + 1) {
-                None | Some(b'"' | b'\'' | b'n' | b'r' | b't') => break,
+                None | Some(b'"' | b'\'' | b'n' | b'r' | b't' | b'f') => break,
                 Some(_) => i += 2,
             },
             _ => i += 1,
@@ -1594,6 +1594,12 @@ mod tests {
             );
             assert!(!out.contains("synthetic"), "{esc}: {out}");
         }
+        // An escaped form feed ends a bare value, like `\n`, `\r` and `\t`.
+        let out = redact(r"cut a\fpassword=synthetic-value\fuser=alice", None, &mut f);
+        assert!(
+            !out.contains("synthetic") && out.contains("user=alice"),
+            "{out}"
+        );
         // A long header comment, and doubled apostrophes after an escaped opening quote.
         let long = format!(
             "password: | #{}\n  synthetic-secret\nnext: 1",
