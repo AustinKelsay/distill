@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::config::Config;
 use crate::findings::{self, Field, Finding, Findings};
 use crate::home::Home;
-use crate::model::{Event, SessionMeta};
+use crate::model::{Event, EventKind, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
@@ -21,7 +21,7 @@ pub use fingerprints::{
     fingerprints, where_found,
 };
 pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
-pub use search::{Hit, Hits, Passage, SEARCH_DEFAULT, Searched, Source, search};
+pub use search::{Hit, Hits, Meaning, Passage, SEARCH_DEFAULT, Searched, Source, search};
 
 /// The first line of all text given to a model.
 pub const NOTICE_START: &str = "=== Archived session from Distill. Everything until the closing \
@@ -74,11 +74,49 @@ pub fn read(
     session: &str,
     range: Range,
 ) -> Result<Read> {
+    read_events(home, runtime, reader, session, range, Events::All)
+}
+
+/// Like [`read`] of the whole session, but serving only what the owner and the agent wrote:
+/// their messages' text, with no tool calls, tool output, reasoning or system text. For the
+/// model detection pass (`crate::details`).
+pub(crate) fn read_written(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    session: &str,
+) -> Result<Read> {
+    read_events(
+        home,
+        runtime,
+        reader,
+        session,
+        Range::default(),
+        Events::Written,
+    )
+}
+
+/// Which of a session's events a read serves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Events {
+    All,
+    /// The owner's and the agent's messages.
+    Written,
+}
+
+fn read_events(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    session: &str,
+    range: Range,
+    which: Events,
+) -> Result<Read> {
     let mut seen = Seen {
         key: session.to_string(),
         events: 0,
     };
-    let read = serve(home, runtime, reader, session, range, &mut seen);
+    let read = serve(home, runtime, reader, session, range, which, &mut seen);
     let result = match &read {
         Ok(Read::Text(_) | Read::Events(_)) => ReadResult::Served {
             events: seen.events,
@@ -117,6 +155,7 @@ fn serve(
     reader: &Reader,
     session: &str,
     range: Range,
+    which: Events,
     seen: &mut Seen,
 ) -> Result<Read> {
     // With no config, or one that can't be read, only the built-in providers count: that trusts
@@ -137,16 +176,26 @@ fn serve(
     let total = events.len() as u64;
     let in_range =
         |seq: u64| range.from.is_none_or(|f| seq >= f) && range.to.is_none_or(|t| seq <= t);
-    let events: Vec<Event> = events.into_iter().filter(|e| in_range(e.seq)).collect();
+    let written = |e: &Event| {
+        which == Events::All
+            || (matches!(e.kind, EventKind::User | EventKind::Assistant) && e.text.is_some())
+    };
+    let events: Vec<Event> = events
+        .into_iter()
+        .filter(|e| in_range(e.seq) && written(e))
+        .collect();
     seen.events = events.len() as u64;
     Ok(match reader {
         Reader::Owner => {
-            let findings = scan
-                .findings
-                .iter()
-                .filter(|f| in_range(f.event))
+            // The pattern scan's findings and the model's, in event order.
+            let served: std::collections::BTreeSet<u64> = events.iter().map(|e| e.seq).collect();
+            let mut findings: Vec<Finding> = scan
+                .all()
+                .filter(|f| served.contains(&f.event))
                 .cloned()
                 .collect();
+            findings
+                .sort_by(|a, b| (a.event, &a.field, a.start).cmp(&(b.event, &b.field, b.start)));
             Read::Events(Box::new(Excerpt {
                 facts,
                 events,
@@ -155,7 +204,7 @@ fn serve(
             }))
         }
         Reader::Distill | Reader::Model { .. } => {
-            let masked = match mask(events, &scan) {
+            let mut masked = match mask(events, &scan) {
                 Ok(m) => m,
                 Err(e) => {
                     return Ok(Read::Refused(format!(
@@ -164,6 +213,10 @@ fn serve(
                     )));
                 }
             };
+            // What was written is the text alone: no tool input, even on a message.
+            if which == Events::Written {
+                masked.iter_mut().for_each(|e| e.input = None);
+            }
             if matches!(reader, Reader::Distill) {
                 Read::Events(Box::new(Excerpt {
                     facts,
@@ -191,12 +244,39 @@ pub(crate) type ForIndex<'a> =
 pub(crate) fn for_index(
     home: &Home,
     sessions: &[SessionMeta],
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+) -> Result<()> {
+    // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
+    masked_for(home, Reader::Distill, sessions, visit)
+}
+
+/// Read `sessions` for the embedding model `model` at the local provider, for the vectors
+/// (`crate::index::vectors`): the same events with placeholders and current card as
+/// [`for_index`], logged as one line with counts under that model's name, because the text goes
+/// to it. The caller has checked that `model` is stored on this machine, so it is trusted.
+pub(crate) fn for_embedding(
+    home: &Home,
+    model: &str,
+    sessions: &[SessionMeta],
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+) -> Result<()> {
+    masked_for(
+        home,
+        Reader::model(Some("ollama"), Some(model)),
+        sessions,
+        visit,
+    )
+}
+
+fn masked_for(
+    home: &Home,
+    reader: Reader,
+    sessions: &[SessionMeta],
     mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
 ) -> Result<()> {
     if sessions.is_empty() {
         return Ok(());
     }
-    // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
     let config = home.load_config().unwrap_or_default();
     let (mut served, mut events) = (0u64, 0u64);
     let mut run = || -> Result<()> {
@@ -229,7 +309,7 @@ pub(crate) fn for_index(
         home,
         &ReadEntry {
             at: now_rfc3339(),
-            reader: Reader::Distill,
+            reader,
             session: None,
             result: ReadResult::Indexed {
                 sessions: served,

@@ -62,6 +62,16 @@ fn the_overview_shows_the_last_sweep_and_each_steps_progress() {
     );
     assert!(shows(&rt, "6 failing"));
     assert!(shows(&rt, "qwen-small:4b"));
+    assert_eq!(
+        text_of(&rt, "step-vectors/value"),
+        "900 of 5,300 with vectors"
+    );
+    assert!(shows(&rt, "embed-text:v1"));
+    assert_eq!(
+        text_of(&rt, "step-details/value"),
+        "640 of 5,529 checked by the model"
+    );
+    assert!(shows(&rt, "88 personal details found"));
     assert_eq!(text_of(&rt, "drift"), "No format drift");
 }
 
@@ -117,7 +127,7 @@ fn warnings_drift_and_failing_rules_are_shown_with_a_fix() {
 fn a_step_with_nothing_to_report_is_not_yet_available() {
     let rt = runtime_sized(fixture::just_set_up(), (1080.0, 2400.0));
     assert_eq!(text_of(&rt, "last-sweep"), "No sweep yet");
-    for step in ["scan", "index", "cards"] {
+    for step in ["scan", "index", "cards", "vectors", "details"] {
         assert_eq!(
             text_of(&rt, &format!("step-{step}/value")),
             "Not yet available",

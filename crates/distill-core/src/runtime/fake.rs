@@ -20,12 +20,14 @@ pub enum Call {
 }
 
 type Reply = Arc<dyn Fn(&str, &str) -> String + Send + Sync>;
+type Embedding = Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>;
 
 struct State {
     installed: bool,
     running: bool,
     models: Vec<(String, Stored)>,
     reply: Reply,
+    embedding: Embedding,
     calls: Vec<Call>,
 }
 
@@ -37,6 +39,7 @@ impl FakeRuntime {
                 running,
                 models: Vec::new(),
                 reply: Arc::new(|_, _| "fake reply".to_string()),
+                embedding: Arc::new(hashed),
                 calls: Vec::new(),
             })),
         }
@@ -66,6 +69,13 @@ impl FakeRuntime {
     /// `fake reply`.
     pub fn replying(self, reply: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> Self {
         self.lock().reply = Arc::new(reply);
+        self
+    }
+
+    /// Embed every text as `embedding(text)`. By default a text embeds as a vector made from its
+    /// hash, so the same text always embeds the same.
+    pub fn embedding(self, embedding: impl Fn(&str) -> Vec<f32> + Send + Sync + 'static) -> Self {
+        self.lock().embedding = Arc::new(embedding);
         self
     }
 
@@ -116,7 +126,7 @@ impl Backend for FakeRuntime {
         Ok(reply(model, prompt))
     }
 
-    /// A vector made from the text's hash: the same text always embeds the same.
+    /// Each text's vector from [`FakeRuntime::embedding`].
     fn embed(&self, model: &str, texts: &[&str]) -> Result<Vec<Vec<f32>>, RuntimeError> {
         let mut s = self.lock();
         if !s.running {
@@ -126,15 +136,17 @@ impl Backend for FakeRuntime {
             model: model.to_string(),
             texts: texts.iter().map(|t| t.to_string()).collect(),
         });
-        Ok(texts
-            .iter()
-            .map(|t| {
-                use sha2::{Digest, Sha256};
-                Sha256::digest(t.as_bytes())[..8]
-                    .iter()
-                    .map(|b| f32::from(*b) / 255.0)
-                    .collect()
-            })
-            .collect())
+        let embedding = s.embedding.clone();
+        drop(s);
+        Ok(texts.iter().map(|t| embedding(t)).collect())
     }
+}
+
+/// A vector made from the text's hash: the same text always embeds the same.
+fn hashed(text: &str) -> Vec<f32> {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())[..8]
+        .iter()
+        .map(|b| f32::from(*b) / 255.0)
+        .collect()
 }

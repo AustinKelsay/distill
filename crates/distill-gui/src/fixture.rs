@@ -332,6 +332,8 @@ pub fn running() -> State {
             "scan": { "sessions": 5_529, "current": 5_529, "pending": 0, "secrets": 37 },
             "index": { "sessions": 5_529, "current": 5_490, "pending": 39, "segments": 4, "bytes": 212_000_000 },
             "cards": { "model": "qwen-small:4b", "sessions": 5_300, "current": 1_212, "pending": 4_088, "failing": 6 },
+            "vectors": { "model": "embed-text:v1", "sessions": 5_300, "current": 900, "pending": 4_400, "vectors": 1_800, "bytes": 5_500_000 },
+            "details": { "model": "qwen-small:4b", "sessions": 5_529, "current": 640, "pending": 4_889, "failing": 2, "found": 88 },
             "pending_reveals": 2,
         }),
         exposure(true),

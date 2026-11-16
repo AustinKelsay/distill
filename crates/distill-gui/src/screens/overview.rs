@@ -1,5 +1,6 @@
 //! Overview: the status report (`distill_core::status::Status`), rendered. Sessions and capture
-//! health per harness, format drift, the last sweep, warnings, each step's progress, the reveal
+//! health per harness, format drift, the last sweep, warnings, each step's progress (scan, word
+//! index, cards, vectors and the model detection pass), the reveal
 //! requests waiting and the exposure check, with a Fix button that calls `exposure::fix`. A step
 //! with nothing to report says it is not yet available. No session text is shown.
 //!
@@ -299,6 +300,8 @@ fn steps(st: &Status) -> Vec<Step> {
     let scan = &st.scan;
     let index = &st.index;
     let cards = &st.cards;
+    let vectors = &st.vectors;
+    let details = &st.details;
     vec![
         Step {
             id: "scan",
@@ -351,6 +354,54 @@ fn steps(st: &Status) -> Vec<Step> {
                 (cards.failing > 0).then(|| format!("{} failing", thousands(cards.failing))),
                 cards.model.clone(),
                 cards.skipped.as_ref().map(|why| format!("Skipped: {why}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        },
+        Step {
+            id: "vectors",
+            name: "Search by meaning",
+            value: (vectors.sessions > 0).then(|| {
+                format!(
+                    "{} of {} with vectors",
+                    thousands(vectors.current),
+                    thousands(vectors.sessions)
+                )
+            }),
+            detail: [
+                waiting(vectors.pending),
+                (vectors.bytes > 0).then(|| human_bytes(vectors.bytes)),
+                vectors.model.clone(),
+                vectors
+                    .skipped
+                    .as_ref()
+                    .map(|why| format!("Skipped: {why}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        },
+        Step {
+            id: "details",
+            name: "Model detection pass",
+            value: (details.sessions > 0).then(|| {
+                format!(
+                    "{} of {} checked by the model",
+                    thousands(details.current),
+                    thousands(details.sessions)
+                )
+            }),
+            detail: [
+                waiting(details.pending),
+                (details.failing > 0).then(|| format!("{} failing", thousands(details.failing))),
+                (details.sessions > 0)
+                    .then(|| format!("{} found", count(details.found, "personal detail"))),
+                details.model.clone(),
+                details
+                    .skipped
+                    .as_ref()
+                    .map(|why| format!("Skipped: {why}")),
             ]
             .into_iter()
             .flatten()

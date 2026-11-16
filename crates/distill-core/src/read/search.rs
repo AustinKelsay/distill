@@ -5,9 +5,10 @@
 //! reads the card's title and summary in place of the opening.
 //!
 //! The candidates come from the index, never from reading every session: only the sessions on the
-//! page asked for are read, to prepare their openings and passages. Today the one source is the
-//! word index ([`Source::Words`]). Search by meaning (#82) adds its own ranked list in
-//! [`found`], and [`merge`] fuses the lists.
+//! page asked for are read, to prepare their openings and passages. There are two sources, each a
+//! ranked list: the word index ([`Source::Words`]) and the vectors ([`Source::Meaning`]), which
+//! [`merge`] fuses into one. Without an `embedding_model` or a local runtime that can run it,
+//! search finds by words alone and says so ([`Meaning::Skipped`]).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -22,6 +23,7 @@ use crate::config::Config;
 use crate::findings::{Field, Finding, Findings};
 use crate::home::Home;
 use crate::index;
+use crate::index::vectors::{self, Nearest};
 use crate::model::{Event, EventKind, Originals, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
@@ -54,6 +56,20 @@ pub struct Hits {
     pub next: Option<usize>,
     /// Sessions in the session list the index doesn't hold yet, which a search can't find.
     pub unindexed: u64,
+    /// Whether search by meaning was part of this search.
+    pub meaning: Meaning,
+}
+
+/// Whether a search was also by meaning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Meaning {
+    /// It was. Some of the sessions searched may have no vectors yet.
+    Used {
+        /// Sessions searched that have no vectors yet, which only words can find.
+        unembedded: u64,
+    },
+    /// It was not, and why: the results are word matches only.
+    Skipped(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +89,8 @@ pub struct Hit {
 pub enum Source {
     /// The word index: every word of the query is in the session.
     Words,
+    /// The vectors: the session is close in meaning to the query.
+    Meaning,
 }
 
 /// The matching part of one string in one event, as the reader is served it.
@@ -137,13 +155,16 @@ struct Found {
 /// One source's ranked list.
 type Ranked = (Source, Vec<Found>);
 
-/// Each source's matches among `candidates`, each list best first, and how many sessions the
-/// index holds. Search by meaning (#82) adds its list here.
+/// Each source's matches among `candidates`, each list best first, how many sessions the word
+/// index holds, and whether search by meaning took part.
 fn found(
     home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    query: &str,
     words: &[String],
     candidates: &HashMap<String, &SessionMeta>,
-) -> Result<(Vec<Ranked>, u64)> {
+) -> Result<(Vec<Ranked>, u64, Meaning)> {
     let lookup = index::lookup(home, words)?;
     let mut by_words: Vec<(f64, &SessionMeta, index::WordMatch)> = lookup
         .matches
@@ -163,7 +184,31 @@ fn found(
             events: m.events,
         })
         .collect();
-    Ok((vec![(Source::Words, words_list)], lookup.indexed))
+    let among: BTreeMap<String, Option<&str>> = candidates
+        .iter()
+        .map(|(k, f)| (k.clone(), f.started_at.as_deref()))
+        .collect();
+    let (meaning_list, meaning) = match vectors::nearest(home, config, runtime, query, &among) {
+        Nearest::Found {
+            matches,
+            unembedded,
+        } => (
+            matches
+                .into_iter()
+                .map(|m| Found {
+                    key: m.key,
+                    events: m.event.into_iter().collect(),
+                })
+                .collect(),
+            Meaning::Used { unembedded },
+        ),
+        Nearest::Skipped(why) => (Vec::new(), Meaning::Skipped(why)),
+    };
+    Ok((
+        vec![(Source::Words, words_list), (Source::Meaning, meaning_list)],
+        lookup.indexed,
+        meaning,
+    ))
 }
 
 /// A session found by one or more sources.
@@ -234,7 +279,7 @@ fn serve(
         .filter(|m| filter.card_matches(home, &config, key.as_ref(), m))
         .map(|m| (m.key(), m))
         .collect();
-    let (lists, indexed) = found(home, &words, &candidates)?;
+    let (lists, indexed, meaning) = found(home, &config, runtime, query, &words, &candidates)?;
     let merged = merge(lists);
     let total = merged.len() as u64;
     let limit = page.limit.min(PAGE_MAX);
@@ -251,6 +296,7 @@ fn serve(
         hits,
         total,
         unindexed: (all.len() as u64).saturating_sub(indexed),
+        meaning,
     };
     Ok(match reader {
         Reader::Model { .. } => Searched::Text(render(&hits, page.offset)),
@@ -502,6 +548,22 @@ fn render(hits: &Hits, offset: usize) -> String {
             if n == 1 { "is" } else { "are" },
             if n == 1 { "it" } else { "them" }
         );
+    }
+    match &hits.meaning {
+        Meaning::Skipped(why) => {
+            head += &format!(" Search by meaning is off ({why}), so these are word matches only.");
+        }
+        Meaning::Used { unembedded } if *unembedded > 0 => {
+            let n = *unembedded;
+            head += &format!(
+                " {} {} no vectors yet, so only {} words find {}.",
+                count(n, "session"),
+                if n == 1 { "has" } else { "have" },
+                if n == 1 { "its" } else { "their" },
+                if n == 1 { "it" } else { "them" }
+            );
+        }
+        Meaning::Used { .. } => {}
     }
     head.push('\n');
     if hits.hits.is_empty() {

@@ -111,7 +111,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         m.home.join("config.toml"),
         format!(
             "[[harnesses]]\nkind = \"claude-code\"\nenabled = true\nroots = [\"{}\"]\n\n\
-             [steward]\ncard_model = \"small:8b\"\n",
+             [steward]\ncard_model = \"small:8b\"\nembedding_model = \"embed:small\"\n",
             claude.display()
         ),
     )
@@ -184,6 +184,10 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         false,
     );
     step(&m, &mut printed, &["reads"], true);
+
+    // No local runtime: the model detection pass is skipped, and status says why.
+    let status = &printed.iter().find(|(c, _)| c == "status").unwrap().1;
+    assert!(status.contains("model detection: skipped ("), "{status}");
 
     // The reads served placeholders in their place.
     let served = printed

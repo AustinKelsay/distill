@@ -221,3 +221,36 @@ fn deleting_the_index_and_running_the_tick_rebuilds_it_with_the_same_results() {
             .contains("word index: 2 of 2 sessions current")
     );
 }
+
+#[test]
+fn with_no_embedding_model_or_no_local_runtime_search_finds_by_words_and_says_so() {
+    let m = Machine::new(&sessions());
+    let out = m.ok(&["search", "overflow", "--provider", "ollama"]);
+    assert!(
+        out.contains(
+            "Search by meaning is off (no embedding_model is set), so these are word matches only."
+        ),
+        "{out}"
+    );
+    let config = fs::read_to_string(m.home.join("config.toml")).unwrap();
+    fs::write(
+        m.home.join("config.toml"),
+        format!("{config}\n[steward]\nembedding_model = \"embed:small\"\n"),
+    )
+    .unwrap();
+    // No runtime is reachable here: the tick skips the vectors, and search says why.
+    m.ok(&["tick"]);
+    let out = m.ok(&["search", "overflow", "--provider", "ollama"]);
+    assert_eq!(keys(&out), ["claude-code/s2", "claude-code/s1"], "{out}");
+    assert!(
+        out.contains("Search by meaning is off (")
+            && out.contains("so these are word matches only."),
+        "{out}"
+    );
+    assert!(!out.contains("no embedding_model is set"), "{out}");
+    let st = m.ok(&["status"]);
+    assert!(
+        st.contains("vectors: skipped (") && st.contains("search by meaning is off"),
+        "{st}"
+    );
+}

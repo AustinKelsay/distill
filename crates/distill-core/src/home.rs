@@ -22,6 +22,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///     findings.json              findings_path
 ///     card.json                  card_path
 ///   index/                       index_dir: word index and vectors
+///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
 ///   log/reads.jsonl              read_log_path
 ///   runs/                        runs_dir: the run log
@@ -108,6 +109,10 @@ impl Home {
     pub fn index_dir(&self) -> PathBuf {
         self.root.join("index")
     }
+    /// The vectors for search by meaning: one flat file, searched directly.
+    pub fn vectors_path(&self) -> PathBuf {
+        self.index_dir().join("vectors.bin")
+    }
     pub fn state_dir(&self) -> PathBuf {
         self.root.join("state")
     }
@@ -139,6 +144,11 @@ impl Home {
     /// The sessions whose last card attempt failed, so they are retried after the rest.
     pub fn card_failures_path(&self) -> PathBuf {
         self.state_dir().join("cards.json")
+    }
+
+    /// The sessions whose last model detection pass failed, so they are retried after the rest.
+    pub fn detail_failures_path(&self) -> PathBuf {
+        self.state_dir().join("details.json")
     }
 
     /// Hold the archive writer lock until the returned file is dropped. Sweeps from the timer
@@ -219,7 +229,9 @@ mod tests {
         );
         assert_eq!(p(h.card_path(k, id)), "/h/sessions/codex/s1/card.json");
         assert_eq!(p(h.index_dir()), "/h/index");
+        assert_eq!(p(h.vectors_path()), "/h/index/vectors.bin");
         assert_eq!(p(h.card_failures_path()), "/h/state/cards.json");
+        assert_eq!(p(h.detail_failures_path()), "/h/state/details.json");
         assert_eq!(p(h.state_dir()), "/h/state");
         assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");
         assert_eq!(p(h.runs_dir()), "/h/runs");

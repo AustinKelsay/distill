@@ -246,6 +246,44 @@ pub struct Findings {
     /// What the detector found in the session's card, when it has one (`crate::cards`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<CardFindings>,
+    /// What the local model found in what the owner and the agent wrote (`crate::details`),
+    /// once its pass has run. Kept under its own version, so that it and the pattern scan can
+    /// each be rerun alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelFindings>,
+}
+
+/// The personal details a local model found in a session, and what they were made from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelFindings {
+    pub made_from: ModelMadeFrom,
+    /// In event order. Each is in an event's text, and none overlaps a pattern finding.
+    pub findings: Vec<Finding>,
+}
+
+/// What a session's model findings were made from. Their places fit the session's events only
+/// while its capture hash and parser version are the same, and their fingerprints only while the
+/// key is; the pattern scan keeps them only then. The pass runs again when any of it, the
+/// [`MODEL_DETECTOR_VERSION`](crate::details::MODEL_DETECTOR_VERSION) or the model differs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelMadeFrom {
+    /// [`MODEL_DETECTOR_VERSION`](crate::details::MODEL_DETECTOR_VERSION).
+    pub detector: u32,
+    /// The model that found them, at the local provider.
+    pub model: String,
+    pub capture_hash: String,
+    pub parser: u32,
+    /// The fingerprint key's [`id`](FingerprintKey::id).
+    pub key: String,
+}
+
+impl ModelMadeFrom {
+    /// Whether findings made from this fit the events and key that `pattern` was made from.
+    pub(crate) fn fits(&self, pattern: &MadeFrom) -> bool {
+        self.capture_hash == pattern.capture_hash
+            && self.parser == pattern.parser
+            && self.key == pattern.key
+    }
 }
 
 /// The findings in a session's card, and which card they were made from. A card is scanned like
@@ -331,14 +369,142 @@ pub(crate) fn set_card(home: &Home, facts: &SessionMeta, card: CardFindings) -> 
 }
 
 impl Findings {
-    /// Whether these findings are current for `facts` with `key` and `config`.
+    /// Whether these findings are current for `facts` with `key` and `config`. Only the pattern
+    /// scan's count: a missing or out-of-date model section never holds up a read, because
+    /// personal details are never masked.
     pub fn is_current(&self, facts: &SessionMeta, key: &FingerprintKey, config: &Config) -> bool {
         self.session == facts.key() && self.made_from == MadeFrom::current(facts, key, config)
     }
-    /// The findings in one event.
-    pub fn in_event(&self, seq: u64) -> impl Iterator<Item = &Finding> {
-        self.findings.iter().filter(move |f| f.event == seq)
+    /// The model's findings, when they fit the events the pattern findings were made from.
+    pub fn model_findings(&self) -> &[Finding] {
+        match &self.model {
+            Some(m) if m.made_from.fits(&self.made_from) => &m.findings,
+            _ => &[],
+        }
     }
+    /// Every finding: the pattern scan's, then the model's.
+    pub fn all(&self) -> impl Iterator<Item = &Finding> {
+        self.findings.iter().chain(self.model_findings())
+    }
+    /// The findings in one event, the pattern scan's and the model's.
+    pub fn in_event(&self, seq: u64) -> impl Iterator<Item = &Finding> {
+        self.all().filter(move |f| f.event == seq)
+    }
+}
+
+/// What the model's answers came to once placed in a session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Placed {
+    /// Findings stored.
+    pub findings: u64,
+    /// Answers found nowhere in what the owner and the agent wrote, and dropped.
+    pub unplaced: u64,
+}
+
+/// Record what `model` answered for a session as its model findings, keeping its other findings.
+/// Each answer is a kind and the exact text the model said it found; it is placed wherever that
+/// text is written in an event the owner or the agent wrote, as a whole word, and dropped when
+/// it is nowhere. A place that touches a pattern finding is dropped: a secret's place, or a
+/// personal detail the patterns found already. The session's pattern findings must be stored and
+/// current with the events the model read.
+pub(crate) fn set_model(
+    home: &Home,
+    config: &Config,
+    facts: &SessionMeta,
+    model: &str,
+    answers: &[(Kind, String)],
+) -> Result<Placed> {
+    let key = FingerprintKey::open(home)?;
+    let events = normalize::read_events(home, facts)?;
+    let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
+    let mut f = load(home, facts)
+        .filter(|f| f.is_current(facts, &key, config))
+        .with_context(|| format!("{} changed while the model read it", facts.key()))?;
+    let (findings, unplaced) = place_answers(&events, answers, &key, &f.findings);
+    let placed = Placed {
+        findings: findings.len() as u64,
+        unplaced,
+    };
+    f.model = Some(ModelFindings {
+        made_from: ModelMadeFrom {
+            detector: crate::details::MODEL_DETECTOR_VERSION,
+            model: model.to_string(),
+            capture_hash: f.made_from.capture_hash.clone(),
+            parser: f.made_from.parser,
+            key: f.made_from.key.clone(),
+        },
+        findings,
+    });
+    write_json_pretty(&home.findings_path(facts.harness, &facts.session_id), &f)?;
+    Ok(placed)
+}
+
+/// Every place each answer is written in what the owner and the agent wrote, with no place
+/// touching `taken` or another, and how many answers were placed nowhere. Of two that overlap,
+/// the one that starts first is kept, and of two that start together the longer.
+fn place_answers(
+    events: &[Event],
+    answers: &[(Kind, String)],
+    key: &FingerprintKey,
+    taken: &[Finding],
+) -> (Vec<Finding>, u64) {
+    use crate::model::EventKind;
+    let mut found: Vec<Finding> = Vec::new();
+    let mut unplaced = 0;
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for (kind, text) in answers {
+        let text = text.trim();
+        if text.is_empty() || !seen.insert(text) {
+            continue;
+        }
+        let mut placed = false;
+        let written = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::User | EventKind::Assistant));
+        for e in written {
+            let Some(body) = e.text.as_deref() else {
+                continue;
+            };
+            for (start, _) in body.match_indices(text) {
+                let end = start + text.len();
+                if !whole_word(body, start, end) {
+                    continue;
+                }
+                placed = true;
+                found.push(Finding {
+                    event: e.seq,
+                    field: Field::Text,
+                    start,
+                    end,
+                    kind: *kind,
+                    fingerprint: key.fingerprint(text),
+                });
+            }
+        }
+        unplaced += u64::from(!placed);
+    }
+    found.sort_by_key(|f| (f.event, f.start, std::cmp::Reverse(f.end)));
+    let mut kept: Vec<Finding> = Vec::new();
+    for f in found {
+        let touches = |o: &Finding| {
+            o.event == f.event && o.field == Field::Text && o.start < f.end && f.start < o.end
+        };
+        if !taken.iter().any(touches) && !kept.iter().any(touches) {
+            kept.push(f);
+        }
+    }
+    (kept, unplaced)
+}
+
+/// Whether `body[start..end]` is not part of a longer word: a letter or digit at either edge of
+/// it has none beside it.
+fn whole_word(body: &str, start: usize, end: usize) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let inner = &body[start..end];
+    let before = body[..start].chars().next_back();
+    let after = body[end..].chars().next();
+    !(inner.chars().next().is_some_and(word) && before.is_some_and(word))
+        && !(inner.chars().next_back().is_some_and(word) && after.is_some_and(word))
 }
 
 /// Everything `detector` finds in `events`, placed and fingerprinted.
@@ -434,14 +600,30 @@ fn scan(
     key: &FingerprintKey,
     detector: &Detector,
 ) -> Result<Findings> {
-    let findings = Findings {
+    let mut findings = Findings {
         session: facts.key(),
         made_from: MadeFrom::current(facts, key, config),
         findings: find(events, key, detector),
         // The card is scanned with the session; one that holds a secret is discarded.
         card: crate::cards::rescan(home, facts, key, detector),
+        model: None,
     };
     let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
+    // The model's findings are kept while they still fit the session's events and key, so that
+    // rescanning with new patterns or terms never makes the model pass run again. Any that now
+    // touch a pattern finding are dropped: a model finding never overrides a secret's place.
+    findings.model = load(home, facts)
+        .and_then(|old| old.model)
+        .filter(|m| m.made_from.fits(&findings.made_from))
+        .map(|mut m| {
+            let taken = &findings.findings;
+            m.findings.retain(|f| {
+                !taken.iter().any(|o| {
+                    o.event == f.event && o.field == f.field && o.start < f.end && f.start < o.end
+                })
+            });
+            m
+        });
     write_json_pretty(
         &home.findings_path(facts.harness, &facts.session_id),
         &findings,
@@ -527,6 +709,9 @@ pub struct ScanProgress {
     pub pending: u64,
     /// Secrets in the current findings.
     pub secrets: u64,
+    /// Personal details in the current findings: the patterns' and the local model's.
+    #[serde(default)]
+    pub personal_details: u64,
 }
 
 /// Scan progress over the session list. Creates nothing: with no key yet, nothing is current.
@@ -544,6 +729,7 @@ pub fn progress(home: &Home) -> Result<ScanProgress> {
             (Some(k), Some(f)) if f.is_current(facts, k, &config) => {
                 p.current += 1;
                 p.secrets += f.findings.iter().filter(|f| f.is_secret()).count() as u64;
+                p.personal_details += f.all().filter(|f| !f.is_secret()).count() as u64;
             }
             _ => p.pending += 1,
         }
@@ -557,8 +743,7 @@ pub fn lookup(home: &Home, prefix: &str) -> Result<BTreeSet<Fingerprint>> {
     Ok(normalize::read_session_list(home)?
         .iter()
         .filter_map(|facts| load(home, facts))
-        .flat_map(|f| f.findings)
-        .map(|f| f.fingerprint)
+        .flat_map(|f| f.all().map(|f| f.fingerprint.clone()).collect::<Vec<_>>())
         .filter(|fp| fp.matches(prefix))
         .collect())
 }

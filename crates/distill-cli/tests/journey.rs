@@ -241,8 +241,8 @@ sweep_every_minutes = 60
     );
     human(&user, &home, &["scan"]);
 
-    // A tick is sweep, parse, scan, the word index then cards, and one run-log entry. With no
-    // card_model set, the card step is skipped and says why.
+    // A tick is sweep, parse, scan, the word index, cards then the model detection pass, and one
+    // run-log entry. With no card_model set, the card step and the pass are skipped and say why.
     let before = json(&user, &home, &["runs", "--limit", "100"])
         .as_array()
         .unwrap()
@@ -254,10 +254,24 @@ sweep_every_minutes = 60
         .iter()
         .map(|s| s["name"].clone())
         .collect();
-    assert_eq!(names, ["sweep", "parse", "scan", "index", "cards"], "{t}");
+    assert_eq!(
+        names,
+        [
+            "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+        ],
+        "{t}"
+    );
     assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
     assert_eq!(
         t["steps"][4]["report"]["skipped"], "no card_model is set",
+        "{t}"
+    );
+    assert_eq!(
+        t["steps"][5]["report"]["skipped"], "no embedding_model is set",
+        "{t}"
+    );
+    assert_eq!(
+        t["steps"][6]["report"]["skipped"], "no detail_model or card_model is set",
         "{t}"
     );
     let runs = json(&user, &home, &["runs", "--limit", "100"]);
@@ -282,6 +296,11 @@ sweep_every_minutes = 60
     // The previous steward's session gets no card.
     assert_eq!(st["cards"]["sessions"], 2, "{st}");
     assert_eq!(st["cards"]["pending"], 2, "{st}");
+    assert_eq!(
+        st["vectors"]["skipped"], "no embedding_model is set",
+        "{st}"
+    );
+    assert_eq!(st["vectors"]["sessions"], 2, "{st}");
     assert_eq!(st["index"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
     // Just swept, and no harness here deletes sessions sooner than the timer runs.
@@ -304,7 +323,10 @@ sweep_every_minutes = 60
         printed.contains("claude-code")
             && printed.contains("last sweep")
             && printed.contains("scan: 3 of 3 sessions current")
-            && printed.contains("word index: 3 of 3 sessions current"),
+            && printed.contains("word index: 3 of 3 sessions current")
+            && printed.contains(
+                "vectors: skipped (no embedding_model is set) · 0 of 2 sessions have them"
+            ),
         "{printed}"
     );
 

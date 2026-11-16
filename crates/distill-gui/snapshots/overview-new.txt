@@ -35,6 +35,12 @@
           text: Cards
             value: Not yet available
             detail: Skipped: no card_model is set
+          text: Search by meaning
+            value: Not yet available
+            detail: 
+          text: Model detection pass
+            value: Not yet available
+            detail: 
         reveals: Reveal requests
             title: Reveal requests
             message: No reveal requests are waiting.

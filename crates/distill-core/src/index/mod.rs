@@ -22,6 +22,7 @@
 //! found by each of its parts. Words longer than [`MAX_WORD`] characters are not indexed.
 
 pub mod segment;
+pub mod vectors;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -74,6 +75,21 @@ impl MadeFrom {
             session: BuiltFrom::of(facts, findings),
             card: card.map(Card::hash),
         }
+    }
+
+    /// What `facts` would be built from now: its events, its current secret findings and its
+    /// current card. None when its findings are missing or out of date, because the read path
+    /// would scan it first.
+    pub(crate) fn now(
+        home: &Home,
+        config: &Config,
+        key: Option<&FingerprintKey>,
+        facts: &SessionMeta,
+    ) -> Option<Self> {
+        let key = key?;
+        let f = crate::findings::load(home, facts).filter(|f| f.is_current(facts, key, config))?;
+        let card = cards::current(home, facts, &f);
+        Some(Self::of(facts, &f, card.as_ref()))
     }
 }
 
