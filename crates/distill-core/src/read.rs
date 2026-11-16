@@ -1,8 +1,9 @@
 //! The read path: the one way session text leaves Distill (issue #72, "The read path"; ADR 0002).
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use serde_json::Value;
 
-use crate::config::ProviderKind;
+use crate::findings::{self, Field, Finding, Findings};
 use crate::home::Home;
 use crate::model::{Event, SessionMeta};
 use crate::normalize;
@@ -32,8 +33,8 @@ pub enum Read {
     /// For a model: the events as text, starting with [`NOTICE_START`] and ending with
     /// [`NOTICE_END`].
     Text(String),
-    /// For the owner, the stored events, for the GUI to show with their findings blurred. For
-    /// Distill itself, the events with each secret replaced by a placeholder.
+    /// For the owner, the stored events with their findings, for the GUI to blur. For Distill
+    /// itself, the events with each secret replaced by a placeholder.
     Events(Box<Excerpt>),
     /// No text, and why, with what the owner can do about it.
     Refused(String),
@@ -47,6 +48,9 @@ pub struct Excerpt {
     pub events: Vec<Event>,
     /// How many events the session has in all.
     pub total: u64,
+    /// For the owner, the findings in these events. Empty for Distill itself, whose events hold
+    /// placeholders instead.
+    pub findings: Vec<Finding>,
 }
 
 /// Read `session` (its key, `harness/id`, or its id alone when only one harness has it) as
@@ -115,72 +119,169 @@ fn serve(
     };
     seen.key = facts.key();
     let events = normalize::read_events(home, &facts)?;
-    let scan = scan(home, &facts, &events)?;
-    match scan {
-        // Until the detector lands, only readers that need nothing masked are served: the owner,
-        // and (the deliberate interim) a model on this machine. Distill itself and remote models
-        // get placeholders, which need findings.
-        Scan::NotScanned => {
-            let unmasked = match reader {
-                Reader::Owner => true,
-                Reader::Distill => false,
-                Reader::Model { .. } => trust
-                    .provider_for(reader, runtime)
-                    .is_some_and(|p| p.kind == ProviderKind::Local),
-            };
-            if !unmasked {
-                return Ok(Read::Refused(format!(
-                    "{} has not been scanned for secrets yet, and no session is served to this \
-                     reader before it is.",
-                    facts.key()
-                )));
-            }
+    // No reader is served a session whose findings are missing or out of date.
+    let scan = match scan(home, &facts, &events) {
+        Ok(scan) => scan,
+        Err(e) => {
+            return Ok(Read::Refused(format!(
+                "{} could not be scanned for secrets ({e:#}), and no session is served before \
+                 it is.",
+                facts.key()
+            )));
         }
-    }
+    };
     let total = events.len() as u64;
-    let events: Vec<Event> = events
-        .into_iter()
-        .filter(|e| range.from.is_none_or(|f| e.seq >= f) && range.to.is_none_or(|t| e.seq <= t))
-        .collect();
+    let in_range =
+        |seq: u64| range.from.is_none_or(|f| seq >= f) && range.to.is_none_or(|t| seq <= t);
+    let events: Vec<Event> = events.into_iter().filter(|e| in_range(e.seq)).collect();
     seen.events = events.len() as u64;
     Ok(match reader {
-        // The detector ticket adds the findings here, for the GUI to blur.
-        Reader::Owner => Read::Events(Box::new(Excerpt {
-            facts,
-            events,
-            total,
-        })),
-        Reader::Distill => Read::Events(Box::new(Excerpt {
-            facts,
-            events: mask(events, &scan),
-            total,
-        })),
-        Reader::Model { .. } => Read::Text(render(&facts, &mask(events, &scan), total)),
+        Reader::Owner => {
+            let findings = scan
+                .findings
+                .iter()
+                .filter(|f| in_range(f.event))
+                .cloned()
+                .collect();
+            Read::Events(Box::new(Excerpt {
+                facts,
+                events,
+                total,
+                findings,
+            }))
+        }
+        Reader::Distill | Reader::Model { .. } => {
+            let masked = match mask(events, &scan) {
+                Ok(m) => m,
+                Err(e) => {
+                    return Ok(Read::Refused(format!(
+                        "{}'s findings do not fit its events ({e:#}), so it is not served.",
+                        facts.key()
+                    )));
+                }
+            };
+            if matches!(reader, Reader::Distill) {
+                Read::Events(Box::new(Excerpt {
+                    facts,
+                    events: masked,
+                    total,
+                    findings: Vec::new(),
+                }))
+            } else {
+                Read::Text(render(&facts, &masked, total))
+            }
+        }
     })
 }
 
-/// What the read path knows of a session's findings.
-enum Scan {
-    /// There is no detector yet: no session has findings.
-    NotScanned,
-}
-
-/// The session's findings, current with the detector.
-///
-/// The detector ticket (#76) fills this in: load `findings.json`, and when it is missing or out
-/// of date run the pattern detector over `events`, store the findings and return them. A scan
-/// that fails returns an error, which refuses the read.
-fn scan(_home: &Home, _facts: &SessionMeta, _events: &[Event]) -> Result<Scan> {
-    Ok(Scan::NotScanned)
+/// The session's findings, current with the detector: loaded from `findings.json`, or, when
+/// they are missing or out of date, made by running the detector over `events` and stored. A
+/// scan that fails returns an error, which refuses the read.
+fn scan(home: &Home, facts: &SessionMeta, events: &[Event]) -> Result<Findings> {
+    findings::current_or_scan(home, facts, events)
 }
 
 /// The events a model or Distill itself is given: each secret replaced by its placeholder,
-/// `[secret: <kind> #<fingerprint>]`, and personal details left in place. The detector ticket
-/// (#76) fills this in; with nothing scanned there is nothing to replace.
-fn mask(events: Vec<Event>, scan: &Scan) -> Vec<Event> {
-    match scan {
-        Scan::NotScanned => events,
+/// `[secret: <kind> #<fingerprint>]`, in the text and inside tool-call input, and personal
+/// details left in place. Findings that don't fit their events are an error: the read is
+/// refused rather than served with a secret left in.
+fn mask(mut events: Vec<Event>, scan: &Findings) -> Result<Vec<Event>> {
+    for e in &mut events {
+        let mut text: Vec<&Finding> = Vec::new();
+        let mut values: Vec<&Finding> = Vec::new();
+        let mut keys: Vec<&Finding> = Vec::new();
+        for f in scan.in_event(e.seq).filter(|f| f.is_secret()) {
+            match &f.field {
+                Field::Text => text.push(f),
+                Field::Input { key: false, .. } => values.push(f),
+                Field::Input { key: true, .. } => keys.push(f),
+            }
+        }
+        if !text.is_empty() {
+            let t = e
+                .text
+                .as_mut()
+                .context("a finding in text an event lacks")?;
+            *t = replace(t, &text)?;
+        }
+        if values.is_empty() && keys.is_empty() {
+            continue;
+        }
+        let input = e
+            .input
+            .as_mut()
+            .context("a finding in input an event lacks")?;
+        // Values first, while every pointer still names its key as stored.
+        let mut by_pointer: std::collections::BTreeMap<&str, Vec<&Finding>> = Default::default();
+        for f in values {
+            by_pointer.entry(pointer(f)).or_default().push(f);
+        }
+        for (p, fs) in by_pointer {
+            let v = input
+                .pointer_mut(p)
+                .with_context(|| format!("no input at {p}"))?;
+            *v = match v {
+                Value::String(s) => Value::String(replace(s, &fs)?),
+                Value::Number(n) if fs.len() == 1 && fs[0].end == n.to_string().len() => {
+                    Value::String(fs[0].placeholder())
+                }
+                _ => bail!("input at {p} is not what was scanned"),
+            };
+        }
+        // Then keys, deepest first, so that renaming one never moves a pointer still to come.
+        let mut by_key: std::collections::BTreeMap<&str, Vec<&Finding>> = Default::default();
+        for f in keys {
+            by_key.entry(pointer(f)).or_default().push(f);
+        }
+        let mut keyed: Vec<_> = by_key.into_iter().collect();
+        keyed.sort_by_key(|(p, _)| std::cmp::Reverse(p.matches('/').count()));
+        for (p, fs) in keyed {
+            let (parent, last) = p.rsplit_once('/').context("a key finding with no key")?;
+            let name = last.replace("~1", "/").replace("~0", "~");
+            let Some(Value::Object(o)) = input.pointer_mut(parent) else {
+                bail!("no object at {parent:?}");
+            };
+            let v = o.remove(&name).with_context(|| format!("no key at {p}"))?;
+            let base = replace(&name, &fs)?;
+            let (mut renamed, mut n) = (base.clone(), 2);
+            while o.contains_key(&renamed) {
+                renamed = format!("{base} #{n}");
+                n += 1;
+            }
+            o.insert(renamed, v);
+        }
     }
+    Ok(events)
+}
+
+fn pointer(f: &Finding) -> &str {
+    match &f.field {
+        Field::Input { pointer, .. } => pointer,
+        Field::Text => "",
+    }
+}
+
+/// `s` with each finding's range replaced by its placeholder.
+fn replace(s: &str, found: &[&Finding]) -> Result<String> {
+    let mut found = found.to_vec();
+    found.sort_by_key(|f| (f.start, f.end));
+    let mut out = String::with_capacity(s.len());
+    let mut pos = 0;
+    for f in found {
+        if f.start < pos
+            || f.end > s.len()
+            || f.start >= f.end
+            || !s.is_char_boundary(f.start)
+            || !s.is_char_boundary(f.end)
+        {
+            bail!("a finding at {}..{} does not fit", f.start, f.end);
+        }
+        out.push_str(&s[pos..f.start]);
+        out.push_str(&f.placeholder());
+        pos = f.end;
+    }
+    out.push_str(&s[pos..]);
+    Ok(out)
 }
 
 /// A session by its key (`harness/id`), or by its id alone when only one harness has it.
@@ -267,15 +368,24 @@ mod tests {
 
     /// The same session, opening with `said`.
     fn home_with_first_message(said: &str) -> (tempfile::TempDir, Home) {
+        home_with(
+            said,
+            &serde_json::json!({"command": "git mv widget.rs gadget.rs"}),
+        )
+    }
+
+    /// The same session, opening with `said`, with `input` as its tool call's input.
+    fn home_with(said: &str, input: &serde_json::Value) -> (tempfile::TempDir, Home) {
         let said = serde_json::to_string(said).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path().join("home"));
         home.ensure().unwrap();
         let body = r#"{"type":"user","cwd":"/work/app","timestamp":"2026-11-10T10:00:00Z","message":{"role":"user","content":SAID}}
-{"type":"assistant","timestamp":"2026-11-10T10:00:05Z","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git mv widget.rs gadget.rs"}}]}}
+{"type":"assistant","timestamp":"2026-11-10T10:00:05Z","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"t1","name":"Bash","input":INPUT}]}}
 {"type":"user","timestamp":"2026-11-10T10:00:09Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"moved"}]}}
 "#
-        .replace("SAID", &said);
+        .replace("SAID", &said)
+        .replace("INPUT", &input.to_string());
         let mut a = Archive::open(&home).unwrap();
         a.put(
             Harness::ClaudeCode,
@@ -286,6 +396,33 @@ mod tests {
         .unwrap();
         crate::normalize::normalize(&home, false).unwrap();
         (dir, home)
+    }
+
+    /// A fake key, built at run time so no secret scanner mistakes it for a leak.
+    fn fake_key() -> String {
+        ["sk-", "ant-", "api03-", &"Zz9".repeat(9)].concat()
+    }
+
+    /// A session with secrets planted in what the owner said and in the tool call's input: in a
+    /// command, under a credential-named key, and as a key.
+    fn home_with_secrets() -> (tempfile::TempDir, Home, String) {
+        let key = fake_key();
+        let input = serde_json::json!({
+            "command": "export DB_PASSWORD=synthetic-pass-9 && deploy",
+            "api_key": 12345678901_u64,
+            "env": {key.clone(): "set"},
+        });
+        let (d, home) = home_with(&format!("deploy with {key} please"), &input);
+        (d, home, key)
+    }
+
+    /// Every placeholder in `text`.
+    fn placeholders(text: &str) -> Vec<String> {
+        regex::Regex::new(r"\[secret: [a-z_]+ #[0-9a-f]{8}\]")
+            .unwrap()
+            .find_iter(text)
+            .map(|m| m.as_str().to_string())
+            .collect()
     }
 
     fn local() -> LocalRuntime {
@@ -358,8 +495,48 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_remote_provider_is_refused_until_the_session_is_scanned() {
-        let (_d, home) = home_with_session();
+    fn a_model_reads_a_placeholder_in_place_of_each_secret_also_inside_tool_input() {
+        let (_d, home, key) = home_with_secrets();
+        assert!(!home.findings_path(Harness::ClaudeCode, "s1").exists());
+        let reader = Reader::model(Some("ollama"), Some("small:8b"));
+        let t = text(read(&home, &local(), &reader, "claude-code/s1", Range::default()).unwrap());
+        for value in [key.as_str(), "synthetic-pass-9", "12345678901"] {
+            assert!(!t.contains(value), "{value:?} served: {t}");
+        }
+        // The session was scanned on read, and its findings stored.
+        let facts = find(&home, "claude-code/s1").unwrap().unwrap();
+        let stored = crate::findings::load(&home, &facts).unwrap();
+        let fp = |kind: crate::detect::Kind| {
+            let f = stored.findings.iter().find(|f| f.kind == kind).unwrap();
+            f.fingerprint.short().to_string()
+        };
+        use crate::detect::Kind;
+        let ant = format!("[secret: anthropic_key #{}]", fp(Kind::AnthropicKey));
+        assert!(t.contains(&format!("deploy with {ant} please")), "{t}");
+        assert!(
+            t.contains(&format!(
+                "DB_PASSWORD=[secret: assigned_secret #{}] && deploy",
+                fp(Kind::AssignedSecret)
+            )),
+            "{t}"
+        );
+        assert!(
+            t.contains(&format!(
+                r#""api_key":"[secret: credential_field #{}]""#,
+                fp(Kind::CredentialField)
+            )),
+            "{t}"
+        );
+        // The same key, as a key of the input, reads as the same placeholder.
+        assert!(t.contains(&format!(r#"{{"{ant}":"set"}}"#)), "{t}");
+        assert_eq!(placeholders(&t).len(), 4, "{t}");
+        // What the owner wrote around the secrets stays.
+        assert!(t.contains("moved") && t.contains("please"), "{t}");
+    }
+
+    #[test]
+    fn a_trusted_remote_provider_is_served_with_placeholders() {
+        let (_d, home, key) = home_with_secrets();
         trust_remote(&home, "example-cloud", true);
         let rt = FakeRuntime::stopped()
             .with_model("big:cloud", Stored::Cloud)
@@ -369,18 +546,19 @@ mod tests {
         c.save(&home.config_path()).unwrap();
         for reader in [
             Reader::model(Some("example-cloud"), Some("any")),
-            // Trusted, but a cloud model: remote.
+            // Trusted, and a cloud model: remote.
             Reader::model(Some("ollama"), Some("big:cloud")),
         ] {
-            let why =
-                refused(read(&home, &rt, &reader, "claude-code/s1", Range::default()).unwrap());
-            assert!(why.contains("not been scanned"), "{reader:?}: {why}");
+            let t = text(read(&home, &rt, &reader, "claude-code/s1", Range::default()).unwrap());
+            assert!(t.starts_with(NOTICE_START), "{t}");
+            assert!(!t.contains(&key) && !t.contains("synthetic-pass-9"), "{t}");
+            assert_eq!(placeholders(&t).len(), 4, "{reader:?}: {t}");
         }
     }
 
     #[test]
-    fn the_owner_gets_the_stored_events_and_distill_itself_waits_for_a_scan() {
-        let (_d, home) = home_with_session();
+    fn the_owner_gets_the_stored_events_with_their_findings_and_distill_itself_placeholders() {
+        let (_d, home, key) = home_with_secrets();
         let rt = FakeRuntime::not_installed().runtime();
         let Read::Events(x) = read(
             &home,
@@ -393,24 +571,105 @@ mod tests {
             panic!("the owner gets events");
         };
         assert_eq!(x.facts.key(), "claude-code/s1");
-        assert_eq!(x.total, 3);
-        assert_eq!(x.events.len(), 3);
-        assert_eq!(
-            x.events[0].text.as_deref(),
-            Some("rename the widget module")
-        );
+        assert_eq!((x.total, x.events.len()), (3, 3));
+        let said = x.events[0].text.as_deref().unwrap();
+        assert_eq!(said, format!("deploy with {key} please"));
+        assert_eq!(x.findings.len(), 4, "{:?}", x.findings);
+        let f = &x.findings[0];
+        assert_eq!((f.event, &f.field), (0, &Field::Text));
+        assert_eq!(&said[f.start..f.end], key);
 
-        let why = refused(
-            read(
-                &home,
-                &rt,
-                &Reader::Distill,
-                "claude-code/s1",
-                Range::default(),
-            )
-            .unwrap(),
+        // Part of a session: only that part's findings.
+        let Read::Events(x) = read(
+            &home,
+            &rt,
+            &Reader::Owner,
+            "claude-code/s1",
+            Range {
+                from: Some(2),
+                to: None,
+            },
+        )
+        .unwrap() else {
+            panic!("the owner gets events");
+        };
+        assert!(x.findings.is_empty(), "{:?}", x.findings);
+
+        let Read::Events(x) = read(
+            &home,
+            &rt,
+            &Reader::Distill,
+            "claude-code/s1",
+            Range::default(),
+        )
+        .unwrap() else {
+            panic!("Distill itself gets events");
+        };
+        assert!(x.findings.is_empty());
+        let all = serde_json::to_string(&x.events).unwrap();
+        assert!(
+            !all.contains(&key) && !all.contains("synthetic-pass-9"),
+            "{all}"
         );
-        assert!(why.contains("not been scanned"), "{why}");
+        assert_eq!(placeholders(&all).len(), 4, "{all}");
+    }
+
+    #[test]
+    fn out_of_date_findings_are_made_again_before_a_read() {
+        let (_d, home, key) = home_with_secrets();
+        let reader = Reader::model(Some("ollama"), None);
+        read(&home, &local(), &reader, "s1", Range::default()).unwrap();
+        // Findings from another detector version, that missed everything.
+        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let mut f: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        f["made_from"]["detector"] = serde_json::json!(0);
+        f["findings"] = serde_json::json!([]);
+        std::fs::write(&path, f.to_string()).unwrap();
+
+        let t = text(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
+        assert!(!t.contains(&key), "{t}");
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            stored["made_from"]["detector"],
+            crate::detect::DETECTOR_VERSION
+        );
+        assert_eq!(stored["findings"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_session_that_cannot_be_scanned_is_refused_to_every_reader() {
+        let (_d, home, key) = home_with_secrets();
+        std::fs::create_dir_all(home.keys_dir()).unwrap();
+        std::fs::write(home.fingerprint_key_path(), "not a key").unwrap();
+        for reader in [
+            Reader::Owner,
+            Reader::Distill,
+            Reader::model(Some("ollama"), None),
+        ] {
+            let why = refused(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
+            assert!(why.contains("could not be scanned"), "{why}");
+            assert!(!why.contains(&key), "{why}");
+        }
+        let log = crate::readlog::list(&home, None, usize::MAX).unwrap();
+        let line = serde_json::to_value(&log[0]).unwrap();
+        assert_eq!(line["result"], "refused");
+    }
+
+    #[test]
+    fn findings_that_do_not_fit_their_events_refuse_the_read() {
+        let (_d, home, key) = home_with_secrets();
+        let reader = Reader::model(Some("ollama"), None);
+        read(&home, &local(), &reader, "s1", Range::default()).unwrap();
+        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let mut f: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        f["findings"][0]["end"] = serde_json::json!(10_000);
+        std::fs::write(&path, f.to_string()).unwrap();
+        let why = refused(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
+        assert!(why.contains("do not fit"), "{why}");
+        assert!(!why.contains(&key), "{why}");
     }
 
     #[test]
@@ -475,7 +734,7 @@ mod tests {
         assert_eq!(lines.len(), 5, "{lines:#?}");
         // Newest first.
         assert_eq!(lines[0]["reader"], "distill");
-        assert_eq!(lines[0]["result"], "refused");
+        assert_eq!(lines[0]["result"], "served");
         assert_eq!(lines[1]["reader"], "owner");
         assert_eq!(lines[1]["session"], "nothing-here");
         assert_eq!(lines[1]["result"], "refused");

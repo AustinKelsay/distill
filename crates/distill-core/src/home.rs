@@ -139,14 +139,21 @@ impl Home {
 
     /// Hold a named lock under `state/` until the returned file is dropped.
     pub fn lock(&self, name: &str) -> Result<fs::File> {
-        fs::create_dir_all(self.state_dir())?;
-        let f = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.state_dir().join(format!("{name}.lock")))?;
-        f.lock().with_context(|| format!("take the {name} lock"))?;
-        Ok(f)
+        lock_at(&self.state_dir().join(format!("{name}.lock")), name)
+    }
+
+    /// The lock a session's findings file is written under.
+    pub fn findings_lock_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.state_dir()
+            .join("findings")
+            .join(harness.id())
+            .join(format!("{}.lock", safe_component(session_id)))
+    }
+
+    /// Hold a session's findings lock until the returned file is dropped. The tick and the read
+    /// path can both write the findings file; each holds this only for the write.
+    pub fn lock_findings(&self, harness: Harness, session_id: &str) -> Result<fs::File> {
+        lock_at(&self.findings_lock_path(harness, session_id), "findings")
     }
 
     pub fn load_config(&self) -> Result<Config> {
@@ -160,6 +167,19 @@ impl Home {
         let root = root.trim_end_matches('/');
         path == root || path.starts_with(&format!("{root}/"))
     }
+}
+
+fn lock_at(path: &Path, name: &str) -> Result<fs::File> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    f.lock().with_context(|| format!("take the {name} lock"))?;
+    Ok(f)
 }
 
 pub fn user_home() -> Result<PathBuf> {
@@ -194,5 +214,9 @@ mod tests {
         assert_eq!(p(h.runs_dir()), "/h/runs");
         assert_eq!(p(h.reveals_dir()), "/h/reveals");
         assert_eq!(p(h.fingerprint_key_path()), "/h/keys/fingerprint.key");
+        assert_eq!(
+            p(h.findings_lock_path(k, id)),
+            "/h/state/findings/codex/s1.lock"
+        );
     }
 }

@@ -19,6 +19,10 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             human_bytes(s.archive_bytes),
             s.last_sweep.as_deref().unwrap_or("never")
         );
+        println!(
+            "scan: {} of {} sessions current, {} waiting · {} secrets found",
+            s.scan.current, s.scan.sessions, s.scan.pending, s.scan.secrets
+        );
         for h in &s.harnesses {
             println!(
                 "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",

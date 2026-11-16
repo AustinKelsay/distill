@@ -1,7 +1,8 @@
 //! No code path but the read path returns session text (issue #75; ADR 0002). The faces' code
 //! (the command line, the MCP server, the GUI) never names what reads stored text directly, and
 //! inside core only the parsers, the archive and the read path do. Tests may: they check what
-//! the parse step wrote. Core also keeps those readers
+//! the parse step wrote. The scan (`findings`) reads events like the parsers do, because it is what
+//! produces findings. Core also keeps those readers
 //! crate-private, so a face that called one would not compile; this catches the ways around
 //! that, such as joining `events.jsonl` onto a path by hand.
 
@@ -22,8 +23,15 @@ const DIRECT_READERS: [&str; 7] = [
 ];
 
 /// Files in core's `src/` allowed to name a direct reader: where they are defined, the parse step
-/// that writes events, the archive, and the read path.
-const CORE_ALLOWED: [&str; 4] = ["home.rs", "archive.rs", "normalize/", "read.rs"];
+/// that writes events, the archive, the scan that writes findings, and the read path.
+const CORE_ALLOWED: [&str; 6] = [
+    "home.rs",
+    "archive.rs",
+    "normalize/",
+    "read.rs",
+    "findings.rs",
+    "findings/",
+];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap().filter_map(Result::ok) {

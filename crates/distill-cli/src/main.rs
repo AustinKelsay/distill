@@ -43,9 +43,11 @@ enum Cmd {
     Verify(verify::Args),
     /// Turn captures into events and session facts
     Parse(parse::Args),
+    /// Scan every session whose findings are missing or out of date for secrets
+    Scan(scan::Args),
     /// What the timer runs: every step of a tick, in order
     Tick(tick::Args),
-    /// Sessions, capture health and format drift per harness, and the last sweep
+    /// Sessions, capture health and format drift per harness, the last sweep and scan progress
     Status(status::Args),
     /// The run log
     Runs(runs::Args),
@@ -83,6 +85,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Sweep(a) => sweep::run(&ctx, a),
         Cmd::Verify(a) => verify::run(&ctx, a),
         Cmd::Parse(a) => parse::run(&ctx, a),
+        Cmd::Scan(a) => scan::run(&ctx, a),
         Cmd::Tick(a) => tick::run(&ctx, a),
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),

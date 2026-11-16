@@ -8,6 +8,7 @@ pub mod providers;
 pub mod read;
 pub mod reads;
 pub mod runs;
+pub mod scan;
 pub mod schedule;
 pub mod status;
 pub mod sweep;

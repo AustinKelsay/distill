@@ -196,13 +196,13 @@ fn a_local_model_reads_a_session_and_others_are_refused() {
         "distill providers trust other-cloud",
     );
 
-    // Trusted, but remote: nothing is scanned yet.
+    // Trusted and remote: served, scanned on read.
     m.ok(&["providers", "trust", "other-cloud"], &[]);
-    m.refused(
+    let out = m.ok(
         &["read", "s1", "--provider", "other-cloud", "--model", "any"],
         &[],
-        "not been scanned",
     );
+    assert!(out.contains("rename the widget module"), "{out}");
 
     m.refused(
         &["read", "no-such", "--provider", "ollama"],

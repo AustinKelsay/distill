@@ -1,6 +1,6 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
-//! Today it covers sessions and capture health per harness, format drift and the last sweep. Each
-//! later ticket adds its own fields.
+//! Today it covers sessions and capture health per harness, format drift, the last sweep and the
+//! scan's progress. Each later ticket adds its own fields.
 
 use std::collections::BTreeMap;
 
@@ -8,6 +8,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::archive::Archive;
+use crate::findings::{self, ScanProgress};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::normalize;
@@ -25,6 +26,8 @@ pub struct Status {
     /// When the last successful sweep ran.
     pub last_sweep: Option<String>,
     pub harnesses: Vec<HarnessStatus>,
+    /// How many sessions have current findings, and how many wait for a scan.
+    pub scan: ScanProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +135,7 @@ pub fn status(home: &Home) -> Result<Status> {
         archive_bytes: archive.stored_bytes(),
         last_sweep: last.map(|(at, _)| at),
         harnesses,
+        scan: findings::progress(home)?,
     })
 }
 
@@ -176,6 +180,7 @@ mod tests {
         let before = status(&home).unwrap();
         assert!(before.configured);
         assert_eq!(before.last_sweep, None);
+        assert_eq!(before.scan, ScanProgress::default());
 
         crate::tick::tick(&home, &config).unwrap();
         let s = status(&home).unwrap();
@@ -190,5 +195,6 @@ mod tests {
         assert_eq!(of(Harness::Goose).health, Health::Missing);
         assert_eq!(of(Harness::Codex).health, Health::Disabled);
         assert_eq!(s.harnesses.len(), Harness::ALL.len());
+        assert_eq!((s.scan.sessions, s.scan.current, s.scan.pending), (1, 1, 0));
     }
 }

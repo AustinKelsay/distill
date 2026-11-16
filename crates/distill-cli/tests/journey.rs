@@ -1,5 +1,6 @@
 //! The kept loop through the real binary, against synthetic harness files in a temp dir: init,
-//! harnesses, sweep with append detection and exclusions, verify, parse, tick, status and runs.
+//! harnesses, sweep with append detection and exclusions, verify, parse, scan, tick, status and
+//! runs.
 //! Every command runs with `HOME` set to the temp dir, and none may print session text.
 
 use std::fs;
@@ -221,7 +222,26 @@ sweep_every_minutes = 60
     assert_eq!(n["normalized"], 0, "parse is idempotent: {n}");
     human(&user, &home, &["parse", "--force"]);
 
-    // A tick is sweep then parse, and one run-log entry.
+    // Scan: every session's findings made, counts only, and a second scan finds them current.
+    let sc = json(&user, &home, &["scan"]);
+    assert_eq!(
+        (sc["sessions"].as_u64(), sc["scanned"].as_u64()),
+        (Some(3), Some(3)),
+        "{sc}"
+    );
+    assert!(
+        home.join("sessions/claude-code/aaaa/findings.json")
+            .exists()
+    );
+    let sc = json(&user, &home, &["scan"]);
+    assert_eq!(
+        (sc["scanned"].as_u64(), sc["current"].as_u64()),
+        (Some(0), Some(3)),
+        "{sc}"
+    );
+    human(&user, &home, &["scan"]);
+
+    // A tick is sweep, parse then scan, and one run-log entry.
     let before = json(&user, &home, &["runs", "--limit", "100"])
         .as_array()
         .unwrap()
@@ -233,11 +253,11 @@ sweep_every_minutes = 60
         .iter()
         .map(|s| s["name"].clone())
         .collect();
-    assert_eq!(names, ["sweep", "parse"], "{t}");
+    assert_eq!(names, ["sweep", "parse", "scan"], "{t}");
     let runs = json(&user, &home, &["runs", "--limit", "100"]);
     assert_eq!(runs.as_array().unwrap().len(), before + 1);
     assert_eq!(runs[0]["step"], "tick");
-    for step in ["sweep", "verify", "parse", "tick"] {
+    for step in ["sweep", "verify", "parse", "scan", "tick"] {
         assert!(
             runs.as_array().unwrap().iter().any(|r| r["step"] == step),
             "no {step} entry"
@@ -246,9 +266,11 @@ sweep_every_minutes = 60
     human(&user, &home, &["tick"]);
     human(&user, &home, &["runs"]);
 
-    // Status: sessions and capture health per harness, and the last sweep.
+    // Status: sessions and capture health per harness, the last sweep and scan progress.
     let st = json(&user, &home, &["status"]);
     assert_eq!(st["sessions"], 3, "{st}");
+    assert_eq!(st["scan"]["current"], 3, "{st}");
+    assert_eq!(st["scan"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
     let of = |k: &str| {
         st["harnesses"]
@@ -265,7 +287,9 @@ sweep_every_minutes = 60
     assert_eq!(of("pi")["health"], "disabled");
     let printed = human(&user, &home, &["status"]);
     assert!(
-        printed.contains("claude-code") && printed.contains("last sweep"),
+        printed.contains("claude-code")
+            && printed.contains("last sweep")
+            && printed.contains("scan: 3 of 3 sessions current"),
         "{printed}"
     );
 
