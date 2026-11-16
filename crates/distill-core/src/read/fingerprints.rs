@@ -139,11 +139,7 @@ pub fn fingerprints(
         let stored = stored(home)?;
         let mut groups: BTreeMap<Fingerprint, Group> = BTreeMap::new();
         for (facts, findings) in stored.sessions.iter().filter(|(m, _)| filter.matches(m)) {
-            for f in findings
-                .findings
-                .iter()
-                .filter(|f| filter.kinds.admit(f.kind))
-            {
+            for f in findings.all().filter(|f| filter.kinds.admit(f.kind)) {
                 let g = groups.entry(f.fingerprint.clone()).or_default();
                 g.kinds.insert(f.kind);
                 g.sessions.insert(facts.key());
@@ -325,11 +321,7 @@ pub fn where_found(
         let mut found: BTreeMap<Fingerprint, (BTreeSet<Kind>, Vec<Appearance>)> = BTreeMap::new();
         for (facts, findings) in &stored.sessions {
             let mut here: BTreeMap<&Fingerprint, BTreeSet<u64>> = BTreeMap::new();
-            for f in findings
-                .findings
-                .iter()
-                .filter(|f| f.fingerprint.matches(prefix))
-            {
+            for f in findings.all().filter(|f| f.fingerprint.matches(prefix)) {
                 here.entry(&f.fingerprint).or_default().insert(f.event);
                 found
                     .entry(f.fingerprint.clone())

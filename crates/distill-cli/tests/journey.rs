@@ -241,8 +241,8 @@ sweep_every_minutes = 60
     );
     human(&user, &home, &["scan"]);
 
-    // A tick is sweep, parse, scan, the word index then cards, and one run-log entry. With no
-    // card_model set, the card step is skipped and says why.
+    // A tick is sweep, parse, scan, the word index, cards then the model detection pass, and one
+    // run-log entry. With no card_model set, the card step and the pass are skipped and say why.
     let before = json(&user, &home, &["runs", "--limit", "100"])
         .as_array()
         .unwrap()
@@ -254,10 +254,18 @@ sweep_every_minutes = 60
         .iter()
         .map(|s| s["name"].clone())
         .collect();
-    assert_eq!(names, ["sweep", "parse", "scan", "index", "cards"], "{t}");
+    assert_eq!(
+        names,
+        ["sweep", "parse", "scan", "index", "cards", "details"],
+        "{t}"
+    );
     assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
     assert_eq!(
         t["steps"][4]["report"]["skipped"], "no card_model is set",
+        "{t}"
+    );
+    assert_eq!(
+        t["steps"][5]["report"]["skipped"], "no detail_model or card_model is set",
         "{t}"
     );
     let runs = json(&user, &home, &["runs", "--limit", "100"]);

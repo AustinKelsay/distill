@@ -74,6 +74,14 @@ pub enum Kind {
     Username,
     /// A term from the config's `personal_terms`.
     PersonalTerm,
+    /// A person's name, found by the local model (`crate::details`).
+    PersonName,
+    /// A postal address, found by the local model.
+    PostalAddress,
+    /// A phone number, found by the local model.
+    PhoneNumber,
+    /// A client's or a company's name, found by the local model.
+    Organization,
 }
 
 /// Whether a finding is a secret or a personal detail.
@@ -95,7 +103,11 @@ impl Kind {
             | Kind::TailnetName
             | Kind::TailnetAddress
             | Kind::Username
-            | Kind::PersonalTerm => Class::PersonalDetail,
+            | Kind::PersonalTerm
+            | Kind::PersonName
+            | Kind::PostalAddress
+            | Kind::PhoneNumber
+            | Kind::Organization => Class::PersonalDetail,
             _ => Class::Secret,
         }
     }
@@ -124,6 +136,10 @@ impl Kind {
             Kind::TailnetAddress => "tailnet_address",
             Kind::Username => "username",
             Kind::PersonalTerm => "personal_term",
+            Kind::PersonName => "person_name",
+            Kind::PostalAddress => "postal_address",
+            Kind::PhoneNumber => "phone_number",
+            Kind::Organization => "organization",
         }
     }
 }
