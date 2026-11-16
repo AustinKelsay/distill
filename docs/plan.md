@@ -1,5 +1,6 @@
 # Distill Rebuild Plan: Agent-Driven Session Archive
 
+- Superseded 2026-11-15: Distill is being rebuilt as a private, searchable session archive. The spec is issue #72, the terms are in `GLOSSARY.md` and the decisions in `docs/adr/`. This file describes the build being replaced.
 - Status: direction agreed 2026-11-13; this repository is that fresh rebuild. `docs/status.md` records what is built against each milestone.
 - Predecessor: the Tauri/Electron-era app, replaced in a hard cut. Its last commit is tagged `legacy-final`; its beta releases stay on the releases page.
 
