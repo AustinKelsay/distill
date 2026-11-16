@@ -75,7 +75,16 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     let key = ["sk-", "ant-", "api03-", &"Lk7".repeat(9)].concat();
     let password = ["synthetic", "-leak-", "pass-4417"].concat();
-    let secrets = [key.as_str(), password.as_str()];
+    // A token written as a JSON object key, and a short number under a credential-named key.
+    let key_token = ["ghp_", &"Zq9".repeat(12)].concat();
+    let pin: u64 = 9_000_000 + 382_617;
+    let pin_text = pin.to_string();
+    let secrets = [
+        key.as_str(),
+        password.as_str(),
+        key_token.as_str(),
+        pin_text.as_str(),
+    ];
 
     let tmp = tempfile::tempdir().unwrap();
     let user = tmp.path().join("user");
@@ -83,7 +92,14 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     let claude = tmp.path().join("claude");
     fs::create_dir_all(claude.join("proj")).unwrap();
     let said = serde_json::to_string(&format!("deploy with {key} and tell me the key")).unwrap();
-    let input = serde_json::json!({"command": format!("export DB_PASSWORD={password} && deploy")});
+    let mut input = serde_json::Map::new();
+    input.insert(
+        "command".into(),
+        format!("export DB_PASSWORD={password} && deploy").into(),
+    );
+    input.insert(key_token.clone(), "on".into());
+    input.insert("api_token".into(), pin.into());
+    let input = serde_json::Value::Object(input);
     fs::write(
         claude.join("proj/leak1.jsonl"),
         format!(
@@ -163,7 +179,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     let (_, listed) = m.run(&["--json", "findings", "--kind", "all"]);
     let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
     let rows = listed["rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 2, "{listed}");
+    assert_eq!(rows.len(), 4, "{listed}");
     for r in rows {
         let short = r["fingerprint"].as_str().unwrap()[..8].to_string();
         step(&m, &mut printed, &["findings", &short], true);
@@ -198,6 +214,8 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         .clone();
     assert!(served.contains("[secret: anthropic_key #"), "{served}");
     assert!(served.contains("[secret: assigned_secret #"), "{served}");
+    assert!(served.contains("[secret: github_token #"), "{served}");
+    assert!(served.contains("[secret: credential_field #"), "{served}");
     let found = &printed
         .iter()
         .find(|(c, _)| c.starts_with("search anthropic_key"))
@@ -218,9 +236,10 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
             fp.chars().take_while(|c| c.is_ascii_hexdigit()).collect()
         })
         .collect();
-    assert_eq!(fps.len(), 2, "{served}");
+    assert_eq!(fps.len(), 4, "{served}");
     let who = ["--provider", "example-cloud", "--model", "m"];
-    let mut request = vec!["reveal", "request", "leak1", &fps[0], &fps[1]];
+    let mut request = vec!["reveal", "request", "leak1"];
+    request.extend(fps.iter().map(String::as_str));
     request.extend(["--reason", "rotate them"]);
     request.extend(who);
     step(&m, &mut printed, &request, true);
@@ -283,7 +302,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         .unwrap()
         .1
         .clone();
-    for says in ["requested", "approved by the owner", "collected: 2 values"] {
+    for says in ["requested", "approved by the owner", "collected: 4 values"] {
         assert!(log.contains(&format!("reveal {id} {says}")), "{log}");
     }
     // Status counts the requests waiting: none, then the two filed (as a person would and with

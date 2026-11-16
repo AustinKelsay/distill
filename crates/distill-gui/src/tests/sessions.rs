@@ -394,14 +394,14 @@ fn the_revealed_scene_shows_only_the_finding_clicked() {
 #[test]
 fn a_finding_that_cannot_be_placed_covers_the_whole_event() {
     let mut x = fixture::deploy_excerpt();
-    // The bearer token in the tool call's input, said to be at a pointer the input lacks.
+    // The bearer token in the tool call's input, said to be at a place the input lacks.
     let f = x
         .findings
         .iter_mut()
         .find(|f| f.kind == distill_core::detect::Kind::Bearer)
         .unwrap();
     f.field = distill_core::findings::Field::Input {
-        pointer: "/nowhere".into(),
+        path: vec![9],
         key: false,
     };
     let rt = runtime_sized(fixture::session_with(x), (1080.0, 1400.0));

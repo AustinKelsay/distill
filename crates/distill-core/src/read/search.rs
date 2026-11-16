@@ -461,38 +461,33 @@ fn strings(e: &Event) -> Vec<(Field, &str)> {
     if let Some(t) = e.text.as_deref().filter(|t| !t.trim().is_empty()) {
         out.push((Field::Text, t));
     }
-    fn walk<'a>(v: &'a Value, at: &str, out: &mut Vec<(Field, &'a str)>) {
+    fn walk<'a>(v: &'a Value, at: &mut Vec<usize>, out: &mut Vec<(Field, &'a str)>) {
+        let field = |at: &[usize], key| Field::Input {
+            path: at.to_vec(),
+            key,
+        };
         match v {
-            Value::String(s) => out.push((
-                Field::Input {
-                    pointer: at.to_string(),
-                    key: false,
-                },
-                s,
-            )),
+            Value::String(s) => out.push((field(at, false), s)),
             Value::Array(a) => {
                 for (i, v) in a.iter().enumerate() {
-                    walk(v, &format!("{at}/{i}"), out);
+                    at.push(i);
+                    walk(v, at, out);
+                    at.pop();
                 }
             }
             Value::Object(o) => {
-                for (k, v) in o {
-                    let p = format!("{at}/{}", k.replace('~', "~0").replace('/', "~1"));
-                    out.push((
-                        Field::Input {
-                            pointer: p.clone(),
-                            key: true,
-                        },
-                        k,
-                    ));
-                    walk(v, &p, out);
+                for (i, (k, v)) in o.iter().enumerate() {
+                    at.push(i);
+                    out.push((field(at, true), k));
+                    walk(v, at, out);
+                    at.pop();
                 }
             }
             _ => {}
         }
     }
     if let Some(input) = &e.input {
-        walk(input, "", &mut out);
+        walk(input, &mut Vec::new(), &mut out);
     }
     out
 }
@@ -590,8 +585,8 @@ fn render(hits: &Hits, offset: usize) -> String {
                 kind(p.kind),
                 match &p.field {
                     Field::Text => String::new(),
-                    Field::Input { pointer, key: true } => format!(", input key at {pointer}"),
-                    Field::Input { pointer, .. } => format!(", input at {pointer}"),
+                    Field::Input { key: true, .. } => ", a key of its input".to_string(),
+                    Field::Input { .. } => ", its input".to_string(),
                 },
                 if p.cut_before { "…" } else { "" },
                 words.join(" "),

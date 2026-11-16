@@ -202,7 +202,7 @@ fn a_trusted_model_searches_sessions_by_words_narrowed_by_filters() {
         distill_core::read::NOTICE_START,
         "claude-code/s1 · Claude Code · project /work/app · branch main",
         "Opened with: rename the widget module",
-        "Matched in event 1 (tool_call, input at /command): git mv widget.rs gadget.rs",
+        "Matched in event 1 (tool_call, its input): git mv widget.rs gadget.rs",
         distill_core::read::NOTICE_END,
     ] {
         assert!(t.contains(want), "{want:?} missing: {t}");

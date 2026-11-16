@@ -3,9 +3,10 @@
 //! 0002). The detector itself is `crate::detect`; this module places its hits in a session's
 //! events, keeps the file current, and owns the fingerprint key.
 //!
-//! - A finding's place is an event, a field ([`Field`]: the event's text, or a JSON pointer into
-//!   a tool call's input, to a value or the key holding it) and a byte range of that decoded
-//!   string, key or number as written.
+//! - A finding's place is an event, a field ([`Field`]: the event's text, or a path of positions
+//!   into a tool call's input, to a value or the key holding it) and a byte range of that decoded
+//!   string, key or number as written. A place never holds any of the session's text: a key can
+//!   be a secret itself.
 //! - A finding never holds the value: only its kind and its [`Fingerprint`], a keyed hash.
 //! - The file records what it was made from ([`MadeFrom`]). When any of it differs from the
 //!   current one, the findings are out of date and the session is scanned again.
@@ -21,6 +22,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::Sha256;
 
 use crate::config::Config;
@@ -147,13 +149,28 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 pub enum Field {
     /// The event's text.
     Text,
-    /// A tool call's input: the string or number at `pointer` (RFC 6901), or, with `key`, the
-    /// key that holds it.
+    /// A tool call's input: the string or number at `path`, or, with `key`, the key that holds
+    /// it. Each step of the path is the position of an array's item or an object's member, in
+    /// the order the input iterates them ([`at`]).
     Input {
-        pointer: String,
+        path: Vec<usize>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         key: bool,
     },
+}
+
+/// What is at `path` in `input`: the value, and the key it is held under when the path ends at
+/// an object's member.
+pub fn at<'a>(input: &'a Value, path: &[usize]) -> Option<(Option<&'a str>, &'a Value)> {
+    let mut here = (None, input);
+    for &i in path {
+        here = match here.1 {
+            Value::Array(a) => (None, a.get(i)?),
+            Value::Object(o) => o.iter().nth(i).map(|(k, v)| (Some(k.as_str()), v))?,
+            _ => return None,
+        };
+    }
+    Some(here)
 }
 
 /// A detected piece of sensitive text in a session: where it is, what kind it is, and its
@@ -552,7 +569,7 @@ fn placed<'a>(
                 let f = Finding {
                     event: e.seq,
                     field: Field::Input {
-                        pointer: v.pointer,
+                        path: v.path,
                         key: v.key,
                     },
                     start: v.hit.range.start,

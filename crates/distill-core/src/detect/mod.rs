@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The detector's version. Findings made by another version are out of date.
-pub const DETECTOR_VERSION: u32 = 2;
+pub const DETECTOR_VERSION: u32 = 3;
 
 /// How many levels of JSON inside JSON strings are read token by token; deeper text goes to the
 /// text scanner rather than risk the stack.
@@ -269,26 +269,28 @@ fn term_rule(term: &str) -> Rule {
 /// Where a hit sits in a JSON value, such as a tool call's input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueHit {
-    /// A JSON pointer (RFC 6901) to a string or number.
-    pub pointer: String,
-    /// The hit is in the key that `pointer` ends with, not in its value.
+    /// The path to a string or number: at each level, the position of an array's item or of an
+    /// object's member, in the order the value iterates them. Never a key's text, which can be
+    /// a secret or a personal detail itself.
+    pub path: Vec<usize>,
+    /// The hit is in the key of the member that `path` ends with, not in its value.
     pub key: bool,
     /// Bytes of that string or key, decoded, or of the number as written.
     pub hit: Hit,
 }
 
 /// Everything the detector finds in a JSON value: in every string and key, and under a
-/// credential-named key a string or number whole, or each one of an array whole. An object under
+/// credential-named key a string or any number whole, or each one of an array whole. An object under
 /// such a key is left to its own keys: a tool schema's `"password": {"type": "string"}` holds no
 /// secret.
 impl Detector {
     pub fn detect_value(&self, v: &Value) -> Vec<ValueHit> {
         let mut out = Vec::new();
-        self.walk(v, &mut String::new(), false, &mut out);
+        self.walk(v, &mut Vec::new(), false, &mut out);
         out
     }
 
-    fn walk(&self, v: &Value, pointer: &mut String, secret: bool, out: &mut Vec<ValueHit>) {
+    fn walk(&self, v: &Value, path: &mut Vec<usize>, secret: bool, out: &mut Vec<ValueHit>) {
         let whole = |written: String| Hit {
             kind: Kind::CredentialField,
             range: 0..written.len(),
@@ -296,42 +298,37 @@ impl Detector {
         };
         match v {
             Value::String(s) if secret && !s.is_empty() => out.push(ValueHit {
-                pointer: pointer.clone(),
+                path: path.clone(),
                 key: false,
                 hit: whole(s.clone()),
             }),
             Value::String(s) => out.extend(self.detect(s).into_iter().map(|hit| ValueHit {
-                pointer: pointer.clone(),
+                path: path.clone(),
                 key: false,
                 hit,
             })),
-            Value::Number(n) if secret && json::is_secret_number(&n.to_string()) => {
-                out.push(ValueHit {
-                    pointer: pointer.clone(),
-                    key: false,
-                    hit: whole(n.to_string()),
-                })
-            }
+            Value::Number(n) if secret => out.push(ValueHit {
+                path: path.clone(),
+                key: false,
+                hit: whole(n.to_string()),
+            }),
             Value::Array(a) => {
                 for (i, x) in a.iter().enumerate() {
-                    let len = pointer.len();
-                    pointer.push_str(&format!("/{i}"));
-                    self.walk(x, pointer, secret, out);
-                    pointer.truncate(len);
+                    path.push(i);
+                    self.walk(x, path, secret, out);
+                    path.pop();
                 }
             }
             Value::Object(o) => {
-                for (k, x) in o {
-                    let len = pointer.len();
-                    pointer.push('/');
-                    pointer.push_str(&k.replace('~', "~0").replace('/', "~1"));
+                for (i, (k, x)) in o.iter().enumerate() {
+                    path.push(i);
                     out.extend(self.detect(k).into_iter().map(|hit| ValueHit {
-                        pointer: pointer.clone(),
+                        path: path.clone(),
                         key: true,
                         hit,
                     }));
-                    self.walk(x, pointer, json::is_credential_key(k), out);
-                    pointer.truncate(len);
+                    self.walk(x, path, json::is_credential_key(k), out);
+                    path.pop();
                 }
             }
             _ => {}

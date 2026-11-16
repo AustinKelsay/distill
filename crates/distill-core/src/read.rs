@@ -411,53 +411,99 @@ fn mask(mut events: Vec<Event>, scan: &Findings) -> Result<Vec<Event>> {
             .input
             .as_mut()
             .context("a finding in input an event lacks")?;
-        // Values first, while every pointer still names its key as stored.
-        let mut by_pointer: std::collections::BTreeMap<&str, Vec<&Finding>> = Default::default();
+        let mut places = Places::default();
         for f in values {
-            by_pointer.entry(pointer(f)).or_default().push(f);
+            places.values.entry(path(f)).or_default().push(f);
         }
-        for (p, fs) in by_pointer {
-            let v = input
-                .pointer_mut(p)
-                .with_context(|| format!("no input at {p}"))?;
-            *v = match v {
-                Value::String(s) => Value::String(replace(s, &fs)?),
-                Value::Number(n) if fs.len() == 1 && fs[0].end == n.to_string().len() => {
-                    Value::String(fs[0].placeholder())
-                }
-                _ => bail!("input at {p} is not what was scanned"),
-            };
-        }
-        // Then keys, deepest first, so that renaming one never moves a pointer still to come.
-        let mut by_key: std::collections::BTreeMap<&str, Vec<&Finding>> = Default::default();
         for f in keys {
-            by_key.entry(pointer(f)).or_default().push(f);
+            places.keys.entry(path(f)).or_default().push(f);
         }
-        let mut keyed: Vec<_> = by_key.into_iter().collect();
-        keyed.sort_by_key(|(p, _)| std::cmp::Reverse(p.matches('/').count()));
-        for (p, fs) in keyed {
-            let (parent, last) = p.rsplit_once('/').context("a key finding with no key")?;
-            let name = last.replace("~1", "/").replace("~0", "~");
-            let Some(Value::Object(o)) = input.pointer_mut(parent) else {
-                bail!("no object at {parent:?}");
-            };
-            let v = o.remove(&name).with_context(|| format!("no key at {p}"))?;
-            let base = replace(&name, &fs)?;
-            let (mut renamed, mut n) = (base.clone(), 2);
-            while o.contains_key(&renamed) {
-                renamed = format!("{base} #{n}");
-                n += 1;
-            }
-            o.insert(renamed, v);
+        let wanted = places.values.len() + places.keys.len();
+        let mut at = Vec::new();
+        mask_input(input, &mut at, &mut places)?;
+        // Messages name no place: a refusal is logged and goes to the reader.
+        if places.placed != wanted {
+            bail!("a finding in input is at no place the input has");
         }
     }
     Ok(events)
 }
 
-fn pointer(f: &Finding) -> &str {
+/// The secret findings in one tool call's input, by path, and how many paths were masked.
+#[derive(Default)]
+struct Places<'a> {
+    values: std::collections::BTreeMap<&'a [usize], Vec<&'a Finding>>,
+    keys: std::collections::BTreeMap<&'a [usize], Vec<&'a Finding>>,
+    placed: usize,
+}
+
+/// `v`, at `at` in the input, with each secret in `places` replaced by its placeholder. Every
+/// path is a position in the input as stored and scanned, so an object is rebuilt from its
+/// members in their stored order, and no renamed key moves a place still to come.
+fn mask_input(v: &mut Value, at: &mut Vec<usize>, places: &mut Places) -> Result<()> {
+    if let Some(fs) = places.values.get(at.as_slice()) {
+        *v = match v {
+            Value::String(s) => Value::String(replace(s, fs)?),
+            Value::Number(n) if fs.len() == 1 && fs[0].end == n.to_string().len() => {
+                Value::String(fs[0].placeholder())
+            }
+            _ => bail!("a finding in input is not on what was scanned"),
+        };
+        places.placed += 1;
+        return Ok(());
+    }
+    match v {
+        Value::Array(a) => {
+            for (i, x) in a.iter_mut().enumerate() {
+                at.push(i);
+                mask_input(x, at, places)?;
+                at.pop();
+            }
+        }
+        Value::Object(o) => {
+            let mut members = Vec::with_capacity(o.len());
+            for (i, (k, mut x)) in std::mem::take(o).into_iter().enumerate() {
+                at.push(i);
+                mask_input(&mut x, at, places)?;
+                let masked = match places.keys.get(at.as_slice()) {
+                    Some(fs) => Some(replace(&k, fs)?),
+                    None => None,
+                };
+                places.placed += usize::from(masked.is_some());
+                at.pop();
+                members.push((k, masked, x));
+            }
+            // A masked key never takes the name of another: `<placeholder> #2`, and so on.
+            let mut taken: std::collections::BTreeSet<String> = members
+                .iter()
+                .filter(|(_, masked, _)| masked.is_none())
+                .map(|(k, _, _)| k.clone())
+                .collect();
+            for (k, masked, x) in members {
+                let name = match masked {
+                    None => k,
+                    Some(base) => {
+                        let (mut name, mut n) = (base.clone(), 2);
+                        while taken.contains(&name) {
+                            name = format!("{base} #{n}");
+                            n += 1;
+                        }
+                        taken.insert(name.clone());
+                        name
+                    }
+                };
+                o.insert(name, x);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn path(f: &Finding) -> &[usize] {
     match &f.field {
-        Field::Input { pointer, .. } => pointer,
-        Field::Text => "",
+        Field::Input { path, .. } => path,
+        Field::Text => &[],
     }
 }
 
@@ -858,14 +904,16 @@ mod tests {
             .map(|f| {
                 let at = match &f.field {
                     Field::Text => text[f.start..f.end].to_string(),
-                    Field::Input { pointer, key: true } => {
-                        pointer[f.start + 1..f.end + 1].to_string()
+                    Field::Input { path, key } => {
+                        let input = x.events[1].input.as_ref().unwrap();
+                        let (k, v) = findings::at(input, path).unwrap();
+                        let s = if *key {
+                            k.unwrap()
+                        } else {
+                            v.as_str().unwrap()
+                        };
+                        s[f.start..f.end].to_string()
                     }
-                    Field::Input { pointer, .. } => x.events[1].input.as_ref().unwrap()
-                        [&pointer[1..]]
-                        .as_str()
-                        .unwrap()[f.start..f.end]
-                        .to_string(),
                 };
                 (f.event, f.kind, at)
             })
@@ -939,6 +987,45 @@ mod tests {
         let why = refused(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
         assert!(why.contains("do not fit"), "{why}");
         assert!(!why.contains(&key), "{why}");
+    }
+
+    #[test]
+    fn a_secret_key_is_placed_by_position_and_masked_with_what_it_holds() {
+        let key = fake_key();
+        // The key is a secret, it holds one, and a sibling would sort between them once renamed.
+        let input = serde_json::json!({
+            "env": {key.clone(): {"token": "synthetic-tok-1"}, "[secret: x": 1, "zz": "kept"},
+        });
+        let (_d, home) = home_with("deploy", &input);
+        let reader = Reader::model(Some("ollama"), None);
+        let t = text(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
+        assert!(!t.contains(&key) && !t.contains("synthetic-tok-1"), "{t}");
+        assert!(
+            t.contains(r#""zz":"kept""#) && t.contains(r#""[secret: x":1"#),
+            "{t}"
+        );
+        assert_eq!(placeholders(&t).len(), 2, "{t}");
+        // The findings file names the key's place by position only.
+        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let file = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !file.contains(&key) && !file.contains("synthetic-tok"),
+            "{file}"
+        );
+
+        // A place the input lacks refuses the read, and the refusal names no place.
+        let mut f: serde_json::Value = serde_json::from_str(&file).unwrap();
+        let input_finding = f["findings"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|x| x["field"] == "input")
+            .unwrap();
+        input_finding["path"] = serde_json::json!([0, 7]);
+        std::fs::write(&path, f.to_string()).unwrap();
+        let why = refused(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
+        assert!(why.contains("do not fit"), "{why}");
+        assert!(!why.contains("env") && !why.contains('7'), "{why}");
     }
 
     #[test]

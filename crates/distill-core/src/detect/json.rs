@@ -1,7 +1,7 @@
 //! Text that is JSON (tool arguments, a tool's JSON output) is read token by token, so no
 //! pattern has to read escaped JSON. Each string is decoded and detected on its own (a string
 //! that is JSON itself recurses), and what is found is mapped back to bytes of the text. A value
-//! under a credential-named key is one finding whole. Ported from the previous build's redactor.
+//! under a credential-named key is one finding whole, a string or any number. Ported from the previous build's redactor.
 
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -136,13 +136,13 @@ struct Tok {
 }
 
 enum Role {
-    /// A non-empty string, or a number of 1e7 or more, under a credential-named key.
+    /// A non-empty string, or any number, under a credential-named key.
     Secret,
     /// Any other string, object keys included.
     Str,
 }
 
-/// The strings (and secret numbers) of a JSON document, with their byte ranges; `None` unless
+/// The strings (and numbers under credential-named keys) of a JSON document, with their byte ranges; `None` unless
 /// the whole text is valid JSON. Iterative, so nesting depth costs no stack.
 fn json_tokens(text: &str) -> Option<Vec<Tok>> {
     // `secret`: the value being read sits under a credential-named key. Arrays pass that on
@@ -218,7 +218,7 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                     }
                     b'-' | b'0'..=b'9' => {
                         let end = number_end(b, i)?;
-                        if secret && is_secret_number(&text[i..end]) {
+                        if secret {
                             toks.push(Tok {
                                 start: i,
                                 end,
@@ -274,12 +274,6 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
             }
         }
     }
-}
-
-/// A number under a credential-named key that is long enough to be a secret, written in any
-/// notation (`12345678901`, `1e21`). Shorter ones are counts and ports.
-pub(super) fn is_secret_number(written: &str) -> bool {
-    written.parse::<f64>().is_ok_and(|f| f.abs() >= 1e7)
 }
 
 /// The end (past the closing quote) of the JSON string starting at `b[i]`.

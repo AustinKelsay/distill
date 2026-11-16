@@ -81,7 +81,7 @@ fn a_passage_in_tool_input_says_where_and_a_long_string_is_cut_around_the_match(
     let (_d, home) = indexed(&[a]);
     let t = as_model(&home, "release", &Filter::default());
     assert!(
-        t.contains("Matched in event 1 (tool_call, input at /command): cargo build --release"),
+        t.contains("Matched in event 1 (tool_call, its input): cargo build --release"),
         "{t}"
     );
     let t = as_model(&home, "needle", &Filter::default());

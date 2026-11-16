@@ -58,13 +58,11 @@ fn findings_place_each_secret_and_never_hold_its_value() {
         let e = events.iter().find(|e| e.seq == x.event).unwrap();
         let place = match &x.field {
             Field::Text => e.text.clone().unwrap(),
-            Field::Input { pointer, key } => {
+            Field::Input { path, key } => {
                 assert!(!key);
-                e.input
-                    .as_ref()
+                at(e.input.as_ref().unwrap(), path)
                     .unwrap()
-                    .pointer(pointer)
-                    .unwrap()
+                    .1
                     .as_str()
                     .unwrap()
                     .to_string()
@@ -79,7 +77,7 @@ fn findings_place_each_secret_and_never_hold_its_value() {
             (
                 Kind::AssignedSecret,
                 Field::Input {
-                    pointer: "/command".into(),
+                    path: vec![0],
                     key: false
                 },
                 "synthetic-value-1".into()
@@ -88,7 +86,7 @@ fn findings_place_each_secret_and_never_hold_its_value() {
             (
                 Kind::CredentialField,
                 Field::Input {
-                    pointer: "/password".into(),
+                    path: vec![1],
                     key: false
                 },
                 "synthetic-pass-2".into()
@@ -106,7 +104,7 @@ fn findings_place_each_secret_and_never_hold_its_value() {
     assert_eq!(stored["made_from"]["parser"], s0.normalizer.version);
     assert_eq!(stored["findings"][0]["field"], "text");
     assert_eq!(stored["findings"][1]["field"], "input");
-    assert_eq!(stored["findings"][1]["pointer"], "/command");
+    assert_eq!(stored["findings"][1]["path"], serde_json::json!([0]));
     assert_eq!(stored["findings"][0]["kind"], "anthropic_key");
     let fp = f.findings[0].fingerprint.as_str();
     assert!(

@@ -23,10 +23,30 @@ use serde_json::{Value, json};
 fn no_tool_serves_a_planted_secret() {
     let key = ["sk-", "ant-", "api03-", &"Mq4".repeat(9)].concat();
     let password = ["synthetic", "-mcp-", "pass-2208"].concat();
+    // A token written as a JSON object key, and a short number under a credential-named key.
+    let key_token = ["ghp_", &"Wd3".repeat(12)].concat();
+    let pin: u64 = 9_000_000 + 271_828;
+    let secrets = [
+        key.clone(),
+        password.clone(),
+        key_token.clone(),
+        pin.to_string(),
+    ];
+    let holds = move |text: &str| {
+        let text = text.to_lowercase();
+        secrets.iter().any(|s| text.contains(&s.to_lowercase()))
+    };
     // A made-up name, for the model detection pass to find.
     let name = "Jane Roe";
     let said = serde_json::to_string(&format!("deploy with {key} now and tell {name}")).unwrap();
-    let input = json!({"command": format!("export DB_PASSWORD={password} && deploy")});
+    let mut input = serde_json::Map::new();
+    input.insert(
+        "command".into(),
+        format!("export DB_PASSWORD={password} && deploy").into(),
+    );
+    input.insert(key_token.clone(), "on".into());
+    input.insert("api_token".into(), pin.into());
+    let input = Value::Object(input);
     let session = format!(
         r#"{{"type":"user","cwd":"/work/app","timestamp":"2026-11-10T10:00:00Z","message":{{"role":"user","content":{said}}}}}
 {{"type":"assistant","timestamp":"2026-11-10T10:00:05Z","message":{{"role":"assistant","model":"m","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{input}}}]}}}}
@@ -59,14 +79,11 @@ fn no_tool_serves_a_planted_secret() {
         json!({"title": title, "summary": summary, "tags": ["deploy"], "outcome": "done"})
             .to_string()
     };
-    let (echo, served) = (key.clone(), password.clone());
+    let (echo, held) = (key.clone(), holds.clone());
     let leaky = FakeRuntime::running()
         .with_model("small:8b", Stored::Here)
         .replying(move |_, prompt| {
-            assert!(
-                !prompt.contains(&echo) && !prompt.contains(&served),
-                "{prompt}"
-            );
+            assert!(!held(prompt), "{prompt}");
             card_reply(&format!("Deploy with {echo}"), "Deployed.")
         });
     let r = distill_core::cards::write(&home, &config, &leaky.runtime()).unwrap();
@@ -87,14 +104,11 @@ fn no_tool_serves_a_planted_secret() {
 
     // Personal details: the model is never served a value, and an answer that names one (it
     // cannot know it, but may guess) or a placeholder is never a finding. Only the name is.
-    let (echo, served) = (key.clone(), password.clone());
+    let (echo, served, held) = (key.clone(), password.clone(), holds.clone());
     let finder = FakeRuntime::running()
         .with_model("small:8b", Stored::Here)
         .replying(move |_, prompt| {
-            assert!(
-                !prompt.contains(&echo) && !prompt.contains(&served),
-                "{prompt}"
-            );
+            assert!(!held(prompt), "{prompt}");
             assert!(
                 !prompt.contains("DB_PASSWORD"),
                 "tool input was sent: {prompt}"
@@ -117,12 +131,12 @@ fn no_tool_serves_a_planted_secret() {
     let mut saved = home.load_config().unwrap();
     saved.steward.embedding_model = config.steward.embedding_model.clone();
     saved.save(&home.config_path()).unwrap();
-    let (k, p) = (key.clone(), password.clone());
+    let held = holds.clone();
     let embedder = FakeRuntime::running()
         .with_model("small:8b", Stored::Here)
         .with_model("embed:small", Stored::Here)
         .embedding(move |text| {
-            assert!(!text.contains(&k) && !text.contains(&p), "embedded: {text}");
+            assert!(!held(text), "embedded: {text}");
             vec![1.0, text.len() as f32]
         });
     let r = distill_core::index::vectors::build(&home, &config, &embedder.runtime()).unwrap();
@@ -146,8 +160,8 @@ fn no_tool_serves_a_planted_secret() {
                 .unwrap();
             r.split('#').skip(1).map(|p| p[..8].to_string()).collect()
         };
-        // The two secrets and the name.
-        assert_eq!(shorts.len(), 3, "{reader:?}");
+        // The four secrets and the name.
+        assert_eq!(shorts.len(), 5, "{reader:?}");
         let mut calls = vec![
             ("list_sessions", json!({})),
             ("read_session", json!({"session": "claude-code/s1"})),
@@ -178,10 +192,7 @@ fn no_tool_serves_a_planted_secret() {
                     "params": {"name": tool, "arguments": args}}))
                 .unwrap();
             let whole = r.to_string();
-            assert!(
-                !whole.contains(&key) && !whole.contains(&password),
-                "{reader:?} {tool}: {whole}"
-            );
+            assert!(!holds(&whole), "{reader:?} {tool}: {whole}");
             texts.push(
                 r["result"]["content"][0]["text"]
                     .as_str()
@@ -199,6 +210,13 @@ fn no_tool_serves_a_planted_secret() {
             "{reader:?}: {}",
             texts[1]
         );
+        for kind in ["github_token", "credential_field"] {
+            assert!(
+                texts[1].contains(&format!("[secret: {kind} #")),
+                "{reader:?}: {}",
+                texts[1]
+            );
+        }
         for t in &texts[texts.len() - 4..texts.len() - 2] {
             assert!(
                 t.contains("deploy with [secret: anthropic_key #"),
@@ -241,38 +259,28 @@ fn no_tool_serves_a_planted_secret() {
         (r["result"]["isError"] == true, text, r.to_string())
     };
     let fingerprints: Vec<String> = fingerprints_in(&last_read);
-    assert_eq!(fingerprints.len(), 2, "{last_read}");
+    assert_eq!(fingerprints.len(), 4, "{last_read}");
     let (err, receipt, whole) = call(
         "request_reveal",
         json!({"session": "claude-code/s1", "fingerprints": fingerprints, "reason": "rotate them"}),
     );
     assert!(!err, "{receipt}");
-    assert!(
-        !whole.contains(&key) && !whole.contains(&password),
-        "{whole}"
-    );
+    assert!(!holds(&whole), "{whole}");
     let id = receipt.split_whitespace().nth(2).unwrap().to_string();
     let (err, early, whole) = call("collect_reveal", json!({"request": id}));
     assert!(err && early.contains("not approved yet"), "{early}");
-    assert!(
-        !whole.contains(&key) && !whole.contains(&password),
-        "{whole}"
-    );
+    assert!(!holds(&whole), "{whole}");
 
     // The owner approves, in the GUI; no tool can.
     distill_core::reveal::approve(&home, &id).unwrap();
     let (err, values, _) = call("collect_reveal", json!({"request": id}));
     assert!(!err, "{values}");
-    assert!(
-        values.contains(&key) && values.contains(&password),
-        "{values}"
-    );
+    for s in [&key, &password, &key_token, &pin.to_string()] {
+        assert!(values.contains(s.as_str()), "{values}");
+    }
     let (err, again, whole) = call("collect_reveal", json!({"request": id}));
     assert!(err && again.contains("already collected"), "{again}");
-    assert!(
-        !whole.contains(&key) && !whole.contains(&password),
-        "{whole}"
-    );
+    assert!(!holds(&whole), "{whole}");
 
     let embeds = embedder
         .calls()
@@ -310,7 +318,7 @@ fn no_tool_serves_a_planted_secret() {
                     p.display()
                 );
             }
-            if !text.contains(&key.to_lowercase()) && !text.contains(&password.to_lowercase()) {
+            if !holds(&text) {
                 continue;
             }
             let events = p.parent() == Some(session.as_path())

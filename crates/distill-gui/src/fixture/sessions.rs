@@ -54,10 +54,10 @@ fn finding(event: u64, text: &str, value: &str, kind: Kind, n: u8) -> Finding {
     .expect("a finding")
 }
 
-fn input_finding(event: u64, pointer: &str, s: &str, value: &str, kind: Kind, n: u8) -> Finding {
+fn input_finding(event: u64, path: &[usize], s: &str, value: &str, kind: Kind, n: u8) -> Finding {
     let (start, end) = at(s, value);
     serde_json::from_value(json!({
-        "event": event, "field": "input", "pointer": pointer, "start": start, "end": end,
+        "event": event, "field": "input", "path": path, "start": start, "end": end,
         "kind": kind, "fingerprint": fingerprint(n),
     }))
     .expect("a finding")
@@ -302,8 +302,8 @@ pub fn deploy_excerpt() -> Excerpt {
     let findings = vec![
         finding(0, &said, &fake_token(), Kind::AssignedSecret, 1),
         finding(0, &said, &fake_email(), Kind::Email, 2),
-        input_finding(3, "/command", &command, &fake_bearer(), Kind::Bearer, 4),
-        input_finding(3, "/command", &command, &fake_host(), Kind::TailnetHost, 3),
+        input_finding(3, &[0], &command, &fake_bearer(), Kind::Bearer, 4),
+        input_finding(3, &[0], &command, &fake_host(), Kind::TailnetHost, 3),
         finding(4, &result, &fake_host(), Kind::TailnetHost, 3),
         finding(5, &reply, &fake_email(), Kind::Email, 2),
     ];

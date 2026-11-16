@@ -93,7 +93,7 @@ fn event(e: &Event, all: &[Finding]) -> EventDoc {
             mine: &mine,
             placed: &mut placed,
         };
-        w.value(input, "", 0);
+        w.value(input, &mut Vec::new(), 0);
     }
     if let Some(i) = placed.iter().position(|p| !p) {
         let (n, f) = mine[i];
@@ -130,7 +130,7 @@ fn mark(f: &Finding, n: usize, base: usize) -> Mark {
 }
 
 /// Writes a tool call's input as indented `key: value` lines, placing the findings whose JSON
-/// pointer names each key or value as it is written.
+/// path names each key or value as it is written.
 struct Input<'a> {
     out: &'a mut String,
     marks: &'a mut Vec<Mark>,
@@ -139,10 +139,10 @@ struct Input<'a> {
 }
 
 impl Input<'_> {
-    fn place(&mut self, pointer: &str, key: bool, base: usize, len: usize) {
+    fn place(&mut self, path: &[usize], key: bool, base: usize, len: usize) {
         for (i, (n, f)) in self.mine.iter().enumerate() {
-            if let Field::Input { pointer: p, key: k } = &f.field
-                && p == pointer
+            if let Field::Input { path: p, key: k } = &f.field
+                && p == path
                 && *k == key
                 && f.end <= len
             {
@@ -153,7 +153,7 @@ impl Input<'_> {
     }
 
     /// A scalar as written, with its findings.
-    fn scalar(&mut self, v: &Value, pointer: &str) {
+    fn scalar(&mut self, v: &Value, path: &[usize]) {
         let s = match v {
             Value::String(s) => s.clone(),
             Value::Number(n) => n.to_string(),
@@ -164,7 +164,7 @@ impl Input<'_> {
         };
         let base = self.out.len();
         self.out.push_str(&s);
-        self.place(pointer, false, base, s.len());
+        self.place(path, false, base, s.len());
     }
 
     fn nested(v: &Value) -> bool {
@@ -175,7 +175,7 @@ impl Input<'_> {
         }
     }
 
-    fn value(&mut self, v: &Value, pointer: &str, indent: usize) {
+    fn value(&mut self, v: &Value, path: &mut Vec<usize>, indent: usize) {
         match v {
             Value::Object(o) if !o.is_empty() => {
                 for (i, (k, x)) in o.iter().enumerate() {
@@ -183,18 +183,19 @@ impl Input<'_> {
                         self.out.push('\n');
                     }
                     self.out.push_str(&" ".repeat(indent));
-                    let at = format!("{pointer}/{}", k.replace('~', "~0").replace('/', "~1"));
+                    path.push(i);
                     let base = self.out.len();
                     self.out.push_str(k);
-                    self.place(&at, true, base, k.len());
+                    self.place(path, true, base, k.len());
                     self.out.push(':');
                     if Self::nested(x) {
                         self.out.push('\n');
-                        self.value(x, &at, indent + 2);
+                        self.value(x, path, indent + 2);
                     } else {
                         self.out.push(' ');
-                        self.scalar(x, &at);
+                        self.scalar(x, path);
                     }
+                    path.pop();
                 }
             }
             Value::Array(a) if !a.is_empty() => {
@@ -203,18 +204,19 @@ impl Input<'_> {
                         self.out.push('\n');
                     }
                     self.out.push_str(&" ".repeat(indent));
-                    let at = format!("{pointer}/{i}");
+                    path.push(i);
                     self.out.push('-');
                     if Self::nested(x) {
                         self.out.push('\n');
-                        self.value(x, &at, indent + 2);
+                        self.value(x, path, indent + 2);
                     } else {
                         self.out.push(' ');
-                        self.scalar(x, &at);
+                        self.scalar(x, path);
                     }
+                    path.pop();
                 }
             }
-            _ => self.scalar(v, pointer),
+            _ => self.scalar(v, path),
         }
     }
 }

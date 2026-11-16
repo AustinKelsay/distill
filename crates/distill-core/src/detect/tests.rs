@@ -133,7 +133,7 @@ fn catches_credential_fields_and_quoted_json() {
     assert_eq!(
         detect_value(&v),
         [ValueHit {
-            pointer: "/input/password".into(),
+            path: vec![0, 0],
             key: false,
             hit: Hit {
                 kind: Kind::CredentialField,
@@ -152,11 +152,11 @@ fn catches_credential_fields_and_quoted_json() {
     );
 }
 
-/// Where `detect_value` finds something: each pointer, and whether it is a key.
-fn places(v: &Value) -> Vec<(String, bool, Kind, String)> {
+/// Where `detect_value` finds something: each path, and whether it is a key.
+fn places(v: &Value) -> Vec<(Vec<usize>, bool, Kind, String)> {
     let mut out: Vec<_> = detect_value(v)
         .into_iter()
-        .map(|h| (h.pointer, h.key, h.hit.kind, h.hit.value))
+        .map(|h| (h.path, h.key, h.hit.kind, h.hit.value))
         .collect();
     out.sort();
     out
@@ -190,12 +190,7 @@ fn catches_prefixed_secret_names() {
     let v = json!({"TINFOIL_API_KEY": "short", "max_tokens": 10});
     assert_eq!(
         places(&v),
-        [(
-            "/TINFOIL_API_KEY".into(),
-            false,
-            Kind::CredentialField,
-            "short".into()
-        )]
+        [(vec![0], false, Kind::CredentialField, "short".into())]
     );
 }
 
@@ -299,12 +294,12 @@ fn assignment_values_are_found_whole_in_json() {
             "synthetic-value",
             "synthetic",
         ),
-        // A long number in an array under a secret name; a short one is not a secret. (Cut
-        // short, the text scanner leaves a JSON array alone.)
+        // A number in an array under a secret name, however short; one elsewhere is not a
+        // secret. (Cut short, the text scanner leaves a JSON array alone.)
         (
-            r#"{"token":[12345678,2],"ok":true}"#,
+            r#"{"token":[4417],"ok":2}"#,
             Kind::CredentialField,
-            "12345678",
+            "4417",
             "",
         ),
         // Every occurrence of a duplicate key.
@@ -542,7 +537,7 @@ fn assignment_values_are_found_whole_in_text() {
     }
     let v = json!({"APP__DB_PASSWORD": "short", "_token": "x"});
     let p: Vec<_> = places(&v).into_iter().map(|p| p.0).collect();
-    assert_eq!(p, ["/APP__DB_PASSWORD", "/_token"]);
+    assert_eq!(p, [[0], [1]]);
 }
 
 #[test]
@@ -608,10 +603,18 @@ fn json_text_is_read_field_by_field_at_any_depth() {
 fn json_is_read_token_by_token() {
     let nested = json!({"a": r#"{"password":"synthetic-secret","password":null}"#}).to_string();
     assert!(covered(&nested, "synthetic"));
-    // Numbers: a long one under a credential key is found, whatever its notation; others not.
+    // Numbers: any one under a credential key is found, whatever its notation; others not.
     assert_eq!(
         found(r#"{"password":1000000000000000000000}"#),
         hits(Kind::CredentialField, &["1000000000000000000000"])
+    );
+    assert_eq!(
+        found(r#"{"pin_token": 4417, "count": 3, "api_key": [-2.5]}"#),
+        hits(Kind::CredentialField, &["4417", "-2.5"])
+    );
+    assert_eq!(
+        places(&json!({"pin_token": 4417, "count": 3})),
+        [(vec![1], false, Kind::CredentialField, "4417".into())]
     );
     assert_eq!(
         found(
@@ -678,29 +681,24 @@ fn json_is_read_token_by_token() {
         places(&v),
         [
             (
-                "/secret/0".into(),
+                vec![2, 0],
                 false,
                 Kind::CredentialField,
                 "synthetic-a".into()
             ),
             (
-                "/tab0c0ffe-password".into(),
+                vec![3],
                 false,
                 Kind::CredentialField,
                 "synthetic-secret".into()
             ),
-            (
-                "/token".into(),
-                false,
-                Kind::CredentialField,
-                "1e+21".into()
-            ),
+            (vec![4], false, Kind::CredentialField, "1e+21".into()),
         ]
     );
 }
 
 #[test]
-fn json_values_are_found_by_pointer_in_strings_and_keys() {
+fn json_values_are_found_by_position_in_strings_and_keys() {
     let key = tinfoil();
     let v = json!({"cmd": format!("run {key} now"), "a/b": [{"x~y": "password=synthetic-value"}],
         key.clone(): "ok"});
@@ -709,24 +707,34 @@ fn json_values_are_found_by_pointer_in_strings_and_keys() {
         found,
         [
             (
-                "/a~1b/0/x~0y".into(),
+                vec![0, 0, 0],
                 false,
                 Kind::AssignedSecret,
                 "synthetic-value".into()
             ),
-            ("/cmd".into(), false, Kind::TinfoilKey, key.clone()),
-            (format!("/{key}"), true, Kind::TinfoilKey, key.clone()),
+            (vec![1], false, Kind::TinfoilKey, key.clone()),
+            (vec![2], true, Kind::TinfoilKey, key.clone()),
         ]
     );
     // The range counts bytes of the decoded string, or key.
     let hits = detect_value(&v);
-    let cmd = hits.iter().find(|h| h.pointer == "/cmd").unwrap();
+    let cmd = hits.iter().find(|h| h.path == [1]).unwrap();
     assert_eq!(cmd.hit.range, 4..4 + key.len());
     let k = hits.iter().find(|h| h.key).unwrap();
     assert_eq!(k.hit.range, 0..key.len());
-    assert!(
-        v.pointer("/a~1b/0/x~0y").is_some(),
-        "pointers follow RFC 6901"
+    // A place is positions only: what is under a secret key is placed without naming the key.
+    let under = json!({ key.clone(): {"password": "synthetic-value"} });
+    assert_eq!(
+        places(&under),
+        [
+            (vec![0], true, Kind::TinfoilKey, key.clone()),
+            (
+                vec![0, 0],
+                false,
+                Kind::CredentialField,
+                "synthetic-value".into()
+            ),
+        ]
     );
 }
 
@@ -930,20 +938,10 @@ fn identifiers_are_found_in_json_keys_and_escaped_text() {
     assert_eq!(
         places(&v),
         [
+            (vec![0], true, Kind::Email, "alice@proton.me".into()),
+            (vec![1], false, Kind::TailnetAddress, "100.101.2.3".into()),
             (
-                "/alice@proton.me".into(),
-                true,
-                Kind::Email,
-                "alice@proton.me".into()
-            ),
-            (
-                "/box.tail1234.ts.net".into(),
-                false,
-                Kind::TailnetAddress,
-                "100.101.2.3".into()
-            ),
-            (
-                "/box.tail1234.ts.net".into(),
+                vec![1],
                 true,
                 Kind::TailnetHost,
                 "box.tail1234.ts.net".into()
