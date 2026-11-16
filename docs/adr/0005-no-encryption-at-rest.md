@@ -6,4 +6,4 @@ Encryption would protect only sessions a harness has already pruned, since the r
 
 ## Consequences
 
-Distill meets the bar another way: owner-only file modes, no network listener, secrets kept out of everything derived from sessions, fingerprints that cannot be reversed, and a rotation list. It relies on the machine's disk encryption and on backups being encrypted.
+Distill meets the bar another way: owner-only file modes, no network listener, secret values kept out of the index, cards and vectors, fingerprints that cannot be reversed, and a rotation list. It relies on the machine's disk encryption and on backups being encrypted.
