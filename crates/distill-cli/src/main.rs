@@ -45,6 +45,8 @@ enum Cmd {
     Parse(parse::Args),
     /// Scan every session whose findings are missing or out of date for secrets
     Scan(scan::Args),
+    /// Findings by fingerprint: the rotation list, or where one fingerprint appears
+    Findings(findings::Args),
     /// What the timer runs: every step of a tick, in order
     Tick(tick::Args),
     /// Sessions, capture health and format drift per harness, the last sweep and scan progress
@@ -86,6 +88,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Verify(a) => verify::run(&ctx, a),
         Cmd::Parse(a) => parse::run(&ctx, a),
         Cmd::Scan(a) => scan::run(&ctx, a),
+        Cmd::Findings(a) => findings::run(&ctx, a),
         Cmd::Tick(a) => tick::run(&ctx, a),
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),

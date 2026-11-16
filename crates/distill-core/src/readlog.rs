@@ -32,10 +32,21 @@ pub enum ReadResult {
     /// A list of sessions, this many of them, each with its facts and the opening of what the
     /// owner first wrote.
     Listed { sessions: u64 },
+    /// Findings by fingerprint: this many fingerprints, and the sessions listed for them (none
+    /// for the rotation list, which gives counts). Never a value or session text.
+    Findings {
+        fingerprints: u64,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        sessions: u64,
+    },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.
     Failed { error: String },
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl ReadEntry {

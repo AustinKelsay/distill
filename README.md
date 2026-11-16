@@ -27,6 +27,7 @@ Capture and the parsers, which the rebuild keeps (ADR 0001):
 | `distill verify` | Checks every capture in the raw archive against its hash. |
 | `distill parse` | Turns captures into `sessions/<harness>/<id>/events.jsonl` (prompts, replies, reasoning, tool calls and results) and `meta.json` (session facts, which hold no session text), and rebuilds the session list. Reports format drift. |
 | `distill scan` | Scans every session whose findings are missing or out of date for secrets, and stores `findings.json` beside it: each secret's place, kind and fingerprint (a keyed hash), never its value. Stored text is never changed. Prints counts only. |
+| `distill findings [<fingerprint>]` | The rotation list: each secret by fingerprint (its short form), with its kind, how many sessions it appears in, their harnesses, and when it was first and last seen. `--kind personal`, `all` or one kind (`github_token`) selects other kinds; `--harness`, `--since`, `--until` filter; `--sort spread` (the default) or `recent`. Given a fingerprint or its short form, every session it appears in, for every fingerprint that starts with it. Answers from stored findings, never a value. In the read log. |
 | `distill tick` | What the timer runs: sweep, parse, then scan. Writes one entry to the run log. |
 | `distill status` | Sessions, capture health and format drift per harness, the last sweep, and how many sessions are scanned. |
 | `distill runs` | The run log. |
@@ -35,7 +36,7 @@ Capture and the parsers, which the rebuild keeps (ADR 0001):
 | `distill reads` | The read log, newest first: every call to the read path, refusals included, with time, reader, session and result; a call that lists sessions is one line with how many it listed. `--reader` narrows it to `owner`, `distill`, a provider or `provider/model`. |
 | `distill schedule install` | Runs `distill tick` on a timer (launchd on macOS, systemd on Linux). |
 | `distill gui` | The window. A shell that shows nothing until its ticket lands. |
-| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call) and `read_session` (in full or by event range). See [The MCP server](#the-mcp-server). |
+| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call) `read_session` (in full or by event range) and `list_findings` (the rotation list, or where one fingerprint appears, never a value). See [The MCP server](#the-mcp-server). |
 
 Only `distill read` and the MCP server's tools return session text, and only through the read path, the one function in core that returns it.
 
