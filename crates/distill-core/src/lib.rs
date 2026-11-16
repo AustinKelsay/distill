@@ -4,11 +4,12 @@
 //! What is here is what the rebuild keeps (ADR 0001): capture (the sweep, the raw archive,
 //! `verify`, the timer) and the parsers with their mirror rules and format-drift detection; and
 //! what it adds: trust, the read path, the detector (`detect`), findings (`findings`), the word
-//! index (`index`) and reveals (`reveal`). The spec is issue #72; terms are in `GLOSSARY.md`. The
-//! layout of a Distill home is fixed by the spec, and [`Home`] has a path helper for every entry
-//! in it.
+//! index (`index`), cards from a local model (`cards`) and reveals (`reveal`). The spec is issue
+//! #72; terms are in `GLOSSARY.md`. The layout of a Distill home is fixed by the spec, and
+//! [`Home`] has a path helper for every entry in it.
 
 pub mod archive;
+pub mod cards;
 pub mod config;
 pub mod detect;
 pub mod exposure;

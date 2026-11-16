@@ -1,8 +1,9 @@
 //! `distill search`: sessions that have every word of a query, for a model at a named provider,
-//! best first, with each one's facts, opening and matching passage. Prints session text, and
+//! best first, with each one's facts, card (or opening) and matching passage. Prints session text, and
 //! only through the read path.
 
 use anyhow::{Result, bail};
+use distill_core::cards::Outcome;
 use distill_core::read::{self, Filter, PAGE_MAX, Page, SEARCH_DEFAULT, Searched};
 use distill_core::runtime::LocalRuntime;
 use distill_core::trust::Reader;
@@ -42,6 +43,12 @@ pub struct Args {
     /// Include sessions the previous build's steward ran
     #[arg(long)]
     steward: bool,
+    /// Only sessions whose card has this tag, ignoring case
+    #[arg(long)]
+    tag: Option<String>,
+    /// Only sessions whose card has this outcome: done, partly_done, failed or unknown
+    #[arg(long)]
+    outcome: Option<String>,
     /// How many matching sessions to skip
     #[arg(long, default_value_t = 0)]
     offset: usize,
@@ -65,6 +72,16 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         until: day(&a.until)?,
         mirrors: a.mirrors,
         steward: a.steward,
+        tag: a.tag,
+        outcome: a
+            .outcome
+            .as_deref()
+            .map(|o| {
+                Outcome::parse(o).ok_or_else(|| {
+                    anyhow::anyhow!("unknown outcome {o:?}: done, partly_done, failed or unknown")
+                })
+            })
+            .transpose()?,
     };
     if a.limit == 0 || a.limit > PAGE_MAX {
         bail!("--limit is from 1 to {PAGE_MAX}");

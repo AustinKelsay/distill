@@ -241,7 +241,8 @@ sweep_every_minutes = 60
     );
     human(&user, &home, &["scan"]);
 
-    // A tick is sweep, parse, scan then the word index, and one run-log entry.
+    // A tick is sweep, parse, scan, the word index then cards, and one run-log entry. With no
+    // card_model set, the card step is skipped and says why.
     let before = json(&user, &home, &["runs", "--limit", "100"])
         .as_array()
         .unwrap()
@@ -253,8 +254,12 @@ sweep_every_minutes = 60
         .iter()
         .map(|s| s["name"].clone())
         .collect();
-    assert_eq!(names, ["sweep", "parse", "scan", "index"], "{t}");
+    assert_eq!(names, ["sweep", "parse", "scan", "index", "cards"], "{t}");
     assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
+    assert_eq!(
+        t["steps"][4]["report"]["skipped"], "no card_model is set",
+        "{t}"
+    );
     let runs = json(&user, &home, &["runs", "--limit", "100"]);
     assert_eq!(runs.as_array().unwrap().len(), before + 1);
     assert_eq!(runs[0]["step"], "tick");
@@ -273,6 +278,10 @@ sweep_every_minutes = 60
     assert_eq!(st["scan"]["current"], 3, "{st}");
     assert_eq!(st["scan"]["pending"], 0, "{st}");
     assert_eq!(st["index"]["current"], 3, "{st}");
+    assert_eq!(st["cards"]["skipped"], "no card_model is set", "{st}");
+    // The previous steward's session gets no card.
+    assert_eq!(st["cards"]["sessions"], 2, "{st}");
+    assert_eq!(st["cards"]["pending"], 2, "{st}");
     assert_eq!(st["index"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
     // Just swept, and no harness here deletes sessions sooner than the timer runs.

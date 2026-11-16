@@ -1,13 +1,13 @@
 //! Search through the read path (issue #72, "Organization" and "The read path"): sessions that
 //! match a query, best first, each with its facts, the opening of what the owner first wrote and
 //! the matching passage, prepared for the reader like any other session text, and logged as one
-//! line with a count.
+//! line with a count. A session's current card is part of the word index and of its hit; a model
+//! reads the card's title and summary in place of the opening.
 //!
 //! The candidates come from the index, never from reading every session: only the sessions on the
 //! page asked for are read, to prepare their openings and passages. Today the one source is the
 //! word index ([`Source::Words`]). Search by meaning (#82) adds its own ranked list in
-//! [`found`], and [`merge`] fuses the lists. When cards exist (#81), a hit shows the card's title
-//! in place of the opening.
+//! [`found`], and [`merge`] fuses the lists.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -15,8 +15,9 @@ use anyhow::{Result, bail};
 use regex::Regex;
 use serde_json::Value;
 
-use super::list::{LEFT_OUT, facts_line, opening_line, opening_of};
+use super::list::{LEFT_OUT, card_or_opening, facts_line, opening_of};
 use super::{Filter, NOTICE_END, NOTICE_START, Opening, PAGE_MAX, Page, defuse, mask, scanned};
+use crate::cards::Shown;
 use crate::config::Config;
 use crate::findings::{Field, Finding, Findings};
 use crate::home::Home;
@@ -58,6 +59,8 @@ pub struct Hits {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
     pub facts: SessionMeta,
+    /// The session's current card. A model reads its title and summary in place of the opening.
+    pub card: Option<Shown>,
     pub opening: Opening,
     /// Where the session matches; None when it was withheld from the reader or holds no text.
     pub passage: Option<Passage>,
@@ -222,9 +225,13 @@ fn serve(
     }
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
+    let key = crate::findings::FingerprintKey::existing(home)
+        .ok()
+        .flatten();
     let candidates: HashMap<String, &SessionMeta> = all
         .iter()
         .filter(|m| filter.matches(m, &originals))
+        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m))
         .map(|m| (m.key(), m))
         .collect();
     let (lists, indexed) = found(home, &words, &candidates)?;
@@ -262,6 +269,7 @@ fn hit(
 ) -> Hit {
     let withheld = |why: String| Hit {
         facts: facts.clone(),
+        card: None,
         opening: Opening::Withheld(why),
         passage: None,
         found_by: m.found_by.clone(),
@@ -271,6 +279,7 @@ fn hit(
         Ok(Err(why)) => return withheld(why),
         Err(e) => return withheld(format!("{} could not be read: {e:#}", facts.key())),
     };
+    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner));
     let (events, owner_findings) = match reader {
         Reader::Owner => (events, Some(&scan)),
         Reader::Model { .. } | Reader::Distill => match mask(events, &scan) {
@@ -285,6 +294,7 @@ fn hit(
     };
     Hit {
         facts: facts.clone(),
+        card,
         opening: opening_of(&events),
         passage: passage(&events, owner_findings, words, &m.events),
         found_by: m.found_by,
@@ -298,7 +308,8 @@ const AFTER: usize = 240;
 /// The passage of `events` that best matches `words`: the string, in the events the index pointed
 /// at, holding the most of them, and around the first. When none holds any (a word the index
 /// found in a placeholder, which the owner's stored text doesn't have), the start of the first
-/// string of the first event pointed at.
+/// string of the first event pointed at; and None when it pointed at none, because the words are
+/// only in the session's card.
 fn passage(
     events: &[Event],
     findings: Option<&Findings>,
@@ -336,7 +347,7 @@ fn passage(
     let (e, field, text, at) = match best {
         Some((_, e, field, text, at)) => (e, field, text, at),
         None => {
-            let e = pointed.first().copied().or(events.first())?;
+            let e = pointed.first().copied()?;
             let (field, text) = strings(e).into_iter().next()?;
             (e, field, text, 0)
         }
@@ -498,7 +509,11 @@ fn render(hits: &Hits, offset: usize) -> String {
     }
     let mut body = String::new();
     for h in &hits.hits {
-        body += &format!("\n{}\n{}", facts_line(&h.facts), opening_line(&h.opening));
+        body += &format!(
+            "\n{}\n{}",
+            facts_line(&h.facts),
+            card_or_opening(h.card.as_ref(), &h.opening)
+        );
         if let Some(p) = &h.passage {
             let words: Vec<&str> = p.text.split_whitespace().collect();
             body += &format!(

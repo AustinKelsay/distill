@@ -5,8 +5,11 @@
 //!
 //! - **Entries.** The manifest (`manifest.json`) holds one entry per indexed session, recording
 //!   what it was built from ([`MadeFrom`]: the session's capture hash and parser version, which
-//!   name its events, and a digest of its secret findings). An entry whose session's events or
-//!   secret findings have changed is out of date, and the tick indexes the session again.
+//!   name its events, a digest of its secret findings, and its current card). An entry whose
+//!   session's events, secret findings or card have changed is out of date, and the tick indexes
+//!   the session again.
+//! - **Cards.** A session's current card (`crate::cards`) is indexed with its events: its title,
+//!   summary and tags. Their words point at no event.
 //! - **Segments.** The words themselves are in immutable segment files ([`segment`]), each holding
 //!   some sessions. Indexing a session again writes it to a new segment and points its entry
 //!   there; the old copy is dead and is dropped when segments are merged.
@@ -28,18 +31,19 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::cards::{self, Card};
 use crate::config::Config;
-use crate::findings::{Findings, FingerprintKey};
+use crate::findings::{BuiltFrom, Findings, FingerprintKey};
 use crate::home::Home;
 use crate::model::{Event, SessionMeta};
 use crate::normalize;
 use crate::read;
-use crate::util::{count, sha256_hex, write_atomic};
+use crate::util::{count, write_atomic};
 use segment::{Posting, Segment, Writer};
 
 /// The version of the index's format and of how it splits text into words. An index of another
 /// version is rebuilt.
-pub const INDEX_VERSION: u32 = 1;
+pub const INDEX_VERSION: u32 = 2;
 
 /// Words longer than this many characters are not indexed.
 pub const MAX_WORD: usize = 64;
@@ -56,20 +60,19 @@ const MAX_EVENTS: usize = 16;
 /// the entry is out of date.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MadeFrom {
-    /// The capture hash and parser version that name the session's events.
-    pub capture_hash: String,
-    pub parser: u32,
-    /// A digest of the session's secret findings: what its placeholders were made from.
-    pub secrets: String,
+    /// The session's events and secret findings: what its placeholders were made from.
+    #[serde(flatten)]
+    pub session: BuiltFrom,
+    /// The [`hash`](Card::hash) of the session's current card, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
 }
 
 impl MadeFrom {
-    fn of(facts: &SessionMeta, findings: &Findings) -> Self {
-        let secrets: Vec<_> = findings.findings.iter().filter(|f| f.is_secret()).collect();
+    pub fn of(facts: &SessionMeta, findings: &Findings, card: Option<&Card>) -> Self {
         Self {
-            capture_hash: facts.raw.sha256.clone(),
-            parser: facts.normalizer.version,
-            secrets: sha256_hex(&serde_json::to_vec(&secrets).unwrap_or_default()),
+            session: BuiltFrom::of(facts, findings),
+            card: card.map(Card::hash),
         }
     }
 }
@@ -136,14 +139,17 @@ fn is_current(
     let (Some(key), Some(entry)) = (key, entry) else {
         return false;
     };
-    if entry.made_from.capture_hash != facts.raw.sha256
-        || entry.made_from.parser != facts.normalizer.version
+    if entry.made_from.session.capture_hash != facts.raw.sha256
+        || entry.made_from.session.parser != facts.normalizer.version
     {
         return false;
     }
     crate::findings::load(home, facts)
         .filter(|f| f.is_current(facts, key, config))
-        .is_some_and(|f| MadeFrom::of(facts, &f) == entry.made_from)
+        .is_some_and(|f| {
+            let card = cards::current(home, facts, &f);
+            MadeFrom::of(facts, &f, card.as_ref()) == entry.made_from
+        })
 }
 
 /// What a build of the index did.
@@ -211,8 +217,9 @@ pub fn build(home: &Home) -> Result<IndexReport> {
     let mut batch = Batch::default();
     read::for_index(home, &pending, |facts, served| {
         match served {
-            Ok((events, findings)) => {
-                batch.add(facts, &events, MadeFrom::of(facts, findings));
+            Ok((events, findings, card)) => {
+                let made_from = MadeFrom::of(facts, findings, card.as_ref());
+                batch.add(facts, &events, card.as_ref(), made_from);
                 r.indexed += 1;
                 if batch.sessions.len() >= BATCH {
                     batch.flush(home, &mut m)?;
@@ -265,29 +272,43 @@ struct Batch {
 }
 
 impl Batch {
-    fn add(&mut self, facts: &SessionMeta, events: &[Event], made_from: MadeFrom) {
+    fn add(
+        &mut self,
+        facts: &SessionMeta,
+        events: &[Event],
+        card: Option<&Card>,
+        made_from: MadeFrom,
+    ) {
         let ord = self.sessions.len() as u32;
         let mut found: HashMap<String, (u32, Vec<u64>)> = HashMap::new();
         let mut total = 0u64;
-        for e in events {
-            for_each_text(e, |text| {
-                for_each_word(text, |w| {
-                    total += 1;
-                    let mut note = |w: String| {
-                        let (n, evs) = found.entry(w).or_default();
-                        *n += 1;
-                        if evs.len() < MAX_EVENTS && evs.last() != Some(&e.seq) {
-                            evs.push(e.seq);
-                        }
-                    };
-                    if w.contains('_') {
-                        for part in w.split('_').filter(|p| !p.is_empty()) {
-                            note(part.to_string());
-                        }
+        // Each word of `text`, found in event `seq` or, for a card's, in none.
+        let mut words = |text: &str, seq: Option<u64>| {
+            for_each_word(text, |w| {
+                total += 1;
+                let mut note = |w: String| {
+                    let (n, evs) = found.entry(w).or_default();
+                    *n += 1;
+                    if let Some(seq) = seq
+                        && evs.len() < MAX_EVENTS
+                        && evs.last() != Some(&seq)
+                    {
+                        evs.push(seq);
                     }
-                    note(w);
-                });
+                };
+                if w.contains('_') {
+                    for part in w.split('_').filter(|p| !p.is_empty()) {
+                        note(part.to_string());
+                    }
+                }
+                note(w);
             });
+        };
+        for e in events {
+            for_each_text(e, |text| words(text, Some(e.seq)));
+        }
+        for (_, text) in card.map(Card::fields).unwrap_or_default() {
+            words(text, None);
         }
         for (w, (n, mut evs)) in found {
             evs.sort_unstable();

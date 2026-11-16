@@ -1,6 +1,6 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
-//! scan's and the word index's progress, the reveal requests waiting for the owner, warnings
+//! scan's, the word index's and the cards' progress, the reveal requests waiting for the owner, warnings
 //! when a harness could delete sessions before they are swept or the timer has stopped sweeping,
 //! and the exposure check's results with a warning for each rule that fails. Each later ticket
 //! adds its own fields.
@@ -11,6 +11,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::archive::Archive;
+use crate::cards::{self, CardProgress};
 use crate::config::Config;
 use crate::exposure::{self, Exposure, Outcome};
 use crate::findings::{self, ScanProgress};
@@ -40,6 +41,10 @@ pub struct Status {
     /// How many sessions the word index holds current, and how many wait for it.
     #[serde(default)]
     pub index: IndexProgress,
+    /// How many sessions have a current card, how many wait for one, and why the card step is
+    /// skipped when it is.
+    #[serde(default)]
+    pub cards: CardProgress,
     /// Reveal requests waiting for the owner to approve or deny them in the GUI.
     #[serde(default)]
     pub pending_reveals: u64,
@@ -211,6 +216,7 @@ pub fn status(home: &Home) -> Result<Status> {
         warnings,
         scan: findings::progress(home)?,
         index: index::progress(home)?,
+        cards: cards::progress(home)?,
         pending_reveals: crate::reveal::pending_count(home),
         exposure,
     })

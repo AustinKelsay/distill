@@ -473,3 +473,46 @@ fn the_binary_refuses_an_argument_it_does_not_know() {
         "{err}"
     );
 }
+
+#[test]
+fn sessions_list_and_search_with_their_cards_filtered_by_tag_and_outcome() {
+    let tmp = tempfile::tempdir().unwrap();
+    let s = server(tmp.path(), ollama());
+    let mut config = s.home.load_config().unwrap_or_default();
+    config.harnesses.clear();
+    config.steward.card_model = Some("small:8b".into());
+    let model = FakeRuntime::running()
+        .with_model("small:8b", Stored::Here)
+        .replying(|_, _| {
+            json!({"title": "Rename the widget", "summary": "Moved the module and its callers.",
+                   "tags": ["refactor"], "outcome": "done"})
+            .to_string()
+        });
+    let r = distill_core::cards::write(&s.home, &config, &model.runtime()).unwrap();
+    assert_eq!(r.written, 1, "{r:?}");
+    distill_core::index::build(&s.home).unwrap();
+
+    let (err, t) = call(&s, "list_sessions", json!({"tag": "refactor"}));
+    assert!(!err, "{t}");
+    assert!(
+        t.contains("  Card: Rename the widget · outcome done · tags refactor"),
+        "{t}"
+    );
+    assert!(
+        t.contains("  Summary: Moved the module and its callers."),
+        "{t}"
+    );
+    let (_, t) = call(&s, "list_sessions", json!({"outcome": "failed"}));
+    assert!(t.starts_with("No sessions match."), "{t}");
+    let (_, t) = call(
+        &s,
+        "search_sessions",
+        json!({"query": "callers", "outcome": "done"}),
+    );
+    assert!(t.contains("claude-code/s1"), "{t}");
+    let (err, t) = call(&s, "list_sessions", json!({"outcome": "great"}));
+    assert!(
+        err && t.contains("done, partly_done, failed, unknown"),
+        "{t}"
+    );
+}

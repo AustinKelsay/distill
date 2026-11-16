@@ -136,6 +136,11 @@ impl Home {
         self.keys_dir().join("fingerprint.key")
     }
 
+    /// The sessions whose last card attempt failed, so they are retried after the rest.
+    pub fn card_failures_path(&self) -> PathBuf {
+        self.state_dir().join("cards.json")
+    }
+
     /// Hold the archive writer lock until the returned file is dropped. Sweeps from the timer
     /// and from a person can overlap; only one may write `raw/` at a time.
     pub fn lock_archive(&self) -> Result<fs::File> {
@@ -214,6 +219,7 @@ mod tests {
         );
         assert_eq!(p(h.card_path(k, id)), "/h/sessions/codex/s1/card.json");
         assert_eq!(p(h.index_dir()), "/h/index");
+        assert_eq!(p(h.card_failures_path()), "/h/state/cards.json");
         assert_eq!(p(h.state_dir()), "/h/state");
         assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");
         assert_eq!(p(h.runs_dir()), "/h/runs");

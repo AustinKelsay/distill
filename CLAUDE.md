@@ -9,6 +9,7 @@
 - Commands: `cargo test` (default members, no GUI), `cargo test -p distill-gui`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`.
 - Session text leaves Distill only through `read::read` (ADR 0002), which checks trust and writes the read log. No face reads events or captures directly; `crates/distill-core/tests/read_path_only.rs` fails if one does.
 - The raw archive (`raw/`) is append-only and its on-disk format never changes. Only `archive.rs` writes it. Everything under `sessions/`, `index/` and `state/` must stay rebuildable from `raw/`.
+- Cards (`cards.rs`) are written by `card_model` through the read path as `ollama/<model>`; its reply is parsed strictly by `cards::parse_reply`. Bump `cards::PROMPT_VERSION` whenever `cards::PROMPT` changes, and `CARD_FORMAT` whenever a card's shape changes. Tests use `FakeRuntime` only.
 - Parsers live in `crates/distill-core/src/normalize/<harness>.rs`. When a parser's output changes, bump its `parser_version` in `normalize/mod.rs` and add a test with a small synthetic sample. When what the parse step derives beyond the parsers changes, bump `META_VERSION`. Never commit real session text, paths, or secrets as fixtures.
 - Rune is pinned to one `dev` rev in the root `Cargo.toml` (dependency and `[patch.crates-io]`); bump them together.
 

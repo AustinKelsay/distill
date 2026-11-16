@@ -243,6 +243,91 @@ pub struct Findings {
     pub made_from: MadeFrom,
     /// In event order.
     pub findings: Vec<Finding>,
+    /// What the detector found in the session's card, when it has one (`crate::cards`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<CardFindings>,
+}
+
+/// The findings in a session's card, and which card they were made from. A card is scanned like
+/// session text; one found to hold a secret is discarded and written again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardFindings {
+    /// The [`hash`](crate::cards::Card::hash) of the card these were found in.
+    pub hash: String,
+    pub findings: Vec<CardFinding>,
+}
+
+/// A finding in a card. Its place is one of the card's fields (`title`, `summary`, or
+/// `tags/<n>`) and a byte range of it. Never its value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardFinding {
+    pub field: String,
+    pub start: usize,
+    pub end: usize,
+    pub kind: Kind,
+    pub fingerprint: Fingerprint,
+}
+
+impl CardFinding {
+    pub fn is_secret(&self) -> bool {
+        self.kind.class() == Class::Secret
+    }
+}
+
+/// What a card, an index entry or a set of vectors was built from: the session's events, named by
+/// its capture hash and parser version, and its secret findings, which its placeholders were made
+/// from. When either changes, what was built from them is out of date.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuiltFrom {
+    pub capture_hash: String,
+    pub parser: u32,
+    /// A digest of the session's secret findings.
+    pub secrets: String,
+}
+
+impl BuiltFrom {
+    /// What something built now from `facts`'s events, served with `findings`, is built from.
+    pub fn of(facts: &SessionMeta, findings: &Findings) -> Self {
+        let secrets: Vec<_> = findings.findings.iter().filter(|f| f.is_secret()).collect();
+        Self {
+            capture_hash: facts.raw.sha256.clone(),
+            parser: facts.normalizer.version,
+            secrets: crate::util::sha256_hex(&serde_json::to_vec(&secrets).unwrap_or_default()),
+        }
+    }
+}
+
+/// Everything `detector` finds in the fields of a card, by field name, fingerprinted.
+pub fn find_in_fields<'a>(
+    fields: impl IntoIterator<Item = (String, &'a str)>,
+    key: &FingerprintKey,
+    detector: &Detector,
+) -> Vec<CardFinding> {
+    fields
+        .into_iter()
+        .flat_map(|(field, text)| {
+            detector
+                .detect(text)
+                .into_iter()
+                .map(move |h| CardFinding {
+                    field: field.clone(),
+                    start: h.range.start,
+                    end: h.range.end,
+                    kind: h.kind,
+                    fingerprint: key.fingerprint(&h.value),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Record `card` as the findings of the session's card, keeping its other findings. The
+/// session's findings must be stored already.
+pub(crate) fn set_card(home: &Home, facts: &SessionMeta, card: CardFindings) -> Result<()> {
+    let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
+    let mut f = load(home, facts).with_context(|| format!("{} has no findings", facts.key()))?;
+    f.card = Some(card);
+    write_json_pretty(&home.findings_path(facts.harness, &facts.session_id), &f)
 }
 
 impl Findings {
@@ -353,6 +438,8 @@ fn scan(
         session: facts.key(),
         made_from: MadeFrom::current(facts, key, config),
         findings: find(events, key, detector),
+        // The card is scanned with the session; one that holds a secret is discarded.
+        card: crate::cards::rescan(home, facts, key, detector),
     };
     let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
     write_json_pretty(

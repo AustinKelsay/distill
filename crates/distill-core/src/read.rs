@@ -179,9 +179,10 @@ fn serve(
 }
 
 /// One session as the read path serves it to Distill itself for the word index: its events with
-/// each secret replaced by its placeholder, and the findings they were prepared with; or why it
-/// was not served.
-pub(crate) type ForIndex<'a> = std::result::Result<(Vec<Event>, &'a Findings), String>;
+/// each secret replaced by its placeholder, the findings they were prepared with, and its current
+/// card, which holds no secret; or why it was not served.
+pub(crate) type ForIndex<'a> =
+    std::result::Result<(Vec<Event>, &'a Findings, Option<crate::cards::Card>), String>;
 
 /// Read `sessions` as Distill itself, for the word index: each one's events with placeholders,
 /// handed to `visit` in turn. The whole call is one line in the read log, with how many sessions
@@ -215,7 +216,8 @@ pub(crate) fn for_index(
                 Ok((evs, scan)) => {
                     served += 1;
                     events += evs.len() as u64;
-                    visit(facts, Ok((evs, &scan)))?;
+                    let card = crate::cards::current(home, facts, &scan);
+                    visit(facts, Ok((evs, &scan, card)))?;
                 }
                 Err(why) => visit(facts, Err(why))?,
             }

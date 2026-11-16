@@ -2,9 +2,11 @@
 //! indexed, then listed, searched and read through every MCP tool by trusted readers, local and
 //! remote, and no tool's output holds a value; each reads a placeholder instead. A tool the
 //! server lists that this test does not call fails it. A reveal request that the owner
-//! approves releases the values in the collection's output, once, and nowhere else. The secrets
-//! are fake, and built from pieces at run time so that no secret scanner mistakes this file for
-//! a leak.
+//! approves releases the values in the collection's output, once, and nowhere else. The session
+//! has a card: a model whose reply echoes a secret's value has that card discarded, and the card
+//! written after it holds only the placeholder. Afterwards no file under the home but the raw
+//! archive and the session's events holds a value. The secrets are fake, and built from pieces at
+//! run time so that no secret scanner mistakes this file for a leak.
 
 use distill_core::archive::Archive;
 use distill_core::runtime::{FakeRuntime, Stored};
@@ -42,6 +44,40 @@ fn no_tool_serves_a_planted_secret() {
     let mut c = home.load_config().unwrap_or_default();
     distill_core::trust::add(&mut c, "example-cloud", true).unwrap();
     c.save(&home.config_path()).unwrap();
+
+    // Cards: a reply that echoes a value is discarded; the next, with the placeholder, is kept.
+    let mut config = home.load_config().unwrap();
+    config.harnesses.clear();
+    config.steward.card_model = Some("small:8b".into());
+    let card_reply = |title: &str, summary: &str| {
+        json!({"title": title, "summary": summary, "tags": ["deploy"], "outcome": "done"})
+            .to_string()
+    };
+    let (echo, served) = (key.clone(), password.clone());
+    let leaky = FakeRuntime::running()
+        .with_model("small:8b", Stored::Here)
+        .replying(move |_, prompt| {
+            assert!(
+                !prompt.contains(&echo) && !prompt.contains(&served),
+                "{prompt}"
+            );
+            card_reply(&format!("Deploy with {echo}"), "Deployed.")
+        });
+    let r = distill_core::cards::write(&home, &config, &leaky.runtime()).unwrap();
+    assert_eq!((r.written, r.discarded), (0, 1), "{r:?}");
+    assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
+    let careful = FakeRuntime::running()
+        .with_model("small:8b", Stored::Here)
+        .replying(move |_, prompt| {
+            let at = prompt.find("[secret: anthropic_key #").unwrap();
+            let placeholder = &prompt[at..at + prompt[at..].find(']').unwrap() + 1];
+            card_reply(
+                "Deploy the app",
+                &format!("The owner asked to deploy with {placeholder} and it was done."),
+            )
+        });
+    let r = distill_core::cards::write(&home, &config, &careful.runtime()).unwrap();
+    assert_eq!(r.written, 1, "{r:?}");
 
     distill_core::index::build(&home).unwrap();
 
@@ -180,6 +216,35 @@ fn no_tool_serves_a_planted_secret() {
         !whole.contains(&key) && !whole.contains(&password),
         "{whole}"
     );
+
+    // On disk, only the raw archive and the session's events hold a value: not its card, its
+    // findings, the index, the logs or the reveal request.
+    let session = home.session_dir(Harness::ClaudeCode, "s1");
+    let (mut stack, mut in_events) = (vec![home.root.clone()], false);
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let text = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).to_lowercase();
+            if !text.contains(&key.to_lowercase()) && !text.contains(&password.to_lowercase()) {
+                continue;
+            }
+            let events = p.parent() == Some(session.as_path())
+                && !["card.json", "findings.json", "meta.json"]
+                    .iter()
+                    .any(|n| p.ends_with(n));
+            assert!(
+                p.starts_with(home.raw_dir()) || events,
+                "{} holds a value",
+                p.display()
+            );
+            in_events |= events;
+        }
+    }
+    assert!(in_events, "the walk found the session's events");
 }
 
 /// The fingerprints of the placeholders in `text`, in order, each once.

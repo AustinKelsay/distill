@@ -1,6 +1,6 @@
-//! Listing sessions through the read path: each session's facts and the opening of what the owner
-//! first wrote, prepared for the reader like any other session text, and logged as one line with
-//! a count (issue #72, "The read path").
+//! Listing sessions through the read path: each session's facts, its card when it has a current
+//! one, and the opening of what the owner first wrote, prepared for the reader like any other
+//! session text, and logged as one line with a count (issue #72, "The read path").
 
 use std::path::Path;
 
@@ -8,7 +8,9 @@ use anyhow::Result;
 use chrono::NaiveDate;
 
 use super::{NOTICE_END, NOTICE_START, defuse, mask, scanned};
+use crate::cards::{self, Outcome, Shown};
 use crate::config::Config;
+use crate::findings::FingerprintKey;
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::model::{Event, EventKind, Originals, SessionMeta};
@@ -37,6 +39,10 @@ pub struct Filter {
     pub mirrors: bool,
     /// Include sessions the previous build's steward ran.
     pub steward: bool,
+    /// Only sessions whose current card has this tag, ignoring case.
+    pub tag: Option<String>,
+    /// Only sessions whose current card has this outcome.
+    pub outcome: Option<Outcome>,
 }
 
 /// Which rows of the matching sessions, newest first.
@@ -82,6 +88,8 @@ pub struct Rows {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub facts: SessionMeta,
+    /// The session's current card. A model reads its title and summary in place of the opening.
+    pub card: Option<Shown>,
     pub opening: Opening,
 }
 
@@ -151,9 +159,12 @@ fn serve(
     }
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
+    let key = FingerprintKey::existing(home).ok().flatten();
     let matching: Vec<SessionMeta> = all
-        .into_iter()
+        .iter()
         .filter(|m| filter.matches(m, &originals))
+        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m))
+        .cloned()
         .collect();
     let total = matching.len() as u64;
     let limit = page.limit.min(PAGE_MAX);
@@ -161,9 +172,13 @@ fn serve(
         .into_iter()
         .skip(page.offset)
         .take(limit)
-        .map(|facts| Row {
-            opening: opening(home, &config, reader, &facts),
-            facts,
+        .map(|facts| {
+            let (card, opening) = opening(home, &config, reader, &facts);
+            Row {
+                card,
+                opening,
+                facts,
+            }
         })
         .collect();
     *listed_rows = rows.len() as u64;
@@ -182,20 +197,38 @@ fn serve(
 /// How long an opening is, at most, in characters.
 const OPENING_CHARS: usize = 200;
 
-/// The opening of what the owner first wrote in `facts`, as the read path would serve it to
-/// `reader`.
-fn opening(home: &Home, config: &Config, reader: &Reader, facts: &SessionMeta) -> Opening {
+/// The current card of `facts` and the opening of what the owner first wrote in it, as the read
+/// path would serve them to `reader`.
+fn opening(
+    home: &Home,
+    config: &Config,
+    reader: &Reader,
+    facts: &SessionMeta,
+) -> (Option<Shown>, Opening) {
     let (events, scan) = match scanned(home, config, facts) {
         Ok(Ok(scanned)) => scanned,
-        Ok(Err(why)) => return Opening::Withheld(why),
-        Err(e) => return Opening::Withheld(format!("{} could not be read: {e:#}", facts.key())),
+        Ok(Err(why)) => return (None, Opening::Withheld(why)),
+        Err(e) => {
+            let why = format!("{} could not be read: {e:#}", facts.key());
+            return (None, Opening::Withheld(why));
+        }
     };
+    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner));
+    (card, first_opening(events, &scan, reader, facts))
+}
+
+fn first_opening(
+    events: Vec<Event>,
+    scan: &crate::findings::Findings,
+    reader: &Reader,
+    facts: &SessionMeta,
+) -> Opening {
     let Some(first) = events.into_iter().find(is_opening) else {
         return Opening::None;
     };
     let first = match reader {
         Reader::Owner => vec![first],
-        Reader::Model { .. } | Reader::Distill => match mask(vec![first], &scan) {
+        Reader::Model { .. } | Reader::Distill => match mask(vec![first], scan) {
             Ok(masked) => masked,
             Err(e) => {
                 return Opening::Withheld(format!(
@@ -245,6 +278,30 @@ impl Filter {
             && (self.mirrors || !m.is_duplicate(originals))
             && (self.steward || !m.steward)
     }
+
+    /// Whether the filter asks about cards: by tag or outcome.
+    pub(super) fn wants_card(&self) -> bool {
+        self.tag.is_some() || self.outcome.is_some()
+    }
+
+    /// Whether `m`'s current card matches the tag and outcome asked for; true when neither is.
+    /// Read from the stored findings and card, never the events: a session whose findings or card
+    /// are missing or out of date has no card to match. `key` is the home's fingerprint key.
+    pub(super) fn card_matches(
+        &self,
+        home: &Home,
+        config: &Config,
+        key: Option<&FingerprintKey>,
+        m: &SessionMeta,
+    ) -> bool {
+        if !self.wants_card() {
+            return true;
+        }
+        cards::stored_current(home, config, key, m).is_some_and(|(card, _)| {
+            self.tag.as_deref().is_none_or(|t| card.has_tag(t))
+                && self.outcome.is_none_or(|o| card.outcome == o)
+        })
+    }
 }
 
 /// A page of rows as text for a model: a line about the page, then the rows between the two
@@ -272,7 +329,11 @@ fn render(rows: &Rows, offset: usize) -> String {
     }
     let mut body = String::new();
     for r in &rows.rows {
-        body += &format!("\n{}\n{}", facts_line(&r.facts), opening_line(&r.opening));
+        body += &format!(
+            "\n{}\n{}",
+            facts_line(&r.facts),
+            card_or_opening(r.card.as_ref(), &r.opening)
+        );
     }
     format!("{head}{NOTICE_START}\n{}\n{NOTICE_END}\n", defuse(&body))
 }
@@ -315,6 +376,14 @@ pub(super) fn opening_line(o: &Opening) -> String {
         Opening::Text(t) => format!("  Opened with: {t}\n"),
         Opening::None => "  No message from the owner.\n".to_string(),
         Opening::Withheld(why) => format!("  Opening withheld: {why}\n"),
+    }
+}
+
+/// A session's card, when it has one, else its opening, as indented lines for a model.
+pub(super) fn card_or_opening(card: Option<&Shown>, o: &Opening) -> String {
+    match card {
+        Some(c) => c.lines(),
+        None => opening_line(o),
     }
 }
 

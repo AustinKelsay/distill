@@ -30,6 +30,20 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             s.index.pending,
             human_bytes(s.index.bytes)
         );
+        match &s.cards.skipped {
+            Some(why) => println!(
+                "cards: skipped ({why}) · {} of {} sessions have one",
+                s.cards.current, s.cards.sessions
+            ),
+            None => println!(
+                "cards: {} of {} sessions current, {} waiting, {} failing · model {}",
+                s.cards.current,
+                s.cards.sessions,
+                s.cards.pending,
+                s.cards.failing,
+                s.cards.model.as_deref().unwrap_or("none")
+            ),
+        }
         println!(
             "reveals: {} waiting for the owner in the GUI",
             distill_core::util::count(s.pending_reveals, "request")

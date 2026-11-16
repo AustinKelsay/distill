@@ -6,6 +6,7 @@ use crate::harness::Harness;
 use crate::read::{Filter, Page, Searched};
 use crate::runtime::{FakeRuntime, LocalRuntime, Stored};
 use crate::trust::Reader;
+use crate::util::sha256_hex;
 
 /// A synthetic Claude Code session: what the owner said, one tool call and its result.
 #[derive(Clone)]

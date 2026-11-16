@@ -1,7 +1,8 @@
-//! `list_sessions`: sessions with their facts and the opening of what the owner first wrote,
-//! filtered and a page at a time, from the read path.
+//! `list_sessions`: sessions with their facts and their card, or the opening of what the owner
+//! first wrote when they have none, filtered and a page at a time, from the read path.
 
 use distill_core::Harness;
+use distill_core::cards::Outcome;
 use distill_core::read::{self, Filter, Listed, PAGE_MAX, Page};
 use serde_json::{Value, json};
 
@@ -18,13 +19,15 @@ impl Tool for ListSessions {
     fn description(&self) -> String {
         format!(
             "List archived sessions, newest first, with each one's facts (harness, project, \
-             branch, models, times, counts) and the opening of what the owner first wrote. \
-             Filter by harness, project (a folder; sessions in it and below), model (part of \
-             its name) and start date. At most {PAGE_MAX} rows per call; the first line says how \
+             branch, models, times, counts) and its card (a title, a summary, tags and an \
+             outcome, written by a local model), or the opening of what the owner first wrote \
+             when it has no card yet. Filter by harness, project (a folder; sessions in it and \
+             below), model (part of its name), start date, and the card's tag and outcome. At \
+             most {PAGE_MAX} rows per call; the first line says how \
              many match and the offset where the next page starts. Mirrors of sessions already \
              in the archive, and sessions the previous build's steward ran, are left out unless \
-             asked for. {ARCHIVED_DATA} The openings come between a notice that opens and one \
-             that closes them."
+             asked for. {ARCHIVED_DATA} The cards and openings come between a notice that opens \
+             and one that closes them."
         )
     }
 
@@ -54,6 +57,7 @@ impl Tool for ListSessions {
 /// The schema of the session filters `list_sessions` and `search_sessions` take.
 pub(super) fn filter_properties() -> serde_json::Map<String, Value> {
     let harnesses: Vec<&str> = Harness::ALL.iter().map(|h| h.id()).collect();
+    let outcomes: Vec<&str> = Outcome::ALL.iter().map(|o| o.id()).collect();
     let Value::Object(o) = json!({
         "harness": {"type": "string", "enum": harnesses, "description": "Only this harness's sessions."},
         "project": {"type": "string", "description": "Only sessions that worked in this folder or one inside it."},
@@ -61,7 +65,9 @@ pub(super) fn filter_properties() -> serde_json::Map<String, Value> {
         "since": {"type": "string", "description": "Only sessions that started on or after this day, YYYY-MM-DD (UTC)."},
         "until": {"type": "string", "description": "Only sessions that started on or before this day, YYYY-MM-DD (UTC)."},
         "include_mirrors": {"type": "boolean", "description": "Include mirrors of sessions already in the archive."},
-        "include_steward": {"type": "boolean", "description": "Include sessions the previous build's steward ran."}
+        "include_steward": {"type": "boolean", "description": "Include sessions the previous build's steward ran."},
+        "tag": {"type": "string", "description": "Only sessions whose card has this tag, ignoring case."},
+        "outcome": {"type": "string", "enum": outcomes, "description": "Only sessions whose card has this outcome."}
     }) else {
         unreachable!("an object literal")
     };
@@ -92,6 +98,14 @@ pub(super) fn filter(args: &Value) -> Result<Filter, String> {
         until: day("until")?,
         mirrors: flag(args, "include_mirrors")?,
         steward: flag(args, "include_steward")?,
+        tag: string(args, "tag")?,
+        outcome: match string(args, "outcome")? {
+            Some(o) => Some(Outcome::parse(&o).ok_or_else(|| {
+                let ids: Vec<&str> = Outcome::ALL.iter().map(|o| o.id()).collect();
+                format!("unknown outcome {o:?}: one of {}", ids.join(", "))
+            })?),
+            None => None,
+        },
     })
 }
 

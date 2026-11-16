@@ -1,5 +1,6 @@
 //! `search_sessions`: sessions that have every word of a query, best first, with each one's facts,
-//! the opening of what the owner first wrote and the matching passage, from the read path.
+//! its card (or the opening of what the owner first wrote) and the matching passage, from the
+//! read path.
 
 use distill_core::read::{self, PAGE_MAX, SEARCH_DEFAULT, Searched};
 use serde_json::{Value, json};
@@ -18,18 +19,20 @@ impl Tool for SearchSessions {
     fn description(&self) -> String {
         format!(
             "Search archived sessions by exact words: an error string, a file name, a command. \
-             A session matches when it has every word of the query, ignoring case; words are \
-             letters, digits and underscores, and a part of a snake_case name finds the whole. \
-             Results come best first, each with the session's facts (harness, project, branch, \
-             models, times, counts), the opening of what the owner first wrote, and the passage \
-             that matched. Filter by harness, project (a folder; sessions in it and below), \
-             model (part of its name) and start date. At most {PAGE_MAX} results per call \
+             A session matches when it has every word of the query, in its text or its card, \
+             ignoring case; words are letters, digits and underscores, and a part of a \
+             snake_case name finds the whole. Results come best first, each with the session's \
+             facts (harness, project, branch, models, times, counts), its card (a title, a \
+             summary, tags and an outcome, written by a local model) or, with no card yet, the \
+             opening of what the owner first wrote, and the passage that matched. Filter by \
+             harness, project (a folder; sessions in it and below), model (part of its name), \
+             start date, and the card's tag and outcome. At most {PAGE_MAX} results per call \
              ({SEARCH_DEFAULT} unless asked); the first line says how many match and the offset \
              where the next page starts. Mirrors of sessions already in the archive, and \
              sessions the previous build's steward ran, are left out unless asked for. Secrets \
              read as placeholders, `[secret: <kind> #<fingerprint>]`; search for a fingerprint \
              to find every session that holds the same secret. Read a result in full with \
-             read_session. {ARCHIVED_DATA} The openings and passages come between a notice that \
+             read_session. {ARCHIVED_DATA} The cards, openings and passages come between a notice that \
              opens and one that closes them."
         )
     }
