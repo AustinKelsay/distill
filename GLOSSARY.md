@@ -18,8 +18,12 @@ _Avoid_: Conversation, thread, chat, transcript
 An exact copy of one harness file as it stood at one moment.
 _Avoid_: Snapshot, blob, backup
 
+**Capture hash**:
+The content hash that names a capture in the raw archive.
+_Avoid_: Fingerprint (a finding's), checksum
+
 **Raw archive**:
-The append-only store of every capture. It is the only part of Distill that cannot be rebuilt.
+The append-only store of every capture. Everything Distill knows about a session can be rebuilt from it, and it cannot be rebuilt from anything.
 _Avoid_: Raw, store, vault
 
 **Event**:
@@ -46,6 +50,10 @@ _Avoid_: Database, cache
 **Steward**:
 The scheduled background work that scans sessions, writes cards and builds the index without being asked.
 _Avoid_: Agent, daemon, worker
+
+**Run log**:
+The record of what each steward run did, and what it skipped or failed.
+_Avoid_: Activity, history
 
 ### Privacy
 
