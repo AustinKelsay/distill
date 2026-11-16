@@ -35,7 +35,7 @@ fn no_tool_serves_a_planted_secret() {
         )
         .unwrap();
     distill_core::normalize::normalize(&home, false).unwrap();
-    distill_core::findings::scan_all(&home).unwrap();
+    distill_core::findings::scan_all(&home, &home.load_config().unwrap_or_default()).unwrap();
     let mut c = home.load_config().unwrap_or_default();
     distill_core::trust::add(&mut c, "example-cloud", true).unwrap();
     c.save(&home.config_path()).unwrap();

@@ -63,8 +63,8 @@ pub fn parse_outcome(r: &normalize::NormalizeReport) -> Result<StepOutcome> {
 }
 
 /// Scan every session whose findings are missing or out of date, with no limit per tick.
-pub fn scan_step(home: &Home, _config: &Config) -> Result<StepOutcome> {
-    scan_outcome(&findings::scan_all(home)?)
+pub fn scan_step(home: &Home, config: &Config) -> Result<StepOutcome> {
+    scan_outcome(&findings::scan_all(home, config)?)
 }
 
 pub fn scan_outcome(r: &findings::ScanReport) -> Result<StepOutcome> {

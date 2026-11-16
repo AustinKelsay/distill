@@ -405,13 +405,14 @@ fn stored(home: &Home) -> Result<Stored> {
     let list = normalize::read_session_list(home)?;
     let originals = Originals::of(&list);
     let key = FingerprintKey::existing(home).ok().flatten();
+    let config = home.load_config().unwrap_or_default();
     let mut out = Stored {
         sessions: Vec::new(),
         pending: 0,
     };
     for facts in list.into_iter().filter(|m| !m.is_duplicate(&originals)) {
         match (&key, findings::load(home, &facts)) {
-            (Some(k), Some(f)) if f.is_current(&facts, k) => out.sessions.push((facts, f)),
+            (Some(k), Some(f)) if f.is_current(&facts, k, &config) => out.sessions.push((facts, f)),
             _ => out.pending += 1,
         }
     }
@@ -621,7 +622,7 @@ mod tests {
             std::fs::write(home.events_path(s.harness, s.id), lines.join("\n") + "\n").unwrap();
         }
         crate::normalize::rebuild_session_list(&home).unwrap();
-        crate::findings::scan_all(&home).unwrap();
+        crate::findings::scan_all(&home, &home.load_config().unwrap_or_default()).unwrap();
         (dir, home)
     }
 

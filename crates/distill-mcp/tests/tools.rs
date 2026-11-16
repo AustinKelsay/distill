@@ -198,7 +198,7 @@ fn with_secret(s: &Server, key: &str) {
         )
         .unwrap();
     distill_core::normalize::normalize(&s.home, false).unwrap();
-    distill_core::findings::scan_all(&s.home).unwrap();
+    distill_core::findings::scan_all(&s.home, &s.home.load_config().unwrap_or_default()).unwrap();
 }
 
 #[test]
