@@ -1,0 +1,85 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+      text: Overview
+        sweep: No sweep yet
+          last-sweep: No sweep yet
+        refresh: Refresh
+          label: Refresh
+          text: Sessions
+            value: 0
+          text: Raw archive
+            value: 0 B
+          text: Harnesses captured
+            value: 2
+        progress: Progress
+            title: Progress
+          text: Scan for findings
+            value: Not yet available
+            detail: 
+          text: Word index
+            value: Not yet available
+            detail: 
+          text: Cards
+            value: Not yet available
+            detail: Skipped: no card_model is set
+        reveals: Reveal requests
+            title: Reveal requests
+            message: No reveal requests are waiting.
+        harnesses: Harnesses
+            title: Harnesses
+            drift: No format drift
+          text: Harness
+          text: Health
+          text: Sessions
+          text: Captures
+          text: Archive
+          text: Last capture
+          text: Drift
+          text: Claude Code
+            health: OK
+            sessions: 0
+            captures: 0
+            size: 0 B
+            last: Not yet
+            drift: 0
+          text: Codex
+            health: OK
+            sessions: 0
+            captures: 0
+            size: 0 B
+            last: Not yet
+            drift: 0
+          off: Not captured: OpenCode, Droid, Pi, Cursor, Grok, Antigravity, Hermes, T3 Code, Goose.
+        exposure: Exposure
+            title: Exposure
+            outcome: Pass
+            text: Pass
+          text: home is owner-only
+            message: every file and folder in the home is owner-only
+            outcome: Pass
+            text: Pass
+          text: fingerprint key is owner-only
+            message: the fingerprint key is owner-only
+            outcome: Pass
+            text: Pass
+          text: home is not in a synced folder
+            message: the home is not in a synced folder
+            outcome: Not checked
+            text: Not checked
+          text: no network listener
+            message: lsof is not available
+          disk: The disk is encrypted.
+          backups: Backups carry the archive, every secret in it included: keep them encrypted too.

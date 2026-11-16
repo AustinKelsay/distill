@@ -1,0 +1,137 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+      text: Overview
+        sweep: Last sweep 7 h ago
+          last-sweep: Last sweep 7 h ago
+        refresh: Refresh
+          label: Refresh
+          text: Sessions
+            value: 5,529
+          text: Raw archive
+            value: 2.6 GB
+          text: Harnesses captured
+            value: 6
+        warnings: Needs your attention
+            title: Needs your attention
+            kind: Sweep overdue
+            text: Sweep overdue
+            message: Nothing has swept for 7 hours, and the timer runs every 60 minutes: check that it is installed and running (`distill schedule`).
+            kind: Prunes sooner
+            text: Prunes sooner
+            message: Claude Code deletes sessions untouched for 30 minutes (cleanupPeriodDays), sooner than the timer sweeps (every 60 minutes): raise the setting or sweep more often.
+            kind: Exposure
+            text: Exposure
+            message: Exposure: 2 files in the home can be read by others: run `distill exposure --fix`
+        progress: Progress
+            title: Progress
+          text: Scan for findings
+            value: 5,529 of 5,529 scanned
+            detail: 37 secrets found
+          text: Word index
+            value: 5,490 of 5,529 indexed
+            detail: 39 waiting · 212 MB
+          text: Cards
+            value: 1,212 of 5,300 with a card
+            detail: 4,088 waiting · 6 failing · qwen-small:4b · Skipped: the local runtime is not running
+        reveals: Reveal requests
+            title: Reveal requests
+            message: 2 reveal requests wait for you
+            open-approvals: Open approvals
+              label: Open approvals
+        harnesses: Harnesses
+            title: Harnesses
+            drift: 12 captures look like format drift
+          text: Harness
+          text: Health
+          text: Sessions
+          text: Captures
+          text: Archive
+          text: Last capture
+          text: Drift
+          text: Claude Code
+            health: Warning
+            sessions: 4,118
+            captures: 4,212
+            size: 1.8 GB
+            last: 12 min ago
+            drift: 0
+            note: deletes sessions sooner than the sweep runs
+          text: Codex
+            health: Warning
+            sessions: 1,090
+            captures: 1,103
+            size: 642 MB
+            last: 12 min ago
+            drift: 12
+            note: 12 look like format drift · 2 captures failed to parse
+          text: OpenCode
+            health: OK
+            sessions: 61
+            captures: 1
+            size: 92.4 MB
+            last: 1 h ago
+            drift: 0
+          text: Droid
+            health: Missing
+            sessions: 0
+            captures: 0
+            size: 0 B
+            last: Not yet
+            drift: 0
+            note: not found on this machine
+          text: Pi
+            health: OK
+            sessions: 46
+            captures: 48
+            size: 12.3 MB
+            last: 2 days ago
+            drift: 0
+          text: T3 Code
+            health: OK
+            sessions: 214
+            captures: 220
+            size: 31.0 MB
+            last: 12 min ago
+            drift: 0
+          off: Not captured: Cursor, Grok, Antigravity, Hermes, Goose.
+        exposure: Exposure
+            title: Exposure
+            fix-exposure: Fix modes
+              label: Fix modes
+            outcome: Fail
+            text: Fail
+          text: home is owner-only
+            message: 2 files in the home can be read by others: run `distill exposure --fix`
+          text: ~/distill/config.toml 0644
+          text: ~/distill/runs 0755
+            outcome: Pass
+            text: Pass
+          text: fingerprint key is owner-only
+            message: the fingerprint key is owner-only
+            outcome: Pass
+            text: Pass
+          text: home is not in a synced folder
+            message: the home is not in a synced folder
+            outcome: Not checked
+            text: Not checked
+          text: no network listener
+            message: lsof is not available
+          disk: The disk is encrypted.
+          backups: Backups carry the archive, every secret in it included: keep them encrypted too.
+          text: Left by the previous build (ignored, never deleted):
+          text: ~/distill/exports 0755
+          text: dataset builds: session text

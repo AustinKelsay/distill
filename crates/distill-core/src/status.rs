@@ -1,4 +1,4 @@
-//! Status: one report built here, which `distill status` prints and the GUI overview will render.
+//! Status: one report built here, which `distill status` prints and the GUI overview renders.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
 //! scan's, the word index's and the cards' progress, the reveal requests waiting for the owner, warnings
 //! when a harness could delete sessions before they are swept or the timer has stopped sweeping,

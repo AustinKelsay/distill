@@ -1,0 +1,80 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Providers
+          text: 3 Providers
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Schedule
+          text: 6 Schedule
+        text: Step 1 of 6
+          step-title: Harnesses
+        text: Which harnesses' sessions to archive
+              switch: Claude Code
+            text: Claude Code
+            text: ~/.claude-code
+              found: 1.8 GB · 4,212 files
+              switch: Codex
+            text: Codex
+            text: ~/.codex
+              found: 642 MB · 1,103 files
+              switch: OpenCode
+            text: OpenCode
+            text: ~/.opencode
+              found: 92.4 MB · 1 file
+              switch: Droid
+            text: Droid
+            text: ~/.droid
+              found: not found
+              switch: Pi
+            text: Pi
+            text: ~/.pi
+              found: 12.3 MB · 48 files
+              switch: Cursor
+            text: Cursor
+            text: ~/.cursor
+              found: not found
+              switch: Grok
+            text: Grok
+            text: ~/.grok
+              found: not found
+              switch: Antigravity
+            text: Antigravity
+            text: ~/.antigravity
+              found: not found
+              switch: Hermes
+            text: Hermes
+            text: ~/.hermes
+              found: not found
+              switch: T3 Code
+            text: T3 Code
+            text: ~/.t3code
+              found: 31.0 MB · 220 files
+              switch: Goose
+            text: Goose
+            text: ~/.goose
+              found: not found
+        text: Each harness's files are copied into the raw archive exactly as they are and never edited. Untick a harness to skip it.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

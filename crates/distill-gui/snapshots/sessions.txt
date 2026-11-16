@@ -1,0 +1,19 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+      heading: Sessions
+      not-yet: Not yet available
+      what: Search and open your sessions here, with every finding covered until you click it.

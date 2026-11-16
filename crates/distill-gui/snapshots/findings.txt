@@ -1,0 +1,19 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+      heading: Findings
+      not-yet: Not yet available
+      what: The rotation list goes here: each secret by kind, how many sessions hold it, and when it was first and last seen.
