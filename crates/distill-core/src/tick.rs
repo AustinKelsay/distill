@@ -1,14 +1,14 @@
 //! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
 //! tick writes one entry to the run log. Today the steps are sweep, parse, scan, the word index,
-//! cards and vectors; the spec's later step (model detection pass) is added to [`STEPS`] by the
-//! ticket that builds it. A step that calls a model gets the local runtime, and the steps
-//! before it never wait on one.
+//! cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
+//! model gets the local runtime, and the steps before it never wait on one.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::cards;
 use crate::config::Config;
+use crate::details;
 use crate::findings;
 use crate::home::Home;
 use crate::index;
@@ -48,6 +48,10 @@ pub const STEPS: &[Step] = &[
     Step {
         name: "vectors",
         run: vectors_step,
+    },
+    Step {
+        name: "details",
+        run: details_step,
     },
 ];
 
@@ -131,6 +135,20 @@ pub fn vectors_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Res
     })
 }
 
+/// Find personal details with the local model in the sessions whose model findings are missing
+/// or out of date, newest first, up to `sessions_per_run`; skipped when no model is set or no
+/// local runtime can run it.
+pub fn details_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<StepOutcome> {
+    let r = details::find(home, config, runtime)?;
+    Ok(StepOutcome {
+        name: "details".into(),
+        ok: r.failed == 0,
+        summary: r.summary(),
+        errors: r.errors.clone(),
+        report: serde_json::to_value(&r)?,
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TickReport {
     pub steps: Vec<StepOutcome>,
@@ -160,11 +178,13 @@ mod tests {
     use crate::harness::Harness;
 
     #[test]
-    fn the_steps_are_sweep_parse_scan_index_cards_then_vectors() {
+    fn the_steps_are_sweep_parse_scan_index_cards_vectors_then_details() {
         let names: Vec<_> = STEPS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
-            ["sweep", "parse", "scan", "index", "cards", "vectors"]
+            [
+                "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+            ]
         );
     }
 
@@ -198,7 +218,9 @@ mod tests {
         let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
-            ["sweep", "parse", "scan", "index", "cards", "vectors"]
+            [
+                "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+            ]
         );
         assert!(r.steps.iter().all(|s| s.ok), "{r:?}");
         assert_eq!(r.steps[0].report["new"], 1);
@@ -239,6 +261,10 @@ mod tests {
             "vectors skipped: no embedding_model is set"
         );
         assert!(!home.vectors_path().exists());
+        assert_eq!(
+            r.steps[6].summary,
+            "model detection skipped: no detail_model or card_model is set"
+        );
     }
 
     #[test]
@@ -293,6 +319,8 @@ mod tests {
         assert!(home.card_path(Harness::Pi, "p1").exists());
         // The steps before it all ran and succeeded.
         assert!(r.steps[..4].iter().all(|s| s.ok), "{r:?}");
+        assert_eq!(r.steps[5].name, "vectors");
+        assert_eq!(r.steps[6].name, "details");
         let runs = runlog::recent(&home, 10).unwrap();
         assert_eq!(runs[0].steps, r.steps);
     }

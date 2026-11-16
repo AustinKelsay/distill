@@ -20,8 +20,12 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             s.last_sweep.as_deref().unwrap_or("never")
         );
         println!(
-            "scan: {} of {} sessions current, {} waiting · {} secrets found",
-            s.scan.current, s.scan.sessions, s.scan.pending, s.scan.secrets
+            "scan: {} of {} sessions current, {} waiting · {} secrets and {} personal details found",
+            s.scan.current,
+            s.scan.sessions,
+            s.scan.pending,
+            s.scan.secrets,
+            s.scan.personal_details
         );
         println!(
             "word index: {} of {} sessions current, {} waiting · {}",
@@ -56,6 +60,21 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.vectors.pending,
                 human_bytes(s.vectors.bytes),
                 s.vectors.model.as_deref().unwrap_or("none")
+            ),
+        }
+        match &s.details.skipped {
+            Some(why) => println!(
+                "model detection: skipped ({why}) · {} of {} sessions current",
+                s.details.current, s.details.sessions
+            ),
+            None => println!(
+                "model detection: {} of {} sessions current, {} waiting, {} failing · {} found · model {}",
+                s.details.current,
+                s.details.sessions,
+                s.details.pending,
+                s.details.failing,
+                distill_core::util::count(s.details.found, "personal detail"),
+                s.details.model.as_deref().unwrap_or("none")
             ),
         }
         println!(

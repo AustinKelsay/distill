@@ -6,8 +6,10 @@
 //! has a card: a model whose reply echoes a secret's value has that card discarded, and the card
 //! written after it holds only the placeholder. The session's vectors are built, and searches
 //! go by meaning too: no text sent to the embedding model, the stored session's or a query's,
-//! holds a value. Afterwards no file under the home but the raw archive and the session's events
-//! holds a value. The secrets are fake, and built from pieces at
+//! holds a value. The local model's pass finds a made-up name, and its answers that name a value
+//! or a placeholder are dropped. Afterwards no file under the home but the raw archive and the
+//! session's events holds a value, and no findings file, state file or log holds the name. The
+//! secrets are fake, and built from pieces at
 //! run time so that no secret scanner mistakes this file for a leak.
 
 use distill_core::archive::Archive;
@@ -21,7 +23,9 @@ use serde_json::{Value, json};
 fn no_tool_serves_a_planted_secret() {
     let key = ["sk-", "ant-", "api03-", &"Mq4".repeat(9)].concat();
     let password = ["synthetic", "-mcp-", "pass-2208"].concat();
-    let said = serde_json::to_string(&format!("deploy with {key} now")).unwrap();
+    // A made-up name, for the model detection pass to find.
+    let name = "Jane Roe";
+    let said = serde_json::to_string(&format!("deploy with {key} now and tell {name}")).unwrap();
     let input = json!({"command": format!("export DB_PASSWORD={password} && deploy")});
     let session = format!(
         r#"{{"type":"user","cwd":"/work/app","timestamp":"2026-11-10T10:00:00Z","message":{{"role":"user","content":{said}}}}}
@@ -81,6 +85,31 @@ fn no_tool_serves_a_planted_secret() {
     let r = distill_core::cards::write(&home, &config, &careful.runtime()).unwrap();
     assert_eq!(r.written, 1, "{r:?}");
 
+    // Personal details: the model is never served a value, and an answer that names one (it
+    // cannot know it, but may guess) or a placeholder is never a finding. Only the name is.
+    let (echo, served) = (key.clone(), password.clone());
+    let finder = FakeRuntime::running()
+        .with_model("small:8b", Stored::Here)
+        .replying(move |_, prompt| {
+            assert!(
+                !prompt.contains(&echo) && !prompt.contains(&served),
+                "{prompt}"
+            );
+            assert!(
+                !prompt.contains("DB_PASSWORD"),
+                "tool input was sent: {prompt}"
+            );
+            json!({"details": [
+                {"kind": "person_name", "text": name},
+                {"kind": "organization", "text": echo},
+                {"kind": "organization", "text": served},
+                {"kind": "organization", "text": "[secret: anthropic_key"},
+            ]})
+            .to_string()
+        });
+    let r = distill_core::details::find(&home, &config, &finder.runtime()).unwrap();
+    assert_eq!((r.written, r.found), (1, 1), "{r:?}");
+
     distill_core::index::build(&home).unwrap();
 
     // Vectors: nothing sent to the embedding model holds a value, from the session or a query.
@@ -117,7 +146,8 @@ fn no_tool_serves_a_planted_secret() {
                 .unwrap();
             r.split('#').skip(1).map(|p| p[..8].to_string()).collect()
         };
-        assert_eq!(shorts.len(), 2, "{reader:?}");
+        // The two secrets and the name.
+        assert_eq!(shorts.len(), 3, "{reader:?}");
         let mut calls = vec![
             ("list_sessions", json!({})),
             ("read_session", json!({"session": "claude-code/s1"})),
@@ -268,6 +298,18 @@ fn no_tool_serves_a_planted_secret() {
                 continue;
             }
             let text = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).to_lowercase();
+            // Findings, state and logs never hold a personal detail's value either.
+            if p.ends_with("findings.json")
+                || p.starts_with(home.state_dir())
+                || p.starts_with(home.runs_dir())
+                || p.starts_with(home.log_dir())
+            {
+                assert!(
+                    !text.contains(&name.to_lowercase()),
+                    "{} holds the name",
+                    p.display()
+                );
+            }
             if !text.contains(&key.to_lowercase()) && !text.contains(&password.to_lowercase()) {
                 continue;
             }

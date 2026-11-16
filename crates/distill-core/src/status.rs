@@ -1,6 +1,6 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
-//! scan's, the word index's, the cards' and the vectors' progress, the reveal requests waiting for the owner, warnings
+//! scan's, the word index's, the cards', the vectors' and the model detection pass's progress, the reveal requests waiting for the owner, warnings
 //! when a harness could delete sessions before they are swept or the timer has stopped sweeping,
 //! and the exposure check's results with a warning for each rule that fails. Each later ticket
 //! adds its own fields.
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::archive::Archive;
 use crate::cards::{self, CardProgress};
 use crate::config::Config;
+use crate::details::{self, DetailProgress};
 use crate::exposure::{self, Exposure, Outcome};
 use crate::findings::{self, ScanProgress};
 use crate::harness::Harness;
@@ -50,6 +51,10 @@ pub struct Status {
     /// why the vectors step is skipped when it is.
     #[serde(default)]
     pub vectors: VectorProgress,
+    /// How many sessions have current model findings (personal details found by the local
+    /// model), how many wait for the pass, and why it is skipped when it is.
+    #[serde(default)]
+    pub details: DetailProgress,
     /// Reveal requests waiting for the owner to approve or deny them in the GUI.
     #[serde(default)]
     pub pending_reveals: u64,
@@ -223,6 +228,7 @@ pub fn status(home: &Home) -> Result<Status> {
         index: index::progress(home)?,
         cards: cards::progress(home)?,
         vectors: index::vectors::progress(home)?,
+        details: details::progress(home)?,
         pending_reveals: crate::reveal::pending_count(home),
         exposure,
     })
