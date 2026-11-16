@@ -48,6 +48,8 @@ enum Cmd {
     Status(status::Args),
     /// The run log
     Runs(runs::Args),
+    /// Providers, which are local and which are trusted, and the local runtime's models
+    Providers(providers::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
     /// Open the Distill window
@@ -79,6 +81,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Tick(a) => tick::run(&ctx, a),
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),
+        Cmd::Providers(a) => providers::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),
     }

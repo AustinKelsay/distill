@@ -4,6 +4,7 @@ pub mod gui;
 pub mod harnesses;
 pub mod init;
 pub mod parse;
+pub mod providers;
 pub mod runs;
 pub mod schedule;
 pub mod status;

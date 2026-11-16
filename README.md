@@ -29,6 +29,7 @@ Capture and the parsers, which the rebuild keeps (ADR 0001):
 | `distill tick` | What the timer runs: sweep, then parse. Writes one entry to the run log. |
 | `distill status` | Sessions, capture health and format drift per harness, and the last sweep. |
 | `distill runs` | The run log. |
+| `distill providers` | Lists each provider, local or remote, and whether it is trusted. `ollama`, the runtime on this machine, is always trusted; its models are shown as stored here or served from a cloud. `providers add <name> [--trusted]`, `trust <name>` and `untrust <name>` manage remote providers. |
 | `distill schedule install` | Runs `distill tick` on a timer (launchd on macOS, systemd on Linux). |
 | `distill gui` / `distill-mcp` | The window and the stdio MCP server. Both are shells that expose nothing until their tickets land. |
 
