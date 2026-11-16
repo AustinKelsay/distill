@@ -208,6 +208,7 @@ fn a_reply_is_parsed_strictly() {
     for bad in [
         "",
         "no json here",
+        r#"["A title","A summary.",["rust"],"done"]"#,
         &format!("Here it is: {good}"),
         &format!("{good} and more"),
         r#"{"title":"T","summary":"S.","tags":[],"outcome":"success"}"#,

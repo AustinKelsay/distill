@@ -124,6 +124,10 @@ pub fn parse_reply(answer: &str) -> std::result::Result<Vec<(Kind, String)>, Str
             .ok_or("an unclosed code fence")?
             .trim();
     }
+    // Serde also reads a struct from an array, which would let `[]` through as none.
+    if !body.starts_with('{') {
+        return Err("not one JSON object of details, each a kind and a text".into());
+    }
     let r: Reply = serde_json::from_str(body)
         .map_err(|e| format!("not one JSON object of details, each a kind and a text ({e})"))?;
     if r.details.len() > DETAILS_MAX {

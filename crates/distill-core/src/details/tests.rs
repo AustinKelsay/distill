@@ -260,6 +260,8 @@ fn a_reply_is_parsed_strictly() {
         r#"{"details":[],"notes":"none"}"#,
         r#"{"notes":"none"}"#,
         r#"[{"kind":"person_name","text":"x"}]"#,
+        "[]",
+        r#"[[{"kind":"person_name","text":"x"}]]"#,
         "```json\n{\"details\":[]}",
         &serde_json::json!({"details": many}).to_string(),
         &serde_json::json!({"details": [{"kind": "person_name", "text": "x".repeat(201)}]})
