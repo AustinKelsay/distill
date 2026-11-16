@@ -59,6 +59,8 @@ enum Cmd {
     Read(read::Args),
     /// The read log: who read which session, and what they got
     Reads(reads::Args),
+    /// Ask for a secret's value as a model, and collect it once the owner approves in the GUI
+    Reveal(reveal::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
     /// Whether Distill is no more exposed than the harness folders: file modes, the fingerprint
@@ -98,6 +100,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Providers(a) => providers::run(&ctx, a),
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
+        Cmd::Reveal(a) => reveal::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Exposure(a) => exposure::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),

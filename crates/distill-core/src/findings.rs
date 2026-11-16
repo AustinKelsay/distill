@@ -258,33 +258,62 @@ impl Findings {
 
 /// Everything `detector` finds in `events`, placed and fingerprinted.
 pub fn find(events: &[Event], key: &FingerprintKey, detector: &Detector) -> Vec<Finding> {
-    let mut out = Vec::new();
-    for e in events {
-        if let Some(text) = &e.text {
-            out.extend(detector.detect(text).into_iter().map(|h| Finding {
-                event: e.seq,
-                field: Field::Text,
-                start: h.range.start,
-                end: h.range.end,
-                kind: h.kind,
-                fingerprint: key.fingerprint(&h.value),
-            }));
-        }
-        if let Some(input) = &e.input {
-            out.extend(detector.detect_value(input).into_iter().map(|v| Finding {
-                event: e.seq,
-                field: Field::Input {
-                    pointer: v.pointer,
-                    key: v.key,
-                },
-                start: v.hit.range.start,
-                end: v.hit.range.end,
-                kind: v.hit.kind,
-                fingerprint: key.fingerprint(&v.hit.value),
-            }));
-        }
-    }
-    out
+    placed(events, key, detector).map(|(f, _)| f).collect()
+}
+
+/// The value of each secret in `events` whose fingerprint is in `wanted`, by fingerprint, with
+/// its kind. Values come only from running the detector over the stored text again; nothing
+/// stores them. Only a reveal the owner approved asks for them (`crate::reveal`).
+pub(crate) fn values(
+    events: &[Event],
+    key: &FingerprintKey,
+    detector: &Detector,
+    wanted: &BTreeSet<Fingerprint>,
+) -> std::collections::BTreeMap<Fingerprint, (Kind, String)> {
+    placed(events, key, detector)
+        .filter(|(f, _)| f.is_secret() && wanted.contains(&f.fingerprint))
+        .map(|(f, value)| (f.fingerprint, (f.kind, value)))
+        .collect()
+}
+
+/// Each finding in `events` with the value it was made from.
+fn placed<'a>(
+    events: &'a [Event],
+    key: &'a FingerprintKey,
+    detector: &'a Detector,
+) -> impl Iterator<Item = (Finding, String)> + 'a {
+    events.iter().flat_map(move |e| {
+        let in_text = e.text.iter().flat_map(move |text| {
+            detector.detect(text).into_iter().map(move |h| {
+                let f = Finding {
+                    event: e.seq,
+                    field: Field::Text,
+                    start: h.range.start,
+                    end: h.range.end,
+                    kind: h.kind,
+                    fingerprint: key.fingerprint(&h.value),
+                };
+                (f, h.value)
+            })
+        });
+        let in_input = e.input.iter().flat_map(move |input| {
+            detector.detect_value(input).into_iter().map(move |v| {
+                let f = Finding {
+                    event: e.seq,
+                    field: Field::Input {
+                        pointer: v.pointer,
+                        key: v.key,
+                    },
+                    start: v.hit.range.start,
+                    end: v.hit.range.end,
+                    kind: v.hit.kind,
+                    fingerprint: key.fingerprint(&v.hit.value),
+                };
+                (f, v.hit.value)
+            })
+        });
+        in_text.chain(in_input)
+    })
 }
 
 /// A session's findings file as stored, current or not. A file that can't be read counts as
