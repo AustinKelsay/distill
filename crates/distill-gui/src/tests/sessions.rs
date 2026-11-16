@@ -363,11 +363,14 @@ fn a_covered_value_is_never_in_the_element_tree_or_the_snapshot_text() {
         assert!(!values.is_empty(), "{scene} has covered findings");
         let rt = runtime_sized(s, super::snapshots::SNAP_SIZE);
         let tree = everything(&rt);
+        // Every field of every element, which is what `--tree` prints.
+        let fields = format!("{:?}", rt.elements());
         let snap = super::snapshots::dump(&rt);
         for v in &values {
             let once = shown.iter().filter(|x| *x == v).count();
             if once == 0 {
                 assert!(!tree.contains(v.as_str()), "{scene}: {v:?} in the tree");
+                assert!(!fields.contains(v.as_str()), "{scene}: {v:?} in an element");
                 assert!(!snap.contains(v.as_str()), "{scene}: {v:?} in the snapshot");
                 continue;
             }
