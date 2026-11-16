@@ -1,7 +1,9 @@
 //! The leak test's MCP half (issue #72, "Testing Decisions"): a session with planted secrets is
 //! listed and read through every MCP tool by trusted readers, local and remote, and no tool's
-//! output holds a value; each reads a placeholder instead. The secrets are fake, and built from
-//! pieces at run time so that no secret scanner mistakes this file for a leak.
+//! output holds a value; each reads a placeholder instead. A reveal request that the owner
+//! approves releases the values in the collection's output, once, and nowhere else. The secrets
+//! are fake, and built from pieces at run time so that no secret scanner mistakes this file for
+//! a leak.
 
 use distill_core::archive::Archive;
 use distill_core::runtime::{FakeRuntime, Stored};
@@ -39,6 +41,7 @@ fn no_tool_serves_a_planted_secret() {
     distill_core::trust::add(&mut c, "example-cloud", true).unwrap();
     c.save(&home.config_path()).unwrap();
 
+    let mut last_read = String::new();
     for reader in [
         Reader::model(Some("ollama"), Some("small:8b")),
         Reader::model(Some("example-cloud"), Some("m")),
@@ -81,5 +84,70 @@ fn no_tool_serves_a_planted_secret() {
             "{reader:?}: {}",
             texts[1]
         );
+        last_read = texts[1].clone();
     }
+
+    // A reveal: requested by the remote reader, approved by the owner, collected once.
+    let s = Server {
+        home: home.clone(),
+        runtime: FakeRuntime::stopped().runtime(),
+        reader: Reader::model(Some("example-cloud"), Some("m")),
+    };
+    let call = |tool: &str, args: Value| -> (bool, String, String) {
+        let r = s
+            .handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": tool, "arguments": args}}))
+            .unwrap();
+        let text = r["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        (r["result"]["isError"] == true, text, r.to_string())
+    };
+    let fingerprints: Vec<String> = fingerprints_in(&last_read);
+    assert_eq!(fingerprints.len(), 2, "{last_read}");
+    let (err, receipt, whole) = call(
+        "request_reveal",
+        json!({"session": "claude-code/s1", "fingerprints": fingerprints, "reason": "rotate them"}),
+    );
+    assert!(!err, "{receipt}");
+    assert!(
+        !whole.contains(&key) && !whole.contains(&password),
+        "{whole}"
+    );
+    let id = receipt.split_whitespace().nth(2).unwrap().to_string();
+    let (err, early, whole) = call("collect_reveal", json!({"request": id}));
+    assert!(err && early.contains("not approved yet"), "{early}");
+    assert!(
+        !whole.contains(&key) && !whole.contains(&password),
+        "{whole}"
+    );
+
+    // The owner approves, in the GUI; no tool can.
+    distill_core::reveal::approve(&home, &id).unwrap();
+    let (err, values, _) = call("collect_reveal", json!({"request": id}));
+    assert!(!err, "{values}");
+    assert!(
+        values.contains(&key) && values.contains(&password),
+        "{values}"
+    );
+    let (err, again, whole) = call("collect_reveal", json!({"request": id}));
+    assert!(err && again.contains("already collected"), "{again}");
+    assert!(
+        !whole.contains(&key) && !whole.contains(&password),
+        "{whole}"
+    );
+}
+
+/// The fingerprints of the placeholders in `text`, in order, each once.
+fn fingerprints_in(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in text.split("[secret: ").skip(1) {
+        let fp = part.split('#').nth(1).unwrap_or_default();
+        let fp: String = fp.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        if !out.contains(&fp) {
+            out.push(fp);
+        }
+    }
+    out
 }

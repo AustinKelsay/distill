@@ -1,6 +1,6 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
-//! scan's progress, and warnings when a harness could delete sessions before they are swept or
+//! scan's progress, the reveal requests waiting for the owner, and warnings when a harness could delete sessions before they are swept or
 //! the timer has stopped sweeping. Each later ticket adds its own fields.
 
 use std::collections::BTreeMap;
@@ -33,6 +33,9 @@ pub struct Status {
     pub warnings: Vec<Warning>,
     /// How many sessions have current findings, and how many wait for a scan.
     pub scan: ScanProgress,
+    /// Reveal requests waiting for the owner to approve or deny them in the GUI.
+    #[serde(default)]
+    pub pending_reveals: u64,
 }
 
 /// One thing the owner should act on, in a sentence.
@@ -183,6 +186,7 @@ pub fn status(home: &Home) -> Result<Status> {
         harnesses,
         warnings,
         scan: findings::progress(home)?,
+        pending_reveals: crate::reveal::pending_count(home),
     })
 }
 

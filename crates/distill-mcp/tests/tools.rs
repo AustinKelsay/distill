@@ -72,7 +72,15 @@ fn it_offers_a_list_and_a_read_tool_whose_descriptions_say_session_text_is_data(
     let tools = rpc(&s, "tools/list", json!({}));
     let tools = tools["result"]["tools"].as_array().unwrap();
     let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_sessions", "read_session"]);
+    assert_eq!(
+        names,
+        [
+            "list_sessions",
+            "read_session",
+            "request_reveal",
+            "collect_reveal"
+        ]
+    );
     for t in tools {
         let d = t["description"].as_str().unwrap();
         assert!(
@@ -191,6 +199,12 @@ fn every_tool(s: &Server) -> Vec<(String, Value)> {
             let name = t["name"].as_str().unwrap().to_string();
             let args = match name.as_str() {
                 "read_session" => json!({"session": "claude-code/s1"}),
+                "request_reveal" => json!({
+                    "session": "claude-code/s1",
+                    "fingerprints": ["0123abcd"],
+                    "reason": "rotate it"
+                }),
+                "collect_reveal" => json!({"request": "0123456789abcdef"}),
                 _ => json!({}),
             };
             (name, args)
@@ -208,7 +222,7 @@ fn with_no_provider_or_an_untrusted_one_every_tool_returns_the_refusal_and_nothi
         let tmp = tempfile::tempdir().unwrap();
         let s = server(tmp.path(), reader.clone());
         let calls = every_tool(&s);
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 4);
         for (tool, args) in calls {
             let (err, t) = call(&s, &tool, args);
             assert!(err, "{reader:?} {tool}: {t}");

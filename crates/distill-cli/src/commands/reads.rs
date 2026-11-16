@@ -26,6 +26,21 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 ReadResult::Listed { sessions } => {
                     format!("listed {}", distill_core::util::count(*sessions, "session"))
                 }
+                ReadResult::RevealRequested { request, secrets } => {
+                    let fps: Vec<String> = secrets.iter().map(|s| format!("#{s}")).collect();
+                    format!("reveal {request} requested: {}", fps.join(" "))
+                }
+                ReadResult::RevealApproved { request } => {
+                    format!("reveal {request} approved by the owner")
+                }
+                ReadResult::RevealDenied { request } => {
+                    format!("reveal {request} denied by the owner")
+                }
+                ReadResult::RevealCollected { request, secrets } => format!(
+                    "reveal {request} collected: {}",
+                    distill_core::util::count(*secrets, "value")
+                ),
+                ReadResult::RevealExpired { request } => format!("reveal {request} expired"),
                 ReadResult::Refused { reason } => format!("refused: {reason}"),
                 ReadResult::Failed { error } => format!("failed: {error}"),
             };
@@ -33,7 +48,10 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 "{}  {:<28} {:<36} {result}",
                 e.at,
                 e.reader.to_string(),
-                e.session.as_deref().unwrap_or("(a list of sessions)")
+                e.session.as_deref().unwrap_or(match e.result {
+                    ReadResult::Listed { .. } => "(a list of sessions)",
+                    _ => "-",
+                })
             );
         }
     })

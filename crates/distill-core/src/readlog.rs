@@ -1,6 +1,7 @@
 //! The read log (`log/reads.jsonl`): one line for every call to the read path, refusals included,
-//! saying when, which reader, which session and what it got. It never holds session text. It
-//! cannot be rebuilt from the raw archive.
+//! saying when, which reader, which session and what it got, and one line for each step of a
+//! reveal request. It never holds session text or a secret's value. It cannot be rebuilt from
+//! the raw archive.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,20 @@ pub enum ReadResult {
     /// A list of sessions, this many of them, each with its facts and the opening of what the
     /// owner first wrote.
     Listed { sessions: u64 },
+    /// A reveal request was filed for these secrets, by their short fingerprints (`crate::reveal`).
+    RevealRequested {
+        request: String,
+        secrets: Vec<String>,
+    },
+    /// The owner approved the reader's reveal request, in the GUI.
+    RevealApproved { request: String },
+    /// The owner denied the reader's reveal request, in the GUI.
+    RevealDenied { request: String },
+    /// The reader collected the values of its approved request, this many of them. Never the
+    /// values themselves.
+    RevealCollected { request: String, secrets: u64 },
+    /// The reader's request passed its 24 hours before it was answered or collected.
+    RevealExpired { request: String },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.

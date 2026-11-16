@@ -1,6 +1,7 @@
 //! The leak test (issue #72, "Testing Decisions"): a synthetic session with planted secrets goes
 //! through every step, and then every file under the home and the output of every command is
-//! searched for the values. Only the raw archive and that session's events may hold them.
+//! searched for the values. Only the raw archive and that session's events may hold them, and
+//! the output of collecting a reveal the owner approved.
 //!
 //! The secrets are fake, and built from pieces at run time so that no secret scanner mistakes
 //! this file for a leak. No local runtime is reachable, and `HOME` is a temp dir.
@@ -37,6 +38,25 @@ impl Machine {
             String::from_utf8_lossy(&out.stderr)
         );
         (out.status.success(), printed)
+    }
+}
+
+/// Run `args` as a person would and again with `--json`, except the two that change the config,
+/// which run once, keeping what each printed.
+fn step(m: &Machine, printed: &mut Vec<(String, String)>, args: &[&str], must_succeed: bool) {
+    let once = args[0] == "init" || (args[0] == "providers" && args.len() > 1);
+    for json in [false, true] {
+        if json && once {
+            continue;
+        }
+        let mut a = Vec::new();
+        if json {
+            a.push("--json");
+        }
+        a.extend_from_slice(args);
+        let (ok, out) = m.run(&a);
+        assert!(ok || !must_succeed, "distill {a:?} failed: {out}");
+        printed.push((a.join(" "), out));
     }
 }
 
@@ -85,26 +105,8 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         _tmp: tmp,
     };
 
-    let mut printed = Vec::new();
-    // Each command runs as a person would and with `--json`, except the two that change the
-    // config, which run once.
-    let mut step = |args: &[&str], must_succeed: bool| {
-        let once = args[0] == "init" || (args[0] == "providers" && args.len() > 1);
-        for json in [false, true] {
-            if json && once {
-                continue;
-            }
-            let mut a = Vec::new();
-            if json {
-                a.push("--json");
-            }
-            a.extend_from_slice(args);
-            let (ok, out) = m.run(&a);
-            assert!(ok || !must_succeed, "distill {a:?} failed: {out}");
-            printed.push((a.join(" "), out));
-        }
-    };
-    step(&["init"], true);
+    let mut printed: Vec<(String, String)> = Vec::new();
+    step(&m, &mut printed, &["init"], true);
     fs::write(
         m.home.join("config.toml"),
         format!(
@@ -113,7 +115,12 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         ),
     )
     .unwrap();
-    step(&["providers", "add", "example-cloud", "--trusted"], true);
+    step(
+        &m,
+        &mut printed,
+        &["providers", "add", "example-cloud", "--trusted"],
+        true,
+    );
     for args in [
         &["harnesses"][..],
         &["sweep"],
@@ -135,26 +142,122 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         ],
         &["reads"],
     ] {
-        step(args, true);
+        step(&m, &mut printed, args, true);
     }
     // Refused reads print nothing of the session either.
-    step(&["read", "leak1"], false);
-    step(&["read", "leak1", "--provider", "unheard-of"], false);
-    step(&["reads"], true);
+    step(&m, &mut printed, &["read", "leak1"], false);
+    step(
+        &m,
+        &mut printed,
+        &["read", "leak1", "--provider", "unheard-of"],
+        false,
+    );
+    step(&m, &mut printed, &["reads"], true);
+
+    // The reads served placeholders in their place.
+    let served = printed
+        .iter()
+        .find(|(c, _)| c.starts_with("read leak1 --provider example-cloud"))
+        .unwrap()
+        .1
+        .clone();
+    assert!(served.contains("[secret: anthropic_key #"), "{served}");
+    assert!(served.contains("[secret: assigned_secret #"), "{served}");
+
+    // A reveal: requested by the remote model, approved by the owner (in the GUI, which calls
+    // core), and collected once. Only the collection prints the values.
+    let fps: Vec<String> = served
+        .split("[secret: ")
+        .skip(1)
+        .map(|p| {
+            let fp = p.split('#').nth(1).unwrap_or_default();
+            fp.chars().take_while(|c| c.is_ascii_hexdigit()).collect()
+        })
+        .collect();
+    assert_eq!(fps.len(), 2, "{served}");
+    let who = ["--provider", "example-cloud", "--model", "m"];
+    let mut request = vec!["reveal", "request", "leak1", &fps[0], &fps[1]];
+    request.extend(["--reason", "rotate them"]);
+    request.extend(who);
+    step(&m, &mut printed, &request, true);
+    step(
+        &m,
+        &mut printed,
+        &[
+            "reveal",
+            "request",
+            "leak1",
+            &fps[0],
+            "--reason",
+            "rotate it",
+        ],
+        false,
+    );
+    let filed: serde_json::Value = serde_json::from_str(
+        &printed
+            .iter()
+            .rev()
+            .find(|(c, _)| c.starts_with("--json reveal request") && c.contains("example-cloud"))
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    let id = filed["request"].as_str().unwrap().to_string();
+    let mut collect = vec!["reveal", "collect", id.as_str()];
+    collect.extend(who);
+    step(&m, &mut printed, &collect, false);
+    step(&m, &mut printed, &["status"], true);
+    distill_core::reveal::approve(&distill_core::Home::new(&m.home), &id).unwrap();
+    let (ok, released) = m.run(&collect);
+    assert!(ok, "{released}");
+    for s in secrets {
+        assert!(
+            released.contains(s),
+            "the collection lacks a value: {released}"
+        );
+    }
+    // Collected once: the second time, and a different reader, get nothing.
+    step(&m, &mut printed, &collect, false);
+    step(
+        &m,
+        &mut printed,
+        &["reveal", "collect", &id, "--provider", "example-cloud"],
+        false,
+    );
+    step(&m, &mut printed, &["reads"], true);
+    step(&m, &mut printed, &["status"], true);
 
     for (cmd, out) in &printed {
         for s in secrets {
             assert!(!out.contains(s), "`distill {cmd}` printed a secret:\n{out}");
         }
     }
-    // The reads served placeholders in their place.
-    let served = &printed
+    let log = printed
         .iter()
-        .find(|(c, _)| c.starts_with("read leak1 --provider example-cloud"))
+        .rev()
+        .find(|(c, _)| c == "reads")
         .unwrap()
-        .1;
-    assert!(served.contains("[secret: anthropic_key #"), "{served}");
-    assert!(served.contains("[secret: assigned_secret #"), "{served}");
+        .1
+        .clone();
+    for says in ["requested", "approved by the owner", "collected: 2 values"] {
+        assert!(log.contains(&format!("reveal {id} {says}")), "{log}");
+    }
+    // Status counts the requests waiting: none, then the two filed (as a person would and with
+    // `--json`), then the one left once the other is approved.
+    let statuses: Vec<&String> = printed
+        .iter()
+        .filter(|(c, _)| c == "status")
+        .map(|(_, out)| out)
+        .collect();
+    for (status, waiting) in statuses
+        .iter()
+        .zip(["0 requests", "2 requests", "1 request"])
+    {
+        assert!(
+            status.contains(&format!("reveals: {waiting} waiting")),
+            "{status}"
+        );
+    }
 
     let events = m.home.join("sessions/claude-code/leak1/events.jsonl");
     assert!(events.exists());

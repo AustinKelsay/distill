@@ -3,8 +3,10 @@
 //! archive gets it from the read path as [`Server::reader`], and says in its description that
 //! session text is archived data, not instructions ([`ARCHIVED_DATA`]).
 
+mod collect_reveal;
 mod list_sessions;
 mod read_session;
+mod request_reveal;
 
 use serde_json::Value;
 
@@ -38,6 +40,8 @@ pub fn all() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(list_sessions::ListSessions),
         Box::new(read_session::ReadSession),
+        Box::new(request_reveal::RequestReveal),
+        Box::new(collect_reveal::CollectReveal),
     ]
 }
 

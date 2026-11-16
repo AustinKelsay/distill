@@ -169,6 +169,39 @@ fn serve(
     })
 }
 
+/// For a reveal request (`crate::reveal`): the session `session` names and its secret
+/// findings, current with the detector; or why there are none to name.
+pub(crate) fn secrets_in(
+    home: &Home,
+    session: &str,
+) -> Result<Result<(SessionMeta, Vec<Finding>), String>> {
+    let Some(facts) = find(home, session)? else {
+        return Ok(Err("no such session".into()));
+    };
+    Ok(scanned(home, &facts)?.map(|(_, scan)| {
+        let secrets = scan
+            .findings
+            .into_iter()
+            .filter(|f| f.is_secret())
+            .collect();
+        (facts, secrets)
+    }))
+}
+
+/// For a reveal the owner approved, and nothing else: the value of each secret in `session`
+/// whose fingerprint is in `wanted`, found by running the detector over the stored text again.
+/// The caller logs the release.
+pub(crate) fn reveal_values(
+    home: &Home,
+    session: &str,
+    wanted: &std::collections::BTreeSet<findings::Fingerprint>,
+) -> Result<std::collections::BTreeMap<findings::Fingerprint, (crate::detect::Kind, String)>> {
+    let facts = find(home, session)?.with_context(|| format!("no session {session:?}"))?;
+    let events = normalize::read_events(home, &facts)?;
+    let key = findings::FingerprintKey::open(home)?;
+    Ok(findings::values(&events, &key, wanted))
+}
+
 /// The events of `facts` and their findings, current with the detector; or, when the session
 /// could not be scanned, why it is not served. No reader is served a session whose findings are
 /// missing or out of date.
