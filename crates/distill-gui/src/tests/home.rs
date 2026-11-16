@@ -160,6 +160,8 @@ pub fn everything(rt: &Runtime<State>) -> String {
         .flatten()
         .collect::<Vec<_>>()
         .join("\n")
+        // The pads beside a chip are drawn, not read: `crate::cover::PAD`.
+        .replace(crate::cover::PAD, "")
 }
 
 /// Fails if any fake value is anywhere in the window.

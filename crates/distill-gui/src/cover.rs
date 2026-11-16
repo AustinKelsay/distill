@@ -23,6 +23,11 @@ pub struct Mark {
     pub id: String,
 }
 
+/// What sits on each side of a chip or a shown value, outside its fill and never copied: Rune
+/// draws a span's fill past its text by its padding, which would cover the spaces beside it.
+/// A narrow no-break space is about as wide as that padding.
+pub const PAD: &str = "\u{202f}";
+
 /// What a chip shows in place of a value: `‹openai key›`.
 pub fn chip(kind: Kind) -> String {
     format!("‹{}›", kind.name().replace('_', " "))
@@ -57,11 +62,14 @@ pub fn fit(src: &str, marks: &[Mark]) -> Vec<Mark> {
     out
 }
 
-/// `src` as it is drawn: each mark that `shown` doesn't name replaced by its chip.
+/// `src` as it is drawn: each mark that `shown` doesn't name replaced by its chip, and each
+/// mark between two [`PAD`]s, which copying leaves out.
 pub struct Covered {
     pub text: String,
     pub spans: Vec<Span>,
     pub links: Vec<Link>,
+    /// The pads' byte ranges of `text`.
+    pub uncopied: Vec<std::ops::Range<usize>>,
 }
 
 /// Build what [`text`] draws. Clickable chips are links that report their mark's id.
@@ -78,9 +86,15 @@ pub fn cover(
     let mut out = String::with_capacity(src.len());
     let mut spans = Vec::new();
     let mut links = Vec::new();
+    let mut uncopied = Vec::new();
+    let mut pad = |out: &mut String| {
+        uncopied.push(out.len()..out.len() + PAD.len());
+        out.push_str(PAD);
+    };
     let mut at = 0;
     for m in &marks {
         out.push_str(&src[at..m.start]);
+        pad(&mut out);
         let start = out.len();
         let hidden = !shown(&m.id);
         let name = m.kind.name().replace('_', " ");
@@ -110,6 +124,7 @@ pub fn cover(
                     .hover(LinkPaint::new().ring(p.k.c.info.icon, 1.0)),
             );
         }
+        pad(&mut out);
         at = m.end;
     }
     out.push_str(&src[at..]);
@@ -117,6 +132,7 @@ pub fn cover(
         text: out,
         spans,
         links,
+        uncopied,
     }
 }
 
@@ -133,6 +149,9 @@ pub fn text(
     let mut t = rich(c.text, c.spans);
     for l in c.links {
         t = t.link(l);
+    }
+    for r in c.uncopied {
+        t = t.uncopied(r);
     }
     t
 }
@@ -165,11 +184,31 @@ mod tests {
         let src = "mail ab@example.com or cd@example.com";
         let marks = [mark(5, 19, "a"), mark(23, 37, "b")];
         let c = cover(&p, src, &marks, |_| false, true);
-        assert_eq!(c.text, "mail ‹email› or ‹email›");
+        assert_eq!(c.text.replace(PAD, ""), "mail ‹email› or ‹email›");
         assert_eq!(c.links.len(), 2);
         let c = cover(&p, src, &marks, |id| id == "b", false);
-        assert_eq!(c.text, "mail ‹email› or cd@example.com");
+        assert_eq!(c.text.replace(PAD, ""), "mail ‹email› or cd@example.com");
         assert!(c.links.is_empty());
+    }
+
+    #[test]
+    fn a_chip_keeps_the_spaces_beside_it_clear_of_its_fill() {
+        let p = Paint::new(true, 1.0);
+        let src = "the token is ab@example.com and";
+        let c = cover(&p, src, &[mark(13, 27, "a")], |_| false, true);
+        // A fill is drawn past its text by its padding, so a narrow, uncopied pad on each side
+        // takes that room and the spaces beside the chip stay as wide as written.
+        let chip = "‹email›";
+        assert_eq!(c.text, format!("the token is {PAD}{chip}{PAD} and"));
+        let at = 13 + PAD.len();
+        assert_eq!(
+            c.uncopied,
+            [13..at, at + chip.len()..at + chip.len() + PAD.len()]
+        );
+        assert_eq!(
+            (c.spans[0].start, c.spans[0].end),
+            (at as u32, (at + chip.len()) as u32)
+        );
     }
 
     #[test]

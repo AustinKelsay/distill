@@ -32,12 +32,12 @@
             text: Any outcome
         summary: 1 session matches “deploy”
         note-0: Search by meaning is off (no embedding_model is set): word matches only.
-              title: Deploy the staging app to ‹tailnet host›
+              title: Deploy the staging app to  ‹tailnet host› 
               outcome: Done
               text: Done
               facts: Claude Code · /work/app · claude-opus-5-5 · 40 min ago · 6 events
-              card-summary: Rotated the staging deploy token, redeployed, and mailed ‹email› the release notes.
+              card-summary: Rotated the staging deploy token, redeployed, and mailed  ‹email›  the release notes.
               text: #deploy
               text: #staging
               text: Matched in a tool result
-                passage-text: …ok: deploy finished on ‹tailnet host›, notes sent to ‹email›
+                passage-text: …ok: deploy finished on  ‹tailnet host› , notes sent to  ‹email› 

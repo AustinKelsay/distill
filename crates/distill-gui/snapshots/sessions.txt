@@ -29,16 +29,16 @@
           filter-outcome-trigger: Outcome
             text: Any outcome
         summary: 3 sessions, newest first
-              title: Deploy the staging app to ‹tailnet host›
+              title: Deploy the staging app to  ‹tailnet host› 
               outcome: Done
               text: Done
               facts: Claude Code · /work/app · claude-opus-5-5 · 40 min ago · 6 events
-              card-summary: Rotated the staging deploy token, redeployed, and mailed ‹email› the release notes.
+              card-summary: Rotated the staging deploy token, redeployed, and mailed  ‹email›  the release notes.
               text: #deploy
               text: #staging
-              title: set API_TOKEN=‹assigned secret› and run the build again
+              title: set API_TOKEN= ‹assigned secret›  and run the build again
               facts: Codex · /work/tools · gpt-6 · yesterday · 12 events
-              title: Meeting notes for ‹person name›
+              title: Meeting notes for  ‹person name› 
               outcome: Partly done
               text: Partly done
               facts: Pi · /work/notes · qwen-small:4b · 4 days ago · 5 events
