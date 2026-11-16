@@ -13,6 +13,9 @@ use distill_core::{Config, Harness, Home};
 use crate::State;
 use crate::nav::{self, Screen};
 
+mod sessions;
+pub use sessions::*;
+
 /// Named fixture states for `--snap --scene`; the snapshot tests render each.
 /// A named state for `--snap --scene`.
 pub type Scene = (&'static str, fn(&mut State));
@@ -27,7 +30,10 @@ pub const SCENES: &[Scene] = &[
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
     ("overview-new", |s| *s = just_set_up()),
-    ("sessions", |s| shown(s, Screen::Sessions)),
+    ("sessions", |s| *s = sessions_listed()),
+    ("sessions-search", |s| *s = sessions_searched()),
+    ("sessions-open", |s| *s = session_covered()),
+    ("sessions-open-shown", |s| *s = session_revealed()),
     ("findings", |s| shown(s, Screen::Findings)),
     ("approvals", |s| shown(s, Screen::Approvals)),
     ("read-log", |s| shown(s, Screen::ReadLog)),

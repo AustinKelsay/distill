@@ -283,3 +283,31 @@ fn sessions_not_yet_indexed_are_counted() {
     assert!(t.contains("No sessions match."), "{t}");
     assert!(t.contains("1 session is not in the word index yet"), "{t}");
 }
+
+#[test]
+fn the_owners_hit_carries_the_findings_in_its_opening() {
+    let a = s(
+        "a",
+        "2026-11-01T09:00:00Z",
+        &format!("rotate {} today", fake_key()),
+    );
+    let (_d, home) = indexed(&[a]);
+    let Searched::Hits(h) = search(
+        &home,
+        &local(),
+        &Reader::Owner,
+        "rotate",
+        &Filter::default(),
+        Page::default(),
+    )
+    .unwrap() else {
+        panic!("the owner gets hits");
+    };
+    let hit = &h.hits[0];
+    let Opening::Text(t) = &hit.opening else {
+        panic!("an opening");
+    };
+    assert_eq!(hit.opening_findings.len(), 1);
+    let f = &hit.opening_findings[0];
+    assert_eq!(&t[f.start..f.end], fake_key());
+}

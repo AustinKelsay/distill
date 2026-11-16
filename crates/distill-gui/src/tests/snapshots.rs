@@ -9,11 +9,11 @@ use super::*;
 use crate::fixture::SCENES;
 
 /// Tall enough that every section of a screen is laid out on screen.
-const SNAP_SIZE: (f32, f32) = (1080.0, 1600.0);
+pub const SNAP_SIZE: (f32, f32) = (1080.0, 1600.0);
 
 /// One line per element that shows text or names itself, indented by how many keyed elements
 /// hold it.
-fn dump(rt: &Runtime<State>) -> String {
+pub fn dump(rt: &Runtime<State>) -> String {
     let mut out = String::new();
     for e in rt.elements() {
         if e.exiting {

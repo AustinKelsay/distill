@@ -78,6 +78,9 @@ pub struct Hit {
     /// The session's current card. A model reads its title and summary in place of the opening.
     pub card: Option<Shown>,
     pub opening: Opening,
+    /// For the owner, the findings inside the opening's text, their ranges counted from its
+    /// start. Empty for everyone else.
+    pub opening_findings: Vec<Finding>,
     /// Where the session matches; None when it was withheld from the reader or holds no text.
     pub passage: Option<Passage>,
     /// What found it.
@@ -317,6 +320,7 @@ fn hit(
         facts: facts.clone(),
         card: None,
         opening: Opening::Withheld(why),
+        opening_findings: Vec::new(),
         passage: None,
         found_by: m.found_by.clone(),
     };
@@ -338,10 +342,12 @@ fn hit(
             }
         },
     };
+    let (opening, opening_findings) = opening_of(&events, owner_findings);
     Hit {
         facts: facts.clone(),
         card,
-        opening: opening_of(&events),
+        opening,
+        opening_findings,
         passage: passage(&events, owner_findings, words, &m.events),
         found_by: m.found_by,
     }

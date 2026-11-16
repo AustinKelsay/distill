@@ -10,7 +10,7 @@ use chrono::NaiveDate;
 use super::{NOTICE_END, NOTICE_START, defuse, mask, scanned};
 use crate::cards::{self, Outcome, Shown};
 use crate::config::Config;
-use crate::findings::FingerprintKey;
+use crate::findings::{Field, Finding, Findings, FingerprintKey};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::model::{Event, EventKind, Originals, SessionMeta};
@@ -91,6 +91,9 @@ pub struct Row {
     /// The session's current card. A model reads its title and summary in place of the opening.
     pub card: Option<Shown>,
     pub opening: Opening,
+    /// For the owner, the findings inside the opening's text, their ranges counted from its
+    /// start, for the GUI to blur. Empty for everyone else, whose opening holds placeholders.
+    pub opening_findings: Vec<Finding>,
 }
 
 /// The opening of what the owner first wrote in a session.
@@ -173,10 +176,11 @@ fn serve(
         .skip(page.offset)
         .take(limit)
         .map(|facts| {
-            let (card, opening) = opening(home, &config, reader, &facts);
+            let (card, (opening, opening_findings)) = opening(home, &config, reader, &facts);
             Row {
                 card,
                 opening,
+                opening_findings,
                 facts,
             }
         })
@@ -197,20 +201,20 @@ fn serve(
 /// How long an opening is, at most, in characters.
 const OPENING_CHARS: usize = 200;
 
-/// The current card of `facts` and the opening of what the owner first wrote in it, as the read
-/// path would serve them to `reader`.
+/// The current card of `facts` and the opening of what the owner first wrote in it, with the
+/// owner's findings in it, as the read path would serve them to `reader`.
 fn opening(
     home: &Home,
     config: &Config,
     reader: &Reader,
     facts: &SessionMeta,
-) -> (Option<Shown>, Opening) {
+) -> (Option<Shown>, (Opening, Vec<Finding>)) {
     let (events, scan) = match scanned(home, config, facts) {
         Ok(Ok(scanned)) => scanned,
-        Ok(Err(why)) => return (None, Opening::Withheld(why)),
+        Ok(Err(why)) => return (None, (Opening::Withheld(why), Vec::new())),
         Err(e) => {
             let why = format!("{} could not be read: {e:#}", facts.key());
-            return (None, Opening::Withheld(why));
+            return (None, (Opening::Withheld(why), Vec::new()));
         }
     };
     let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner));
@@ -219,26 +223,26 @@ fn opening(
 
 fn first_opening(
     events: Vec<Event>,
-    scan: &crate::findings::Findings,
+    scan: &Findings,
     reader: &Reader,
     facts: &SessionMeta,
-) -> Opening {
+) -> (Opening, Vec<Finding>) {
     let Some(first) = events.into_iter().find(is_opening) else {
-        return Opening::None;
+        return (Opening::None, Vec::new());
     };
-    let first = match reader {
-        Reader::Owner => vec![first],
+    match reader {
+        Reader::Owner => opening_of(&[first], Some(scan)),
         Reader::Model { .. } | Reader::Distill => match mask(vec![first], scan) {
-            Ok(masked) => masked,
-            Err(e) => {
-                return Opening::Withheld(format!(
+            Ok(masked) => opening_of(&masked, None),
+            Err(e) => (
+                Opening::Withheld(format!(
                     "{}'s findings do not fit its events ({e:#})",
                     facts.key()
-                ));
-            }
+                )),
+                Vec::new(),
+            ),
         },
-    };
-    opening_of(&first)
+    }
 }
 
 /// Whether `e` is what the owner first wrote, when it is the first such event.
@@ -247,14 +251,67 @@ fn is_opening(e: &Event) -> bool {
 }
 
 /// The opening of what the owner first wrote in `events`, already prepared for the reader:
-/// whitespace collapsed and clipped.
-pub(super) fn opening_of(events: &[Event]) -> Opening {
+/// whitespace collapsed and clipped. With the owner's `findings`, also the findings in its text,
+/// their ranges moved with the collapsed whitespace; a finding the clip cuts is kept up to the
+/// cut, so no part of a value shows uncovered.
+pub(super) fn opening_of(events: &[Event], findings: Option<&Findings>) -> (Opening, Vec<Finding>) {
     let Some(first) = events.iter().find(|e| is_opening(e)) else {
-        return Opening::None;
+        return (Opening::None, Vec::new());
     };
     let text = first.text.as_deref().unwrap_or_default();
-    let words: Vec<&str> = text.split_whitespace().collect();
-    Opening::Text(clip(&words.join(" "), OPENING_CHARS))
+    // Each word's place in the stored text and in the collapsed one.
+    let mut words: Vec<(usize, usize, usize)> = Vec::new();
+    let mut collapsed = String::with_capacity(text.len());
+    for (at, word) in text
+        .split_whitespace()
+        .map(|w| (w.as_ptr() as usize - text.as_ptr() as usize, w))
+    {
+        if !collapsed.is_empty() {
+            collapsed.push(' ');
+        }
+        words.push((at, at + word.len(), collapsed.len()));
+        collapsed.push_str(word);
+    }
+    let shown = clip(&collapsed, OPENING_CHARS);
+    // How many bytes of `shown` are the session's own text, before any clip marker.
+    let kept = collapsed
+        .char_indices()
+        .nth(OPENING_CHARS)
+        .map_or(collapsed.len(), |(i, _)| i);
+    // Where byte `i` of the stored text lands in the collapsed text, when it is not whitespace.
+    let moved = |i: usize| {
+        words
+            .iter()
+            .find(|&&(s, e, _)| s <= i && i < e)
+            .map(|&(s, _, to)| to + (i - s))
+    };
+    let mut found = Vec::new();
+    for f in findings
+        .into_iter()
+        .flat_map(|f| f.in_event(first.seq))
+        .filter(|f| f.field == Field::Text && f.end <= text.len())
+    {
+        let Some(start) = (f.start..f.end).find_map(moved) else {
+            continue;
+        };
+        let Some(end) = (f.start..f.end).rev().find_map(moved).map(|e| e + 1) else {
+            continue;
+        };
+        if start >= kept {
+            continue;
+        }
+        let end = end.min(kept);
+        // The last byte may sit inside a character; widen to its end.
+        let end = (end..=shown.len())
+            .find(|&e| shown.is_char_boundary(e))
+            .unwrap_or(shown.len());
+        found.push(Finding {
+            start,
+            end,
+            ..f.clone()
+        });
+    }
+    (Opening::Text(shown), found)
 }
 
 impl Filter {
@@ -829,6 +886,82 @@ mod tests {
         );
         assert!(!t.contains(&key), "{t}");
         assert!(t.contains("deploy with [secret: anthropic_key #"), "{t}");
+    }
+
+    #[test]
+    fn the_owners_opening_carries_its_findings_through_collapsed_whitespace_and_the_clip() {
+        let key = ["sk-", "ant-", "api03-", &"Qq7".repeat(9)].concat();
+        let said: &'static str = Box::leak(
+            format!("deploy\n\n  with   {key} now {}", "pad ".repeat(80)).into_boxed_str(),
+        );
+        let (_d, home) = home_with(&[Session {
+            said: Some(said),
+            ..Session::new("s1", "2026-11-01T09:00:00Z")
+        }]);
+        let Listed::Rows(rows) = list(
+            &home,
+            &local(),
+            &Reader::Owner,
+            &Filter::default(),
+            Page::default(),
+        )
+        .unwrap() else {
+            panic!("the owner gets rows");
+        };
+        let row = &rows.rows[0];
+        let Opening::Text(t) = &row.opening else {
+            panic!("an opening: {:?}", row.opening);
+        };
+        assert!(t.starts_with("deploy with sk-"), "{t}");
+        assert!(t.ends_with("[clipped]"), "{t}");
+        assert_eq!(row.opening_findings.len(), 1, "{:?}", row.opening_findings);
+        let f = &row.opening_findings[0];
+        assert_eq!(&t[f.start..f.end], key);
+        assert!(f.is_secret());
+
+        // A model gets placeholders, and no findings to place.
+        let mut c = home.load_config().unwrap_or_default();
+        crate::trust::add(&mut c, "example-cloud", true).unwrap();
+        c.save(&home.config_path()).unwrap();
+        let Listed::Text(_) = list(
+            &home,
+            &local(),
+            &Reader::model(Some("example-cloud"), None),
+            &Filter::default(),
+            Page::default(),
+        )
+        .unwrap() else {
+            panic!("a model gets text");
+        };
+    }
+
+    #[test]
+    fn a_finding_cut_by_the_clip_is_kept_up_to_the_cut() {
+        let key = ["sk-", "ant-", "api03-", &"Qq7".repeat(9)].concat();
+        let said: &'static str = Box::leak(format!("{}{key}", "w ".repeat(95)).into_boxed_str());
+        let (_d, home) = home_with(&[Session {
+            said: Some(said),
+            ..Session::new("s1", "2026-11-01T09:00:00Z")
+        }]);
+        let Listed::Rows(rows) = list(
+            &home,
+            &local(),
+            &Reader::Owner,
+            &Filter::default(),
+            Page::default(),
+        )
+        .unwrap() else {
+            panic!("the owner gets rows");
+        };
+        let row = &rows.rows[0];
+        let Opening::Text(t) = &row.opening else {
+            panic!("an opening");
+        };
+        assert_eq!(row.opening_findings.len(), 1);
+        let f = &row.opening_findings[0];
+        assert_eq!(f.start, 190);
+        assert_eq!(&t[f.start..f.end], &key[..10]);
+        assert_eq!(&t[f.end..], " …[clipped]");
     }
 
     #[test]

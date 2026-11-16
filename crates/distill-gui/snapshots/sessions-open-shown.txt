@@ -1,0 +1,61 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        back: Back
+          label: Back
+        session-title: Deploy the staging app to ‹tailnet host›
+        session-facts: Claude Code · /work/app · claude-opus-5-5 · 40 min ago · 6 events
+        session-summary: Rotated the staging deploy token, redeployed, and mailed ‹email› the release notes.
+        session-tags: Outcome: Done  #deploy  #staging
+        findings-note: 1 shown. 6 findings covered (2 secrets). Click one to show it; closing the session covers it again.
+            event-head: Event 0, you
+            text: You
+            text: #0
+            text: 11:20:00
+            text-0: Deploy the staging app. The token is ‹assigned secret› and the notes go to jo.example@example.com.
+            event-head: Event 1, reasoning
+            text: Reasoning
+            text: #1
+            text: 11:20:04
+            text-1: Check the token works before deploying.
+            event-head: Event 2, assistant
+            text: Assistant · claude-opus-5-5
+            text: #2
+            text: 11:20:08
+            text-2: Deploying the staging app now.
+            event-head: Event 3, tool call, Bash
+            text: Tool call · Bash
+            text: #3
+            text: 11:20:12
+            text-3: command: curl -H 'Authorization: Bearer ‹bearer›' https://‹tailnet host›/deploy\ntimeout: 120
+            event-head: Event 4, tool result, Bash
+            text: Tool result · Bash
+            text: #4
+            text: 11:20:16
+            text-4: deploying…\nstep 1/3 build ok\nstep 2/3 upload ok\nstep 3/3 restart ok\nok: deploy finished on ‹tailnet host›
+            event-head: Event 5, assistant
+            text: Assistant · claude-opus-5-5
+            text: #5
+            text: 11:20:20
+            text-5: Deployed. I mailed the release notes to ‹email›.
+        c0: ‹tailnet host›
+        c1: ‹email›
+            f0: ‹assigned secret›
+            f1: jo.example@example.com
+            f2: ‹bearer›
+            f3: ‹tailnet host›
+            f4: ‹tailnet host›
+            f5: ‹email›

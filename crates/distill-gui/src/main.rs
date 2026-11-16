@@ -9,6 +9,7 @@
 //! fixture headless (`--list-scenes` lists them). A headless run never starts the worker, so it
 //! reads nothing from disk and never installs the timer.
 
+mod cover;
 mod fixture;
 mod jobs;
 mod nav;

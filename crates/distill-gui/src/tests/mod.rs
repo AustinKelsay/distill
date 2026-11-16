@@ -3,6 +3,7 @@
 //! and a stand-in for the timer installer, so no test reaches a real model or the real timer.
 
 mod overview;
+mod sessions;
 mod setup;
 mod shell;
 mod snapshots;
