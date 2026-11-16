@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 
 use crate::harness::Harness;
 use crate::home::Home;
-use crate::util::{append_jsonl, now_rfc3339, read_jsonl, set_private};
+use crate::util::{
+    append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,9 +117,13 @@ impl Archive {
         mut reader: impl Read,
     ) -> Result<Option<CaptureRecord>> {
         let previous = self.latest.get(origin).cloned();
-        fs::create_dir_all(&self.raw)?;
+        create_dir_private(&self.raw)?;
         let tmp = self.raw.join(format!(".incoming-{}", std::process::id()));
-        let mut out = fs::File::create(&tmp)?;
+        let mut out = private_file()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
         let mut full = Sha256::new();
         // Hash the first `previous.size` bytes separately to tell an append from a rewrite.
         let mut prefix = previous.as_ref().map(|p| (Sha256::new(), p.size));
@@ -174,7 +180,7 @@ impl Archive {
         let dest = self.blob_path(&sha);
         let shard = dest.parent().expect("blob has parent").to_path_buf();
         if !shard.exists() {
-            fs::create_dir_all(&shard)?;
+            create_dir_private(&shard)?;
             set_private(&shard);
         }
         if dest.exists() {
@@ -284,8 +290,10 @@ pub fn copy_sqlite(path: &Path) -> Result<Vec<u8>> {
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
+    // The copy holds session text, so its folder is owner-only even in a shared temp dir.
     let dir = std::env::temp_dir().join(format!("distill-sqlite-{}", std::process::id()));
-    fs::create_dir_all(&dir)?;
+    create_dir_private(&dir)?;
+    set_private(&dir);
     let dest_path = dir.join("copy.db");
     let _ = fs::remove_file(&dest_path);
     let result = (|| -> Result<Vec<u8>> {

@@ -27,7 +27,7 @@ use crate::read;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
 use crate::trust::{Access, Reader, Trust};
-use crate::util::{set_private, write_json_pretty};
+use crate::util::{create_dir_private, write_json_pretty};
 
 /// How long a request lives after it was made, whether or not it was approved.
 pub const LIFETIME_HOURS: i64 = 24;
@@ -643,8 +643,7 @@ fn is_id(id: &str) -> bool {
 
 fn save(home: &Home, r: &Request) -> Result<()> {
     let dir = home.reveals_dir();
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    set_private(&dir);
+    create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
     write_json_pretty(&home.reveal_path(&r.id), r)
 }
 

@@ -1,5 +1,7 @@
 //! One module per command. Each has an `Args` and a `run`.
 
+pub mod exposure;
+pub mod findings;
 pub mod gui;
 pub mod harnesses;
 pub mod init;

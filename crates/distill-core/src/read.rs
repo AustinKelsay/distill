@@ -12,7 +12,12 @@ use crate::runtime::LocalRuntime;
 use crate::trust::{Access, Reader, Trust};
 use crate::util::now_rfc3339;
 
+mod fingerprints;
 mod list;
+pub use fingerprints::{
+    Answer, Appearance, Appearances, FindingFilter, Fingerprints, Kinds, Lookup, Order, Spread,
+    fingerprints, where_found,
+};
 pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
 
 /// The first line of all text given to a model.

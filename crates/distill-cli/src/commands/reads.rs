@@ -41,6 +41,19 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                     distill_core::util::count(*secrets, "value")
                 ),
                 ReadResult::RevealExpired { request } => format!("reveal {request} expired"),
+                ReadResult::Findings {
+                    fingerprints,
+                    sessions,
+                } => {
+                    let mut s = format!(
+                        "listed {}",
+                        distill_core::util::count(*fingerprints, "fingerprint")
+                    );
+                    if *sessions > 0 {
+                        s += &format!(" in {}", distill_core::util::count(*sessions, "session"));
+                    }
+                    s
+                }
                 ReadResult::Refused { reason } => format!("refused: {reason}"),
                 ReadResult::Failed { error } => format!("failed: {error}"),
             };
@@ -50,6 +63,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 e.reader.to_string(),
                 e.session.as_deref().unwrap_or(match e.result {
                     ReadResult::Listed { .. } => "(a list of sessions)",
+                    ReadResult::Findings { .. } => "(findings)",
                     _ => "-",
                 })
             );

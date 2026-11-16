@@ -10,6 +10,7 @@
 pub mod archive;
 pub mod config;
 pub mod detect;
+pub mod exposure;
 pub mod findings;
 pub mod harness;
 pub mod home;

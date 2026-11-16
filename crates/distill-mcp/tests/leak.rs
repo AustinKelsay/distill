@@ -37,6 +37,7 @@ fn no_tool_serves_a_planted_secret() {
         )
         .unwrap();
     distill_core::normalize::normalize(&home, false).unwrap();
+    distill_core::findings::scan_all(&home).unwrap();
     let mut c = home.load_config().unwrap_or_default();
     distill_core::trust::add(&mut c, "example-cloud", true).unwrap();
     c.save(&home.config_path()).unwrap();
@@ -54,10 +55,23 @@ fn no_tool_serves_a_planted_secret() {
             reader: reader.clone(),
         };
         let mut texts = Vec::new();
-        for (tool, args) in [
+        // Each fingerprint's short form, as `list_findings` shows it, looked up in turn.
+        let shorts: Vec<String> = {
+            let r = s
+                .call_tool("list_findings", &json!({"kind": "all"}))
+                .unwrap();
+            r.split('#').skip(1).map(|p| p[..8].to_string()).collect()
+        };
+        assert_eq!(shorts.len(), 2, "{reader:?}");
+        let mut calls = vec![
             ("list_sessions", json!({})),
             ("read_session", json!({"session": "claude-code/s1"})),
-        ] {
+            ("list_findings", json!({"kind": "all"})),
+        ];
+        for short in &shorts {
+            calls.push(("list_findings", json!({"fingerprint": short})));
+        }
+        for (tool, args) in calls {
             let r: Value = s
                 .handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                     "params": {"name": tool, "arguments": args}}))
