@@ -1,5 +1,6 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
-//! logic of its own; the work is in distill-core. No command prints session text.
+//! logic of its own; the work is in distill-core. Only `read` prints session text, and only
+//! through the read path.
 
 mod commands;
 mod output;
@@ -50,6 +51,10 @@ enum Cmd {
     Runs(runs::Args),
     /// Providers, which are local and which are trusted, and the local runtime's models
     Providers(providers::Args),
+    /// Read a session's events as a model at a named provider
+    Read(read::Args),
+    /// The read log: who read which session, and what they got
+    Reads(reads::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
     /// Open the Distill window
@@ -82,6 +87,8 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),
         Cmd::Providers(a) => providers::run(&ctx, a),
+        Cmd::Read(a) => read::run(&ctx, a),
+        Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),
     }

@@ -481,9 +481,9 @@ pub fn read_session_list(home: &Home) -> Result<Vec<SessionMeta>> {
     read_jsonl(&home.session_list_path())
 }
 
-/// A session's events. Only the parsers and the detector read stored text directly; everything
-/// else goes through the read path once it exists.
-pub fn read_events(home: &Home, meta: &SessionMeta) -> Result<Vec<Event>> {
+/// A session's events. Only the parse step, the detector and the read path read stored text
+/// directly; everything else goes through the read path (`crate::read`).
+pub(crate) fn read_events(home: &Home, meta: &SessionMeta) -> Result<Vec<Event>> {
     read_jsonl(&home.events_path(meta.harness, &meta.session_id))
 }
 

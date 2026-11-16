@@ -73,7 +73,7 @@ impl Archive {
         })
     }
 
-    pub fn blob_path(&self, sha: &str) -> PathBuf {
+    pub(crate) fn blob_path(&self, sha: &str) -> PathBuf {
         self.raw.join(&sha[..2]).join(sha)
     }
 
@@ -86,7 +86,7 @@ impl Archive {
         &self.records
     }
 
-    pub fn read_blob(&self, sha: &str) -> Result<Vec<u8>> {
+    pub(crate) fn read_blob(&self, sha: &str) -> Result<Vec<u8>> {
         let bytes = fs::read(self.blob_path(sha)).with_context(|| format!("blob {sha} missing"))?;
         let actual = hex::encode(Sha256::digest(&bytes));
         if actual != sha {

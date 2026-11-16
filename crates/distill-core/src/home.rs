@@ -94,7 +94,8 @@ impl Home {
     pub fn meta_path(&self, harness: Harness, session_id: &str) -> PathBuf {
         self.session_dir(harness, session_id).join("meta.json")
     }
-    pub fn events_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+    /// Read only by the read path (`crate::read`), so it is not public.
+    pub(crate) fn events_path(&self, harness: Harness, session_id: &str) -> PathBuf {
         self.session_dir(harness, session_id).join("events.jsonl")
     }
     pub fn findings_path(&self, harness: Harness, session_id: &str) -> PathBuf {

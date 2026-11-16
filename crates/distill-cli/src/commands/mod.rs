@@ -5,6 +5,8 @@ pub mod harnesses;
 pub mod init;
 pub mod parse;
 pub mod providers;
+pub mod read;
+pub mod reads;
 pub mod runs;
 pub mod schedule;
 pub mod status;

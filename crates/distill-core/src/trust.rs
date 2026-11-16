@@ -47,6 +47,33 @@ impl Reader {
             model: named(model),
         }
     }
+
+    /// A model reader as a face names it: `provider` and `model` as given (`--provider`,
+    /// `--model`), each falling back to `DISTILL_PROVIDER` and `DISTILL_MODEL`.
+    pub fn from_flags_or_env(provider: Option<&str>, model: Option<&str>) -> Self {
+        let env = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let provider = provider
+            .map(str::to_string)
+            .or_else(|| env("DISTILL_PROVIDER"));
+        let model = model.map(str::to_string).or_else(|| env("DISTILL_MODEL"));
+        Self::model(provider.as_deref(), model.as_deref())
+    }
+}
+
+impl std::fmt::Display for Reader {
+    /// `owner`, `distill`, `provider/model`, `provider`, or `no provider`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Owner => f.write_str("owner"),
+            Self::Distill => f.write_str("distill"),
+            Self::Model { provider, model } => match (provider, model) {
+                (Some(p), Some(m)) => write!(f, "{p}/{m}"),
+                (Some(p), None) => f.write_str(p),
+                (None, Some(m)) => write!(f, "no provider/{m}"),
+                (None, None) => f.write_str("no provider"),
+            },
+        }
+    }
 }
 
 /// What a reader may do: read, or nothing, with a reason the owner can act on.
@@ -174,32 +201,18 @@ impl Trust {
     /// Whether `reader` may read session text. `runtime` tells a model stored on this machine
     /// from one Ollama serves from a cloud; it need not be running.
     pub fn check(&self, reader: &Reader, runtime: &LocalRuntime) -> Access {
-        let (provider, model) = match reader {
-            Reader::Owner | Reader::Distill => return Access::Allowed,
-            Reader::Model { provider, model } => (
-                provider.as_deref().map(normalize).filter(|p| !p.is_empty()),
-                model.as_deref().map(str::trim).filter(|m| !m.is_empty()),
-            ),
+        let Some((provider, via)) = Self::resolve(reader, runtime) else {
+            return match reader {
+                Reader::Owner | Reader::Distill => Access::Allowed,
+                Reader::Model { .. } => Access::Refused(
+                    "this reader names no provider. Name the provider the model runs at with \
+                     --provider or DISTILL_PROVIDER; `distill providers` lists the trusted ones, \
+                     and the owner can trust one with `distill providers trust <name>`."
+                        .into(),
+                ),
+            };
         };
-        let Some(provider) = provider else {
-            return Access::Refused(
-                "this reader names no provider. Name the provider the model runs at with \
-                 --provider or DISTILL_PROVIDER; `distill providers` lists the trusted ones."
-                    .into(),
-            );
-        };
-        let mut via = String::new();
-        let provider = match model {
-            Some(m) if provider == OLLAMA && !runtime.stored_here(m) => {
-                via = format!(
-                    "\"{m}\" is not stored on this machine, so Ollama serves it from a cloud: \
-                     it reads as provider \"{OLLAMA_CLOUD}\". "
-                );
-                OLLAMA_CLOUD
-            }
-            _ => &provider,
-        };
-        match self.provider(provider) {
+        match self.provider(&provider) {
             Some(p) if p.trusted => Access::Allowed,
             Some(_) => Access::Refused(format!(
                 "{via}Provider \"{provider}\" is not trusted. The owner can trust it with \
@@ -209,6 +222,35 @@ impl Trust {
                 "{via}Provider \"{provider}\" is not listed. The owner can add it as a trusted \
                  remote provider with `distill providers add {provider} --trusted`."
             )),
+        }
+    }
+
+    /// The listed provider whose rules apply to `reader`: `ollama-cloud` for a model Ollama
+    /// serves from a cloud. `None` for the owner, Distill itself, and a model at a provider that
+    /// is unnamed or not listed.
+    pub fn provider_for(&self, reader: &Reader, runtime: &LocalRuntime) -> Option<&Provider> {
+        let (name, _) = Self::resolve(reader, runtime)?;
+        self.provider(&name)
+    }
+
+    /// The provider a model reader reads as, with why when that is not the one it named.
+    fn resolve(reader: &Reader, runtime: &LocalRuntime) -> Option<(String, String)> {
+        let Reader::Model { provider, model } = reader else {
+            return None;
+        };
+        let provider = provider
+            .as_deref()
+            .map(normalize)
+            .filter(|p| !p.is_empty())?;
+        match model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+            Some(m) if provider == OLLAMA && !runtime.stored_here(m) => Some((
+                OLLAMA_CLOUD.into(),
+                format!(
+                    "\"{m}\" is not stored on this machine, so Ollama serves it from a cloud: \
+                     it reads as provider \"{OLLAMA_CLOUD}\". "
+                ),
+            )),
+            _ => Some((provider, String::new())),
         }
     }
 }
