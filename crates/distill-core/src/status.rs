@@ -1,6 +1,6 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
-//! scan's progress, and warnings when a harness could delete sessions before they are swept or
+//! scan's and the word index's progress, and warnings when a harness could delete sessions before they are swept or
 //! the timer has stopped sweeping. Each later ticket adds its own fields.
 
 use std::collections::BTreeMap;
@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::findings::{self, ScanProgress};
 use crate::harness::Harness;
 use crate::home::Home;
+use crate::index::{self, IndexProgress};
 use crate::normalize;
 use crate::pruning;
 use crate::runlog;
@@ -33,6 +34,9 @@ pub struct Status {
     pub warnings: Vec<Warning>,
     /// How many sessions have current findings, and how many wait for a scan.
     pub scan: ScanProgress,
+    /// How many sessions the word index holds current, and how many wait for it.
+    #[serde(default)]
+    pub index: IndexProgress,
 }
 
 /// One thing the owner should act on, in a sentence.
@@ -183,6 +187,7 @@ pub fn status(home: &Home) -> Result<Status> {
         harnesses,
         warnings,
         scan: findings::progress(home)?,
+        index: index::progress(home)?,
     })
 }
 

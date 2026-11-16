@@ -10,7 +10,7 @@ use chrono::NaiveDate;
 use super::{NOTICE_END, NOTICE_START, defuse, mask, scanned};
 use crate::harness::Harness;
 use crate::home::Home;
-use crate::model::{EventKind, Originals, SessionMeta};
+use crate::model::{Event, EventKind, Originals, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
@@ -188,9 +188,7 @@ fn opening(home: &Home, reader: &Reader, facts: &SessionMeta) -> Opening {
         Ok(Err(why)) => return Opening::Withheld(why),
         Err(e) => return Opening::Withheld(format!("{} could not be read: {e:#}", facts.key())),
     };
-    let Some(first) = events.into_iter().find(|e| {
-        e.kind == EventKind::User && e.text.as_deref().is_some_and(|t| !t.trim().is_empty())
-    }) else {
+    let Some(first) = events.into_iter().find(is_opening) else {
         return Opening::None;
     };
     let first = match reader {
@@ -205,13 +203,27 @@ fn opening(home: &Home, reader: &Reader, facts: &SessionMeta) -> Opening {
             }
         },
     };
-    let text = first[0].text.as_deref().unwrap_or_default();
+    opening_of(&first)
+}
+
+/// Whether `e` is what the owner first wrote, when it is the first such event.
+fn is_opening(e: &Event) -> bool {
+    e.kind == EventKind::User && e.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+}
+
+/// The opening of what the owner first wrote in `events`, already prepared for the reader:
+/// whitespace collapsed and clipped.
+pub(super) fn opening_of(events: &[Event]) -> Opening {
+    let Some(first) = events.iter().find(|e| is_opening(e)) else {
+        return Opening::None;
+    };
+    let text = first.text.as_deref().unwrap_or_default();
     let words: Vec<&str> = text.split_whitespace().collect();
     Opening::Text(clip(&words.join(" "), OPENING_CHARS))
 }
 
 impl Filter {
-    fn matches(&self, m: &SessionMeta, originals: &Originals) -> bool {
+    pub(super) fn matches(&self, m: &SessionMeta, originals: &Originals) -> bool {
         let day = m
             .started_at
             .as_deref()
@@ -236,8 +248,6 @@ impl Filter {
 /// A page of rows as text for a model: a line about the page, then the rows between the two
 /// notices.
 fn render(rows: &Rows, offset: usize) -> String {
-    const LEFT_OUT: &str = "Mirrors and sessions the previous build's steward ran are left out \
-                            unless asked for.";
     if rows.rows.is_empty() {
         return if rows.total == 0 {
             format!("No sessions match. {LEFT_OUT}\n")
@@ -260,42 +270,55 @@ fn render(rows: &Rows, offset: usize) -> String {
     }
     let mut body = String::new();
     for r in &rows.rows {
-        let f = &r.facts;
-        body += &format!("\n{} · {}", f.key(), f.harness.label());
-        if let Some(cwd) = &f.cwd {
-            body += &format!(" · project {cwd}");
-        }
-        if let Some(branch) = &f.git_branch {
-            body += &format!(" · branch {branch}");
-        }
-        if !f.models.is_empty() {
-            body += &format!(" · models {}", f.models.join(", "));
-        }
-        if let Some(at) = &f.started_at {
-            body += &format!(" · started {at}");
-        }
-        if let Some(at) = &f.ended_at {
-            body += &format!(" · ended {at}");
-        }
-        body += &format!(
-            " · {}, {}",
-            count(f.counts.events, "event"),
-            count(f.counts.tool_calls, "tool call")
-        );
-        if f.mirror {
-            body += " · mirror";
-        }
-        if f.steward {
-            body += " · previous steward";
-        }
-        body += &match &r.opening {
-            Opening::Text(t) => format!("\n  Opened with: {t}\n"),
-            Opening::None => "\n  No message from the owner.\n".to_string(),
-            Opening::Withheld(why) => format!("\n  Opening withheld: {why}\n"),
-        };
+        body += &format!("\n{}\n{}", facts_line(&r.facts), opening_line(&r.opening));
     }
     format!("{head}{NOTICE_START}\n{}\n{NOTICE_END}\n", defuse(&body))
 }
+
+/// A session's facts on one line, for a model.
+pub(super) fn facts_line(f: &SessionMeta) -> String {
+    let mut line = format!("{} · {}", f.key(), f.harness.label());
+    if let Some(cwd) = &f.cwd {
+        line += &format!(" · project {cwd}");
+    }
+    if let Some(branch) = &f.git_branch {
+        line += &format!(" · branch {branch}");
+    }
+    if !f.models.is_empty() {
+        line += &format!(" · models {}", f.models.join(", "));
+    }
+    if let Some(at) = &f.started_at {
+        line += &format!(" · started {at}");
+    }
+    if let Some(at) = &f.ended_at {
+        line += &format!(" · ended {at}");
+    }
+    line += &format!(
+        " · {}, {}",
+        count(f.counts.events, "event"),
+        count(f.counts.tool_calls, "tool call")
+    );
+    if f.mirror {
+        line += " · mirror";
+    }
+    if f.steward {
+        line += " · previous steward";
+    }
+    line
+}
+
+/// A session's opening as an indented line, for a model.
+pub(super) fn opening_line(o: &Opening) -> String {
+    match o {
+        Opening::Text(t) => format!("  Opened with: {t}\n"),
+        Opening::None => "  No message from the owner.\n".to_string(),
+        Opening::Withheld(why) => format!("  Opening withheld: {why}\n"),
+    }
+}
+
+/// The note on what a list or search leaves out.
+pub(super) const LEFT_OUT: &str =
+    "Mirrors and sessions the previous build's steward ran are left out unless asked for.";
 
 #[cfg(test)]
 mod tests {

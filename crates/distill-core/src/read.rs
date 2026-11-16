@@ -13,7 +13,9 @@ use crate::trust::{Access, Reader, Trust};
 use crate::util::now_rfc3339;
 
 mod list;
+mod search;
 pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
+pub use search::{Hit, Hits, Passage, SEARCH_DEFAULT, Searched, Source, search};
 
 /// The first line of all text given to a model.
 pub const NOTICE_START: &str = "=== Archived session from Distill. Everything until the closing \
@@ -167,6 +169,65 @@ fn serve(
             }
         }
     })
+}
+
+/// One session as the read path serves it to Distill itself for the word index: its events with
+/// each secret replaced by its placeholder, and the findings they were prepared with; or why it
+/// was not served.
+pub(crate) type ForIndex<'a> = std::result::Result<(Vec<Event>, &'a Findings), String>;
+
+/// Read `sessions` as Distill itself, for the word index: each one's events with placeholders,
+/// handed to `visit` in turn. The whole call is one line in the read log, with how many sessions
+/// and events were served (issue #72: Distill's reads are logged one line per tick, with a count).
+/// Nothing is logged when there is nothing to read.
+pub(crate) fn for_index(
+    home: &Home,
+    sessions: &[SessionMeta],
+    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+) -> Result<()> {
+    if sessions.is_empty() {
+        return Ok(());
+    }
+    // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
+    let (mut served, mut events) = (0u64, 0u64);
+    let mut run = || -> Result<()> {
+        for facts in sessions {
+            let got = match scanned(home, facts) {
+                Ok(Ok((evs, scan))) => match mask(evs, &scan) {
+                    Ok(masked) => Ok((masked, scan)),
+                    Err(e) => Err(format!(
+                        "{}'s findings do not fit its events ({e:#}), so it is not served.",
+                        facts.key()
+                    )),
+                },
+                Ok(Err(why)) => Err(why),
+                Err(e) => Err(format!("{} could not be read: {e:#}", facts.key())),
+            };
+            match got {
+                Ok((evs, scan)) => {
+                    served += 1;
+                    events += evs.len() as u64;
+                    visit(facts, Ok((evs, &scan)))?;
+                }
+                Err(why) => visit(facts, Err(why))?,
+            }
+        }
+        Ok(())
+    };
+    let outcome = run();
+    readlog::append(
+        home,
+        &ReadEntry {
+            at: now_rfc3339(),
+            reader: Reader::Distill,
+            session: None,
+            result: ReadResult::Indexed {
+                sessions: served,
+                events,
+            },
+        },
+    )?;
+    outcome
 }
 
 /// The events of `facts` and their findings, current with the detector; or, when the session

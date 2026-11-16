@@ -1,6 +1,6 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
-//! logic of its own; the work is in distill-core. Only `read` prints session text, and only
-//! through the read path.
+//! logic of its own; the work is in distill-core. Only `read` and `search` print session text, and
+//! only through the read path.
 
 mod commands;
 mod output;
@@ -47,7 +47,7 @@ enum Cmd {
     Scan(scan::Args),
     /// What the timer runs: every step of a tick, in order
     Tick(tick::Args),
-    /// Sessions, capture health and format drift per harness, the last sweep and scan progress
+    /// Sessions, capture health and format drift per harness, the last sweep, scan and index progress
     Status(status::Args),
     /// The run log
     Runs(runs::Args),
@@ -57,6 +57,8 @@ enum Cmd {
     Read(read::Args),
     /// The read log: who read which session, and what they got
     Reads(reads::Args),
+    /// Search sessions by exact words as a model at a named provider
+    Search(search::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
     /// Open the Distill window
@@ -92,6 +94,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Providers(a) => providers::run(&ctx, a),
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
+        Cmd::Search(a) => search::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),
     }

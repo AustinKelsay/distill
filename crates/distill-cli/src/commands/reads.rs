@@ -26,6 +26,11 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 ReadResult::Listed { sessions } => {
                     format!("listed {}", distill_core::util::count(*sessions, "session"))
                 }
+                ReadResult::Indexed { sessions, events } => format!(
+                    "indexed {}, {}",
+                    distill_core::util::count(*sessions, "session"),
+                    distill_core::util::count(*events, "event")
+                ),
                 ReadResult::Refused { reason } => format!("refused: {reason}"),
                 ReadResult::Failed { error } => format!("failed: {error}"),
             };

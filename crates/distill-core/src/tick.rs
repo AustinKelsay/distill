@@ -1,7 +1,7 @@
 //! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
-//! tick writes one entry to the run log. Today the steps are sweep, parse and scan; the spec's
-//! later steps (word index, cards, vectors, model detection pass) are added to [`STEPS`] by the
-//! tickets that build them.
+//! tick writes one entry to the run log. Today the steps are sweep, parse, scan and the word
+//! index; the spec's later steps (cards, vectors, model detection pass) are added to [`STEPS`] by
+//! the tickets that build them.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::findings;
 use crate::home::Home;
+use crate::index;
 use crate::normalize;
 use crate::runlog::{self, RunEntry, StepOutcome};
 use crate::sweep;
@@ -32,6 +33,10 @@ pub const STEPS: &[Step] = &[
     Step {
         name: "scan",
         run: scan_step,
+    },
+    Step {
+        name: "index",
+        run: index_step,
     },
 ];
 
@@ -77,6 +82,18 @@ pub fn scan_outcome(r: &findings::ScanReport) -> Result<StepOutcome> {
     })
 }
 
+/// Bring the word index up to date, reading through the read path as Distill itself.
+pub fn index_step(home: &Home, _config: &Config) -> Result<StepOutcome> {
+    let r = index::build(home)?;
+    Ok(StepOutcome {
+        name: "index".into(),
+        ok: r.failed == 0,
+        summary: r.summary(),
+        errors: r.errors.clone(),
+        report: serde_json::to_value(&r)?,
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TickReport {
     pub steps: Vec<StepOutcome>,
@@ -100,13 +117,13 @@ mod tests {
     use crate::harness::Harness;
 
     #[test]
-    fn the_steps_are_sweep_parse_then_scan() {
+    fn the_steps_are_sweep_parse_scan_then_index() {
         let names: Vec<_> = STEPS.iter().map(|s| s.name).collect();
-        assert_eq!(names, ["sweep", "parse", "scan"]);
+        assert_eq!(names, ["sweep", "parse", "scan", "index"]);
     }
 
     #[test]
-    fn a_tick_sweeps_parses_and_scans_and_writes_one_run_log_entry() {
+    fn a_tick_sweeps_parses_scans_and_indexes_and_writes_one_run_log_entry() {
         let dir = tempfile::tempdir().unwrap();
         let pi = dir.path().join("pi");
         std::fs::create_dir_all(&pi).unwrap();
@@ -133,11 +150,12 @@ mod tests {
 
         let r = tick(&home, &config).unwrap();
         let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["sweep", "parse", "scan"]);
+        assert_eq!(names, ["sweep", "parse", "scan", "index"]);
         assert!(r.steps.iter().all(|s| s.ok), "{r:?}");
         assert_eq!(r.steps[0].report["new"], 1);
         assert_eq!(r.steps[1].report["sessions"], 1);
         assert_eq!(r.steps[2].report["scanned"], 1);
+        assert_eq!(r.steps[3].report["indexed"], 1);
         assert!(home.meta_path(Harness::Pi, "p1").exists());
         assert!(home.findings_path(Harness::Pi, "p1").exists());
 
@@ -155,7 +173,8 @@ mod tests {
         assert_eq!(
             top,
             [
-                "exports", "keys", "raw", "recipes", "runs", "sessions", "state", "steward"
+                "exports", "index", "keys", "log", "raw", "recipes", "runs", "sessions", "state",
+                "steward"
             ]
         );
         for old in ["recipes", "exports/good-sessions/b1", "steward"] {

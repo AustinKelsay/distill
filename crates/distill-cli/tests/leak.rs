@@ -1,6 +1,7 @@
 //! The leak test (issue #72, "Testing Decisions"): a synthetic session with planted secrets goes
-//! through every step, and then every file under the home and the output of every command is
-//! searched for the values. Only the raw archive and that session's events may hold them.
+//! through every step, the word index included, and then every file under the home and the output
+//! of every command is searched for the values. Only the raw archive and that session's events
+//! may hold them.
 //!
 //! The secrets are fake, and built from pieces at run time so that no secret scanner mistakes
 //! this file for a leak. No local runtime is reachable, and `HOME` is a temp dir.
@@ -133,6 +134,17 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
             "--model",
             "m",
         ],
+        &["search", "deploy", "--provider", "ollama"],
+        &["search", "anthropic_key", "--provider", "example-cloud"],
+        &[
+            "search",
+            "assigned_secret",
+            "deploy",
+            "--provider",
+            "ollama",
+        ],
+        &["search", &key, "--provider", "ollama"],
+        &["search", &password, "--provider", "example-cloud"],
         &["reads"],
     ] {
         step(args, true);
@@ -140,6 +152,8 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     // Refused reads print nothing of the session either.
     step(&["read", "leak1"], false);
     step(&["read", "leak1", "--provider", "unheard-of"], false);
+    step(&["search", "deploy"], false);
+    step(&["search", "deploy", "--provider", "unheard-of"], false);
     step(&["reads"], true);
 
     for (cmd, out) in &printed {
@@ -155,6 +169,15 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         .1;
     assert!(served.contains("[secret: anthropic_key #"), "{served}");
     assert!(served.contains("[secret: assigned_secret #"), "{served}");
+    let found = &printed
+        .iter()
+        .find(|(c, _)| c.starts_with("search anthropic_key"))
+        .unwrap()
+        .1;
+    assert!(
+        found.contains("deploy with [secret: anthropic_key #"),
+        "{found}"
+    );
 
     let events = m.home.join("sessions/claude-code/leak1/events.jsonl");
     assert!(events.exists());
@@ -181,4 +204,10 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
             .join("sessions/claude-code/leak1/findings.json")
             .exists()
     );
+    // The word index was built, and is among the files searched above.
+    let index: Vec<_> = all
+        .iter()
+        .filter(|f| f.starts_with(m.home.join("index")))
+        .collect();
+    assert!(index.len() >= 2, "{index:?}");
 }

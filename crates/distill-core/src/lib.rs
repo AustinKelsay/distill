@@ -3,7 +3,8 @@
 //!
 //! What is here is what the rebuild keeps (ADR 0001): capture (the sweep, the raw archive,
 //! `verify`, the timer) and the parsers with their mirror rules and format-drift detection; and
-//! what it adds: trust, the read path, the detector (`detect`) and findings (`findings`). The
+//! what it adds: trust, the read path, the detector (`detect`), findings (`findings`) and the word index
+//! (`index`). The
 //! spec is issue #72; terms are in `GLOSSARY.md`. The layout of a Distill home is fixed by the
 //! spec, and [`Home`] has a path helper for every entry in it.
 
@@ -13,6 +14,7 @@ pub mod detect;
 pub mod findings;
 pub mod harness;
 pub mod home;
+pub mod index;
 pub mod model;
 pub mod normalize;
 pub mod pruning;

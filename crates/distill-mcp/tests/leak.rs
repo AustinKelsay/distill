@@ -1,6 +1,7 @@
 //! The leak test's MCP half (issue #72, "Testing Decisions"): a session with planted secrets is
-//! listed and read through every MCP tool by trusted readers, local and remote, and no tool's
-//! output holds a value; each reads a placeholder instead. The secrets are fake, and built from
+//! indexed, then every MCP tool the server lists is called by trusted readers, local and remote,
+//! and no tool's output holds a value; each reads a placeholder instead. A new tool must say here
+//! what it is called with, or this test fails. The secrets are fake, and built from
 //! pieces at run time so that no secret scanner mistakes this file for a leak.
 
 use distill_core::archive::Archive;
@@ -39,6 +40,8 @@ fn no_tool_serves_a_planted_secret() {
     distill_core::trust::add(&mut c, "example-cloud", true).unwrap();
     c.save(&home.config_path()).unwrap();
 
+    distill_core::index::build(&home).unwrap();
+
     for reader in [
         Reader::model(Some("ollama"), Some("small:8b")),
         Reader::model(Some("example-cloud"), Some("m")),
@@ -50,36 +53,58 @@ fn no_tool_serves_a_planted_secret() {
                 .runtime(),
             reader: reader.clone(),
         };
-        let mut texts = Vec::new();
-        for (tool, args) in [
-            ("list_sessions", json!({})),
-            ("read_session", json!({"session": "claude-code/s1"})),
-        ] {
-            let r: Value = s
-                .handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": tool, "arguments": args}}))
-                .unwrap();
-            let whole = r.to_string();
+        let listed = s
+            .handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+            .unwrap();
+        let mut texts = std::collections::BTreeMap::new();
+        for tool in listed["result"]["tools"].as_array().unwrap() {
+            let tool = tool["name"].as_str().unwrap();
+            let calls = match tool {
+                "list_sessions" => vec![json!({})],
+                "read_session" => vec![json!({"session": "claude-code/s1"})],
+                "search_sessions" => vec![
+                    json!({"query": "deploy"}),
+                    json!({"query": "anthropic_key"}),
+                    json!({"query": key}),
+                    json!({"query": password}),
+                ],
+                other => panic!("the leak test does not call {other}: add what it is called with"),
+            };
+            for args in calls {
+                let r: Value = s
+                    .handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": {"name": tool, "arguments": args}}))
+                    .unwrap();
+                let whole = r.to_string();
+                assert!(
+                    !whole.contains(&key) && !whole.contains(&password),
+                    "{reader:?} {tool} {args}: {whole}"
+                );
+                let text = r["result"]["content"][0]["text"].as_str().unwrap();
+                texts.insert(format!("{tool} {args}"), text.to_string());
+            }
+        }
+        let text = |k: &str| texts[k].as_str();
+        assert!(
+            text("list_sessions {}").contains("deploy with [secret: anthropic_key #"),
+            "{reader:?}: {texts:#?}"
+        );
+        assert!(
+            text(r#"read_session {"session":"claude-code/s1"}"#)
+                .contains("DB_PASSWORD=[secret: assigned_secret #"),
+            "{reader:?}: {texts:#?}"
+        );
+        for q in ["deploy", "anthropic_key"] {
+            let t = text(&format!(r#"search_sessions {{"query":"{q}"}}"#));
             assert!(
-                !whole.contains(&key) && !whole.contains(&password),
-                "{reader:?} {tool}: {whole}"
-            );
-            texts.push(
-                r["result"]["content"][0]["text"]
-                    .as_str()
-                    .unwrap()
-                    .to_string(),
+                t.contains("[secret: anthropic_key #"),
+                "{reader:?} {q}: {t}"
             );
         }
-        assert!(
-            texts[0].contains("deploy with [secret: anthropic_key #"),
-            "{reader:?}: {}",
-            texts[0]
-        );
-        assert!(
-            texts[1].contains("DB_PASSWORD=[secret: assigned_secret #"),
-            "{reader:?}: {}",
-            texts[1]
-        );
+        // The values are not in the index, so searching for one finds nothing.
+        for v in [&key, &password] {
+            let t = text(&format!(r#"search_sessions {{"query":"{v}"}}"#));
+            assert!(t.starts_with("No sessions match."), "{reader:?}: {t}");
+        }
     }
 }

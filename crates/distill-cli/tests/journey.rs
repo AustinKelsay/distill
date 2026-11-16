@@ -1,6 +1,6 @@
 //! The kept loop through the real binary, against synthetic harness files in a temp dir: init,
-//! harnesses, sweep with append detection and exclusions, verify, parse, scan, tick, status and
-//! runs.
+//! harnesses, sweep with append detection and exclusions, verify, parse, scan, tick (which also
+//! builds the word index), status and runs.
 //! Every command runs with `HOME` set to the temp dir, and none may print session text.
 
 use std::fs;
@@ -241,7 +241,7 @@ sweep_every_minutes = 60
     );
     human(&user, &home, &["scan"]);
 
-    // A tick is sweep, parse then scan, and one run-log entry.
+    // A tick is sweep, parse, scan then the word index, and one run-log entry.
     let before = json(&user, &home, &["runs", "--limit", "100"])
         .as_array()
         .unwrap()
@@ -253,7 +253,8 @@ sweep_every_minutes = 60
         .iter()
         .map(|s| s["name"].clone())
         .collect();
-    assert_eq!(names, ["sweep", "parse", "scan"], "{t}");
+    assert_eq!(names, ["sweep", "parse", "scan", "index"], "{t}");
+    assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
     let runs = json(&user, &home, &["runs", "--limit", "100"]);
     assert_eq!(runs.as_array().unwrap().len(), before + 1);
     assert_eq!(runs[0]["step"], "tick");
@@ -271,6 +272,8 @@ sweep_every_minutes = 60
     assert_eq!(st["sessions"], 3, "{st}");
     assert_eq!(st["scan"]["current"], 3, "{st}");
     assert_eq!(st["scan"]["pending"], 0, "{st}");
+    assert_eq!(st["index"]["current"], 3, "{st}");
+    assert_eq!(st["index"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
     // Just swept, and no harness here deletes sessions sooner than the timer runs.
     assert_eq!(st["warnings"], serde_json::json!([]), "{st}");
@@ -291,7 +294,8 @@ sweep_every_minutes = 60
     assert!(
         printed.contains("claude-code")
             && printed.contains("last sweep")
-            && printed.contains("scan: 3 of 3 sessions current"),
+            && printed.contains("scan: 3 of 3 sessions current")
+            && printed.contains("word index: 3 of 3 sessions current"),
         "{printed}"
     );
 

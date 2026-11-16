@@ -23,6 +23,13 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             "scan: {} of {} sessions current, {} waiting · {} secrets found",
             s.scan.current, s.scan.sessions, s.scan.pending, s.scan.secrets
         );
+        println!(
+            "word index: {} of {} sessions current, {} waiting · {}",
+            s.index.current,
+            s.index.sessions,
+            s.index.pending,
+            human_bytes(s.index.bytes)
+        );
         for h in &s.harnesses {
             println!(
                 "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",

@@ -32,6 +32,9 @@ pub enum ReadResult {
     /// A list of sessions, this many of them, each with its facts and the opening of what the
     /// owner first wrote.
     Listed { sessions: u64 },
+    /// Distill itself read this many sessions, and this many of their events, to build the word
+    /// index: one line per tick.
+    Indexed { sessions: u64, events: u64 },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.

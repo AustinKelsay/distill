@@ -66,13 +66,13 @@ fn ollama() -> Reader {
 }
 
 #[test]
-fn it_offers_a_list_and_a_read_tool_whose_descriptions_say_session_text_is_data() {
+fn it_offers_list_read_and_search_tools_whose_descriptions_say_session_text_is_data() {
     let tmp = tempfile::tempdir().unwrap();
     let s = server(tmp.path(), ollama());
     let tools = rpc(&s, "tools/list", json!({}));
     let tools = tools["result"]["tools"].as_array().unwrap();
     let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_sessions", "read_session"]);
+    assert_eq!(names, ["list_sessions", "read_session", "search_sessions"]);
     for t in tools {
         let d = t["description"].as_str().unwrap();
         assert!(
@@ -180,6 +180,46 @@ fn a_list_call_is_logged_as_one_line_with_a_count() {
     assert_eq!(line["model"], "small:8b");
 }
 
+#[test]
+fn a_trusted_model_searches_sessions_by_words_narrowed_by_filters() {
+    let tmp = tempfile::tempdir().unwrap();
+    let s = server(tmp.path(), ollama());
+    distill_core::index::build(&s.home).unwrap();
+    let (err, t) = call(&s, "search_sessions", json!({"query": "Widget.rs"}));
+    assert!(!err, "{t}");
+    assert!(t.starts_with("Sessions 1–1 of 1 that match"), "{t}");
+    for want in [
+        distill_core::read::NOTICE_START,
+        "claude-code/s1 · Claude Code · project /work/app · branch main",
+        "Opened with: rename the widget module",
+        "Matched in event 1 (tool_call, input at /command): git mv widget.rs gadget.rs",
+        distill_core::read::NOTICE_END,
+    ] {
+        assert!(t.contains(want), "{want:?} missing: {t}");
+    }
+    let narrowed = json!({"query": "widget", "harness": "claude-code", "model": "SMALL",
+        "project": "/work", "since": "2026-11-10", "until": "2026-11-10", "limit": 5});
+    let (err, t) = call(&s, "search_sessions", narrowed);
+    assert!(!err && t.contains("claude-code/s1"), "{t}");
+    for args in [
+        json!({"query": "widget", "harness": "codex"}),
+        json!({"query": "widget", "since": "2026-11-11"}),
+        json!({"query": "widget gizmo"}),
+    ] {
+        let (err, t) = call(&s, "search_sessions", args.clone());
+        assert!(!err && t.starts_with("No sessions match."), "{args}: {t}");
+    }
+    for (args, says) in [
+        (json!({}), "query is required"),
+        (json!({"query": "widget", "since": "Nov 10"}), "YYYY-MM-DD"),
+        (json!({"query": "widget", "limit": 0}), "limit"),
+        (json!({"query": "?!"}), "at least one word"),
+    ] {
+        let (err, t) = call(&s, "search_sessions", args.clone());
+        assert!(err && t.contains(says), "{args}: {t}");
+    }
+}
+
 /// Every tool, with arguments that a trusted reader would be served.
 fn every_tool(s: &Server) -> Vec<(String, Value)> {
     let tools = rpc(s, "tools/list", json!({}));
@@ -191,6 +231,7 @@ fn every_tool(s: &Server) -> Vec<(String, Value)> {
             let name = t["name"].as_str().unwrap().to_string();
             let args = match name.as_str() {
                 "read_session" => json!({"session": "claude-code/s1"}),
+                "search_sessions" => json!({"query": "widget"}),
                 _ => json!({}),
             };
             (name, args)
@@ -208,7 +249,7 @@ fn with_no_provider_or_an_untrusted_one_every_tool_returns_the_refusal_and_nothi
         let tmp = tempfile::tempdir().unwrap();
         let s = server(tmp.path(), reader.clone());
         let calls = every_tool(&s);
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 3);
         for (tool, args) in calls {
             let (err, t) = call(&s, &tool, args);
             assert!(err, "{reader:?} {tool}: {t}");
