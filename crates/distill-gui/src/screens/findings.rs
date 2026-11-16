@@ -21,7 +21,7 @@ use crate::cover::chip;
 use crate::jobs::{self, Job};
 use crate::nav::Screen;
 use crate::screens::sessions;
-use crate::ui::{Paint, count, thousands};
+use crate::ui::{Paint, count, parse_day, thousands};
 
 #[derive(Default)]
 pub struct FindingsState {
@@ -51,17 +51,11 @@ pub struct Filters {
 
 impl Filters {
     fn filter(&self) -> Result<FindingFilter, String> {
-        let day = |t: &TextEdit, name: &str| match t.text.trim() {
-            "" => Ok(None),
-            d => read::date(d)
-                .map(Some)
-                .map_err(|_| format!("Write dates as YYYY-MM-DD: {name} is {d:?}.")),
-        };
         Ok(FindingFilter {
             kinds: self.kinds,
             harness: self.harness,
-            since: day(&self.since, "from")?,
-            until: day(&self.until, "to")?,
+            since: parse_day(&self.since, "from")?,
+            until: parse_day(&self.until, "to")?,
         })
     }
 }

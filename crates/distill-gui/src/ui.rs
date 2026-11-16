@@ -1,9 +1,9 @@
 //! Shared look and formatting: the kit and core theme for the current appearance, cards,
 //! dots, pills, and how counts, sizes and times are written.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rune::tok::{self, Theme};
-use rune::{Align, Color, El, TextStyle, col, el, row, text};
+use rune::{Align, Color, El, TextEdit, TextStyle, col, el, row, text};
 use rune_kit::Kit;
 
 /// Everything a view function needs to paint itself.
@@ -249,6 +249,17 @@ pub fn left(rfc3339: &str, now: DateTime<Utc>) -> String {
 }
 
 /// A path with the user's home folder written as `~`.
+/// A filter's day field, named `name` in what it says when the field is not a day: empty, or
+/// a day as YYYY-MM-DD.
+pub fn parse_day(t: &TextEdit, name: &str) -> Result<Option<NaiveDate>, String> {
+    match t.text.trim() {
+        "" => Ok(None),
+        d => distill_core::read::date(d)
+            .map(Some)
+            .map_err(|_| format!("Write dates as YYYY-MM-DD: {name} is {d:?}.")),
+    }
+}
+
 pub fn tilde(path: &std::path::Path) -> String {
     let s = path.to_string_lossy().into_owned();
     match std::env::var("HOME") {
@@ -260,6 +271,19 @@ pub fn tilde(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_day_is_empty_a_day_or_says_how_to_write_one() {
+        assert_eq!(parse_day(&TextEdit::new("  "), "from"), Ok(None));
+        assert_eq!(
+            parse_day(&TextEdit::new(" 2026-11-04 "), "from"),
+            Ok(chrono::NaiveDate::from_ymd_opt(2026, 11, 4))
+        );
+        assert_eq!(
+            parse_day(&TextEdit::new("4 Nov"), "to"),
+            Err(r#"Write dates as YYYY-MM-DD: to is "4 Nov"."#.into())
+        );
+    }
 
     #[test]
     fn formats_sizes_counts_and_ages() {

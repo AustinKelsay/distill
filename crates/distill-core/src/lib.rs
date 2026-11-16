@@ -20,6 +20,7 @@ pub mod harness;
 pub mod home;
 pub mod index;
 pub mod model;
+mod model_step;
 pub mod normalize;
 pub mod pruning;
 pub mod read;

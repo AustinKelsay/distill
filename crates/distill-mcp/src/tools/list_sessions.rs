@@ -1,6 +1,7 @@
 //! `list_sessions`: sessions with their facts and their card, or the opening of what the owner
 //! first wrote when they have none, filtered and a page at a time, from the read path.
 
+use chrono::NaiveDate;
 use distill_core::Harness;
 use distill_core::cards::Outcome;
 use distill_core::read::{self, Filter, Listed, PAGE_MAX, Page};
@@ -74,28 +75,35 @@ pub(super) fn filter_properties() -> serde_json::Map<String, Value> {
     o
 }
 
+/// The `harness` in `args`, by its ID.
+pub(super) fn harness(args: &Value) -> Result<Option<Harness>, String> {
+    string(args, "harness")?
+        .map(|id| {
+            Harness::parse(&id).ok_or_else(|| {
+                let ids: Vec<&str> = Harness::ALL.iter().map(|h| h.id()).collect();
+                format!("unknown harness {id:?}: one of {}", ids.join(", "))
+            })
+        })
+        .transpose()
+}
+
+/// The day named `name` in `args`, as YYYY-MM-DD.
+pub(super) fn day(args: &Value, name: &str) -> Result<Option<NaiveDate>, String> {
+    string(args, name)?
+        .map(|d| {
+            read::date(&d).map_err(|_| format!("{name} must be a day as YYYY-MM-DD, not {d:?}"))
+        })
+        .transpose()
+}
+
 /// The session filters in `args`.
 pub(super) fn filter(args: &Value) -> Result<Filter, String> {
-    let harness = match string(args, "harness")? {
-        Some(id) => Some(Harness::parse(&id).ok_or_else(|| {
-            let ids: Vec<&str> = Harness::ALL.iter().map(|h| h.id()).collect();
-            format!("unknown harness {id:?}: one of {}", ids.join(", "))
-        })?),
-        None => None,
-    };
-    let day = |name: &str| -> Result<_, String> {
-        string(args, name)?
-            .map(|d| {
-                read::date(&d).map_err(|_| format!("{name} must be a day as YYYY-MM-DD, not {d:?}"))
-            })
-            .transpose()
-    };
     Ok(Filter {
-        harness,
+        harness: harness(args)?,
         project: string(args, "project")?,
         model: string(args, "model")?,
-        since: day("since")?,
-        until: day("until")?,
+        since: day(args, "since")?,
+        until: day(args, "until")?,
         mirrors: flag(args, "include_mirrors")?,
         steward: flag(args, "include_steward")?,
         tag: string(args, "tag")?,

@@ -91,6 +91,17 @@ pub enum Order {
     Recent,
 }
 
+impl Order {
+    /// `spread` or `recent`, ignoring case.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "spread" => Ok(Order::Spread),
+            "recent" => Ok(Order::Recent),
+            _ => anyhow::bail!("unknown sort {s:?}: spread or recent"),
+        }
+    }
+}
+
 /// What a reader gets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Answer<T> {
@@ -724,6 +735,14 @@ mod tests {
         assert_eq!(with(Kinds::Secrets).total, 2);
         assert_eq!(with(Kinds::All).total, 2);
         assert_eq!(with(Kinds::PersonalDetails).total, 0);
+    }
+
+    #[test]
+    fn an_order_is_parsed_from_its_name() {
+        assert_eq!(Order::parse("spread").unwrap(), Order::Spread);
+        assert_eq!(Order::parse(" Recent ").unwrap(), Order::Recent);
+        let err = Order::parse("oldest").unwrap_err().to_string();
+        assert_eq!(err, r#"unknown sort "oldest": spread or recent"#);
     }
 
     #[test]

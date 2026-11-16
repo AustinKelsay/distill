@@ -23,7 +23,7 @@ use rune::{El, TextEdit};
 use crate::State;
 use crate::jobs::{self, Job};
 use crate::nav::{self, Screen};
-use crate::ui::Paint;
+use crate::ui::{Paint, parse_day};
 
 #[cfg(test)]
 pub use doc::BLOCK_LINES;
@@ -63,18 +63,12 @@ pub struct Filters {
 impl Filters {
     fn filter(&self) -> Result<Filter, String> {
         let words = |t: &TextEdit| Some(t.text.trim().to_string()).filter(|s| !s.is_empty());
-        let day = |t: &TextEdit, name: &str| match words(t) {
-            None => Ok(None),
-            Some(d) => read::date(&d)
-                .map(Some)
-                .map_err(|_| format!("Write dates as YYYY-MM-DD: {name} is {d:?}.")),
-        };
         Ok(Filter {
             harness: self.harness,
             project: words(&self.project),
             model: words(&self.model),
-            since: day(&self.since, "from")?,
-            until: day(&self.until, "to")?,
+            since: parse_day(&self.since, "from")?,
+            until: parse_day(&self.until, "to")?,
             tag: words(&self.tag),
             outcome: self.outcome,
             ..Filter::default()

@@ -119,21 +119,9 @@ struct Manifest {
     entries: BTreeMap<String, Entry>,
 }
 
-fn dir(home: &Home) -> PathBuf {
-    home.index_dir().join("words")
-}
-
-fn manifest_path(home: &Home) -> PathBuf {
-    dir(home).join("manifest.json")
-}
-
-fn segment_path(home: &Home, id: u64) -> PathBuf {
-    dir(home).join(format!("seg-{id}.bin"))
-}
-
 /// The manifest, or an empty one when there is none, it can't be read, or it is another version.
 fn load(home: &Home) -> Manifest {
-    fs::read_to_string(manifest_path(home))
+    fs::read_to_string(home.words_manifest_path())
         .ok()
         .and_then(|t| serde_json::from_str::<Manifest>(&t).ok())
         .filter(|m| m.version == INDEX_VERSION)
@@ -209,7 +197,7 @@ impl IndexReport {
 /// the read path as Distill itself (one read-log line for the whole build), and drop entries whose
 /// session is gone. One writer at a time.
 pub fn build(home: &Home) -> Result<IndexReport> {
-    crate::util::create_dir_private(&dir(home))?;
+    crate::util::create_dir_private(&home.words_dir())?;
     let _lock = home.lock("index")?;
     let sessions = normalize::read_session_list(home)?;
     let mut m = load(home);
@@ -255,7 +243,7 @@ pub fn build(home: &Home) -> Result<IndexReport> {
     batch.flush(home, &mut m)?;
     merge(home, &mut m)?;
     // The commit point: the segments it names are written, and those it no longer names go.
-    write_atomic(&manifest_path(home), &serde_json::to_vec(&m)?)?;
+    write_atomic(&home.words_manifest_path(), &serde_json::to_vec(&m)?)?;
     remove_unlisted(home, &m);
     r.segments = m.segments.len() as u64;
     Ok(r)
@@ -267,10 +255,10 @@ fn remove_unlisted(home: &Home, m: &Manifest) {
     let keep: BTreeSet<PathBuf> = m
         .segments
         .keys()
-        .map(|&id| segment_path(home, id))
-        .chain([manifest_path(home)])
+        .map(|&id| home.words_segment_path(id))
+        .chain([home.words_manifest_path()])
         .collect();
-    let Ok(rd) = fs::read_dir(dir(home)) else {
+    let Ok(rd) = fs::read_dir(home.words_dir()) else {
         return;
     };
     for e in rd.filter_map(Result::ok) {
@@ -346,7 +334,7 @@ impl Batch {
         let id = m.next_segment;
         m.next_segment += 1;
         let keys: Vec<String> = self.sessions.iter().map(|s| s.0.clone()).collect();
-        let mut w = Writer::create(&segment_path(home, id), &keys)?;
+        let mut w = Writer::create(&home.words_segment_path(id), &keys)?;
         for (word, postings) in std::mem::take(&mut self.words) {
             w.add(&word, &segment::encode(&postings))?;
         }
@@ -489,7 +477,7 @@ fn lookup_once(home: &Home, words: &[String]) -> Result<Lookup> {
     // Per query word: each session that has it, with its count and events.
     let mut per_word: Vec<HashMap<&str, (u32, Vec<u64>)>> = vec![HashMap::new(); words.len()];
     for &id in m.segments.keys() {
-        let seg = Segment::open(&segment_path(home, id))?;
+        let seg = Segment::open(&home.words_segment_path(id))?;
         for (i, w) in words.iter().enumerate() {
             let Some(run) = seg.get(w)? else { continue };
             for p in segment::decode(&run)? {
@@ -591,10 +579,10 @@ fn merge(home: &Home, m: &mut Manifest) -> Result<()> {
         .collect();
     let id = m.next_segment;
     m.next_segment += 1;
-    let mut w = Writer::create(&segment_path(home, id), &keys)?;
+    let mut w = Writer::create(&home.words_segment_path(id), &keys)?;
     let mut sources = Vec::new();
     for &old in &chosen {
-        let seg = Segment::open(&segment_path(home, old))?;
+        let seg = Segment::open(&home.words_segment_path(old))?;
         // Old ordinal → new ordinal, for the copies that are current.
         let remap: Vec<Option<u32>> = seg
             .sessions

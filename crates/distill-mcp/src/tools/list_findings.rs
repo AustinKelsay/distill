@@ -2,10 +2,11 @@
 //! list), or every session one fingerprint appears in, from the read path. Never a value.
 
 use distill_core::Harness;
-use distill_core::read::{self, Answer, FindingFilter, Kinds, Order, PAGE_MAX, Page};
+use distill_core::read::{self, Answer, FindingFilter, Kinds, Order, PAGE_MAX};
 use serde_json::{Value, json};
 
-use super::{ARCHIVED_DATA, Tool, number, string};
+use super::list_sessions::{day, harness, page};
+use super::{ARCHIVED_DATA, Tool, string};
 use crate::Server;
 
 pub struct ListFindings;
@@ -56,45 +57,21 @@ impl Tool for ListFindings {
                 l.text()
             });
         }
-        let harness = match string(args, "harness")? {
-            Some(id) => Some(Harness::parse(&id).ok_or_else(|| {
-                let ids: Vec<&str> = Harness::ALL.iter().map(|h| h.id()).collect();
-                format!("unknown harness {id:?}: one of {}", ids.join(", "))
-            })?),
-            None => None,
-        };
-        let day = |name: &str| -> Result<_, String> {
-            string(args, name)?
-                .map(|d| {
-                    read::date(&d)
-                        .map_err(|_| format!("{name} must be a day as YYYY-MM-DD, not {d:?}"))
-                })
-                .transpose()
-        };
         let kinds = match string(args, "kind")? {
             Some(k) => Kinds::parse(&k).map_err(|e| e.to_string())?,
             None => Kinds::Secrets,
         };
         let filter = FindingFilter {
             kinds,
-            harness,
-            since: day("since")?,
-            until: day("until")?,
+            harness: harness(args)?,
+            since: day(args, "since")?,
+            until: day(args, "until")?,
         };
-        let order = match string(args, "sort")?.as_deref() {
-            None | Some("spread") => Order::Spread,
-            Some("recent") => Order::Recent,
-            Some(other) => return Err(format!("unknown sort {other:?}: spread or recent")),
+        let order = match string(args, "sort")? {
+            Some(s) => Order::parse(&s).map_err(|e| e.to_string())?,
+            None => Order::Spread,
         };
-        let limit = match number(args, "limit")? {
-            Some(0) => return Err(format!("limit must be from 1 to {PAGE_MAX}")),
-            Some(n) => usize::try_from(n).unwrap_or(PAGE_MAX).min(PAGE_MAX),
-            None => PAGE_MAX,
-        };
-        let page = Page {
-            offset: number(args, "offset")?.map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
-            limit,
-        };
+        let page = page(args, PAGE_MAX)?;
         answer(
             read::fingerprints(home, runtime, reader, &filter, order, page),
             |f| f.text(),

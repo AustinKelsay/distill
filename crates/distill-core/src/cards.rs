@@ -19,8 +19,6 @@
 //!   produced, newest first, up to `sessions_per_run` each tick. Sessions that failed before go
 //!   after those never tried, so one bad session never holds up the rest.
 
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +27,11 @@ use crate::detect::Detector;
 use crate::findings::{self, BuiltFrom, CardFinding, CardFindings, Findings, FingerprintKey};
 use crate::home::Home;
 use crate::model::{Originals, SessionMeta};
+use crate::model_step::{self, Failed};
 use crate::normalize;
-use crate::read::{self, Range, Read};
-use crate::runtime::{LocalRuntime, RuntimeError, RuntimeState};
-use crate::trust::Reader;
+use crate::read::{self, Range};
+use crate::runtime::LocalRuntime;
+use crate::trust::{OLLAMA, Reader};
 use crate::util::{clip, count, now_rfc3339, sha256_hex, write_json_pretty};
 
 /// The shape of a card file. A card of any other shape, such as the previous build's, counts as
@@ -267,24 +266,6 @@ pub fn wanted(facts: &SessionMeta, originals: &Originals) -> bool {
     !facts.is_duplicate(originals) && !facts.steward
 }
 
-/// A session whose last card attempt failed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Failure {
-    pub at: String,
-    pub error: String,
-    /// How many attempts in a row have failed.
-    pub attempts: u32,
-}
-
-/// The sessions whose last attempt failed, by key. Kept under `state/`, so it is rebuilt by
-/// trying again.
-fn load_failures(home: &Home) -> BTreeMap<String, Failure> {
-    std::fs::read_to_string(home.card_failures_path())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
-}
-
 /// What a run of the card step did.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CardReport {
@@ -335,17 +316,13 @@ impl CardReport {
 /// Why the card step can't run now, if it can't: no `card_model`, or no local runtime that can
 /// run it.
 fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<String, String> {
-    let Some(model) = config.steward.card_model.clone() else {
-        return Err("no card_model is set".into());
-    };
-    match runtime.state() {
-        RuntimeState::NotInstalled => Err("no local runtime is installed".into()),
-        RuntimeState::NotRunning => Err("the local runtime is not running".into()),
-        RuntimeState::Running(_) if !runtime.stored_here(&model) => Err(format!(
-            "card_model \"{model}\" is not stored on this machine"
-        )),
-        RuntimeState::Running(_) => Ok(model),
-    }
+    let model = config
+        .steward
+        .card_model
+        .clone()
+        .ok_or("no card_model is set")?;
+    model_step::runnable(runtime, "card_model", &model)?;
+    Ok(model)
 }
 
 /// Write cards for the sessions whose card is missing or out of date, newest first, up to
@@ -366,7 +343,6 @@ pub fn write(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Car
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
-    let mut failures = load_failures(home);
     let mut r = CardReport {
         model: Some(model.clone()),
         ..Default::default()
@@ -381,76 +357,25 @@ pub fn write(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Car
         }
     }
     r.pending = pending.len() as u64;
-    // Never tried first, then by fewest failed attempts; newest first within each.
-    let tried: BTreeMap<String, u32> = failures
-        .iter()
-        .map(|(k, f)| (k.clone(), f.attempts))
-        .collect();
-    let attempts = |f: &SessionMeta| tried.get(&f.key()).copied().unwrap_or(0);
-    pending.sort_by(|a, b| {
-        attempts(a)
-            .cmp(&attempts(b))
-            .then_with(|| started(b).cmp(&started(a)))
-            .then_with(|| a.key().cmp(&b.key()))
-    });
-    pending.truncate(config.steward.sessions_per_run);
-
-    let reader = Reader::model(Some("ollama"), Some(&model));
-    for facts in pending {
-        match write_one(home, config, runtime, &reader, &model, facts) {
-            Ok(()) => {
-                r.written += 1;
-                failures.remove(&facts.key());
-            }
-            Err(failure) => {
+    let reader = Reader::model(Some(OLLAMA), Some(&model));
+    let ran = model_step::run(
+        &home.card_failures_path(),
+        &all,
+        pending,
+        config.steward.sessions_per_run,
+        |facts| write_one(home, config, runtime, &reader, &model, facts),
+    )?;
+    for (session, result) in ran {
+        match result {
+            Ok(()) => r.written += 1,
+            Err(failed) => {
                 r.failed += 1;
-                if failure.discarded {
-                    r.discarded += 1;
-                }
-                r.errors.push(format!("{}: {}", facts.key(), failure.error));
-                let attempts = attempts(facts) + 1;
-                failures.insert(
-                    facts.key(),
-                    Failure {
-                        at: now_rfc3339(),
-                        error: failure.error,
-                        attempts,
-                    },
-                );
-                // With the runtime gone, every other session would fail the same way.
-                if failure.stop {
-                    break;
-                }
+                r.discarded += u64::from(failed.discarded);
+                r.errors.push(format!("{session}: {}", failed.error));
             }
         }
     }
-    let keys: std::collections::BTreeSet<String> = all.iter().map(SessionMeta::key).collect();
-    failures.retain(|k, _| keys.contains(k));
-    write_json_pretty(&home.card_failures_path(), &failures)?;
     Ok(r)
-}
-
-fn started(f: &SessionMeta) -> Option<&str> {
-    f.started_at.as_deref().or(f.ended_at.as_deref())
-}
-
-/// Why one session got no card.
-struct Failed {
-    error: String,
-    /// The card held a secret and was discarded.
-    discarded: bool,
-    /// The runtime can't be reached: stop the run.
-    stop: bool,
-}
-
-impl Failed {
-    fn new(error: impl Into<String>) -> Self {
-        Self {
-            error: error.into(),
-            discarded: false,
-            stop: false,
-        }
-    }
 }
 
 /// Read one session through the read path, ask the model for its card, scan the card and store
@@ -463,20 +388,20 @@ fn write_one(
     model: &str,
     facts: &SessionMeta,
 ) -> std::result::Result<(), Failed> {
-    let text = match read::read(home, runtime, reader, &facts.key(), Range::default()) {
-        Ok(Read::Text(t)) => t,
-        Ok(Read::Refused(why)) => return Err(Failed::new(format!("the read was refused: {why}"))),
-        Ok(Read::Events(_)) => return Err(Failed::new("the read path served no text")),
-        Err(e) => return Err(Failed::new(format!("the read failed: {e:#}"))),
-    };
+    let text = model_step::served_text(read::read(
+        home,
+        runtime,
+        reader,
+        &facts.key(),
+        Range::default(),
+    ))?;
     // The read scanned the session first, so its findings are current.
     let scan =
         findings::load(home, facts).ok_or_else(|| Failed::new("no findings after a read"))?;
     let prompt = format!("{PROMPT}{}", within_budget(&text));
-    let answer = runtime.generate(model, &prompt).map_err(|e| Failed {
-        stop: matches!(e, RuntimeError::NotRunning | RuntimeError::NotStoredHere(_)),
-        ..Failed::new(format!("the model failed: {e}"))
-    })?;
+    let answer = runtime
+        .generate(model, &prompt)
+        .map_err(model_step::model_failed)?;
     let reply = parse_reply(&answer)
         .map_err(|why| Failed::new(format!("the model's answer is not a usable card: {why}")))?;
     let card = Card {
@@ -582,7 +507,7 @@ pub fn progress(home: &Home) -> Result<CardProgress> {
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
-    let failures = load_failures(home);
+    let failures = model_step::load_failures(&home.card_failures_path());
     let mut p = CardProgress {
         model: config.steward.card_model.clone(),
         ..Default::default()

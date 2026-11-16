@@ -22,6 +22,9 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///     findings.json              findings_path
 ///     card.json                  card_path
 ///   index/                       index_dir: word index and vectors
+///     words/                     words_dir: the word index
+///       manifest.json            words_manifest_path
+///       seg-<n>.bin              words_segment_path
 ///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
 ///   log/reads.jsonl              read_log_path
@@ -31,13 +34,17 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 /// ```
 ///
 /// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. Folders a previous
-/// build left in a home (`recipes/`, `exports/`, `steward/`) are ignored, never deleted.
+/// build left in a home ([`Home::PREVIOUS_BUILD`]) are ignored, never deleted.
 #[derive(Debug, Clone)]
 pub struct Home {
     pub root: PathBuf,
 }
 
 impl Home {
+    /// The folders a previous build left in a home: ignored, never deleted, and checked by the
+    /// exposure check (`previous_build_dirs`).
+    pub const PREVIOUS_BUILD: [&'static str; 3] = ["exports", "recipes", "steward"];
+
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
@@ -108,6 +115,23 @@ impl Home {
     /// The search index: word index and vectors.
     pub fn index_dir(&self) -> PathBuf {
         self.root.join("index")
+    }
+    /// The word index: a manifest and its segments.
+    pub fn words_dir(&self) -> PathBuf {
+        self.index_dir().join("words")
+    }
+    pub fn words_manifest_path(&self) -> PathBuf {
+        self.words_dir().join("manifest.json")
+    }
+    /// One segment of the word index, by its number.
+    pub fn words_segment_path(&self, id: u64) -> PathBuf {
+        self.words_dir().join(format!("seg-{id}.bin"))
+    }
+    /// Each of [`Home::PREVIOUS_BUILD`] with its path in this home, whether it exists or not.
+    pub fn previous_build_dirs(&self) -> impl Iterator<Item = (&'static str, PathBuf)> + '_ {
+        Self::PREVIOUS_BUILD
+            .into_iter()
+            .map(|name| (name, self.root.join(name)))
     }
     /// The vectors for search by meaning: one flat file, searched directly.
     pub fn vectors_path(&self) -> PathBuf {

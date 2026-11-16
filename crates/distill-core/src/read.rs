@@ -10,7 +10,7 @@ use crate::model::{Event, EventKind, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
-use crate::trust::{Access, Reader, Trust};
+use crate::trust::{Access, OLLAMA, Reader, Trust};
 use crate::util::now_rfc3339;
 
 mod fingerprints;
@@ -262,7 +262,7 @@ pub(crate) fn for_embedding(
 ) -> Result<()> {
     masked_for(
         home,
-        Reader::model(Some("ollama"), Some(model)),
+        Reader::model(Some(OLLAMA), Some(model)),
         sessions,
         visit,
     )

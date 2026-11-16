@@ -3,14 +3,13 @@
 //! denied, collected, expired). Filtered by reader (as `distill reads --reader` takes it) and by
 //! the day a line was written (`readlog::find`). The log holds no session text and no value.
 
-use distill_core::read;
 use distill_core::readlog::{self, LogFilter, ReadEntry, ReadResult};
 use rune::{El, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune_kit::{Button, ButtonVariant, TextInput};
 
 use crate::State;
 use crate::jobs::{self, Job};
-use crate::ui::{Paint, ago, count, pill};
+use crate::ui::{Paint, ago, count, parse_day, pill};
 
 /// How many lines a page shows; More adds as many again.
 pub const PAGE: usize = 200;
@@ -49,13 +48,7 @@ fn more(s: &mut State) {
 
 fn ask(s: &mut State, limit: usize) {
     let st = &mut s.read_log;
-    let day = |t: &TextEdit, name: &str| match t.text.trim() {
-        "" => Ok(None),
-        d => read::date(d)
-            .map(Some)
-            .map_err(|_| format!("Write dates as YYYY-MM-DD: {name} is {d:?}.")),
-    };
-    let filter = match (day(&st.since, "from"), day(&st.until, "to")) {
+    let filter = match (parse_day(&st.since, "from"), parse_day(&st.until, "to")) {
         (Ok(since), Ok(until)) => LogFilter {
             reader: Some(st.reader.text.trim().to_string()).filter(|r| !r.is_empty()),
             since,

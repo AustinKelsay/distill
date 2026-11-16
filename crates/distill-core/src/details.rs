@@ -19,8 +19,6 @@
 //!   original's, newest first, up to `sessions_per_run` each tick. Sessions that failed before go
 //!   after those never tried.
 
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -29,11 +27,12 @@ use crate::detect::Kind;
 use crate::findings::{self, Findings, FingerprintKey};
 use crate::home::Home;
 use crate::model::{Originals, SessionMeta};
+use crate::model_step::{self, Failed};
 use crate::normalize;
-use crate::read::{self, NOTICE_END, NOTICE_START, Read};
-use crate::runtime::{LocalRuntime, RuntimeError, RuntimeState};
-use crate::trust::Reader;
-use crate::util::{count, now_rfc3339, write_json_pretty};
+use crate::read::{self, NOTICE_END, NOTICE_START};
+use crate::runtime::LocalRuntime;
+use crate::trust::{OLLAMA, Reader};
+use crate::util::count;
 
 /// The version of the model detection pass: its [`PROMPT`], how its answers are read and how
 /// they are placed. Bump it whenever any of them changes; every session's model findings are
@@ -180,24 +179,6 @@ fn stored_current(
     })
 }
 
-/// A session whose last pass failed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Failure {
-    pub at: String,
-    pub error: String,
-    /// How many attempts in a row have failed.
-    pub attempts: u32,
-}
-
-/// The sessions whose last attempt failed, by key. Kept under `state/`, so it is rebuilt by
-/// trying again.
-fn load_failures(home: &Home) -> BTreeMap<String, Failure> {
-    std::fs::read_to_string(home.detail_failures_path())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
-}
-
 /// What a run of the model detection pass did.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DetailReport {
@@ -252,17 +233,13 @@ impl DetailReport {
 /// Why the pass can't run now, if it can't: no `detail_model` (nor `card_model`), or no local
 /// runtime that can run it.
 fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<String, String> {
-    let Some(model) = config.steward.detail_model().map(str::to_string) else {
-        return Err("no detail_model or card_model is set".into());
-    };
-    match runtime.state() {
-        RuntimeState::NotInstalled => Err("no local runtime is installed".into()),
-        RuntimeState::NotRunning => Err("the local runtime is not running".into()),
-        RuntimeState::Running(_) if !runtime.stored_here(&model) => Err(format!(
-            "detail_model \"{model}\" is not stored on this machine"
-        )),
-        RuntimeState::Running(_) => Ok(model),
-    }
+    let model = config
+        .steward
+        .detail_model()
+        .map(str::to_string)
+        .ok_or("no detail_model or card_model is set")?;
+    model_step::runnable(runtime, "detail_model", &model)?;
+    Ok(model)
 }
 
 /// Find personal details in the sessions whose model findings are missing or out of date,
@@ -283,7 +260,6 @@ pub fn find(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Deta
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
-    let mut failures = load_failures(home);
     let mut r = DetailReport {
         model: Some(model.clone()),
         ..Default::default()
@@ -298,72 +274,28 @@ pub fn find(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Deta
         }
     }
     r.pending = pending.len() as u64;
-    // Never tried first, then by fewest failed attempts; newest first within each.
-    let tried: BTreeMap<String, u32> = failures
-        .iter()
-        .map(|(k, f)| (k.clone(), f.attempts))
-        .collect();
-    let attempts = |f: &SessionMeta| tried.get(&f.key()).copied().unwrap_or(0);
-    pending.sort_by(|a, b| {
-        attempts(a)
-            .cmp(&attempts(b))
-            .then_with(|| started(b).cmp(&started(a)))
-            .then_with(|| a.key().cmp(&b.key()))
-    });
-    pending.truncate(config.steward.sessions_per_run);
-
-    let reader = Reader::model(Some("ollama"), Some(&model));
-    for facts in pending {
-        match find_one(home, config, runtime, &reader, &model, facts) {
+    let reader = Reader::model(Some(OLLAMA), Some(&model));
+    let ran = model_step::run(
+        &home.detail_failures_path(),
+        &all,
+        pending,
+        config.steward.sessions_per_run,
+        |facts| find_one(home, config, runtime, &reader, &model, facts),
+    )?;
+    for (session, result) in ran {
+        match result {
             Ok(placed) => {
                 r.written += 1;
                 r.found += placed.findings;
                 r.unplaced += placed.unplaced;
-                failures.remove(&facts.key());
             }
-            Err(failure) => {
+            Err(failed) => {
                 r.failed += 1;
-                r.errors.push(format!("{}: {}", facts.key(), failure.error));
-                let attempts = attempts(facts) + 1;
-                failures.insert(
-                    facts.key(),
-                    Failure {
-                        at: now_rfc3339(),
-                        error: failure.error,
-                        attempts,
-                    },
-                );
-                // With the runtime gone, every other session would fail the same way.
-                if failure.stop {
-                    break;
-                }
+                r.errors.push(format!("{session}: {}", failed.error));
             }
         }
     }
-    let keys: std::collections::BTreeSet<String> = all.iter().map(SessionMeta::key).collect();
-    failures.retain(|k, _| keys.contains(k));
-    write_json_pretty(&home.detail_failures_path(), &failures)?;
     Ok(r)
-}
-
-fn started(f: &SessionMeta) -> Option<&str> {
-    f.started_at.as_deref().or(f.ended_at.as_deref())
-}
-
-/// Why the pass failed for one session.
-struct Failed {
-    error: String,
-    /// The runtime can't be reached: stop the run.
-    stop: bool,
-}
-
-impl Failed {
-    fn new(error: impl Into<String>) -> Self {
-        Self {
-            error: error.into(),
-            stop: false,
-        }
-    }
 }
 
 /// Read what the owner and the agent wrote in one session through the read path, ask the model
@@ -376,20 +308,12 @@ fn find_one(
     model: &str,
     facts: &SessionMeta,
 ) -> std::result::Result<findings::Placed, Failed> {
-    let text = match read::read_written(home, runtime, reader, &facts.key()) {
-        Ok(Read::Text(t)) => t,
-        Ok(Read::Refused(why)) => return Err(Failed::new(format!("the read was refused: {why}"))),
-        Ok(Read::Events(_)) => return Err(Failed::new("the read path served no text")),
-        Err(e) => return Err(Failed::new(format!("the read failed: {e:#}"))),
-    };
+    let text = model_step::served_text(read::read_written(home, runtime, reader, &facts.key()))?;
     let mut answers = Vec::new();
     for part in parts(&text) {
         let answer = runtime
             .generate(model, &format!("{PROMPT}{part}"))
-            .map_err(|e| Failed {
-                stop: matches!(e, RuntimeError::NotRunning | RuntimeError::NotStoredHere(_)),
-                ..Failed::new(format!("the model failed: {e}"))
-            })?;
+            .map_err(model_step::model_failed)?;
         answers.extend(parse_reply(&answer).map_err(|why| {
             Failed::new(format!("the model's answer is not a usable list: {why}"))
         })?);
@@ -459,7 +383,7 @@ pub fn progress(home: &Home) -> Result<DetailProgress> {
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
-    let failures = load_failures(home);
+    let failures = model_step::load_failures(&home.detail_failures_path());
     let mut p = DetailProgress {
         model: model.clone(),
         ..Default::default()

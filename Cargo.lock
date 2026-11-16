@@ -920,6 +920,7 @@ name = "distill-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "distill-core",
  "serde_json",
  "tempfile",

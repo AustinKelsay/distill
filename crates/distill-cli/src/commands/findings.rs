@@ -56,11 +56,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         since: day(&a.since)?,
         until: day(&a.until)?,
     };
-    let order = match a.sort.as_str() {
-        "spread" => Order::Spread,
-        "recent" => Order::Recent,
-        other => bail!("unknown sort {other:?}: spread or recent"),
-    };
+    let order = Order::parse(&a.sort)?;
     let page = Page {
         offset: a.offset,
         limit: a.limit,

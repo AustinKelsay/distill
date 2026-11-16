@@ -121,18 +121,15 @@ impl Probes {
     };
 }
 
-/// The previous build's folders in a home, and what each holds. They are ignored, never deleted.
-const PREVIOUS_BUILD: [(&str, &str); 3] = [
-    ("exports", "dataset builds: session text"),
-    (
-        "recipes",
-        "dataset recipes and the steward's proposals, drawn from cards",
-    ),
-    (
-        "steward",
-        "the steward's working folder and its last answers",
-    ),
-];
+/// What each of the previous build's folders in a home ([`Home::PREVIOUS_BUILD`]) holds.
+fn previous_build_holds(name: &str) -> &'static str {
+    match name {
+        "exports" => "dataset builds: session text",
+        "recipes" => "dataset recipes and the steward's proposals, drawn from cards",
+        "steward" => "the steward's working folder and its last answers",
+        _ => "the previous build's files",
+    }
+}
 
 /// The app before that kept every captured line in `~/.distill/distill.db`.
 const OLD_APP: (&str, &str) = (".distill", "the old app's database: every captured line");
@@ -350,9 +347,9 @@ fn no_listener(probes: &Probes) -> RuleResult {
 }
 
 fn previous_build(home: &Home, user: &Path) -> Vec<LeftFolder> {
-    let in_home = PREVIOUS_BUILD
-        .iter()
-        .map(|(name, holds)| (home.root.join(name), *holds));
+    let in_home = home
+        .previous_build_dirs()
+        .map(|(name, path)| (path, previous_build_holds(name)));
     let old_app = std::iter::once((user.join(OLD_APP.0), OLD_APP.1));
     in_home
         .chain(old_app)
