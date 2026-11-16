@@ -23,6 +23,9 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 ReadResult::Served { events } => {
                     format!("served {}", distill_core::util::count(*events, "event"))
                 }
+                ReadResult::Listed { sessions } => {
+                    format!("listed {}", distill_core::util::count(*sessions, "session"))
+                }
                 ReadResult::Refused { reason } => format!("refused: {reason}"),
                 ReadResult::Failed { error } => format!("failed: {error}"),
             };
@@ -30,7 +33,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 "{}  {:<28} {:<36} {result}",
                 e.at,
                 e.reader.to_string(),
-                e.session
+                e.session.as_deref().unwrap_or("(a list of sessions)")
             );
         }
     })

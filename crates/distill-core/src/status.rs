@@ -1,6 +1,7 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
-//! Today it covers sessions and capture health per harness, format drift, the last sweep and the
-//! scan's progress. Each later ticket adds its own fields.
+//! Today it covers sessions and capture health per harness, format drift, the last sweep, the
+//! scan's progress, and warnings when a harness could delete sessions before they are swept or
+//! the timer has stopped sweeping. Each later ticket adds its own fields.
 
 use std::collections::BTreeMap;
 
@@ -8,10 +9,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::archive::Archive;
+use crate::config::Config;
 use crate::findings::{self, ScanProgress};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::normalize;
+use crate::pruning;
 use crate::runlog;
 use crate::sweep::SweepReport;
 
@@ -26,8 +29,29 @@ pub struct Status {
     /// When the last successful sweep ran.
     pub last_sweep: Option<String>,
     pub harnesses: Vec<HarnessStatus>,
+    /// What the owner should act on, so that nothing is lost.
+    pub warnings: Vec<Warning>,
     /// How many sessions have current findings, and how many wait for a scan.
     pub scan: ScanProgress,
+}
+
+/// One thing the owner should act on, in a sentence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Warning {
+    pub kind: WarningKind,
+    /// The harness it is about, if it is about one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarningKind {
+    /// The timer has not swept for longer than twice its interval.
+    SweepOverdue,
+    /// A harness's setting could delete sessions sooner than the timer sweeps.
+    PrunesSooner,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,13 +93,25 @@ pub fn status(home: &Home) -> Result<Status> {
     let archive = Archive::open(home)?;
     let failures = normalize::failures(home);
     let last = runlog::last_ok(home, "sweep")?;
-    // The last sweep's errors per harness, from the newest run that swept at all.
-    let sweep_errors: BTreeMap<Harness, u64> = runlog::recent(home, 500)?
-        .into_iter()
-        .find_map(|e| e.outcome("sweep"))
-        .and_then(|o| serde_json::from_value::<SweepReport>(o.report).ok())
-        .map(|r| r.errors_by_harness)
+    // The newest sweep that ran to the end, even if some files failed to capture.
+    let completed: Option<(String, SweepReport)> =
+        runlog::recent(home, 500)?.into_iter().find_map(|e| {
+            let report = serde_json::from_value::<SweepReport>(e.outcome("sweep")?.report).ok()?;
+            Some((e.at, report))
+        });
+    let sweep_errors: BTreeMap<Harness, u64> = completed
+        .as_ref()
+        .map(|(_, r)| r.errors_by_harness.clone())
         .unwrap_or_default();
+    let mut warnings = Vec::new();
+    if let Some(config) = &config {
+        let since = completed
+            .as_ref()
+            .and_then(|(at, _)| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .or_else(|| config_written(home));
+        warnings.extend(sweep_overdue(config, since, chrono::Utc::now()));
+    }
 
     let mut harnesses = Vec::new();
     for kind in Harness::ALL {
@@ -92,10 +128,19 @@ pub fn status(home: &Home) -> Result<Status> {
                 .is_some_and(|c| c.roots_for(kind).iter().any(|r| r.exists()));
         let f = failures.get(&kind).cloned().unwrap_or_default();
         let capture_errors = sweep_errors.get(&kind).copied().unwrap_or(0);
+        let prunes = match &config {
+            Some(c) if enabled && present => prunes_sooner(kind, c),
+            _ => None,
+        };
         let (health, note) = if !enabled {
             (Health::Disabled, None)
         } else if !present {
             (Health::Missing, Some("not found on this machine".into()))
+        } else if prunes.is_some() {
+            (
+                Health::Warn,
+                Some("deletes sessions sooner than the sweep runs".into()),
+            )
         } else if f.drift > 0 {
             (
                 Health::Warn,
@@ -127,6 +172,7 @@ pub fn status(home: &Home) -> Result<Status> {
             drift: f.drift,
             note,
         });
+        warnings.extend(prunes);
     }
 
     Ok(Status {
@@ -135,14 +181,80 @@ pub fn status(home: &Home) -> Result<Status> {
         archive_bytes: archive.stored_bytes(),
         last_sweep: last.map(|(at, _)| at),
         harnesses,
+        warnings,
         scan: findings::progress(home)?,
+    })
+}
+
+/// A span of minutes a person can read: minutes under two hours, hours under two days, else days.
+fn span(minutes: i64) -> String {
+    let m = minutes.max(0) as u64;
+    match m {
+        0..120 => crate::util::count(m, "minute"),
+        120..2880 => crate::util::count(m / 60, "hour"),
+        _ => crate::util::count(m / 1440, "day"),
+    }
+}
+
+/// A warning when `kind`'s own setting deletes sessions sooner than the timer sweeps, so that
+/// one could go before it is captured.
+fn prunes_sooner(kind: Harness, config: &Config) -> Option<Warning> {
+    let every = crate::schedule::interval_minutes(config);
+    let r = pruning::retention(kind, &config.roots_for(kind))?;
+    (r.minutes < u64::from(every)).then(|| Warning {
+        kind: WarningKind::PrunesSooner,
+        harness: Some(kind),
+        message: format!(
+            "{} deletes sessions {} ({}), sooner than the timer sweeps (every {}): {}.",
+            kind.label(),
+            if r.minutes == 0 {
+                "as soon as they end".to_string()
+            } else {
+                format!("untouched for {}", span(r.minutes as i64))
+            },
+            r.setting,
+            span(i64::from(every)),
+            if r.fixed {
+                "sweep more often"
+            } else {
+                "raise the setting or sweep more often"
+            }
+        ),
+    })
+}
+
+/// When `config.toml` was last written: the time to count from before the first sweep.
+fn config_written(home: &Home) -> Option<chrono::DateTime<chrono::Utc>> {
+    let modified = std::fs::metadata(home.config_path())
+        .ok()?
+        .modified()
+        .ok()?;
+    Some(modified.into())
+}
+
+/// A warning when nothing has swept since `since` for longer than twice the timer's interval.
+fn sweep_overdue(
+    config: &Config,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<Warning> {
+    let every = crate::schedule::interval_minutes(config);
+    let since = since?;
+    let quiet = (now - since).num_minutes();
+    (quiet > 2 * i64::from(every)).then(|| Warning {
+        kind: WarningKind::SweepOverdue,
+        harness: None,
+        message: format!(
+            "Nothing has swept for {}, and the timer runs every {}: check that it is installed and running (`distill schedule`).",
+            span(quiet),
+            span(i64::from(every))
+        ),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
 
     #[test]
     fn status_reports_sessions_capture_health_drift_and_the_last_sweep() {
@@ -196,5 +308,146 @@ mod tests {
         assert_eq!(of(Harness::Codex).health, Health::Disabled);
         assert_eq!(s.harnesses.len(), Harness::ALL.len());
         assert_eq!((s.scan.sessions, s.scan.current, s.scan.pending), (1, 1, 0));
+    }
+}
+
+#[cfg(test)]
+mod warning_tests {
+    use super::*;
+    use crate::runlog::{RunEntry, StepOutcome};
+    use crate::sweep::SweepReport;
+
+    fn home_with(config: &Config) -> (tempfile::TempDir, Home) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        config.save(&home.config_path()).unwrap();
+        (dir, home)
+    }
+
+    fn swept(home: &Home, minutes_ago: i64, ok: bool) {
+        let mut report = SweepReport::default();
+        if !ok {
+            report.errors.push("one file failed".into());
+        }
+        let mut e = RunEntry::of(
+            "tick",
+            vec![StepOutcome {
+                name: "sweep".into(),
+                ok,
+                summary: "swept".into(),
+                report: serde_json::to_value(&report).unwrap(),
+                errors: report.errors.clone(),
+            }],
+        );
+        e.at = (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        runlog::record(home, &e).unwrap();
+    }
+
+    fn overdue(s: &Status) -> bool {
+        s.warnings
+            .iter()
+            .any(|w| w.kind == WarningKind::SweepOverdue)
+    }
+
+    #[test]
+    fn status_warns_when_the_timer_has_not_swept_for_twice_its_interval() {
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        config.schedule.sweep_every_minutes = 60;
+        let (_dir, home) = home_with(&config);
+
+        swept(&home, 100, true);
+        assert!(!overdue(&status(&home).unwrap()));
+
+        let (_dir, home) = home_with(&config);
+        swept(&home, 125, true);
+        let s = status(&home).unwrap();
+        assert!(overdue(&s), "{s:?}");
+        let w = s
+            .warnings
+            .iter()
+            .find(|w| w.kind == WarningKind::SweepOverdue)
+            .unwrap();
+        assert_eq!(w.harness, None);
+        assert!(w.message.contains("60 minutes"), "{}", w.message);
+
+        // A sweep that captured all but one file still swept.
+        swept(&home, 5, false);
+        assert!(!overdue(&status(&home).unwrap()));
+    }
+
+    #[test]
+    fn a_home_set_up_long_ago_that_never_swept_is_overdue_too() {
+        let config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let (_dir, home) = home_with(&config);
+        // Just set up: the timer hasn't had its chance yet.
+        assert!(!overdue(&status(&home).unwrap()));
+
+        let f = std::fs::File::options()
+            .write(true)
+            .open(home.config_path())
+            .unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600))
+            .unwrap();
+        let s = status(&home).unwrap();
+        assert!(overdue(&s), "{s:?}");
+        assert!(s.warnings[0].message.contains("3 hours"), "{s:?}");
+    }
+
+    fn prune_warning(s: &Status, kind: Harness) -> Option<&Warning> {
+        s.warnings
+            .iter()
+            .find(|w| w.kind == WarningKind::PrunesSooner && w.harness == Some(kind))
+    }
+
+    #[test]
+    fn status_warns_when_claude_code_deletes_sessions_sooner_than_the_sweep_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        // Claude Code keeps its settings beside its projects folder.
+        let claude = dir.path().join("claude");
+        std::fs::create_dir_all(claude.join("projects")).unwrap();
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let h = config.harness_mut(Harness::ClaudeCode);
+        h.enabled = true;
+        h.roots = vec![claude.join("projects")];
+        config.schedule.sweep_every_minutes = 2 * 24 * 60;
+        let (_home_dir, home) = home_with(&config);
+
+        // No setting: the default thirty days is longer than two days.
+        assert_eq!(
+            prune_warning(&status(&home).unwrap(), Harness::ClaudeCode),
+            None
+        );
+
+        std::fs::write(
+            claude.join("settings.json"),
+            r#"{"model":"x","cleanupPeriodDays":1}"#,
+        )
+        .unwrap();
+        let s = status(&home).unwrap();
+        let w = prune_warning(&s, Harness::ClaudeCode).expect("warns");
+        assert!(w.message.contains("cleanupPeriodDays"), "{}", w.message);
+        let c = s
+            .harnesses
+            .iter()
+            .find(|h| h.harness == Harness::ClaudeCode)
+            .unwrap();
+        assert_eq!(c.health, Health::Warn);
+
+        std::fs::write(claude.join("settings.json"), r#"{"cleanupPeriodDays":3}"#).unwrap();
+        assert_eq!(
+            prune_warning(&status(&home).unwrap(), Harness::ClaudeCode),
+            None
+        );
     }
 }

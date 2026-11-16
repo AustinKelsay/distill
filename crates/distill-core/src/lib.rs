@@ -15,6 +15,7 @@ pub mod harness;
 pub mod home;
 pub mod model;
 pub mod normalize;
+pub mod pruning;
 pub mod read;
 pub mod readlog;
 pub mod runlog;

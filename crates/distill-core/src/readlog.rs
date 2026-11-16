@@ -16,7 +16,9 @@ pub struct ReadEntry {
     #[serde(flatten)]
     pub reader: Reader,
     /// The session read: its key (`harness/id`), or what was asked for when no session matched.
-    pub session: String,
+    /// None for a call that lists sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     #[serde(flatten)]
     pub result: ReadResult,
 }
@@ -27,6 +29,9 @@ pub struct ReadEntry {
 pub enum ReadResult {
     /// Session text, this many events of it.
     Served { events: u64 },
+    /// A list of sessions, this many of them, each with its facts and the opening of what the
+    /// owner first wrote.
+    Listed { sessions: u64 },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.

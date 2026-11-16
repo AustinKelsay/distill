@@ -272,6 +272,8 @@ sweep_every_minutes = 60
     assert_eq!(st["scan"]["current"], 3, "{st}");
     assert_eq!(st["scan"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
+    // Just swept, and no harness here deletes sessions sooner than the timer runs.
+    assert_eq!(st["warnings"], serde_json::json!([]), "{st}");
     let of = |k: &str| {
         st["harnesses"]
             .as_array()
