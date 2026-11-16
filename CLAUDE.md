@@ -2,7 +2,7 @@
 
 - Workspace: `crates/distill-core` (all behavior), `distill-cli` (`distill` binary), `distill-mcp` (stdio MCP server), `distill-gui` (Rune window; the only crate that depends on Rune). The GUI and CLI hold no logic of their own.
 - Rebuild in progress (2026-11-15): the spec is issue #72 with tickets #73 to #91; terms are in `GLOSSARY.md`, decisions in `docs/adr/`. Where they disagree with `docs/plan.md`, they win.
-- The owner's live archive is `~/distill`, and a timer runs the installed binary against it. Run every build, test and GUI session against a temporary home. Installing (`scripts/install.sh`, `cargo install`) waits for #91, which the owner does. A test that reaches the timer installer stubs `launchctl`, because installing replaces the live `dev.distill.tick` job whatever `HOME` is.
+- The owner's live archive is `~/distill`, and a timer runs the installed binary against it. Run every build, test and GUI session against a temporary home. Installing (`scripts/install.sh`, `cargo install`) waits for #91, which the owner does. A test that reaches the timer installer stubs `launchctl` (and `systemctl` on Linux), because installing replaces the live `dev.distill.tick` job whatever `HOME` is.
 - Design: `docs/plan.md`. Built vs. planned: `docs/status.md`. Update `docs/status.md` when a milestone moves.
 - Commands: `cargo test` (default members, no GUI), `cargo test -p distill-gui`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`.
 - The raw archive (`raw/`) is append-only. Only `archive.rs` writes it. Everything under `sessions/`, `exports/` and `state/` must stay rebuildable from `raw/`.
