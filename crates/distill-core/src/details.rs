@@ -105,12 +105,14 @@ impl DetailKind {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reply {
+    /// A model in JSON mode with nothing to list may answer `{}`, which is read as none.
+    #[serde(default)]
     details: Vec<Detail>,
 }
 
 /// The details in a model's answer, each a kind and its exact text, or why the answer is not
-/// usable. The answer must be one JSON object, `{"details": [...]}`, alone or inside a single
-/// code fence; each detail has exactly a `kind` (`person_name`, `postal_address`, `phone_number`
+/// usable. The answer must be one JSON object, `{"details": [...]}` (or `{}` for none), alone or
+/// inside a single code fence; each detail has exactly a `kind` (`person_name`, `postal_address`, `phone_number`
 /// or `organization`) and a `text` of 1 to 200 characters. There may be at most 200.
 pub fn parse_reply(answer: &str) -> std::result::Result<Vec<(Kind, String)>, String> {
     let mut body = answer.trim();
@@ -121,6 +123,10 @@ pub fn parse_reply(answer: &str) -> std::result::Result<Vec<(Kind, String)>, Str
             .strip_suffix("```")
             .ok_or("an unclosed code fence")?
             .trim();
+    }
+    // Serde also reads a struct from an array, which would let `[]` through as none.
+    if !body.starts_with('{') {
+        return Err("not one JSON object of details, each a kind and a text".into());
     }
     let r: Reply = serde_json::from_str(body)
         .map_err(|e| format!("not one JSON object of details, each a kind and a text ({e})"))?;

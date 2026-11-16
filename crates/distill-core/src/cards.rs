@@ -174,6 +174,10 @@ pub fn parse_reply(answer: &str) -> std::result::Result<Reply, String> {
             .ok_or("an unclosed code fence")?
             .trim();
     }
+    // Serde also reads a struct from an array; a card is one object.
+    if !body.starts_with('{') {
+        return Err("not one JSON object of title, summary, tags and outcome".into());
+    }
     let mut r: Reply = serde_json::from_str(body)
         .map_err(|e| format!("not one JSON object of title, summary, tags and outcome ({e})"))?;
     r.title = r.title.trim().to_string();

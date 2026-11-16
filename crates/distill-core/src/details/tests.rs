@@ -242,6 +242,9 @@ fn a_reply_is_parsed_strictly() {
     );
     assert_eq!(parse_reply(&format!("```json\n{good}\n```")).unwrap(), r);
     assert_eq!(parse_reply(r#"{"details":[]}"#).unwrap(), []);
+    // A model in JSON mode with nothing to list may answer an empty object.
+    assert_eq!(parse_reply("{}").unwrap(), []);
+    assert_eq!(parse_reply("{\n\n}").unwrap(), []);
     let many: Vec<_> = (0..201)
         .map(|i| serde_json::json!({"kind": "person_name", "text": format!("P{i}")}))
         .collect();
@@ -255,7 +258,10 @@ fn a_reply_is_parsed_strictly() {
         r#"{"details":[{"kind":"person_name"}]}"#,
         r#"{"details":[{"kind":"person_name","text":"  "}]}"#,
         r#"{"details":[],"notes":"none"}"#,
+        r#"{"notes":"none"}"#,
         r#"[{"kind":"person_name","text":"x"}]"#,
+        "[]",
+        r#"[[{"kind":"person_name","text":"x"}]]"#,
         "```json\n{\"details\":[]}",
         &serde_json::json!({"details": many}).to_string(),
         &serde_json::json!({"details": [{"kind": "person_name", "text": "x".repeat(201)}]})
