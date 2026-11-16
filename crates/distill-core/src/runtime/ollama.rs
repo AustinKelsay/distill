@@ -60,7 +60,8 @@ impl Backend for Ollama {
     }
 
     fn generate(&self, model: &str, prompt: &str) -> Result<String, RuntimeError> {
-        let body = json!({"model": model, "prompt": prompt, "stream": false});
+        // Every prompt asks for one JSON object; Ollama's JSON mode keeps prose out of the reply.
+        let body = json!({"model": model, "prompt": prompt, "stream": false, "format": "json"});
         let answer = self.request("POST", "/api/generate", Some(&body), CALL_TIMEOUT)?;
         answer["response"]
             .as_str()
@@ -380,7 +381,7 @@ mod tests {
         };
         assert_eq!(
             body(1),
-            json!({"model": "small:8b", "prompt": "say \"hi\"", "stream": false})
+            json!({"model": "small:8b", "prompt": "say \"hi\"", "stream": false, "format": "json"})
         );
         assert_eq!(
             body(2),
