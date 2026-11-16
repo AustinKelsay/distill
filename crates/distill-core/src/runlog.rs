@@ -1,5 +1,5 @@
-//! A small log of what each run did, so the dashboard can show it and the steward's work is
-//! visible. One JSONL file per UTC day.
+//! The run log: one entry for each tick, and for each step run on its own from the command line
+//! (`distill sweep`, `distill parse`, `distill verify`). One JSONL file per UTC day under `runs/`.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -11,27 +11,77 @@ use crate::util::{append_jsonl, now_rfc3339, read_jsonl};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunEntry {
     pub at: String,
-    /// sweep, normalize, steward, export, verify, repair
+    /// `tick`, or the one step that ran (`sweep`, `parse`, `verify`). Entries the previous build
+    /// wrote name its steps (`normalize`, `steward`, `export`, …).
     pub step: String,
     pub ok: bool,
-    /// One human sentence, shown on the dashboard.
+    /// One sentence a person can read.
     pub summary: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_usd: Option<f64>,
+    /// What each step did, in the order they ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<StepOutcome>,
+    /// The previous build's per-entry details. Read, never written.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub details: Value,
 }
 
+/// What one step of a run did: its counts, its failures and what it skipped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepOutcome {
+    pub name: String,
+    pub ok: bool,
+    pub summary: String,
+    /// The step's own report.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub report: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+}
+
+impl StepOutcome {
+    pub fn failed(name: &str, error: &anyhow::Error) -> Self {
+        Self {
+            name: name.to_string(),
+            ok: false,
+            summary: format!("{name} failed: {error:#}"),
+            report: Value::Null,
+            errors: vec![format!("{error:#}")],
+        }
+    }
+}
+
 impl RunEntry {
-    pub fn new(step: &str, ok: bool, summary: impl Into<String>) -> Self {
+    /// An entry for a run made of `steps`.
+    pub fn of(step: &str, steps: Vec<StepOutcome>) -> Self {
+        let ok = steps.iter().all(|s| s.ok);
+        let summary = steps
+            .iter()
+            .map(|s| s.summary.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ");
         Self {
             at: now_rfc3339(),
             step: step.to_string(),
             ok,
-            summary: summary.into(),
-            cost_usd: None,
+            summary,
+            steps,
             details: Value::Null,
         }
+    }
+
+    /// The outcome of a step in this run: one of its steps, or the run itself when it was that
+    /// step alone and recorded none (as the previous build's entries do).
+    pub fn outcome(&self, step: &str) -> Option<StepOutcome> {
+        if let Some(s) = self.steps.iter().find(|s| s.name == step) {
+            return Some(s.clone());
+        }
+        (self.step == step).then(|| StepOutcome {
+            name: step.to_string(),
+            ok: self.ok,
+            summary: self.summary.clone(),
+            report: self.details.clone(),
+            errors: Vec::new(),
+        })
     }
 }
 
@@ -60,23 +110,53 @@ pub fn recent(home: &Home, limit: usize) -> Result<Vec<RunEntry>> {
     Ok(out)
 }
 
-/// Steward spend recorded today (UTC).
-pub fn spent_today(home: &Home) -> Result<f64> {
-    let entries = today(home)?;
-    // `+ 0.0` turns the empty sum's -0.0 into 0.0.
-    Ok(entries.iter().filter_map(|e| e.cost_usd).sum::<f64>() + 0.0)
-}
-
-/// Every entry from today (UTC).
-pub fn today(home: &Home) -> Result<Vec<RunEntry>> {
-    let day = &now_rfc3339()[..10];
-    read_jsonl(&home.runs_dir().join(format!("{day}.jsonl")))
-}
-
-/// When a step last ran successfully.
-pub fn last_ok(home: &Home, step: &str) -> Result<Option<String>> {
+/// The newest run that ran `step` and it succeeded, with when it ran.
+pub fn last_ok(home: &Home, step: &str) -> Result<Option<(String, StepOutcome)>> {
     Ok(recent(home, 500)?
         .into_iter()
-        .find(|e| e.step == step && e.ok)
-        .map(|e| e.at))
+        .find_map(|e| e.outcome(step).filter(|o| o.ok).map(|o| (e.at.clone(), o))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_last_sweep_is_found_in_ticks_and_in_runs_of_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let step = |name: &str, ok| StepOutcome {
+            name: name.into(),
+            ok,
+            summary: name.into(),
+            report: Value::Null,
+            errors: vec![],
+        };
+        assert_eq!(last_ok(&home, "sweep").unwrap(), None);
+        // An entry the previous build wrote for a sweep on its own.
+        std::fs::create_dir_all(home.runs_dir()).unwrap();
+        std::fs::write(
+            home.runs_dir().join("2026-11-14.jsonl"),
+            r#"{"at":"2026-11-14T10:00:00Z","step":"sweep","ok":true,"summary":"Swept","details":{"new":1}}
+{"at":"2026-11-14T11:00:00Z","step":"steward","ok":true,"summary":"Wrote cards","cost_usd":0.01}
+"#,
+        )
+        .unwrap();
+        let (at, o) = last_ok(&home, "sweep").unwrap().unwrap();
+        assert_eq!(at, "2026-11-14T10:00:00Z");
+        assert_eq!(o.report["new"], 1);
+
+        // A tick whose sweep succeeded counts; one whose sweep failed does not.
+        let mut good = RunEntry::of("tick", vec![step("sweep", true), step("parse", false)]);
+        good.at = "2026-11-15T10:00:00Z".into();
+        record(&home, &good).unwrap();
+        let mut bad = RunEntry::of("tick", vec![step("sweep", false), step("parse", true)]);
+        bad.at = "2026-11-15T11:00:00Z".into();
+        record(&home, &bad).unwrap();
+        assert!(!good.ok, "a run is ok only when every step is");
+        assert_eq!(
+            last_ok(&home, "sweep").unwrap().unwrap().0,
+            "2026-11-15T10:00:00Z"
+        );
+    }
 }

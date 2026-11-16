@@ -1,0 +1,56 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Providers
+          text: 3 Providers
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Schedule
+          text: 6 Schedule
+        text: Step 5 of 6
+          step-title: Privacy
+        text: Names and places that always count as personal
+          personal-terms: Personal terms
+              title: Personal terms
+          text: Words and names that always count as personal details, matched as whole words whatever their case.
+              input: 
+            add-term: Add
+              label: Add
+              text: Northwind
+                remove: Remove
+                  label: Remove
+              text: Jo Example
+                remove: Remove
+                  label: Remove
+          excluded: Never archive
+              title: Never archive
+          text: Sessions that worked inside one of these folders are skipped before anything is copied.
+              input: 
+            add-exclude: Add
+              label: Add
+              text: ~/work/client-x
+                remove: Remove
+                  label: Remove
+        back: Back
+          label: Back
+        next: Next
+          label: Next

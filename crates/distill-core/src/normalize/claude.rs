@@ -27,18 +27,6 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             out.harness_version = Some(ver.to_string());
         }
         match ty {
-            "custom-title" | "ai-title" => {
-                if let Some(t) = v
-                    .get("customTitle")
-                    .or_else(|| v.get("title"))
-                    .and_then(Value::as_str)
-                {
-                    out.title = Some(t.to_string());
-                }
-            }
-            "summary" if out.title.is_none() => {
-                out.title = v.get("summary").and_then(Value::as_str).map(str::to_string);
-            }
             "user" | "assistant" => {
                 let Some(msg) = v.get("message") else {
                     continue;
@@ -105,7 +93,6 @@ not json"#;
         assert_eq!(p.events[3].call_id.as_deref(), Some("t1"));
         assert_eq!(p.events[3].is_error, Some(true));
         assert_eq!(p.cwd.as_deref(), Some("/r"));
-        assert_eq!(p.title.as_deref(), Some("Fix test"));
         assert_eq!(p.models, vec!["claude-opus-5-5"]);
     }
 }

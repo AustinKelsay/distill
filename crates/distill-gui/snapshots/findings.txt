@@ -1,0 +1,46 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        heading: Findings
+      text: Every value found in the archive, by fingerprint: what to rotate, and where it appears. Values are never shown here; open a session to see one.
+          filter-kind-trigger: Kind
+            text: Secrets: the rotation list
+          filter-harness-trigger: Harness
+            text: Any harness
+          filter-order-trigger: Sort
+            text: Most sessions first
+              input: 
+              input: 
+          apply: Apply
+            label: Apply
+        summary: 4 fingerprints
+        pending: 3 sessions not scanned yet, or scanned by an older detector, so not counted here; the next tick scans them.
+            fingerprint: #a1a1a1a1
+            kinds: ‹anthropic key›
+            spread: 4 sessions
+            facts: Claude Code, Codex · First seen Sep 2, 2026, last seen Nov 14, 2026
+            fingerprint: #b2b2b2b2
+            kinds: ‹github token›
+            spread: 2 sessions
+            facts: Claude Code · First seen Oct 20, 2026, last seen Nov 3, 2026
+            fingerprint: #c3c3c3c3
+            kinds: ‹assigned secret›
+            spread: 1 session
+            facts: Codex · First seen Nov 12, 2026, last seen Nov 12, 2026
+            fingerprint: #d4d4d4d4
+            kinds: ‹bearer› ‹credential field›
+            spread: 1 session
+            facts: T3 Code · First seen Aug 30, 2026, last seen Aug 30, 2026

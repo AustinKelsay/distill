@@ -4,8 +4,9 @@
 //! grows appends. Threads touched in the last few minutes wait for the next sweep.
 //!
 //! A thread whose harness Distill also captures natively (Codex, Claude Code, …) is a mirror of
-//! that session: archived and searchable, but left out of datasets and steward cards so nothing
-//! is counted twice. Threads from harnesses with no local store of their own are the only copy.
+//! that session: archived, but it gets no card and is left out of search unless asked for, so
+//! nothing is counted twice. Threads from harnesses with no local store of their own are the
+//! only copy.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -14,21 +15,21 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
+use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::{Candidate, SourceKind};
 
-/// The source Distill reads a T3 Code driver's sessions from directly, if any.
-fn native(driver: &str) -> Option<SourceKind> {
+/// The harness Distill reads a T3 Code driver's sessions from directly, if any.
+fn native(driver: &str) -> Option<Harness> {
     Some(match driver {
-        "codex" => SourceKind::Codex,
-        "claudeAgent" => SourceKind::ClaudeCode,
-        "opencode" => SourceKind::OpenCode,
-        "pi" => SourceKind::Pi,
-        "grok" => SourceKind::Grok,
-        "antigravity" => SourceKind::Antigravity,
-        "droid" => SourceKind::Droid,
+        "codex" => Harness::Codex,
+        "claudeAgent" => Harness::ClaudeCode,
+        "opencode" => Harness::OpenCode,
+        "pi" => Harness::Pi,
+        "grok" => Harness::Grok,
+        "antigravity" => Harness::Antigravity,
+        "droid" => Harness::Droid,
         // Its agents run through Cursor's SDK, whose stores Distill reads.
-        "cursor" => SourceKind::Cursor,
+        "cursor" => Harness::Cursor,
         _ => return None,
     })
 }
@@ -101,10 +102,10 @@ fn where_ran(thread: &Value, project_root: Option<String>) -> Option<String> {
 /// What a thread's native references say about the sessions it copies.
 #[derive(Debug, Default, PartialEq)]
 pub struct NativeRefs {
-    /// Named originals, as `source/session id` keys.
+    /// Named originals, as `harness/session id` keys.
     pub keys: Vec<String>,
-    /// Sources of runs that name no original.
-    pub unresolved: Vec<SourceKind>,
+    /// Harnesses of runs that name no original.
+    pub unresolved: Vec<Harness>,
 }
 
 /// Read [`export_native_refs`] output for one thread. Runs on harnesses Distill doesn't read
@@ -124,7 +125,7 @@ pub fn native_refs(refs: &[u8]) -> NativeRefs {
         };
         // Pi names its session by file (`…/<time>_<session id>.jsonl`).
         let id = match kind {
-            SourceKind::Pi => id
+            Harness::Pi => id
                 .rsplit('/')
                 .next()
                 .and_then(|f| f.strip_suffix(".jsonl"))
@@ -312,9 +313,6 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     model = Some(m.clone());
                     out.add_model(&m);
                 }
-                if out.title.is_none() {
-                    out.title = s(&v, "title");
-                }
                 thread_instance = s(&v, "provider_instance");
                 continue;
             }
@@ -413,7 +411,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             out.harness_version = Some(inst.clone());
         }
     }
-    let natives: Option<Vec<SourceKind>> = drivers.iter().map(|d| native(d)).collect();
+    let natives: Option<Vec<Harness>> = drivers.iter().map(|d| native(d)).collect();
     if let Some(mut kinds) = natives.filter(|k| !k.is_empty()) {
         kinds.sort_by_key(|k| k.id());
         kinds.dedup();
@@ -532,8 +530,8 @@ mod tests {
         .unwrap();
         let home = crate::Home::new(dir.path().join("home"));
         let mut config = crate::Config::default();
-        for s in &mut config.sources {
-            s.enabled = s.kind == SourceKind::T3Code;
+        for s in &mut config.harnesses {
+            s.enabled = s.kind == Harness::T3Code;
             s.roots = vec![db.clone()];
         }
         let refs_of = |home: &crate::Home| {
@@ -542,12 +540,12 @@ mod tests {
                 .latest()
                 .iter()
                 .find(|(o, _)| o.ends_with(NATIVE_SUFFIX))
-                .map(|(_, r)| r.sha256.clone())
+                .map(|(_, r)| r.capture_hash.clone())
                 .unwrap();
             native_refs(&a.read_blob(&r).unwrap())
         };
         crate::sweep::sweep(&home, &config, None).unwrap();
-        assert_eq!(refs_of(&home).unresolved, vec![SourceKind::Codex]);
+        assert_eq!(refs_of(&home).unresolved, vec![Harness::Codex]);
 
         // The native id is filled in later; the thread itself doesn't change.
         conn.execute(
@@ -594,7 +592,7 @@ mod tests {
             .unwrap();
         let refs = native_refs(&export_native_refs(&db).unwrap()["t1"]);
         assert_eq!(refs.keys, vec!["codex/native-1"]);
-        assert_eq!(refs.unresolved, vec![SourceKind::ClaudeCode]);
+        assert_eq!(refs.unresolved, vec![Harness::ClaudeCode]);
     }
 
     #[test]
@@ -614,7 +612,7 @@ mod tests {
 {"driver":"claudeAgent","native_id":null}"#,
         );
         assert_eq!(partial.keys, vec!["claude-code/c-1"]);
-        assert_eq!(partial.unresolved, vec![SourceKind::ClaudeCode]);
+        assert_eq!(partial.unresolved, vec![Harness::ClaudeCode]);
         assert_eq!(native_refs(b""), NativeRefs::default());
     }
 
@@ -624,7 +622,7 @@ mod tests {
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
         assert_eq!(
             parse(mirror.as_bytes()).unwrap().mirror_of,
-            vec![SourceKind::ClaudeCode]
+            vec![Harness::ClaudeCode]
         );
         let own = r#"{"row":"thread","thread_id":"t7","provider_instance":"fragment"}
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
@@ -637,9 +635,8 @@ mod tests {
 {"row":"item","item":{"type":"user_message","text":"hi"}}"#;
         let p = parse(old.as_bytes()).unwrap();
         assert!(p.is_mirror());
-        assert_eq!(p.mirror_of, vec![SourceKind::Codex]);
+        assert_eq!(p.mirror_of, vec![Harness::Codex]);
         assert_eq!(p.models, vec!["gpt-6"]);
-        assert_eq!(p.title.as_deref(), Some("Old"));
     }
 
     #[test]

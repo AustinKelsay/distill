@@ -1,0 +1,79 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        heading: Read log
+      text: Every read of your sessions, every refusal, and every step of a reveal request, newest first. Days are in UTC. The log holds no session text and no value.
+              input: 
+              input: 
+              input: 
+          apply: Apply
+            label: Apply
+          summary: 11 lines
+          status: Read
+          text: Read
+            what: served 42 events
+            who: Nov 15, 11:59:00 UTC · owner · claude-code/5d1f0c2a
+            when: 1 min ago
+          status: Read
+          text: Read
+            what: listed 4 fingerprints
+            who: Nov 15, 11:58:00 UTC · owner · findings
+            when: 2 min ago
+          status: Reveal
+          text: Reveal
+            what: reveal 3f9a1c0e7b2d4a68 requested: #a1a1a1a1
+            who: Nov 15, 11:55:00 UTC · example-cloud/model-a · claude-code/5d1f0c2a
+            when: 5 min ago
+          status: Read
+          text: Read
+            what: served 42 events
+            who: Nov 15, 11:54:00 UTC · example-cloud/model-a · claude-code/5d1f0c2a
+            when: 6 min ago
+          status: Read
+          text: Read
+            what: indexed 3 sessions, 214 events
+            who: Nov 15, 11:48:00 UTC · distill · the index
+            when: 12 min ago
+          status: Refused
+          text: Refused
+            what: refused: unknown-cloud is not a provider Distill knows: add it with `distill providers add unknown-cloud`
+            who: Nov 15, 11:20:00 UTC · unknown-cloud/x · codex/rollout-0042
+            when: 40 min ago
+          status: Reveal
+          text: Reveal
+            what: reveal 77c0e1d2a3b4c5d6 collected: 1 value
+            who: Nov 15, 10:25:00 UTC · example-cloud/model-b · claude-code/9e8a7b10
+            when: 1 h ago
+          status: Reveal
+          text: Reveal
+            what: reveal 77c0e1d2a3b4c5d6 approved by the owner
+            who: Nov 15, 10:19:00 UTC · example-cloud/model-b · claude-code/9e8a7b10
+            when: 1 h ago
+          status: Reveal
+          text: Reveal
+            what: reveal 0e4d5c6b7a8f9012 denied by the owner
+            who: Nov 15, 09:50:00 UTC · example-cloud/model-b · claude-code/1a2b3c4d
+            when: 2 h ago
+          status: Reveal
+          text: Reveal
+            what: reveal 9b2e6d40c1f37a85 requested: #b2b2b2b2 #c3c3c3c3
+            who: Nov 15, 08:50:00 UTC · example-cloud/model-b · codex/rollout-0042
+            when: 3 h ago
+          status: Read
+          text: Read
+            what: listed 50 sessions
+            who: Nov 15, 07:00:00 UTC · owner · a list of sessions
+            when: 5 h ago

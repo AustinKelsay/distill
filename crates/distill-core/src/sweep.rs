@@ -1,6 +1,6 @@
-//! The sweep: copy new and changed session data into the archive. Deterministic, no model.
+//! The sweep: copy new and changed harness files into the raw archive. Deterministic, no model.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
@@ -10,10 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::archive::{Archive, CaptureKind, copy_sqlite};
 use crate::config::Config;
+use crate::harness::{self, Candidate, Harness};
 use crate::home::Home;
 use crate::normalize::{goose, hermes, opencode, t3code};
-use crate::runlog::{self, RunEntry};
-use crate::source::{self, Candidate, SourceKind};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SweepReport {
@@ -24,6 +23,9 @@ pub struct SweepReport {
     pub rewritten: u64,
     pub excluded: u64,
     pub errors: Vec<String>,
+    /// How many of the errors each harness had: its capture health for status.
+    #[serde(default)]
+    pub errors_by_harness: BTreeMap<Harness, u64>,
     pub bytes_written: u64,
 }
 
@@ -34,7 +36,7 @@ impl SweepReport {
     pub fn summary(&self) -> String {
         format!(
             "Swept {}: {} new, {} grew, {} rewritten, {} unchanged{}{}",
-            crate::util::count(self.seen, "source"),
+            crate::util::count(self.seen, "file"),
             self.new,
             self.appended,
             self.rewritten,
@@ -56,38 +58,17 @@ impl SweepReport {
 /// Whether privacy exclusions keep a file out of the archive. A session's cwd comes from its
 /// records or from the folder it sits in; a sidecar whose session can't be placed is kept out
 /// whenever any exclusion is set.
-fn file_excluded(config: &Config, kind: SourceKind, path: &std::path::Path, origin: &str) -> bool {
+fn file_excluded(config: &Config, kind: Harness, path: &std::path::Path, origin: &str) -> bool {
     if config.privacy.exclude_paths.is_empty() {
         return false;
     }
-    let cwd = || source::peek_cwd(kind, path);
+    let cwd = || harness::peek_cwd(kind, path);
     excluded(config, kind, path, origin, cwd)
-}
-
-/// [`file_excluded`] for bytes that are no longer (or never were) a file at `path`. Stricter:
-/// such bytes come from somewhere other than a sweep (an import), so when neither the records
-/// nor the folder say where the session ran, they are kept out.
-pub(crate) fn bytes_excluded(
-    config: &Config,
-    kind: SourceKind,
-    path: &std::path::Path,
-    bytes: &[u8],
-) -> bool {
-    if config.privacy.exclude_paths.is_empty() {
-        return false;
-    }
-    // A blank or relative cwd says nothing about where the session ran.
-    let recorded = source::cwd_in(kind, bytes).filter(|c| c.starts_with('/'));
-    if recorded.is_none() && source::path_cwd(kind, &config.roots_for(kind), path).is_none() {
-        return true;
-    }
-    let origin = path.to_string_lossy();
-    excluded(config, kind, path, &origin, || recorded)
 }
 
 fn excluded(
     config: &Config,
-    kind: SourceKind,
+    kind: Harness,
     path: &std::path::Path,
     origin: &str,
     recorded_cwd: impl FnOnce() -> Option<String>,
@@ -102,28 +83,33 @@ fn excluded(
     if primary && let Some(cwd) = recorded_cwd() {
         return config.is_excluded(&cwd);
     }
-    match source::path_cwd(kind, &config.roots_for(kind), path) {
-        Some((cwd, enc)) => source::path_cwd_excluded(&cwd, enc, exclude),
+    match harness::path_cwd(kind, &config.roots_for(kind), path) {
+        Some((cwd, enc)) => harness::path_cwd_excluded(&cwd, enc, exclude),
         // Antigravity and Hermes never say where they ran, so with any exclusion set nothing
         // from them is archived; elsewhere a session without a recorded cwd is kept.
-        None => !primary || source::records_no_cwd(kind),
+        None => !primary || harness::records_no_cwd(kind),
     }
 }
 
-pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<SweepReport> {
+/// Sweep every enabled harness (or only `only`). The caller records the run.
+pub fn sweep(home: &Home, config: &Config, only: Option<Harness>) -> Result<SweepReport> {
     home.ensure()?;
     let _lock = home.lock_archive()?;
     let mut archive = Archive::open(home)?;
     let mut report = SweepReport::default();
-    for sc in &config.sources {
+    for sc in &config.harnesses {
         if !sc.enabled || only.is_some_and(|k| k != sc.kind) {
             continue;
         }
         let roots = config.roots_for(sc.kind);
-        let candidates = match source::discover(sc.kind, &roots) {
+        let failed = |report: &mut SweepReport, message: String| {
+            report.errors.push(message);
+            *report.errors_by_harness.entry(sc.kind).or_default() += 1;
+        };
+        let candidates = match harness::discover(sc.kind, &roots) {
             Ok(c) => c,
             Err(e) => {
-                report.errors.push(format!("{}: {e:#}", sc.kind));
+                failed(&mut report, format!("{}: {e:#}", sc.kind));
                 continue;
             }
         };
@@ -132,18 +118,13 @@ pub fn sweep(home: &Home, config: &Config, only: Option<SourceKind>) -> Result<S
         for c in candidates {
             report.seen += 1;
             if let Err(e) = capture_one(home, config, &mut archive, &c, &mut report) {
-                report.errors.push(format!("{}: {e:#}", c.origin()));
+                failed(&mut report, format!("{}: {e:#}", c.origin()));
             }
             if let Err(e) = capture_native_refs(config, &mut archive, &c, &mut refs, &mut report) {
-                report
-                    .errors
-                    .push(format!("{}: native refs: {e:#}", c.origin()));
+                failed(&mut report, format!("{}: native refs: {e:#}", c.origin()));
             }
         }
     }
-    let mut entry = RunEntry::new("sweep", report.errors.is_empty(), report.summary());
-    entry.details = serde_json::to_value(&report)?;
-    runlog::record(home, &entry)?;
     Ok(report)
 }
 
@@ -158,7 +139,7 @@ fn db_session_excluded(config: &Config, cwd: Option<&str>) -> bool {
 }
 
 /// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
-/// normalize can tell which originals a mirror copies. Written whenever they change, which can
+/// the parse step can tell which originals a mirror copies. Written whenever they change, which can
 /// happen without the thread changing (a native id filled in later).
 fn capture_native_refs(
     config: &Config,
@@ -193,11 +174,11 @@ fn capture_native_refs(
     if archive
         .latest()
         .get(&refs_origin)
-        .is_some_and(|r| r.sha256 == sha)
+        .is_some_and(|r| r.capture_hash == sha)
     {
         return Ok(());
     }
-    if let Some(r) = archive.put(SourceKind::T3Code, &refs_origin, "refs", &bytes[..])? {
+    if let Some(r) = archive.put(Harness::T3Code, &refs_origin, "refs", &bytes[..])? {
         report.bytes_written += r.size;
     }
     Ok(())
@@ -211,11 +192,11 @@ fn capture_one(
     report: &mut SweepReport,
 ) -> Result<()> {
     let origin = c.origin();
-    let fingerprint = c.fingerprint();
+    let change_signal = c.change_signal();
     if archive
         .latest()
         .get(&origin)
-        .is_some_and(|r| r.fingerprint == fingerprint)
+        .is_some_and(|r| r.change_signal == change_signal)
     {
         report.unchanged += 1;
         return Ok(());
@@ -227,7 +208,7 @@ fn capture_one(
                 return Ok(());
             }
             let _ = home;
-            archive.put(*kind, &origin, &fingerprint, fs::File::open(path)?)?
+            archive.put(*kind, &origin, &change_signal, fs::File::open(path)?)?
         }
         Candidate::Sqlite { kind, path, .. } => {
             // Databases (Cursor chats, conversation stores, T3 Code's threads) don't say which
@@ -238,7 +219,7 @@ fn capture_one(
                 return Ok(());
             }
             let bytes = copy_sqlite(path)?;
-            archive.put(*kind, &origin, &fingerprint, &bytes[..])?
+            archive.put(*kind, &origin, &change_signal, &bytes[..])?
         }
         Candidate::T3Thread { db, thread_id, .. } => {
             let export = t3code::export_thread(db, thread_id)?;
@@ -246,7 +227,7 @@ fn capture_one(
                 report.excluded += 1;
                 return Ok(());
             }
-            archive.put(SourceKind::T3Code, &origin, &fingerprint, &export.bytes[..])?
+            archive.put(Harness::T3Code, &origin, &change_signal, &export.bytes[..])?
         }
         Candidate::DbSession {
             kind,
@@ -255,7 +236,7 @@ fn capture_one(
             ..
         } => {
             let (bytes, cwd) = match kind {
-                SourceKind::Hermes => {
+                Harness::Hermes => {
                     let e = hermes::export_session(db, session_id)?;
                     (e.bytes, e.cwd)
                 }
@@ -268,7 +249,7 @@ fn capture_one(
                 report.excluded += 1;
                 return Ok(());
             }
-            archive.put(*kind, &origin, &fingerprint, &bytes[..])?
+            archive.put(*kind, &origin, &change_signal, &bytes[..])?
         }
         Candidate::OpenCodeSession { db, session_id, .. } => {
             let export = opencode::export_session(db, session_id)?;
@@ -279,9 +260,9 @@ fn capture_one(
                 return Ok(());
             }
             archive.put(
-                SourceKind::OpenCode,
+                Harness::OpenCode,
                 &origin,
-                &fingerprint,
+                &change_signal,
                 &export.bytes[..],
             )?
         }
@@ -343,13 +324,13 @@ mod tests {
 
         let home = Home::new(root.join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::ClaudeCode);
+        let c = config.harness_mut(Harness::ClaudeCode);
         c.enabled = true;
         c.roots = vec![claude.clone()];
-        let c = config.source_mut(SourceKind::Codex);
+        let c = config.harness_mut(Harness::Codex);
         c.enabled = true;
         c.roots = vec![codex.clone()];
         config.privacy.exclude_paths = vec!["/work/secret".into()];
@@ -360,14 +341,14 @@ mod tests {
         let n = crate::normalize::normalize(&home, false).unwrap();
         assert_eq!(n.sidecars, 1, "{n:?}");
         assert_eq!(n.normalized, 2, "{n:?}");
-        let meta = crate::normalize::find(&home, SourceKind::Codex, "z1")
+        let meta = crate::normalize::find(&home, Harness::Codex, "z1")
             .unwrap()
             .unwrap();
         assert_eq!(meta.counts.user, 1);
     }
 
     #[test]
-    fn exclusions_cover_dotted_droid_folders_and_sources_without_cwd() {
+    fn exclusions_cover_dotted_droid_folders_and_harnesses_without_cwd() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let droid = root.join("factory/sessions/-work-private.repo");
@@ -383,13 +364,13 @@ mod tests {
 
         let home = Home::new(root.join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::Droid);
+        let c = config.harness_mut(Harness::Droid);
         c.enabled = true;
         c.roots = vec![root.join("factory/sessions")];
-        let c = config.source_mut(SourceKind::Antigravity);
+        let c = config.harness_mut(Harness::Antigravity);
         c.enabled = true;
         c.roots = vec![root.join("ag")];
         config.privacy.exclude_paths = vec!["/work/private.repo".into()];
@@ -413,10 +394,10 @@ mod tests {
         std::fs::write(codex.join("rollout-c1.jsonl"), rollout).unwrap();
         let home = Home::new(root.join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::Codex);
+        let c = config.harness_mut(Harness::Codex);
         c.enabled = true;
         c.roots = vec![codex.clone()];
         sweep(&home, &config, None).unwrap();
@@ -456,10 +437,10 @@ mod tests {
         .unwrap();
         let home = Home::new(root.join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::Codex);
+        let c = config.harness_mut(Harness::Codex);
         c.enabled = true;
         c.roots = vec![root.join("codex")];
         sweep(&home, &config, None).unwrap();
@@ -478,7 +459,7 @@ mod tests {
             for force in [false, true] {
                 let n = crate::normalize::normalize(&home, force).unwrap();
                 assert_eq!(n.sessions, 1, "{label}: {n:?}");
-                let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
+                let meta = crate::normalize::find(&home, Harness::Codex, "c1")
                     .unwrap()
                     .unwrap();
                 assert_eq!(
@@ -488,7 +469,7 @@ mod tests {
             }
         };
         check("moved and compressed");
-        // The old file reappears with its old bytes and a new mtime: a fingerprint refresh,
+        // The old file reappears with its old bytes and a new mtime: a change-signal refresh,
         // not newer content.
         std::fs::write(live.join("rollout-c1.jsonl"), &old_bytes).unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
@@ -519,16 +500,16 @@ mod tests {
         let (a, b) = ("/s/rollout-c1.jsonl", "/arch/rollout-c1.jsonl.zst");
         let zst = |t: usize| zstd::stream::encode_all(session(t).as_bytes(), 3).unwrap();
         let mut ar = crate::archive::Archive::open(&home).unwrap();
-        ar.put(SourceKind::Codex, a, "1", session(1).as_bytes())
+        ar.put(Harness::Codex, a, "1", session(1).as_bytes())
             .unwrap(); // A: X
-        ar.put(SourceKind::Codex, a, "2", session(2).as_bytes())
+        ar.put(Harness::Codex, a, "2", session(2).as_bytes())
             .unwrap(); // A: Y
-        ar.put(SourceKind::Codex, b, "3", &zst(3)[..]).unwrap(); //           B: Z (newest content)
-        ar.put(SourceKind::Codex, a, "4", session(1).as_bytes())
+        ar.put(Harness::Codex, b, "3", &zst(3)[..]).unwrap(); //           B: Z (newest content)
+        ar.put(Harness::Codex, a, "4", session(1).as_bytes())
             .unwrap(); // A: X again
         for force in [false, true] {
             crate::normalize::normalize(&home, force).unwrap();
-            let meta = crate::normalize::find(&home, SourceKind::Codex, "c1")
+            let meta = crate::normalize::find(&home, Harness::Codex, "c1")
                 .unwrap()
                 .unwrap();
             assert_eq!(meta.counts.user, 3, "force={force}");
@@ -544,13 +525,13 @@ mod tests {
 {"timestamp":"2026-11-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#;
         let (a, b) = ("/s/rollout-c1.jsonl", "/arch/rollout-c1.jsonl");
         let mut ar = crate::archive::Archive::open(&home).unwrap();
-        ar.put(SourceKind::Codex, a, "1", body.as_bytes()).unwrap();
-        ar.put(SourceKind::Codex, b, "2", body.as_bytes()).unwrap();
+        ar.put(Harness::Codex, a, "1", body.as_bytes()).unwrap();
+        ar.put(Harness::Codex, b, "2", body.as_bytes()).unwrap();
         // What an earlier version left: `a` as c1 and `b` as a suffixed copy.
         crate::normalize::normalize(&home, false).unwrap();
         let suffixed = format!("c1-{}", &crate::util::sha256_hex(b.as_bytes())[..8]);
-        let src = crate::normalize::session_dir_for(&home, SourceKind::Codex, "c1");
-        let dst = crate::normalize::session_dir_for(&home, SourceKind::Codex, &suffixed);
+        let src = home.session_dir(Harness::Codex, "c1");
+        let dst = home.session_dir(Harness::Codex, &suffixed);
         std::fs::create_dir_all(&dst).unwrap();
         let mut meta: crate::model::SessionMeta =
             serde_json::from_str(&std::fs::read_to_string(src.join("meta.json")).unwrap()).unwrap();
@@ -563,8 +544,8 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
         state[b]["session"] = serde_json::Value::String(suffixed.clone());
         crate::util::write_json_pretty(&state_path, &state).unwrap();
-        crate::normalize::rebuild_index(&home).unwrap();
-        assert_eq!(crate::normalize::read_index(&home).unwrap().len(), 2);
+        crate::normalize::rebuild_session_list(&home).unwrap();
+        assert_eq!(crate::normalize::read_session_list(&home).unwrap().len(), 2);
 
         let n = crate::normalize::normalize(&home, false).unwrap();
         assert_eq!(n.sessions, 1, "{n:?}");
@@ -586,10 +567,10 @@ mod tests {
         }
         let home = Home::new(root.join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::ClaudeCode);
+        let c = config.harness_mut(Harness::ClaudeCode);
         c.enabled = true;
         c.roots = vec![root.join("claude/projects")];
         sweep(&home, &config, None).unwrap();
@@ -598,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn folder_cwd_is_read_below_the_source_root_and_recorded_cwd_wins() {
+    fn folder_cwd_is_read_below_the_harness_root_and_recorded_cwd_wins() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("backup/projects/snap/.claude/projects");
         std::fs::create_dir_all(root.join("-work-secret/s1")).unwrap();
@@ -611,10 +592,10 @@ mod tests {
         .unwrap();
         let home = Home::new(dir.path().join("home"));
         let mut config = Config {
-            sources: vec![],
+            harnesses: vec![],
             ..Default::default()
         };
-        let c = config.source_mut(SourceKind::ClaudeCode);
+        let c = config.harness_mut(Harness::ClaudeCode);
         c.enabled = true;
         c.roots = vec![root.clone()];
         config.privacy.exclude_paths = vec!["/work/secret".into(), "/work/private".into()];
@@ -623,7 +604,7 @@ mod tests {
         // called "projects"; the sibling repo /work/private-tools is kept.
         assert_eq!((r.new, r.excluded), (1, 1), "{r:?}");
         assert!(
-            source::percent_decode("%€%2Fa").ends_with("/a"),
+            harness::percent_decode("%€%2Fa").ends_with("/a"),
             "no panic on non-ASCII"
         );
     }
@@ -639,7 +620,7 @@ mod tests {
             sweep(
                 &h2,
                 &Config {
-                    sources: vec![],
+                    harnesses: vec![],
                     ..Default::default()
                 },
                 None,

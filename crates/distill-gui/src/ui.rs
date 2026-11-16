@@ -1,9 +1,9 @@
-//! Shared look: the kit and core theme for the current appearance, cards, dots and source colours.
+//! Shared look and formatting: the kit and core theme for the current appearance, cards,
+//! dots, pills, and how counts, sizes and times are written.
 
-use distill_core::SourceKind;
-use distill_core::stats::Health;
+use chrono::{DateTime, NaiveDate, Utc};
 use rune::tok::{self, Theme};
-use rune::{Color, El, TextStyle, col, el, row, text};
+use rune::{Align, Color, El, TextEdit, TextStyle, col, el, row, text};
 use rune_kit::Kit;
 
 /// Everything a view function needs to paint itself.
@@ -11,7 +11,6 @@ use rune_kit::Kit;
 pub struct Paint {
     pub k: Kit,
     pub t: Theme,
-    pub dark: bool,
     pub hair: f32,
 }
 
@@ -20,7 +19,6 @@ impl Paint {
         Paint {
             k: Kit::neutral(dark),
             t: tok::theme(dark),
-            dark,
             hair: 1.0 / scale.max(1.0),
         }
     }
@@ -41,7 +39,10 @@ impl Paint {
         TextStyle::new(12.0, 450.0).mono().lh(18.0)
     }
     pub fn stat(&self) -> TextStyle {
-        TextStyle::new(26.0, 650.0).lh(32.0).features("'tnum' 1")
+        TextStyle::new(24.0, 650.0).lh(30.0).features("'tnum' 1")
+    }
+    pub fn num(&self) -> TextStyle {
+        self.k.ty.ui.features("'tnum' 1")
     }
 
     pub fn ink(&self) -> Color {
@@ -53,29 +54,17 @@ impl Paint {
     pub fn faint(&self) -> Color {
         self.k.c.text_faint
     }
-
-    /// One colour per source, in `SourceKind::ALL` order.
-    pub fn source_color(&self, kind: SourceKind) -> Color {
-        let i = SourceKind::ALL.iter().position(|&k| k == kind).unwrap_or(0);
-        // Rune has six accents and repeats them; sources past the sixth get their own hues.
-        const EXTRA_HUES: [f32; 5] = [195.0, 25.0, 110.0, 330.0, 270.0];
-        match i.checked_sub(6) {
-            None => tok::accent(i, self.dark),
-            Some(j) => {
-                let l = if self.dark { 0.68 } else { 0.6 };
-                rune::oklch(l, 0.15, EXTRA_HUES[j % EXTRA_HUES.len()])
-            }
-        }
+    pub fn good(&self) -> Color {
+        self.k.c.success.icon
     }
-
-    pub fn health_color(&self, h: Health) -> Color {
-        match h {
-            Health::Ok => self.k.c.success.icon,
-            Health::Warn => self.k.c.warning.icon,
-            // Not installed here: nothing is wrong, so no alarm colour.
-            Health::Missing => self.t.control_off,
-            Health::Disabled => self.t.control_off,
-        }
+    pub fn warn(&self) -> Color {
+        self.k.c.warning.icon
+    }
+    pub fn bad(&self) -> Color {
+        self.k.c.danger.icon
+    }
+    pub fn off(&self) -> Color {
+        self.t.control_off
     }
 
     /// A raised surface holding one section.
@@ -91,12 +80,17 @@ impl Paint {
 
     /// A card with a heading row (title on the left, `trailing` on the right).
     pub fn section(&self, key: &str, title: &str, trailing: Option<El>) -> El {
-        let mut head = row().key("head").center_y().justify_between().child(
-            text(title)
-                .key("title")
-                .font(self.heading())
-                .color(self.ink()),
-        );
+        let mut head = row()
+            .key("head")
+            .w_full()
+            .center_y()
+            .justify_between()
+            .child(
+                text(title)
+                    .key("title")
+                    .font(self.heading())
+                    .color(self.ink()),
+            );
         if let Some(t) = trailing {
             head = head.child(t);
         }
@@ -110,15 +104,41 @@ impl Paint {
             .a11y_hidden()
     }
 
-    /// A centred line of muted text for a list or chart with nothing in it.
+    /// A centred line of muted text for a list or section with nothing in it.
     pub fn empty(&self, key: &str, message: &str) -> El {
-        col().key(key).w_full().py(18.0).center().child(
+        col().key(key).w_full().py(14.0).center().child(
             text(message)
                 .key("message")
                 .font(self.text())
                 .color(self.faint())
-                .wrap(),
+                .wrap()
+                .align(Align::Center),
         )
+    }
+
+    /// A small count in a filled circle, for the navigation.
+    pub fn count_badge(&self, n: u64) -> El {
+        row()
+            .h(18.0)
+            .min_w(18.0)
+            .px(5.0)
+            .center()
+            .radius(9.0)
+            .fill(self.k.c.warning.bg)
+            .border(self.hair, self.k.c.warning.border)
+            .child(
+                text(n.to_string())
+                    .font(self.k.ty.small_medium.lh(12.0))
+                    .color(self.k.c.warning.fg),
+            )
+    }
+
+    /// The muted explanation under a heading or setting.
+    pub fn note(&self, s: impl Into<String>) -> El {
+        text(s.into())
+            .font(self.caption())
+            .color(self.muted())
+            .wrap()
     }
 }
 
@@ -144,4 +164,145 @@ pub fn pill(p: &Paint, label: &str, role: rune_kit::StateColors) -> El {
                 .color(role.fg)
                 .a11y_hidden(),
         )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Formatting
+
+/// `1.4 GB`, `312 KB`, `0 B`.
+pub fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1000.0 && i + 1 < UNITS.len() {
+        v /= 1000.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} B")
+    } else if v >= 100.0 {
+        format!("{v:.0} {}", UNITS[i])
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
+/// `12,345`.
+pub fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// `1 session`, `2,400 sessions`.
+pub fn count(n: u64, one: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{} {one}s", thousands(n))
+    }
+}
+
+/// "just now", "12 min ago", "3 h ago", "2 days ago", or the date for older times.
+pub fn ago(rfc3339: &str, now: DateTime<Utc>) -> String {
+    let Ok(t) = DateTime::parse_from_rfc3339(rfc3339) else {
+        return rfc3339.to_string();
+    };
+    let secs = (now - t.with_timezone(&Utc)).num_seconds().max(0);
+    match secs {
+        0..60 => "just now".to_string(),
+        60..3600 => format!("{} min ago", secs / 60),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        86_400..604_800 => {
+            let d = secs / 86_400;
+            if d == 1 {
+                "yesterday".to_string()
+            } else {
+                format!("{d} days ago")
+            }
+        }
+        _ => t.format("%b %-d").to_string(),
+    }
+}
+
+/// How long until `rfc3339`: "23 h 59 min left", "12 min left", "under a minute left", or
+/// "expired".
+pub fn left(rfc3339: &str, now: DateTime<Utc>) -> String {
+    let Ok(t) = DateTime::parse_from_rfc3339(rfc3339) else {
+        return "expired".to_string();
+    };
+    let secs = (t.with_timezone(&Utc) - now).num_seconds();
+    let (h, m) = (secs / 3600, secs % 3600 / 60);
+    match secs {
+        ..=0 => "expired".to_string(),
+        1..60 => "under a minute left".to_string(),
+        60..3600 => format!("{m} min left"),
+        _ if m == 0 => format!("{h} h left"),
+        _ => format!("{h} h {m} min left"),
+    }
+}
+
+/// A path with the user's home folder written as `~`.
+/// A filter's day field, named `name` in what it says when the field is not a day: empty, or
+/// a day as YYYY-MM-DD.
+pub fn parse_day(t: &TextEdit, name: &str) -> Result<Option<NaiveDate>, String> {
+    match t.text.trim() {
+        "" => Ok(None),
+        d => distill_core::read::date(d)
+            .map(Some)
+            .map_err(|_| format!("Write dates as YYYY-MM-DD: {name} is {d:?}.")),
+    }
+}
+
+pub fn tilde(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy().into_owned();
+    match std::env::var("HOME") {
+        Ok(h) if !h.is_empty() && s.starts_with(&h) => format!("~{}", &s[h.len()..]),
+        _ => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_day_is_empty_a_day_or_says_how_to_write_one() {
+        assert_eq!(parse_day(&TextEdit::new("  "), "from"), Ok(None));
+        assert_eq!(
+            parse_day(&TextEdit::new(" 2026-11-04 "), "from"),
+            Ok(chrono::NaiveDate::from_ymd_opt(2026, 11, 4))
+        );
+        assert_eq!(
+            parse_day(&TextEdit::new("4 Nov"), "to"),
+            Err(r#"Write dates as YYYY-MM-DD: to is "4 Nov"."#.into())
+        );
+    }
+
+    #[test]
+    fn formats_sizes_counts_and_ages() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(1_450_000_000), "1.4 GB");
+        assert_eq!(human_bytes(312_000), "312 KB");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+        assert_eq!(count(1, "session"), "1 session");
+        assert_eq!(count(2400, "session"), "2,400 sessions");
+        let now = DateTime::parse_from_rfc3339("2026-11-13T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(ago("2026-11-13T11:48:00Z", now), "12 min ago");
+        assert_eq!(ago("2026-11-13T09:00:00Z", now), "3 h ago");
+        assert_eq!(ago("2026-11-12T09:00:00Z", now), "yesterday");
+        assert_eq!(left("2026-11-14T11:59:00Z", now), "23 h 59 min left");
+        assert_eq!(left("2026-11-13T15:00:00Z", now), "3 h left");
+        assert_eq!(left("2026-11-13T12:12:30Z", now), "12 min left");
+        assert_eq!(left("2026-11-13T12:00:20Z", now), "under a minute left");
+        assert_eq!(left("2026-11-13T11:00:00Z", now), "expired");
+    }
 }

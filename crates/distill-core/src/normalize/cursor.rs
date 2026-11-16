@@ -16,11 +16,11 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
 use super::blocks::{millis_to_rfc3339, result_text};
+use crate::harness::percent_decode;
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::percent_decode;
 
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
-    if crate::source::cursor_transcript(origin) {
+    if crate::harness::cursor_transcript(origin) {
         return Ok(parse_transcript(origin, bytes));
     }
     // SQLite reads from a file; the copy lives only as long as the parse.
@@ -48,7 +48,7 @@ pub fn parse_transcript(origin: &str, bytes: &[u8]) -> Parsed {
     let mut out = Parsed {
         // Its own id, so it never takes the store's place.
         session_id: Some(format!("transcript-{stem}")),
-        mirror_of: vec![crate::source::SourceKind::Cursor],
+        mirror_of: vec![crate::harness::Harness::Cursor],
         mirror_refs: vec![format!("cursor/{stem}")],
         ..Default::default()
     };
@@ -135,11 +135,6 @@ fn parse_store(origin: &str, conn: &Connection) -> Result<Parsed> {
             .and_then(Value::as_str)
             .map(str::to_string)
             .or_else(|| origin.rsplit('/').nth(1).map(str::to_string)),
-        title: meta
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|n| !n.is_empty() && *n != "New Agent")
-            .map(str::to_string),
         ..Default::default()
     };
     let mut message_ids = Vec::new();
@@ -480,7 +475,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.session_id.as_deref(), Some("a-1"));
-        assert_eq!(p.title.as_deref(), Some("Fix the build"));
         assert_eq!(p.cwd.as_deref(), Some("/w/my app"));
         assert_eq!(p.git_branch.as_deref(), Some("feat/x"));
         assert_eq!(p.models, vec!["composer-2.5"]);

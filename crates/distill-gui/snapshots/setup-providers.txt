@@ -1,0 +1,60 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Providers
+          text: 3 Providers
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Schedule
+          text: 6 Schedule
+        text: Step 3 of 6
+          step-title: Providers
+        text: Which models may read your sessions
+            provider-ollama: ollama local trusted
+            text: ollama
+            text: local, on this machine
+            text: qwen-small:4b
+            text: stored on this machine
+            text: embed-text:v1
+            text: stored on this machine
+            text: big-model:cloud
+            text: served from a cloud (reads as ollama-cloud)
+              trust: Trusted
+              text: Trusted
+            provider-ollama-cloud: ollama-cloud remote not trusted
+            text: ollama-cloud
+            text: remote
+            text: Not trusted
+              switch: Trust ollama-cloud
+            provider-example-cloud: example-cloud remote trusted
+            text: example-cloud
+            text: remote
+            text: Trusted
+              switch: Trust example-cloud
+              input: 
+          add-provider: Add
+            label: Add
+        text: Models on this machine are trusted. A model at a remote provider may read your sessions, with every secret replaced by a placeholder, only once you mark the provider trusted. Anything else is refused.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

@@ -1,252 +1,170 @@
-//! Distill's window: a one-time Setup flow that writes `config.toml`, and a read-only Dashboard
-//! of the archive with approve buttons for datasets waiting to leave the machine.
+//! Distill's window: one window with navigation between Setup, Overview, Sessions, Findings,
+//! Approvals and Read log (`nav.rs`; each screen is a module under `screens/`).
 //!
-//! The window holds no business logic. It reads and writes only through distill-core, on a
-//! worker thread (`data.rs`), so no file I/O runs in the frame loop.
+//! The window holds no logic. It reads and writes only through distill-core, in jobs on a
+//! worker thread (`jobs.rs`), so no file I/O runs in the frame loop. Setup and the overview
+//! show no session text. This is the only crate that depends on Rune (ADR 0007).
 //!
-//! `cargo run -p distill-gui` opens the window; `-- --snap out.png --scene dashboard` renders a
-//! fixture headless (`--list-scenes` lists them).
+//! `cargo run -p distill-gui` opens the window; `-- --snap out.png --scene overview` renders a
+//! fixture headless (`--list-scenes` lists them). A headless run never starts the worker, so it
+//! reads nothing from disk and never installs the timer.
 
-mod chart;
-mod dashboard;
-mod data;
+mod cover;
 mod fixture;
-mod setup;
+mod jobs;
+mod nav;
+mod screens;
 mod ui;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use distill_core::Home;
-use distill_core::config::{Config, Harness};
-use distill_core::source::Detection;
-use distill_core::stats::Dashboard;
-use rune::{AppSpec, Cx, El, Tx, Waker, col};
+use chrono::{DateTime, Utc};
+use distill_core::{Config, Home};
+use rune::{AppSpec, Cx, El, Tx, Waker, el, row};
 
-use crate::data::{Boot, Link, Reply, Request};
-use crate::setup::SetupDraft;
+use crate::jobs::{Core, Job, Link};
+use crate::nav::Screen;
+use crate::screens::{approvals, findings, overview, read_log, sessions, setup};
 use crate::ui::Paint;
-
-/// Seconds between dashboard refreshes while it shows.
-const REFRESH_SECS: f64 = 30.0;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    Setup,
-    Dashboard,
-}
-
-/// What the dashboard shows and is doing.
-#[derive(Default)]
-pub struct DashState {
-    pub data: Option<Dashboard>,
-    pub error: Option<String>,
-    pub loading: bool,
-    /// (recipe, build) pairs whose approval is on its way to disk.
-    pub approving: BTreeSet<(String, String)>,
-    /// Proposed recipes being accepted.
-    pub accepting: BTreeSet<String>,
-    /// A one-line result of the last action ("Approved …", "Saved settings").
-    pub notice: Option<String>,
-}
 
 pub struct State {
     pub screen: Screen,
     pub home: Home,
-    /// The config as last saved (or the defaults before setup has run).
-    pub config: Config,
-    pub configured: bool,
-    pub setup: SetupDraft,
-    pub dash: DashState,
-    /// Per source, what setup's detection found; None until the worker answers.
-    pub detections: Option<Vec<Detection>>,
-    pub schedule_installed: Option<bool>,
-    /// Requests waiting for the worker. `poll` sends them; tests read them.
-    pub outbox: Vec<Request>,
+    /// The config as last saved; None until setup has run.
+    pub config: Option<Config>,
+    /// Why the config could not be read, when it exists but doesn't load.
+    pub config_error: Option<String>,
+    pub setup: setup::SetupState,
+    pub overview: overview::OverviewState,
+    pub sessions: sessions::SessionsState,
+    pub findings: findings::FindingsState,
+    pub approvals: approvals::ApprovalsState,
+    pub read_log: read_log::ReadLogState,
+    /// Jobs waiting for the worker. `poll` sends them; tests run them with `jobs::run_queued`.
+    pub outbox: Vec<Job>,
     pub link: Option<Link>,
-    /// Scenes and tests install data directly; nothing is loaded from disk.
+    /// Scenes and tests install data directly; the worker is never started.
     pub fixture: bool,
-    next_refresh: f64,
+    /// A fixed clock for scenes, so relative times don't change between snapshots.
+    pub clock: Option<DateTime<Utc>>,
 }
 
 impl State {
     /// A window over `home` with `config` (None: setup has not run, so it opens on Setup).
     pub fn new(home: Home, config: Option<Config>) -> State {
-        let configured = config.is_some();
-        let config = config.unwrap_or_default();
-        let setup = SetupDraft::from_config(&config, configured);
+        let screen = if config.is_some() {
+            Screen::Overview
+        } else {
+            Screen::Setup
+        };
         State {
-            screen: if configured {
-                Screen::Dashboard
-            } else {
-                Screen::Setup
-            },
+            screen,
+            setup: setup::SetupState::new(config.as_ref()),
             home,
             config,
-            configured,
-            setup,
-            dash: DashState {
-                loading: configured,
-                ..DashState::default()
-            },
-            detections: None,
-            schedule_installed: None,
+            config_error: None,
+            overview: Default::default(),
+            sessions: Default::default(),
+            findings: Default::default(),
+            approvals: Default::default(),
+            read_log: Default::default(),
             outbox: Vec::new(),
             link: None,
             fixture: false,
-            next_refresh: 0.0,
+            clock: None,
         }
     }
 
-    /// Queue work for the worker.
-    pub fn request(&mut self, r: Request) {
-        if !self.outbox.contains(&r) {
-            self.outbox.push(r);
-        }
+    /// Queue `job` for the worker.
+    pub fn ask(&mut self, job: Job) {
+        self.outbox.push(job);
     }
 
-    /// Open the setup flow over the current config (the dashboard's Settings button).
-    pub fn open_settings(&mut self) {
-        self.setup = SetupDraft::from_config(&self.config, self.configured);
-        self.screen = Screen::Setup;
-        if !self.fixture {
-            self.request(Request::OllamaModels);
-        }
-        if self.detections.is_none() && !self.fixture {
-            self.request(data::detect_request(&self.config));
-        }
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.unwrap_or_else(Utc::now)
     }
 
-    /// Setup's Finish: save the draft and show the dashboard.
-    pub fn finish_setup(&mut self) {
-        let config = self.setup.finish();
-        self.config = config.clone();
-        self.configured = true;
-        self.request(Request::SaveConfig(Box::new(config)));
-        self.screen = Screen::Dashboard;
-        self.dash.notice = Some("Saving settings…".to_string());
-    }
-
-    pub fn approve(&mut self, recipe: String, build: String) {
-        if self.dash.approving.insert((recipe.clone(), build.clone())) {
-            self.request(Request::Approve { recipe, build });
-        }
-    }
-
-    pub fn accept_recipe(&mut self, name: String) {
-        if self.dash.accepting.insert(name.clone()) {
-            self.request(Request::AcceptRecipe(name));
-        }
-    }
-
-    fn land(&mut self, reply: Reply) {
-        match reply {
-            Reply::Dashboard(Ok(d)) => {
-                self.dash.data = Some(*d);
-                self.dash.error = None;
-                self.dash.loading = false;
-            }
-            Reply::Dashboard(Err(e)) => {
-                self.dash.error = Some(e);
-                self.dash.loading = false;
-            }
-            Reply::Detected(found) => self.detections = Some(found),
-            Reply::OllamaModels(models) => {
-                self.setup.ollama_models = models;
-                // Picked before the list arrived: suggest the first stored model.
-                if self.setup.config.steward.harness == Harness::Ollama
-                    && self.setup.model.text.trim().is_empty()
-                    && let Some(m) = self.setup.ollama_models.first()
-                {
-                    self.setup.model.replace_text(m.clone());
-                }
-            }
-            Reply::Saved(Ok(())) => {
-                self.dash.notice = Some("Settings saved".to_string());
-                self.dash.loading = self.dash.data.is_none();
-                self.request(Request::LoadDashboard);
-                self.request(Request::CheckSchedule);
-            }
-            Reply::Saved(Err(e)) => {
-                self.dash.notice = Some(format!("Could not save settings: {e}"))
-            }
-            Reply::Approved {
-                recipe,
-                build,
-                result,
-            } => {
-                self.dash.approving.remove(&(recipe.clone(), build.clone()));
-                self.dash.notice = Some(match result {
-                    Ok(()) => format!("Approved \"{recipe}\" build {build}"),
-                    Err(e) => format!("Could not approve \"{recipe}\": {e}"),
-                });
-                self.request(Request::LoadDashboard);
-            }
-            Reply::Accepted { name, result } => {
-                self.dash.accepting.remove(&name);
-                self.dash.notice = Some(match result {
-                    Ok(()) => format!("\"{name}\" is now a dataset recipe; the next run builds it"),
-                    Err(e) => format!("Could not accept \"{name}\": {e}"),
-                });
-                self.request(Request::LoadDashboard);
-            }
-            Reply::Schedule(on) => self.schedule_installed = Some(on),
-        }
+    /// Reveal requests waiting for the owner, from the last status report.
+    pub fn pending_reveals(&self) -> u64 {
+        self.overview
+            .status
+            .as_ref()
+            .map_or(0, |s| s.pending_reveals)
     }
 }
 
+/// What `main` reads before the window opens: where the home is and its config, if any.
+struct Boot {
+    home: Home,
+    config: Option<Config>,
+    config_error: Option<String>,
+}
+
 static BOOT: OnceLock<Boot> = OnceLock::new();
+
+impl Boot {
+    /// One small file read, done in `main` before any window or frame exists.
+    fn load() -> anyhow::Result<Boot> {
+        let home = Home::resolve(None)?;
+        let (config, config_error) = if home.config_path().exists() {
+            match home.load_config() {
+                Ok(c) => (Some(c), None),
+                Err(e) => (None, Some(format!("{e:#}"))),
+            }
+        } else {
+            (None, None)
+        };
+        Ok(Boot {
+            home,
+            config,
+            config_error,
+        })
+    }
+}
 
 fn init() -> State {
     match BOOT.get() {
         Some(b) => {
             let mut s = State::new(b.home.clone(), b.config.clone());
-            if let Some(e) = &b.config_error {
-                s.dash.error = Some(e.clone());
-            }
+            s.config_error = b.config_error.clone();
             s
         }
-        None => State::new(Home::new("~/distill"), None),
+        // Nothing resolved (no HOME): a window that reads nothing.
+        None => {
+            let mut s = State::new(Home::new("~/distill"), None);
+            s.fixture = true;
+            s
+        }
     }
 }
 
-/// Start the worker and ask for what the first screens show. Scenes skip it.
+/// Start the worker and ask for what the first screen shows. Scenes and headless runs skip it.
 fn start(s: &mut State, waker: Waker) {
-    if s.fixture {
+    if s.fixture || rune::is_headless() {
         return;
     }
-    s.link = Some(data::spawn(s.home.clone(), waker));
-    if !s.configured {
-        s.request(Request::OllamaModels);
-    }
-    s.request(data::detect_request(&s.config));
-    s.request(Request::CheckSchedule);
-    if s.configured {
-        s.request(Request::LoadDashboard);
-    }
+    s.link = Some(jobs::spawn(Core::system(s.home.clone()), waker));
+    nav::go(s, s.screen);
 }
 
 fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
     let Some(link) = &s.link else { return false };
-    let replies: Vec<Reply> = link.replies.try_iter().collect();
-    let changed = !replies.is_empty();
-    for reply in replies {
-        s.land(reply);
+    let landed: Vec<_> = link.landed.try_iter().collect();
+    let changed = !landed.is_empty();
+    for land in landed {
+        land(s);
     }
-    if s.screen == Screen::Dashboard && s.configured {
-        if clock >= s.next_refresh {
-            s.request(Request::LoadDashboard);
-            s.next_refresh = clock + REFRESH_SECS;
-        }
-        tx.wake_after(Duration::from_secs_f64((s.next_refresh - clock).max(0.5)));
+    let waits = [overview::refresh(s, clock), approvals::refresh(s, clock)];
+    if let Some(wait) = waits.into_iter().flatten().reduce(f64::min) {
+        tx.wake_after(Duration::from_secs_f64(wait));
     }
     if let Some(link) = &s.link {
-        for r in s.outbox.drain(..) {
-            let _ = link.jobs.send(r);
+        for job in s.outbox.drain(..) {
+            let _ = link.jobs.send(job);
         }
     }
     if changed {
@@ -255,50 +173,47 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
     changed
 }
 
-fn view(s: &State, cx: &mut Cx<State>) -> El {
+pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let p = Paint::new(cx.system_dark(), cx.env().scale);
-    let body = match s.screen {
-        Screen::Setup => setup::view(s, &p),
-        Screen::Dashboard => dashboard::view(s, &p),
-    };
-    col()
+    let mut layer = Vec::new();
+    let entry = nav::entry(s.screen);
+    let body = (entry.view)(s, &p, &mut layer)
+        .key(format!("screen-{}", entry.id))
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full();
+    let rule = el().w(p.hair).h_full().fill(p.t.separator).a11y_hidden();
+    let window = row()
         .key("window")
         .w_full()
         .h_full()
         .fill(p.t.bg)
-        .child(body)
+        .child(nav::sidebar(s, &p))
+        .child(rule)
+        .child(body);
+    rune_kit::root(window, layer)
 }
-
-/// A named fixture state for `--snap --scene`.
-type Scene = (&'static str, fn(&mut State));
-
-const SCENES: &[Scene] = &[
-    ("setup-sources", fixture::setup_sources),
-    ("setup-agent", fixture::setup_agent),
-    ("setup-agent-local", fixture::setup_agent_local),
-    ("setup-privacy", fixture::setup_privacy),
-    ("setup-schedule", fixture::setup_schedule),
-    ("dashboard", fixture::dashboard),
-    ("dashboard-empty", fixture::dashboard_empty),
-];
 
 pub fn spec() -> AppSpec<State> {
     AppSpec {
-        min_size: Some((820.0, 600.0)),
-        scenes: SCENES,
+        min_size: Some((860.0, 600.0)),
+        scenes: fixture::SCENES,
         setup: Some(start),
         poll: Some(poll),
-        ..AppSpec::new("Distill", (1040.0, 760.0), init, view)
+        ..AppSpec::new("Distill", (1080.0, 780.0), init, view)
     }
 }
 
 fn main() {
     rune::prewarm_gpu();
-    match Boot::load() {
-        Ok(b) => {
-            let _ = BOOT.set(b);
+    // A headless run (`--snap`, `--script`) renders fixtures and reads no home.
+    if !rune::is_headless() {
+        match Boot::load() {
+            Ok(b) => {
+                let _ = BOOT.set(b);
+            }
+            Err(e) => eprintln!("distill-gui: {e:#}"),
         }
-        Err(e) => eprintln!("distill-gui: {e:#}"),
     }
     rune::run(spec());
 }

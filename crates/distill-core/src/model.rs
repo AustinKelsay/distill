@@ -1,9 +1,9 @@
-//! The normalized shapes every source is turned into.
+//! The shapes every harness's sessions are turned into: events and session facts.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::source::SourceKind;
+use crate::harness::Harness;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,7 +17,7 @@ pub enum EventKind {
     ToolResult,
 }
 
-/// One step of a trajectory. Tool calls and results are kept in full, not only chat text.
+/// One event: a step of a session. Tool calls and results are kept in full, not only chat text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub seq: u64,
@@ -26,7 +26,7 @@ pub struct Event {
     pub ts: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    /// Tool name, for tool calls (and results when the source records it).
+    /// Tool name, for tool calls (and results when the harness records it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     /// Links a tool call to its result.
@@ -106,28 +106,14 @@ pub struct Producer {
     pub version: u32,
 }
 
-/// What git says happened in the session's repository while it ran.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct GitOutcome {
-    pub repo: String,
-    /// The branch the session recorded. Commits are only attributed when it is known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha_at_start: Option<String>,
-    /// Commits on `branch` between the session's start and an hour after its end. Other work
-    /// on the same branch in that window is counted too.
-    pub commits: Vec<String>,
-    /// Of those, how many were later reverted.
-    pub reverted: u32,
-}
-
+/// Session facts: what Distill records about a session without holding any of its text. Written
+/// to `meta.json` and the session list, both rebuilt from the raw archive.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMeta {
-    pub source: SourceKind,
+    #[serde(alias = "source")]
+    pub harness: Harness,
     pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    /// The project: the folder the session worked in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,31 +131,31 @@ pub struct SessionMeta {
     pub counts: Counts,
     pub raw: RawRef,
     pub normalizer: Producer,
-    /// True for sessions Distill's own steward ran. Datasets leave them out.
+    /// The mark on sessions the previous build's steward ran (they worked inside the home).
+    /// Kept, get no card, and are left out of search unless asked for.
     #[serde(default)]
     pub steward: bool,
     /// A copy of a session Distill also captures from the harness's own files (a T3 Code
-    /// thread run on Codex, say). Searchable, but left out of datasets and steward cards.
+    /// thread run on Codex, say). Counted as a duplicate only while its original is in the
+    /// archive ([`SessionMeta::is_duplicate`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mirror: bool,
-    /// The sources holding the originals of a mirror. Empty on metas written before this was
-    /// recorded, which count as mirrors of enabled sources.
+    /// The harnesses holding the originals of a mirror. Empty on facts written before this was
+    /// recorded, which count as mirrors of any harness with sessions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mirror_of: Vec<SourceKind>,
-    /// The exact sessions a mirror copies (`source/session id`), when the harness named them.
+    pub mirror_of: Vec<Harness>,
+    /// The exact sessions a mirror copies (`harness/session id`), when the harness named them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mirror_refs: Vec<String>,
-    /// Sources of a mirror's runs that name no original; those count as copied when the
-    /// source has sessions at all.
+    /// Harnesses of a mirror's runs that name no original; those count as copied when the
+    /// harness has sessions at all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mirror_unresolved: Vec<SourceKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<GitOutcome>,
+    pub mirror_unresolved: Vec<Harness>,
 }
 
 impl SessionMeta {
     pub fn key(&self) -> String {
-        format!("{}/{}", self.source.id(), self.session_id)
+        format!("{}/{}", self.harness.id(), self.session_id)
     }
 
     /// A mirror whose originals are in the archive and cover it.
@@ -178,23 +164,23 @@ impl SessionMeta {
     }
 
     /// Whether `originals` hold what this mirror copies. With the originals named, each must be
-    /// there; otherwise their sources must have sessions at all. A mirror of sessions that were
+    /// there; otherwise their harnesses must have sessions at all. A mirror of sessions that were
     /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
     /// session of its own.
     fn copied_in(&self, originals: &Originals) -> bool {
-        // Runs whose original isn't named count as copied when their source has sessions.
-        // Metas from before originals were recorded name none, so they check every source.
+        // Runs whose original isn't named count as copied when their harness has sessions.
+        // Facts from before originals were recorded name none, so they check every harness.
         let unresolved = if self.mirror_refs.is_empty() && self.mirror_unresolved.is_empty() {
             &self.mirror_of
         } else {
             &self.mirror_unresolved
         };
         // A named original must also reach (nearly) as far as the mirror: T3 can carry a
-        // native session on after its source stopped being captured. Cursor dates a turn by
+        // native session on after its harness stopped being captured. Cursor dates a turn by
         // when it began and T3 by when each item finished, so a T3 thread can end a whole turn
         // after its Cursor store's last time; that pair gets a turn's worth of slack.
         let slack = |k: &String| {
-            if k.starts_with("cursor/") && self.source == SourceKind::T3Code {
+            if k.starts_with("cursor/") && self.harness == Harness::T3Code {
                 CURSOR_TURN_SLACK
             } else {
                 COVER_SLACK
@@ -212,7 +198,7 @@ impl SessionMeta {
             })
         };
         self.mirror_refs.iter().all(covers)
-            && unresolved.iter().all(|k| originals.sources.contains(k))
+            && unresolved.iter().all(|k| originals.harnesses.contains(k))
     }
 }
 
@@ -229,13 +215,13 @@ fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok()
 }
 
-/// The sessions in an index that are not mirrors, for [`SessionMeta::is_duplicate`]. Only a
+/// The sessions in a session list that are not mirrors, for [`SessionMeta::is_duplicate`]. Only a
 /// harness's own sessions count: a mirror is never taken as proof for another mirror, since it
 /// may hold less (or more) than the session it copies. When the original is gone, two copies of
 /// it both stay.
 #[derive(Debug, Default)]
 pub struct Originals {
-    pub sources: std::collections::HashSet<SourceKind>,
+    pub harnesses: std::collections::HashSet<Harness>,
     /// Each original's key, with when it ended.
     pub keys: std::collections::HashMap<String, Option<String>>,
 }
@@ -244,7 +230,7 @@ impl Originals {
     pub fn of(metas: &[SessionMeta]) -> Self {
         let mut o = Originals::default();
         for m in metas.iter().filter(|m| !m.mirror) {
-            o.sources.insert(m.source);
+            o.harnesses.insert(m.harness);
             o.keys.insert(m.key(), m.ended_at.clone());
         }
         o
@@ -255,19 +241,18 @@ impl Originals {
 #[derive(Debug, Clone, Default)]
 pub struct Parsed {
     pub session_id: Option<String>,
-    pub title: Option<String>,
     pub cwd: Option<String>,
     pub git_branch: Option<String>,
     pub models: Vec<String>,
     pub harness_version: Option<String>,
     pub parent_session: Option<String>,
     pub events: Vec<Event>,
-    /// For a copy of sessions captured natively elsewhere: the sources holding the originals.
-    pub mirror_of: Vec<SourceKind>,
-    /// And the originals themselves (`source/session id`), when known.
+    /// For a copy of sessions captured natively elsewhere: the harnesses holding the originals.
+    pub mirror_of: Vec<Harness>,
+    /// And the originals themselves (`harness/session id`), when known.
     pub mirror_refs: Vec<String>,
-    /// Sources of runs whose original isn't known.
-    pub mirror_unresolved: Vec<SourceKind>,
+    /// Harnesses of runs whose original isn't known.
+    pub mirror_unresolved: Vec<Harness>,
 }
 
 impl Parsed {
@@ -296,16 +281,16 @@ mod tests {
 
     fn mirror(of: &str) -> SessionMeta {
         serde_json::from_str(&format!(
-            r#"{{"source":"t3code","session_id":"t1","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+            r#"{{"harness":"t3code","session_id":"t1","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
                 "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"t3code","version":4}},
                 "mirror":true{of}}}"#
         ))
         .unwrap()
     }
 
-    fn session(source: &str, id: &str, extra: &str) -> SessionMeta {
+    fn session(harness: &str, id: &str, extra: &str) -> SessionMeta {
         serde_json::from_str(&format!(
-            r#"{{"source":"{source}","session_id":"{id}","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
+            r#"{{"harness":"{harness}","session_id":"{id}","models":[],"counts":{{"events":0,"user":0,"assistant":0,"tool_calls":0,"tool_errors":0}},
                 "raw":{{"origin":"o","sha256":"s","size":0}},"normalizer":{{"name":"x","version":1}}{extra}}}"#
         ))
         .unwrap()
@@ -315,14 +300,14 @@ mod tests {
     fn what_a_mirror_needs_to_count_as_copied() {
         let m = mirror(r#","mirror_of":["codex"]"#);
         let mut codex = Originals::default();
-        codex.sources.insert(SourceKind::Codex);
+        codex.harnesses.insert(Harness::Codex);
         assert!(m.copied_in(&codex));
         // Codex never captured: the mirror is the only copy.
         assert!(!m.copied_in(&Originals::default()));
-        // Metas from before `mirror_of` was recorded count as copied.
+        // Facts from before `mirror_of` was recorded count as copied.
         assert!(mirror("").copied_in(&Originals::default()));
 
-        // Named originals must each be present; another session of the source isn't enough.
+        // Named originals must each be present; another session of the harness isn't enough.
         let exact = mirror(r#","mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#);
         assert!(!exact.copied_in(&codex));
         codex.keys.insert("codex/c-1".into(), None);
@@ -335,7 +320,7 @@ mod tests {
         assert!(!partial.copied_in(&codex));
         codex.keys.insert("codex/c-2".into(), None);
         assert!(partial.copied_in(&codex));
-        // The unresolved run's source must have sessions too.
+        // The unresolved run's harness must have sessions too.
         let keys_only = Originals {
             keys: codex.keys.clone(),
             ..Default::default()

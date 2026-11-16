@@ -1,0 +1,678 @@
+use super::*;
+use crate::archive::Archive;
+use crate::harness::Harness;
+use crate::read::NOTICE_START;
+use crate::runtime::{Call, FakeRuntime, Stored};
+
+const MODEL: &str = "small:8b";
+
+/// A Claude Code session `id` that opens with `said`, started at `at`.
+fn session(id: &str, at: &str, said: &str) -> String {
+    let said = serde_json::to_string(said).unwrap();
+    r#"{"type":"user","cwd":"/work/app","timestamp":"AT","message":{"role":"user","content":SAID}}
+{"type":"assistant","timestamp":"AT","message":{"role":"assistant","model":"m","content":[{"type":"text","text":"done with ID"}]}}
+"#
+    .replace("SAID", &said)
+    .replace("AT", at)
+    .replace("ID", id)
+}
+
+/// A home holding `sessions` (id, start time, what the owner said), parsed and with a config
+/// whose `card_model` is [`MODEL`].
+fn home_with(sessions: &[(&str, &str, &str)]) -> (tempfile::TempDir, Home, Config) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    home.ensure().unwrap();
+    let mut a = Archive::open(&home).unwrap();
+    for (id, at, said) in sessions {
+        a.put(
+            Harness::ClaudeCode,
+            &format!("/s/proj/{id}.jsonl"),
+            "1",
+            session(id, at, said).as_bytes(),
+        )
+        .unwrap();
+    }
+    drop(a);
+    crate::normalize::normalize(&home, false).unwrap();
+    // No harnesses, so that a tick in a test sweeps nothing of this machine.
+    let mut config = Config {
+        harnesses: vec![],
+        ..Default::default()
+    };
+    config.steward.card_model = Some(MODEL.into());
+    config.save(&home.config_path()).unwrap();
+    (dir, home, config)
+}
+
+fn reply(title: &str) -> String {
+    serde_json::json!({
+        "title": title,
+        "summary": "The owner asked for a module rename. The agent moved the file and updated imports.",
+        "tags": ["Rename", "rust"],
+        "outcome": "done",
+    })
+    .to_string()
+}
+
+fn model(reply: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> FakeRuntime {
+    FakeRuntime::running()
+        .with_model(MODEL, Stored::Here)
+        .replying(reply)
+}
+
+fn facts(home: &Home, id: &str) -> SessionMeta {
+    crate::normalize::find(home, Harness::ClaudeCode, id)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn the_steward_writes_a_card_from_the_session_as_a_local_model_reads_it() {
+    let (_d, home, config) =
+        home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
+    let fake = model(|_, _| reply("Rename the widget module"));
+
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!(
+        (r.written, r.failed, r.skipped.as_deref()),
+        (1, 0, None),
+        "{r:?}"
+    );
+
+    let card = load(&home, &facts(&home, "s1")).unwrap();
+    assert_eq!(card.title, "Rename the widget module");
+    assert!(card.summary.starts_with("The owner asked"), "{card:?}");
+    assert_eq!(card.tags, ["rename", "rust"]);
+    assert_eq!(card.outcome, Outcome::Done);
+    assert_eq!(card.model, MODEL);
+    assert_eq!(card.prompt_version, PROMPT_VERSION);
+
+    // The model got the prompt and the session as the read path serves a model.
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let Call::Generate { model, prompt } = &calls[0] else {
+        panic!("{calls:?}")
+    };
+    assert_eq!(model, MODEL);
+    assert!(prompt.starts_with(PROMPT), "{prompt}");
+    assert!(prompt.contains(NOTICE_START), "{prompt}");
+    assert!(prompt.contains("rename the widget module"), "{prompt}");
+
+    // The read is logged as the model at the local provider.
+    let log = crate::readlog::list(&home, None, usize::MAX).unwrap();
+    let line = serde_json::to_value(&log[0]).unwrap();
+    assert_eq!(line["provider"], "ollama", "{line}");
+    assert_eq!(line["model"], MODEL, "{line}");
+    assert_eq!(line["session"], "claude-code/s1", "{line}");
+    assert_eq!(line["result"], "served", "{line}");
+}
+
+/// Change `id`'s stored facts with `edit`, and rebuild the session list from them.
+fn edit_facts(home: &Home, id: &str, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = home.meta_path(Harness::ClaudeCode, id);
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    edit(&mut v);
+    std::fs::write(&path, v.to_string()).unwrap();
+    crate::normalize::rebuild_session_list(home).unwrap();
+}
+
+/// Which sessions have a card now.
+fn carded(home: &Home, ids: &[&str]) -> Vec<String> {
+    ids.iter()
+        .filter(|id| load(home, &facts(home, id)).is_some())
+        .map(|id| id.to_string())
+        .collect()
+}
+
+#[test]
+fn cards_are_written_newest_first_up_to_sessions_per_run_and_never_for_mirrors_or_the_old_steward()
+{
+    let (_d, home, mut config) = home_with(&[
+        ("old", "2026-11-01T10:00:00Z", "the oldest"),
+        ("mid", "2026-11-05T10:00:00Z", "the middle one"),
+        ("new", "2026-11-09T10:00:00Z", "the newest"),
+        ("mirror", "2026-11-09T10:00:00Z", "a mirror of the newest"),
+        (
+            "steward",
+            "2026-11-13T10:00:00Z",
+            "the previous steward's own",
+        ),
+    ]);
+    edit_facts(&home, "mirror", |v| {
+        v["mirror"] = true.into();
+        v["mirror_of"] = serde_json::json!(["claude-code"]);
+        v["mirror_refs"] = serde_json::json!(["claude-code/new"]);
+    });
+    edit_facts(&home, "steward", |v| v["steward"] = true.into());
+    config.steward.sessions_per_run = 2;
+    let fake = model(|_, _| reply("A session"));
+    let all = ["old", "mid", "new", "mirror", "steward"];
+
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!((r.sessions, r.pending, r.written), (3, 3, 2), "{r:?}");
+    assert_eq!(carded(&home, &all), ["mid", "new"]);
+
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!((r.current, r.pending, r.written), (2, 1, 1), "{r:?}");
+    assert_eq!(carded(&home, &all), ["old", "mid", "new"]);
+
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!((r.current, r.pending, r.written), (3, 0, 0), "{r:?}");
+    assert_eq!(fake.calls().len(), 3, "a current card is not written again");
+}
+
+#[test]
+fn an_answer_that_is_not_a_usable_card_is_a_failure_for_that_session_and_is_retried_later() {
+    let (_d, home, config) = home_with(&[
+        ("a", "2026-11-01T10:00:00Z", "first"),
+        ("b", "2026-11-02T10:00:00Z", "second"),
+    ]);
+    // The newest session gets an answer that is no card; the other a good one.
+    let bad = model(|_, prompt| {
+        if prompt.contains("second") {
+            "Sure! Here is the card: {\"title\": \"x\"}".into()
+        } else {
+            reply("First")
+        }
+    });
+    let r = write(&home, &config, &bad.runtime()).unwrap();
+    assert_eq!((r.written, r.failed), (1, 1), "{r:?}");
+    assert!(
+        r.errors[0].starts_with("claude-code/b: the model's answer is not a usable card"),
+        "{r:?}"
+    );
+    assert!(
+        !r.errors[0].contains("Sure!"),
+        "no answer text in the run log: {r:?}"
+    );
+    assert_eq!(carded(&home, &["a", "b"]), ["a"]);
+    assert_eq!(progress(&home).unwrap().failing, 1);
+
+    // Retried at the next run, after sessions never tried.
+    let good = model(|_, _| reply("Second"));
+    let r = write(&home, &config, &good.runtime()).unwrap();
+    assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
+    assert_eq!(load(&home, &facts(&home, "b")).unwrap().title, "Second");
+    assert_eq!(progress(&home).unwrap().failing, 0);
+}
+
+#[test]
+fn a_reply_is_parsed_strictly() {
+    let good = r#"{"title":"T","summary":"S.","tags":["A"," b ","a"],"outcome":"partly_done"}"#;
+    let r = parse_reply(good).unwrap();
+    assert_eq!((r.title.as_str(), r.outcome), ("T", Outcome::PartlyDone));
+    assert_eq!(r.tags, ["a", "b"]);
+    assert_eq!(parse_reply(&format!("```json\n{good}\n```")).unwrap(), r);
+    for bad in [
+        "",
+        "no json here",
+        &format!("Here it is: {good}"),
+        &format!("{good} and more"),
+        r#"{"title":"T","summary":"S.","tags":[],"outcome":"success"}"#,
+        r#"{"title":"T","summary":"S.","tags":[],"outcome":"done","quality":5}"#,
+        r#"{"title":"T","summary":"S.","outcome":"done"}"#,
+        r#"{"title":"","summary":"S.","tags":[],"outcome":"done"}"#,
+        r#"{"title":"two\nlines","summary":"S.","tags":[],"outcome":"done"}"#,
+        r#"{"title":"T","summary":"  ","tags":[],"outcome":"done"}"#,
+        r#"{"title":"T","summary":"S.","tags":["a","b","c","d","e","f","g","h","i"],"outcome":"done"}"#,
+        r#"{"title":"T","summary":"S.","tags":[""],"outcome":"done"}"#,
+        "```json\n{\"title\":\"T\"",
+    ] {
+        assert!(parse_reply(bad).is_err(), "{bad:?} parsed");
+    }
+    assert!(parse_reply(&serde_json::json!({"title": "x".repeat(101), "summary": "S.", "tags": [], "outcome": "done"}).to_string()).is_err());
+}
+
+#[test]
+fn a_card_goes_out_of_date_when_its_events_or_secret_findings_change_and_is_written_again() {
+    let (_d, home, config) =
+        home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
+    let fake = model(|_, _| reply("Rename"));
+    write(&home, &config, &fake.runtime()).unwrap();
+    let f = facts(&home, "s1");
+    let scan = crate::findings::load(&home, &f).unwrap();
+    assert!(current(&home, &f, &scan).is_some());
+
+    // New events: another capture of the same session.
+    let mut a = Archive::open(&home).unwrap();
+    let longer = session("s1", "2026-11-10T10:00:00Z", "rename the widget module")
+        + r#"{"type":"user","timestamp":"2026-11-10T10:01:00Z","message":{"role":"user","content":"and the tests"}}
+"#;
+    a.put(
+        Harness::ClaudeCode,
+        "/s/proj/s1.jsonl",
+        "2",
+        longer.as_bytes(),
+    )
+    .unwrap();
+    drop(a);
+    crate::normalize::normalize(&home, false).unwrap();
+    crate::findings::scan_all(&home, &config).unwrap();
+    let f = facts(&home, "s1");
+    let scan = crate::findings::load(&home, &f).unwrap();
+    assert!(load(&home, &f).is_some(), "the old card is still on disk");
+    assert!(current(&home, &f, &scan).is_none(), "but it is not current");
+    assert_eq!(progress(&home).unwrap().pending, 1);
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!(r.written, 1, "{r:?}");
+    let scan = crate::findings::load(&home, &f).unwrap();
+    assert!(current(&home, &f, &scan).is_some());
+
+    // Different secret findings: the placeholders the card was built from changed.
+    let path = home.findings_path(Harness::ClaudeCode, "s1");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let fp = "ab".repeat(32);
+    v["findings"] = serde_json::json!([{"event": 0, "field": "text", "start": 0, "end": 6,
+        "kind": "anthropic_key", "fingerprint": fp}]);
+    std::fs::write(&path, v.to_string()).unwrap();
+    let scan = crate::findings::load(&home, &f).unwrap();
+    assert!(current(&home, &f, &scan).is_none());
+}
+
+#[test]
+fn a_card_from_the_previous_build_counts_as_absent() {
+    let (_d, home, config) =
+        home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
+    let path = home.card_path(Harness::ClaudeCode, "s1");
+    std::fs::write(
+        &path,
+        r#"{"task":"Rename","outcome":"success","quality":4,"tags":[],"summary":"Old.",
+            "produced_by":{"harness":"command","prompt_version":2,"written_at":"2026-01-01T00:00:00Z"}}"#,
+    )
+    .unwrap();
+    let f = facts(&home, "s1");
+    assert_eq!(load(&home, &f), None);
+    let r = write(&home, &config, &model(|_, _| reply("New")).runtime()).unwrap();
+    assert_eq!((r.pending, r.written), (1, 1), "{r:?}");
+    assert_eq!(load(&home, &f).unwrap().title, "New");
+}
+
+/// A fake key, built at run time so no secret scanner mistakes it for a leak.
+fn fake_key() -> String {
+    ["sk-", "ant-", "api03-", &"Qw8".repeat(9)].concat()
+}
+
+/// Every file under `dir` that holds `value`, relative to it.
+fn holding(dir: &std::path::Path, value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap().filter_map(Result::ok) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains(value) {
+                out.push(p.strip_prefix(dir).unwrap().display().to_string());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn a_card_whose_text_holds_a_secret_is_discarded_and_written_again() {
+    let key = fake_key();
+    let (_d, home, config) = home_with(&[(
+        "s1",
+        "2026-11-10T10:00:00Z",
+        &format!("deploy with {key} now"),
+    )]);
+    // The model saw a placeholder, yet its answer holds the value (a test of the guard).
+    let echoed = key.clone();
+    let leaky = model(move |_, prompt| {
+        assert!(!prompt.contains(&echoed), "the model was served the value");
+        reply(&format!("Deploy with {echoed}"))
+    });
+    let r = write(&home, &config, &leaky.runtime()).unwrap();
+    assert_eq!((r.written, r.failed, r.discarded), (0, 1, 1), "{r:?}");
+    assert!(r.errors[0].contains("held a secret"), "{r:?}");
+    assert!(!format!("{r:?}").contains(&key));
+    assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
+    // Only the raw archive and the session's events hold the value: in the session's folder,
+    // neither its card nor its findings do.
+    let held = holding(&home.root, &key);
+    let in_session = |p: &String| {
+        p.starts_with("sessions/claude-code/s1/")
+            && !p.ends_with("/card.json")
+            && !p.ends_with("/findings.json")
+            && !p.ends_with("/meta.json")
+    };
+    assert!(held.iter().any(in_session), "{held:?}");
+    assert!(
+        held.iter().all(|p| p.starts_with("raw/") || in_session(p)),
+        "{held:?}"
+    );
+
+    // Rewritten at the next run.
+    let r = write(&home, &config, &model(|_, _| reply("Deploy")).runtime()).unwrap();
+    assert_eq!(r.written, 1, "{r:?}");
+}
+
+#[test]
+fn card_findings_are_stored_with_the_cards_field_names_as_their_place() {
+    let (_d, home, config) = home_with(&[("s1", "2026-11-10T10:00:00Z", "write to the team")]);
+    let fake = model(|_, _| {
+        serde_json::json!({
+            "title": "Mail the team",
+            "summary": "Drafted a note to jane@example.com about the launch.",
+            "tags": ["mail", "ops@example.org"],
+            "outcome": "unknown",
+        })
+        .to_string()
+    });
+    write(&home, &config, &fake.runtime()).unwrap();
+    let f = facts(&home, "s1");
+    let scan = crate::findings::load(&home, &f).unwrap();
+    let card = current(&home, &f, &scan).expect("a card with personal details is kept");
+    let found = &scan.card.as_ref().unwrap().findings;
+    let places: Vec<_> = found
+        .iter()
+        .map(|x| (x.field.as_str(), x.kind, x.start, x.end))
+        .collect();
+    use crate::detect::Kind;
+    let at = card.summary.find("jane@").unwrap();
+    assert_eq!(
+        places,
+        [
+            ("summary", Kind::Email, at, at + "jane@example.com".len()),
+            ("tags/1", Kind::Email, 0, "ops@example.org".len()),
+        ]
+    );
+    let file = std::fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s1")).unwrap();
+    assert!(
+        !file.contains("jane@example.com"),
+        "a finding never holds its value"
+    );
+}
+
+#[test]
+fn a_stored_card_found_to_hold_a_secret_at_a_later_scan_is_discarded_and_written_again() {
+    let (_d, home, config) =
+        home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
+    write(&home, &config, &model(|_, _| reply("Rename")).runtime()).unwrap();
+    let f = facts(&home, "s1");
+    // A card written before the detector knew this kind of secret.
+    let path = home.card_path(Harness::ClaudeCode, "s1");
+    let mut card = load(&home, &f).unwrap();
+    card.summary = format!("Used {} to deploy.", fake_key());
+    std::fs::write(&path, serde_json::to_string(&card).unwrap()).unwrap();
+    // A new detector: the findings are out of date, and the scan runs again.
+    let fpath = home.findings_path(Harness::ClaudeCode, "s1");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fpath).unwrap()).unwrap();
+    v["made_from"]["detector"] = 0.into();
+    v["card"]["hash"] = card.hash().into();
+    v["card"]["findings"] = serde_json::json!([]);
+    std::fs::write(&fpath, v.to_string()).unwrap();
+
+    crate::findings::scan_all(&home, &config).unwrap();
+    assert!(!path.exists(), "the card is discarded");
+    assert!(holding(&home.root, &fake_key()).is_empty());
+    let r = write(
+        &home,
+        &config,
+        &model(|_, _| reply("Rename again")).runtime(),
+    )
+    .unwrap();
+    assert_eq!(r.written, 1, "{r:?}");
+    assert_eq!(load(&home, &f).unwrap().title, "Rename again");
+}
+
+#[test]
+fn with_no_card_model_or_no_local_runtime_that_can_run_it_the_step_is_skipped() {
+    let (_d, home, mut config) = home_with(&[("s1", "2026-11-10T10:00:00Z", "rename it")]);
+    let cases = [
+        (
+            FakeRuntime::not_installed(),
+            "no local runtime is installed",
+        ),
+        (
+            FakeRuntime::stopped().with_model(MODEL, Stored::Here),
+            "the local runtime is not running",
+        ),
+        (
+            FakeRuntime::running().with_model(MODEL, Stored::Cloud),
+            "card_model \"small:8b\" is not stored on this machine",
+        ),
+    ];
+    for (fake, why) in cases {
+        let r = write(&home, &config, &fake.runtime()).unwrap();
+        assert_eq!(r.skipped.as_deref(), Some(why), "{r:?}");
+        assert_eq!(r.summary(), format!("cards skipped: {why}"));
+        assert_eq!(fake.calls(), []);
+    }
+    config.steward.card_model = None;
+    let fake = model(|_, _| reply("never"));
+    let r = write(&home, &config, &fake.runtime()).unwrap();
+    assert_eq!(r.skipped.as_deref(), Some("no card_model is set"));
+    assert_eq!(fake.calls(), []);
+    assert!(
+        crate::readlog::list(&home, None, usize::MAX)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn status_shows_card_progress_and_why_the_step_is_skipped() {
+    let (_d, home, mut config) = home_with(&[
+        ("a", "2026-11-01T10:00:00Z", "first"),
+        ("b", "2026-11-02T10:00:00Z", "second"),
+    ]);
+    // Set, but the last tick found no runtime running.
+    crate::tick::tick_with(&home, &config, &FakeRuntime::stopped().runtime()).unwrap();
+    let s = crate::status::status(&home).unwrap();
+    assert_eq!(s.cards.model.as_deref(), Some(MODEL));
+    assert_eq!(
+        s.cards.skipped.as_deref(),
+        Some("the local runtime is not running")
+    );
+    assert_eq!(
+        (s.cards.sessions, s.cards.current, s.cards.pending),
+        (2, 0, 2)
+    );
+
+    config.steward.sessions_per_run = 1;
+    crate::tick::tick_with(&home, &config, &model(|_, _| reply("One")).runtime()).unwrap();
+    let s = crate::status::status(&home).unwrap();
+    assert_eq!(s.cards.skipped, None);
+    assert_eq!(
+        (s.cards.current, s.cards.pending, s.cards.failing),
+        (1, 1, 0)
+    );
+
+    config.steward.card_model = None;
+    config.save(&home.config_path()).unwrap();
+    let s = crate::status::status(&home).unwrap();
+    assert_eq!(s.cards.skipped.as_deref(), Some("no card_model is set"));
+}
+
+fn reply_with(title: &str, summary: &str, tags: &[&str], outcome: &str) -> String {
+    serde_json::json!({"title": title, "summary": summary, "tags": tags, "outcome": outcome})
+        .to_string()
+}
+
+/// Two sessions with cards, indexed: `a` renamed something and is done, `b` failed a deploy.
+fn carded_home() -> (tempfile::TempDir, Home, Config) {
+    let (d, home, config) = home_with(&[
+        ("a", "2026-11-01T10:00:00Z", "rename the widget module"),
+        ("b", "2026-11-02T10:00:00Z", "ship the gadget"),
+    ]);
+    let fake = model(|_, prompt| {
+        if prompt.contains("widget") {
+            reply_with(
+                "Rename the widget",
+                "Moved widget.rs to gadget.rs everywhere.",
+                &["refactor", "rust"],
+                "done",
+            )
+        } else {
+            reply_with(
+                "Ship the gadget",
+                "The deploy to staging timed out twice.",
+                &["deploy"],
+                "failed",
+            )
+        }
+    });
+    write(&home, &config, &fake.runtime()).unwrap();
+    crate::index::build(&home).unwrap();
+    (d, home, config)
+}
+
+fn owner_hits(home: &Home, query: &str, filter: &crate::read::Filter) -> Vec<crate::read::Hit> {
+    let rt = FakeRuntime::not_installed().runtime();
+    match crate::read::search(
+        home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        query,
+        filter,
+        Default::default(),
+    )
+    .unwrap()
+    {
+        crate::read::Searched::Hits(h) => h.hits,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_cards_title_summary_and_tags_are_in_the_word_index_and_shown_in_search_results() {
+    let (_d, home, _) = carded_home();
+    let none = crate::read::Filter::default();
+    // Words only the cards hold.
+    for (q, want) in [
+        ("staging", "b"),
+        ("refactor", "a"),
+        ("everywhere", "a"),
+        ("ship", "b"),
+    ] {
+        let hits = owner_hits(&home, q, &none);
+        let keys: Vec<_> = hits.iter().map(|h| h.facts.session_id.as_str()).collect();
+        assert_eq!(keys, [want], "{q}");
+    }
+    let hit = &owner_hits(&home, "staging", &none)[0];
+    let shown = hit.card.as_ref().expect("the hit shows its card");
+    assert_eq!(shown.card.title, "Ship the gadget");
+    assert_eq!(shown.card.summary, "The deploy to staging timed out twice.");
+
+    // A model reads the card's title and summary in place of the opening.
+    let rt = model(|_, _| String::new()).runtime();
+    let reader = crate::trust::Reader::model(Some("ollama"), Some(MODEL));
+    let crate::read::Searched::Text(t) =
+        crate::read::search(&home, &rt, &reader, "staging", &none, Default::default()).unwrap()
+    else {
+        panic!("a model gets text")
+    };
+    assert!(
+        t.contains("  Card: Ship the gadget · outcome failed · tags deploy\n"),
+        "{t}"
+    );
+    assert!(
+        t.contains("  Summary: The deploy to staging timed out twice.\n"),
+        "{t}"
+    );
+    assert!(!t.contains("Opened with"), "{t}");
+}
+
+#[test]
+fn search_and_list_filter_by_tag_and_outcome() {
+    let (_d, home, _) = carded_home();
+    let by = |tag: Option<&str>, outcome: Option<Outcome>| crate::read::Filter {
+        tag: tag.map(str::to_string),
+        outcome,
+        ..Default::default()
+    };
+    let ids = |hits: Vec<crate::read::Hit>| -> Vec<String> {
+        hits.into_iter().map(|h| h.facts.session_id).collect()
+    };
+    // "gadget" is in both sessions.
+    assert_eq!(ids(owner_hits(&home, "gadget", &by(None, None))).len(), 2);
+    assert_eq!(
+        ids(owner_hits(&home, "gadget", &by(Some("DEPLOY"), None))),
+        ["b"]
+    );
+    assert_eq!(
+        ids(owner_hits(&home, "gadget", &by(None, Some(Outcome::Done)))),
+        ["a"]
+    );
+    assert!(owner_hits(&home, "gadget", &by(Some("rust"), Some(Outcome::Failed))).is_empty());
+
+    let rt = FakeRuntime::not_installed().runtime();
+    let list = |f| match crate::read::list(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &f,
+        Default::default(),
+    )
+    .unwrap()
+    {
+        crate::read::Listed::Rows(r) => r.rows,
+        other => panic!("{other:?}"),
+    };
+    let rows = list(by(None, None));
+    let titles: Vec<_> = rows
+        .iter()
+        .map(|r| r.card.as_ref().map(|c| c.card.title.clone()))
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            Some("Ship the gadget".into()),
+            Some("Rename the widget".into())
+        ]
+    );
+    let rows = list(by(Some("refactor"), None));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].facts.session_id, "a");
+}
+
+#[test]
+fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
+    let (_d, home, config) = carded_home();
+    let none = crate::read::Filter::default();
+    // A new card for `b`: the index entry goes out of date with it.
+    let f = facts(&home, "b");
+    std::fs::remove_file(home.card_path(Harness::ClaudeCode, "b")).unwrap();
+    assert!(crate::index::progress(&home).unwrap().pending >= 1);
+    let fake =
+        model(|_, _| reply_with("Ship it again", "Retried the rollout.", &["deploy"], "done"));
+    write(&home, &config, &fake.runtime()).unwrap();
+    crate::index::build(&home).unwrap();
+    assert!(
+        owner_hits(&home, "staging", &none).is_empty(),
+        "the old card's words are gone"
+    );
+    assert_eq!(owner_hits(&home, "rollout", &none).len(), 1);
+
+    // A card whose session changed is not shown.
+    let path = home.card_path(Harness::ClaudeCode, "b");
+    let mut card = load(&home, &f).unwrap();
+    card.made_from.capture_hash = "0".repeat(64);
+    std::fs::write(&path, serde_json::to_string(&card).unwrap()).unwrap();
+    let hits = owner_hits(&home, "gadget", &none);
+    let b = hits.iter().find(|h| h.facts.session_id == "b").unwrap();
+    assert!(b.card.is_none(), "{b:?}");
+}
+
+#[test]
+fn a_long_session_is_cut_in_the_middle_keeping_its_start_and_its_closing_notice() {
+    let long = format!("start here {} end there", "word ".repeat(10_000));
+    let (_d, home, config) = home_with(&[("s1", "2026-11-10T10:00:00Z", &long)]);
+    let fake = model(|_, _| reply("Long"));
+    write(&home, &config, &fake.runtime()).unwrap();
+    let Call::Generate { prompt, .. } = &fake.calls()[0] else {
+        panic!()
+    };
+    let session = &prompt[PROMPT.len()..];
+    assert!(session.len() < SESSION_BUDGET + 100, "{}", session.len());
+    assert!(session.contains("start here"));
+    assert!(session.contains(" left out …]"));
+    assert!(session.trim_end().ends_with(crate::read::NOTICE_END));
+}

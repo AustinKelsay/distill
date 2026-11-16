@@ -6,8 +6,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::chat::push_message;
+use crate::harness::percent_decode;
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::percent_decode;
 
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();

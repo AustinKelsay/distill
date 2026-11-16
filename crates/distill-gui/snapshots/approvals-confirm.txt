@@ -1,0 +1,54 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        heading: Approvals
+      text: A model at a trusted provider asks for the real value of specific secrets. Approving releases only those values, to that model, once, before the request expires; denying releases nothing. No value is shown here.
+          request-3f9a1c0e7b2d4a68: Reveal request 3f9a1c0e7b2d4a68 from example-cloud/model-a
+              asks: example-cloud/model-a asks for 1 secret
+              left: 23 h 55 min left
+              text: 23 h 55 min left
+            text: Secrets
+              secret-0: ‹anthropic key›  #a1a1a1a1
+            text: Session
+              session: claude-code/5d1f0c2a
+              open-session-3f9a1c0e7b2d4a68: Open session
+                label: Open session
+            text: Reason
+              reason: “The deploy script fails with 401. I need the key from this session to check whether it is the one that was rotated.”
+            made: Asked 5 min ago · request 3f9a1c0e7b2d4a68 · expires Nov 16, 11:55 UTC
+              confirm-text: Release 1 secret to example-cloud/model-a once? Only the value named above, nothing else.
+              cancel-3f9a1c0e7b2d4a68: Cancel
+                label: Cancel
+              confirm-3f9a1c0e7b2d4a68: Release once
+                label: Release once
+          request-9b2e6d40c1f37a85: Reveal request 9b2e6d40c1f37a85 from example-cloud/model-b
+              asks: example-cloud/model-b asks for 2 secrets
+              left: 20 h 50 min left
+              text: 20 h 50 min left
+            text: Secrets
+              secret-0: ‹github token›  #b2b2b2b2
+              secret-1: ‹assigned secret›  #c3c3c3c3
+            text: Session
+              session: codex/rollout-0042
+              open-session-9b2e6d40c1f37a85: Open session
+                label: Open session
+            text: Reason
+              reason: “Re-run the release job with the token and password set in this session.”
+            made: Asked 3 h ago · request 9b2e6d40c1f37a85 · expires Nov 16, 08:50 UTC
+              deny-9b2e6d40c1f37a85: Deny
+                label: Deny
+              approve-9b2e6d40c1f37a85: Approve…
+                label: Approve…

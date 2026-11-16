@@ -1,0 +1,123 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+      text: Overview
+        sweep: Last sweep 12 min ago
+          last-sweep: Last sweep 12 min ago
+        refresh: Refresh
+          label: Refresh
+          text: Sessions
+            value: 5,529
+          text: Raw archive
+            value: 2.6 GB
+          text: Harnesses captured
+            value: 6
+        progress: Progress
+            title: Progress
+          text: Scan for findings
+            value: 5,529 of 5,529 scanned
+            detail: 37 secrets found
+          text: Word index
+            value: 5,490 of 5,529 indexed
+            detail: 39 waiting · 212 MB
+          text: Cards
+            value: 1,212 of 5,300 with a card
+            detail: 4,088 waiting · 6 failing · qwen-small:4b
+          text: Search by meaning
+            value: 900 of 5,300 with vectors
+            detail: 4,400 waiting · 5.5 MB · embed-text:v1
+          text: Model detection pass
+            value: 640 of 5,529 checked by the model
+            detail: 4,889 waiting · 2 failing · 88 personal details found · qwen-small:4b
+        reveals: Reveal requests
+            title: Reveal requests
+            message: 2 reveal requests wait for you
+            open-approvals: Open approvals
+              label: Open approvals
+        harnesses: Harnesses
+            title: Harnesses
+            drift: No format drift
+          text: Harness
+          text: Health
+          text: Sessions
+          text: Captures
+          text: Archive
+          text: Last capture
+          text: Drift
+          text: Claude Code
+            health: OK
+            sessions: 4,118
+            captures: 4,212
+            size: 1.8 GB
+            last: 12 min ago
+            drift: 0
+          text: Codex
+            health: OK
+            sessions: 1,090
+            captures: 1,103
+            size: 642 MB
+            last: 12 min ago
+            drift: 0
+          text: OpenCode
+            health: OK
+            sessions: 61
+            captures: 1
+            size: 92.4 MB
+            last: 1 h ago
+            drift: 0
+          text: Droid
+            health: Missing
+            sessions: 0
+            captures: 0
+            size: 0 B
+            last: Not yet
+            drift: 0
+            note: not found on this machine
+          text: Pi
+            health: OK
+            sessions: 46
+            captures: 48
+            size: 12.3 MB
+            last: 2 days ago
+            drift: 0
+          text: T3 Code
+            health: OK
+            sessions: 214
+            captures: 220
+            size: 31.0 MB
+            last: 12 min ago
+            drift: 0
+          off: Not captured: Cursor, Grok, Antigravity, Hermes, Goose.
+        exposure: Exposure
+            title: Exposure
+            outcome: Pass
+            text: Pass
+          text: home is owner-only
+            message: every file and folder in the home is owner-only
+            outcome: Pass
+            text: Pass
+          text: fingerprint key is owner-only
+            message: the fingerprint key is owner-only
+            outcome: Pass
+            text: Pass
+          text: home is not in a synced folder
+            message: the home is not in a synced folder
+            outcome: Not checked
+            text: Not checked
+          text: no network listener
+            message: lsof is not available
+          disk: The disk is encrypted.
+          backups: Backups carry the archive, every secret in it included: keep them encrypted too.
