@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::home::Home;
 use crate::trust::Reader;
-use crate::util::{append_jsonl, read_jsonl, set_private};
+use crate::util::{append_jsonl, create_dir_private, read_jsonl, set_private};
 
 /// One line of the read log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ impl ReadEntry {
 /// Append one line. The read path serves nothing it could not log.
 pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
     let dir = home.log_dir();
-    std::fs::create_dir_all(&dir)?;
+    create_dir_private(&dir)?;
     set_private(&dir);
     append_jsonl(&home.read_log_path(), entry)
 }

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::config::Config;
 use crate::harness::Harness;
-use crate::util::{safe_component, set_private};
+use crate::util::{create_dir_private, private_file, safe_component, set_private};
 
 /// A Distill home directory. `DISTILL_HOME` overrides the default `~/distill`.
 ///
@@ -62,7 +62,7 @@ impl Home {
             self.runs_dir(),
             self.state_dir(),
         ] {
-            fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+            create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
             set_private(&dir);
         }
         Ok(())
@@ -171,9 +171,9 @@ impl Home {
 
 fn lock_at(path: &Path, name: &str) -> Result<fs::File> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        create_dir_private(dir)?;
     }
-    let f = fs::OpenOptions::new()
+    let f = private_file()
         .create(true)
         .truncate(false)
         .write(true)

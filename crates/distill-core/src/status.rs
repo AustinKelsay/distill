@@ -1,7 +1,8 @@
 //! Status: one report built here, which `distill status` prints and the GUI overview will render.
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
 //! scan's progress, and warnings when a harness could delete sessions before they are swept or
-//! the timer has stopped sweeping. Each later ticket adds its own fields.
+//! the timer has stopped sweeping, and the exposure check's results with a warning for each rule
+//! that fails. Each later ticket adds its own fields.
 
 use std::collections::BTreeMap;
 
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::archive::Archive;
 use crate::config::Config;
+use crate::exposure::{self, Exposure, Outcome};
 use crate::findings::{self, ScanProgress};
 use crate::harness::Harness;
 use crate::home::Home;
@@ -33,6 +35,8 @@ pub struct Status {
     pub warnings: Vec<Warning>,
     /// How many sessions have current findings, and how many wait for a scan.
     pub scan: ScanProgress,
+    /// The exposure check's results. Each failing rule is also a warning.
+    pub exposure: Exposure,
 }
 
 /// One thing the owner should act on, in a sentence.
@@ -52,6 +56,8 @@ pub enum WarningKind {
     SweepOverdue,
     /// A harness's setting could delete sessions sooner than the timer sweeps.
     PrunesSooner,
+    /// A rule of the exposure check fails.
+    Exposure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +181,19 @@ pub fn status(home: &Home) -> Result<Status> {
         warnings.extend(prunes);
     }
 
+    let exposure = exposure::check(home);
+    warnings.extend(
+        exposure
+            .rules
+            .iter()
+            .filter(|r| r.outcome == Outcome::Fail)
+            .map(|r| Warning {
+                kind: WarningKind::Exposure,
+                harness: None,
+                message: format!("Exposure: {}", r.message),
+            }),
+    );
+
     Ok(Status {
         configured: config.is_some(),
         sessions: sessions.len() as u64,
@@ -183,6 +202,7 @@ pub fn status(home: &Home) -> Result<Status> {
         harnesses,
         warnings,
         scan: findings::progress(home)?,
+        exposure,
     })
 }
 
@@ -399,6 +419,36 @@ mod warning_tests {
         let s = status(&home).unwrap();
         assert!(overdue(&s), "{s:?}");
         assert!(s.warnings[0].message.contains("3 hours"), "{s:?}");
+    }
+
+    #[test]
+    fn status_carries_the_exposure_check_and_warns_on_each_failing_rule() {
+        let config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let (_dir, home) = home_with(&config);
+        let s = status(&home).unwrap();
+        assert_eq!(s.exposure.rules.len(), 4);
+        assert!(s.exposure.passes(), "{:?}", s.exposure);
+        assert!(!s.warnings.iter().any(|w| w.kind == WarningKind::Exposure));
+
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(home.config_path(), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        let s = status(&home).unwrap();
+        assert!(!s.exposure.passes());
+        let w: Vec<_> = s
+            .warnings
+            .iter()
+            .filter(|w| w.kind == WarningKind::Exposure)
+            .collect();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w[0].message.contains("distill exposure --fix"),
+            "{}",
+            w[0].message
+        );
     }
 
     fn prune_warning(s: &Status, kind: Harness) -> Option<&Warning> {

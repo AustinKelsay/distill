@@ -122,6 +122,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         &["scan"],
         &["tick"],
         &["status"],
+        &["exposure"],
         &["runs"],
         &["providers"],
         &["read", "leak1", "--provider", "ollama"],

@@ -59,6 +59,9 @@ enum Cmd {
     Reads(reads::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
+    /// Whether Distill is no more exposed than the harness folders: file modes, the fingerprint
+    /// key, synced folders and network listeners
+    Exposure(exposure::Args),
     /// Open the Distill window
     Gui(gui::Args),
 }
@@ -93,6 +96,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
+        Cmd::Exposure(a) => exposure::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),
     }
 }

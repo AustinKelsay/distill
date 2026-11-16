@@ -14,17 +14,41 @@ pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// Create `dir` and every folder missing on the way to it, each owner-only from the start.
+/// Folders that already exist keep their mode (`distill exposure --fix` tightens those).
+pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
+    let mut b = fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    b.create(dir)
+}
+
+/// Options that create a file owner-only from the start. Set the access mode on them as usual.
+pub fn private_file() -> fs::OpenOptions {
+    #[allow(unused_mut)]
+    let mut o = fs::OpenOptions::new();
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o
+}
+
 /// Write a file by writing a sibling temp file and renaming it, so readers never see half a file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().context("path has no parent")?;
-    fs::create_dir_all(dir)?;
+    create_dir_private(dir)?;
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
         std::process::id()
     ));
     {
-        let mut f = fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+        let mut f = private_file()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -41,14 +65,11 @@ pub fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
 pub fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        create_dir_private(dir)?;
     }
     let mut line = serde_json::to_vec(value)?;
     line.push(b'\n');
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut f = private_file().create(true).append(true).open(path)?;
     f.write_all(&line)?;
     // The manifest line must survive a crash before anything it supersedes is removed.
     f.sync_data()?;

@@ -27,7 +27,7 @@ use crate::detect::{self, Class, DETECTOR_VERSION, Kind};
 use crate::home::Home;
 use crate::model::{Event, SessionMeta};
 use crate::normalize;
-use crate::util::{set_private, sync_dir, write_json_pretty};
+use crate::util::{create_dir_private, private_file, set_private, sync_dir, write_json_pretty};
 
 /// A keyed hash of a finding's value: the same wherever that value appears, and the value cannot
 /// be recovered from it. Stored whole (64 hex characters); readers are shown [`short`](Self::short).
@@ -106,7 +106,7 @@ impl FingerprintKey {
 /// replaced.
 fn create_key(home: &Home) -> Result<()> {
     let dir = home.keys_dir();
-    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
     set_private(&home.root);
     set_private(&dir);
     let mut key = [0u8; 32];
@@ -130,11 +130,9 @@ fn create_key(home: &Home) -> Result<()> {
 
 /// Create `path`, readable by the owner only from the start, holding `bytes`.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut opts = fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut f = opts
+    let mut f = private_file()
+        .write(true)
+        .create_new(true)
         .open(path)
         .with_context(|| format!("create {}", path.display()))?;
     f.write_all(bytes)?;
