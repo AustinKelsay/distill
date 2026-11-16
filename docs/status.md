@@ -7,6 +7,7 @@ As of 2026-11-15. The spec is issue #72, with tickets #73 to #91; terms are in `
 | Ticket | What is built |
 | --- | --- |
 | #73 Strip the workspace | The workspace holds only capture and the parsers (ADR 0001). The previous build is tagged `agent-driven-final` (`a6e4be0`). Dataset recipes, builds, approval and publishing, recipe proposals, parser repair, legacy import, git outcome joins, the old steward and its provider setting, the old search, the old MCP tools and the old setup and dashboard screens are removed. Commands: `init`, `harnesses`, `sweep`, `verify`, `parse`, `tick`, `status`, `runs`, `schedule`, `gui`; none prints session text. The tick runs `tick::STEPS` (sweep, then parse) and writes one run-log entry. Status is one report in core (`status::status`). The MCP server and the GUI are shells that expose nothing. Config is written with the spec's names; a previous build's config still loads. Session facts hold no title and no git outcome (`META_VERSION` 4). |
+| #89 Harness pruning check | What each of the eleven harnesses prunes, rewrites or compacts, when, and which setting controls it is in `docs/harness-pruning.md` (checked 2026-11-15). Status reads the settings that exist (Claude Code's `cleanupPeriodDays` and `desktopSessionCleanupPeriodDays`, including managed settings; Grok's `[storage] cleanup_ttl_days`; Hermes's `sessions.auto_prune` and `retention_days`) and Droid's fixed 7 days for orphaned side questions (`pruning::retention`). It warns, in `Status::warnings`, when one could delete sessions sooner than the timer sweeps, and when nothing has swept for longer than twice the timer's interval (counting from setup before the first sweep). `distill status` prints the warnings. |
 
 ## Kept from the previous build
 
@@ -27,6 +28,8 @@ The timer job no longer needs Full Disk Access on macOS. The previous build need
 
 ## Known gaps
 
+- The pruning check reads the owner's own harness settings and Claude Code's managed settings files, not project-level settings (a project's `.claude/settings.json` can shorten `cleanupPeriodDays`), MDM profiles or server-managed settings. Antigravity's trimming by size and every in-place rewrite have no setting to read (see `docs/harness-pruning.md`).
+- OpenCode spills full tool outputs to `tool-output/` beside its database and deletes them after 7 days. Distill's OpenCode root is the database alone, so they are not captured.
 - Format drift is caught only when a capture parses to nothing: a change that drops some record types while others still parse is not detected.
 - With any privacy exclusion set, Antigravity and Hermes are not archived at all: their sessions don't record a working directory.
 - With any privacy exclusion set, a T3 Code thread whose worktree and project root are unknown is not archived, and neither are new native references for it.

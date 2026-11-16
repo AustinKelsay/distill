@@ -13,6 +13,7 @@ pub mod home;
 pub mod model;
 pub mod normalize;
 pub mod parked;
+pub mod pruning;
 pub mod runlog;
 pub mod schedule;
 pub mod setup;

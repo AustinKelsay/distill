@@ -10,6 +10,11 @@ use crate::home::{Home, user_home};
 
 pub const LABEL: &str = "dev.distill.tick";
 
+/// How often the timer runs a tick, in minutes. It never runs more often than every five.
+pub fn interval_minutes(config: &Config) -> u32 {
+    config.schedule.sweep_every_minutes.max(5)
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -17,7 +22,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 pub fn launchd_plist(exe: &Path, home: &Home, config: &Config) -> String {
-    let interval = config.schedule.sweep_every_minutes.max(5) * 60;
+    let interval = interval_minutes(config) * 60;
     let log = home.runs_dir().join("tick.log");
     let path_env = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
     format!(
@@ -60,7 +65,7 @@ pub fn systemd_units(exe: &Path, home: &Home, config: &Config) -> (String, Strin
     );
     let timer = format!(
         "[Unit]\nDescription=Run Distill every {m} minutes\n\n[Timer]\nOnBootSec=5min\nOnUnitActiveSec={m}min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
-        m = config.schedule.sweep_every_minutes.max(5)
+        m = interval_minutes(config)
     );
     (service, timer)
 }
