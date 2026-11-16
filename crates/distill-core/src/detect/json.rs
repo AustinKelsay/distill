@@ -8,11 +8,11 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{Hit, Kind};
+use super::{Detector, Hit, Kind};
 
 /// What is found in `text` read as JSON, or `None` unless the whole text is a JSON object, array
 /// or string.
-pub(super) fn detect_json(text: &str, depth: u32) -> Option<Vec<Hit>> {
+pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<Hit>> {
     if !text.trim_start().starts_with(['{', '[', '"']) {
         return None;
     }
@@ -32,7 +32,7 @@ pub(super) fn detect_json(text: &str, depth: u32) -> Option<Vec<Hit>> {
             }),
             Role::Str => {
                 let (s, map) = decode(raw);
-                for h in super::detect_at(&s, depth + 1) {
+                for h in det.detect_at(&s, depth + 1) {
                     let range = map.encoded(&h.range);
                     hits.push(Hit {
                         kind: h.kind,

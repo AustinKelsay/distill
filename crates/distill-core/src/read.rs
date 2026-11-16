@@ -3,6 +3,7 @@
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use crate::config::Config;
 use crate::findings::{self, Field, Finding, Findings};
 use crate::home::Home;
 use crate::model::{Event, SessionMeta};
@@ -113,7 +114,8 @@ fn serve(
 ) -> Result<Read> {
     // With no config, or one that can't be read, only the built-in providers count: that trusts
     // less, never more.
-    let trust = Trust::new(&home.load_config().unwrap_or_default());
+    let config = home.load_config().unwrap_or_default();
+    let trust = Trust::new(&config);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Read::Refused(why));
     }
@@ -121,7 +123,7 @@ fn serve(
         return Ok(Read::Refused(format!("no session {session:?}")));
     };
     seen.key = facts.key();
-    let (events, scan) = match scanned(home, &facts)? {
+    let (events, scan) = match scanned(home, &config, &facts)? {
         Ok(scanned) => scanned,
         Err(why) => return Ok(Read::Refused(why)),
     };
@@ -172,9 +174,13 @@ fn serve(
 /// The events of `facts` and their findings, current with the detector; or, when the session
 /// could not be scanned, why it is not served. No reader is served a session whose findings are
 /// missing or out of date.
-fn scanned(home: &Home, facts: &SessionMeta) -> Result<Result<(Vec<Event>, Findings), String>> {
+fn scanned(
+    home: &Home,
+    config: &Config,
+    facts: &SessionMeta,
+) -> Result<Result<(Vec<Event>, Findings), String>> {
     let events = normalize::read_events(home, facts)?;
-    Ok(match scan(home, facts, &events) {
+    Ok(match scan(home, config, facts, &events) {
         Ok(scan) => Ok((events, scan)),
         Err(e) => Err(format!(
             "{} could not be scanned for secrets ({e:#}), and no session is served before it is.",
@@ -186,8 +192,8 @@ fn scanned(home: &Home, facts: &SessionMeta) -> Result<Result<(Vec<Event>, Findi
 /// The session's findings, current with the detector: loaded from `findings.json`, or, when
 /// they are missing or out of date, made by running the detector over `events` and stored. A
 /// scan that fails returns an error, which refuses the read.
-fn scan(home: &Home, facts: &SessionMeta, events: &[Event]) -> Result<Findings> {
-    findings::current_or_scan(home, facts, events)
+fn scan(home: &Home, config: &Config, facts: &SessionMeta, events: &[Event]) -> Result<Findings> {
+    findings::current_or_scan(home, config, facts, events)
 }
 
 /// The events a model or Distill itself is given: each secret replaced by its placeholder,
@@ -621,6 +627,75 @@ mod tests {
             "{all}"
         );
         assert_eq!(placeholders(&all).len(), 4, "{all}");
+    }
+
+    #[test]
+    fn a_model_reads_personal_details_unchanged_and_the_owner_gets_their_places_and_kinds() {
+        let key = fake_key();
+        let said =
+            format!("ask jane@example.com on box.tail1234.ts.net about Project Falcon, with {key}");
+        let input = serde_json::json!({"command": "ssh 100.101.2.3", "jane-roe-gmail-com": "x"});
+        let (_d, home) = home_with(&said, &input);
+        let mut c = home.load_config().unwrap_or_default();
+        c.privacy.personal_terms = vec!["project falcon".into()];
+        c.save(&home.config_path()).unwrap();
+
+        let reader = Reader::model(Some("ollama"), Some("small:8b"));
+        let t = text(read(&home, &local(), &reader, "claude-code/s1", Range::default()).unwrap());
+        for value in [
+            "jane@example.com",
+            "box.tail1234.ts.net",
+            "Project Falcon",
+            "ssh 100.101.2.3",
+            "jane-roe-gmail-com",
+        ] {
+            assert!(t.contains(value), "{value:?} not served: {t}");
+        }
+        assert!(!t.contains(&key), "{t}");
+        assert_eq!(placeholders(&t).len(), 1, "{t}");
+
+        let Read::Events(x) = read(
+            &home,
+            &local(),
+            &Reader::Owner,
+            "claude-code/s1",
+            Range::default(),
+        )
+        .unwrap() else {
+            panic!("the owner gets events");
+        };
+        let text = x.events[0].text.as_deref().unwrap();
+        assert_eq!(text, said);
+        use crate::detect::Kind;
+        let places: Vec<_> = x
+            .findings
+            .iter()
+            .map(|f| {
+                let at = match &f.field {
+                    Field::Text => text[f.start..f.end].to_string(),
+                    Field::Input { pointer, key: true } => {
+                        pointer[f.start + 1..f.end + 1].to_string()
+                    }
+                    Field::Input { pointer, .. } => x.events[1].input.as_ref().unwrap()
+                        [&pointer[1..]]
+                        .as_str()
+                        .unwrap()[f.start..f.end]
+                        .to_string(),
+                };
+                (f.event, f.kind, at)
+            })
+            .collect();
+        assert_eq!(
+            places,
+            [
+                (0, Kind::Email, "jane@example.com".into()),
+                (0, Kind::TailnetHost, "box.tail1234.ts.net".into()),
+                (0, Kind::PersonalTerm, "Project Falcon".into()),
+                (0, Kind::AnthropicKey, key.clone()),
+                (1, Kind::TailnetAddress, "100.101.2.3".into()),
+                (1, Kind::EmailSlug, "jane-roe-gmail-com".into()),
+            ]
+        );
     }
 
     #[test]
