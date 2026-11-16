@@ -23,9 +23,10 @@ use serde_json::{Value, json};
 fn no_tool_serves_a_planted_secret() {
     let key = ["sk-", "ant-", "api03-", &"Mq4".repeat(9)].concat();
     let password = ["synthetic", "-mcp-", "pass-2208"].concat();
-    // A token written as a JSON object key, and a short number under a credential-named key.
+    // A token written as a JSON object key, and a number under a credential-named key (eight
+    // digits: a shorter one is a counter, not a secret).
     let key_token = ["ghp_", &"Wd3".repeat(12)].concat();
-    let pin: u64 = 9_000_000 + 271_828;
+    let pin: u64 = 90_000_000 + 271_828;
     let secrets = [
         key.clone(),
         password.clone(),
@@ -45,7 +46,7 @@ fn no_tool_serves_a_planted_secret() {
         format!("export DB_PASSWORD={password} && deploy").into(),
     );
     input.insert(key_token.clone(), "on".into());
-    input.insert("api_token".into(), pin.into());
+    input.insert("api_secret".into(), pin.into());
     let input = Value::Object(input);
     let session = format!(
         r#"{{"type":"user","cwd":"/work/app","timestamp":"2026-11-10T10:00:00Z","message":{{"role":"user","content":{said}}}}}

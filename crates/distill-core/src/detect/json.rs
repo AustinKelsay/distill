@@ -1,14 +1,15 @@
 //! Text that is JSON (tool arguments, a tool's JSON output) is read token by token, so no
 //! pattern has to read escaped JSON. Each string is decoded and detected on its own (a string
 //! that is JSON itself recurses), and what is found is mapped back to bytes of the text. A value
-//! under a credential-named key is one finding whole, a string or any number. Ported from the previous build's redactor.
+//! under a credential-named key is one finding whole, a string or any number, unless it cannot be a
+//! secret (`weak.rs`): then it is read as any other string. Ported from the previous build's redactor.
 
 use std::ops::Range;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{Detector, Hit, Kind};
+use super::{Detector, Hit, Kind, weak};
 
 /// What is found in `text` read as JSON, or `None` unless the whole text is a JSON object, array
 /// or string.
@@ -19,18 +20,34 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
     let mut hits = Vec::new();
     for tok in json_tokens(text)? {
         let raw = &text[tok.start..tok.end];
-        match tok.role {
-            Role::Secret if raw.starts_with('"') => hits.push(Hit {
+        let string = raw.starts_with('"');
+        // A value under a credential-named key that cannot be a secret (too short, an id, a
+        // placeholder) is read as any other string.
+        let secret = match tok.role {
+            Role::Secret { key } => {
+                let value = if string {
+                    decode(raw).0
+                } else {
+                    raw.to_string()
+                };
+                let key = decode(&text[key.0..key.1]).0;
+                weak::can_be_secret(&key, &value).then_some(value)
+            }
+            Role::Str => None,
+        };
+        match secret {
+            Some(value) if string => hits.push(Hit {
                 kind: Kind::CredentialField,
                 range: tok.start + 1..tok.end - 1,
-                value: decode(raw).0,
+                value,
             }),
-            Role::Secret => hits.push(Hit {
+            Some(value) => hits.push(Hit {
                 kind: Kind::CredentialField,
                 range: tok.start..tok.end,
-                value: raw.to_string(),
+                value,
             }),
-            Role::Str => {
+            None if !string => {}
+            None => {
                 let (s, map) = decode(raw);
                 for h in det.detect_at(&s, depth + 1) {
                     let range = map.encoded(&h.range);
@@ -48,6 +65,9 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
 
 /// Whether a key names a credential, so that its value is a secret whole.
 pub(super) fn is_credential_key(key: &str) -> bool {
+    if weak::is_identifier_name(key) {
+        return false;
+    }
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(r"(?i)^(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|pass|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key|authorization|credentials?)$")
@@ -136,8 +156,8 @@ struct Tok {
 }
 
 enum Role {
-    /// A non-empty string, or any number, under a credential-named key.
-    Secret,
+    /// A non-empty string, or any number, under a credential-named key: the key token's range.
+    Secret { key: (usize, usize) },
     /// Any other string, object keys included.
     Str,
 }
@@ -148,9 +168,10 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
     // `secret`: the value being read sits under a credential-named key. Arrays pass that on
     // (`"password": ["…"]`); objects do not, since a tool schema's `"password": {"type": …}`
     // describes a field rather than holding one.
+    // It holds the range of the credential-named key's token.
     enum Frame {
-        Obj { secret: bool },
-        Arr { secret: bool },
+        Obj { secret: Option<(usize, usize)> },
+        Arr { secret: Option<(usize, usize)> },
     }
     #[derive(PartialEq)]
     enum Want {
@@ -179,17 +200,16 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                     want = Want::CommaOrEnd;
                     continue;
                 }
-                let secret = matches!(
-                    stack.last(),
-                    Some(Frame::Obj { secret: true } | Frame::Arr { secret: true })
-                );
+                let secret = match stack.last() {
+                    Some(Frame::Obj { secret } | Frame::Arr { secret }) => *secret,
+                    None => None,
+                };
                 match c {
                     b'"' => {
                         let end = string_end(b, i)?;
-                        let role = if secret && end - i > 2 {
-                            Role::Secret
-                        } else {
-                            Role::Str
+                        let role = match secret {
+                            Some(key) if end - i > 2 => Role::Secret { key },
+                            _ => Role::Str,
                         };
                         toks.push(Tok {
                             start: i,
@@ -199,7 +219,7 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                         i = end;
                     }
                     b'{' => {
-                        stack.push(Frame::Obj { secret: false });
+                        stack.push(Frame::Obj { secret: None });
                         i += 1;
                         want = Want::KeyOrEnd;
                         continue;
@@ -218,11 +238,11 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                     }
                     b'-' | b'0'..=b'9' => {
                         let end = number_end(b, i)?;
-                        if secret {
+                        if let Some(key) = secret {
                             toks.push(Tok {
                                 start: i,
                                 end,
-                                role: Role::Secret,
+                                role: Role::Secret { key },
                             });
                         }
                         i = end;
@@ -245,7 +265,7 @@ fn json_tokens(text: &str) -> Option<Vec<Tok>> {
                 let Some(Frame::Obj { secret }) = stack.last_mut() else {
                     return None;
                 };
-                *secret = is_credential_key(&decode(&text[i..end]).0);
+                *secret = is_credential_key(&decode(&text[i..end]).0).then_some((i, end));
                 toks.push(Tok {
                     start: i,
                     end,
