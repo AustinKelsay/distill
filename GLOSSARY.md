@@ -30,6 +30,14 @@ _Avoid_: Raw, store, vault
 One step of a session in Distill's common shape: a message, a tool call, a tool result or reasoning.
 _Avoid_: Record, turn, entry
 
+**Session facts**:
+What Distill records about a session without holding any of its text: harness, models, project, branch, times and counts.
+_Avoid_: Metadata, meta
+
+**Project**:
+The folder a session worked in.
+_Avoid_: Repo, workspace, cwd
+
 **Mirror**:
 A session that repeats another session already in the archive, because one harness ran another.
 _Avoid_: Duplicate, copy
@@ -51,8 +59,12 @@ _Avoid_: Database, cache
 The scheduled background work that scans sessions, writes cards and builds the index without being asked.
 _Avoid_: Agent, daemon, worker
 
+**Tick**:
+One scheduled run of the steward's steps, from sweep to the last model step.
+_Avoid_: Run, job, cycle
+
 **Run log**:
-The record of what each steward run did, and what it skipped or failed.
+The record of what each tick did, and what it skipped or failed.
 _Avoid_: Activity, history
 
 ### Privacy
@@ -69,16 +81,24 @@ _Avoid_: Vendor, backend, harness
 A provider that runs its models on this machine.
 
 **Trusted provider**:
-A provider whose models may read session text. Local providers always are; a remote provider is once the owner tags it.
+A provider whose models may read session text. Local providers always are; a remote provider is once the owner marks it trusted.
 _Avoid_: Private provider, allowed provider, designated provider
 
 **Reader**:
-Whoever asks Distill for session text: the owner, or a model at a named provider.
+Whoever asks Distill for session text: the owner, a model at a named provider, or Distill itself for work that uses no model.
 _Avoid_: Client, caller, consumer
 
 **Read log**:
 The record of which reader read which sessions, and when.
 _Avoid_: Audit trail, activity
+
+**Read path**:
+The one way session text leaves Distill. It decides what a given reader gets and records the read.
+_Avoid_: API, accessor, gate
+
+**Detector**:
+The part of Distill that examines text and produces findings.
+_Avoid_: Redactor, scanner, scrubber
 
 **Finding**:
 A detected piece of sensitive text in a session: where it is, what kind it is, and its fingerprint.

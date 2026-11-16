@@ -1,6 +1,6 @@
 # One trust tier; untrusted readers are refused, not served masked text
 
-A provider is either trusted or not: local providers automatically, remote ones when the owner tags them. A reader at an untrusted or unnamed provider gets no session text at all.
+A provider is either trusted or not: local providers automatically, remote ones when the owner marks them trusted. A reader at an untrusted or unnamed provider gets no session text at all.
 
 ## Considered options
 
