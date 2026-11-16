@@ -22,6 +22,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///     findings.json              findings_path
 ///     card.json                  card_path
 ///   index/                       index_dir: word index and vectors
+///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
 ///   log/reads.jsonl              read_log_path
 ///   runs/                        runs_dir: the run log
@@ -107,6 +108,10 @@ impl Home {
     /// The search index: word index and vectors.
     pub fn index_dir(&self) -> PathBuf {
         self.root.join("index")
+    }
+    /// The vectors for search by meaning: one flat file, searched directly.
+    pub fn vectors_path(&self) -> PathBuf {
+        self.index_dir().join("vectors.bin")
     }
     pub fn state_dir(&self) -> PathBuf {
         self.root.join("state")
@@ -219,6 +224,7 @@ mod tests {
         );
         assert_eq!(p(h.card_path(k, id)), "/h/sessions/codex/s1/card.json");
         assert_eq!(p(h.index_dir()), "/h/index");
+        assert_eq!(p(h.vectors_path()), "/h/index/vectors.bin");
         assert_eq!(p(h.card_failures_path()), "/h/state/cards.json");
         assert_eq!(p(h.state_dir()), "/h/state");
         assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");

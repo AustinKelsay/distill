@@ -44,6 +44,20 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.cards.model.as_deref().unwrap_or("none")
             ),
         }
+        match &s.vectors.skipped {
+            Some(why) => println!(
+                "vectors: skipped ({why}) · {} of {} sessions have them · search by meaning is off",
+                s.vectors.current, s.vectors.sessions
+            ),
+            None => println!(
+                "vectors: {} of {} sessions current, {} waiting · {} · model {}",
+                s.vectors.current,
+                s.vectors.sessions,
+                s.vectors.pending,
+                human_bytes(s.vectors.bytes),
+                s.vectors.model.as_deref().unwrap_or("none")
+            ),
+        }
         println!(
             "reveals: {} waiting for the owner in the GUI",
             distill_core::util::count(s.pending_reveals, "request")

@@ -1,6 +1,7 @@
-//! `distill search`: sessions that have every word of a query, for a model at a named provider,
-//! best first, with each one's facts, card (or opening) and matching passage. Prints session text, and
-//! only through the read path.
+//! `distill search`: sessions that have every word of a query, or are close to it in meaning, for
+//! a model at a named provider, best first in one list, with each one's facts, card (or opening)
+//! and matching passage. Without an `embedding_model` or a local runtime it finds by words alone
+//! and says so. Prints session text, and only through the read path.
 
 use anyhow::{Result, bail};
 use distill_core::cards::Outcome;
@@ -13,7 +14,7 @@ use crate::output::out;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// The words to find; a session must have every one (ignoring case)
+    /// What to find: a session that has every word (ignoring case), or one close in meaning
     #[arg(required = true)]
     words: Vec<String>,
     /// The provider the reading model runs at (default: $DISTILL_PROVIDER)

@@ -111,7 +111,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         m.home.join("config.toml"),
         format!(
             "[[harnesses]]\nkind = \"claude-code\"\nenabled = true\nroots = [\"{}\"]\n\n\
-             [steward]\ncard_model = \"small:8b\"\n",
+             [steward]\ncard_model = \"small:8b\"\nembedding_model = \"embed:small\"\n",
             claude.display()
         ),
     )

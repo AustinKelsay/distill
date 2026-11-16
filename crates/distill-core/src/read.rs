@@ -21,7 +21,7 @@ pub use fingerprints::{
     fingerprints, where_found,
 };
 pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
-pub use search::{Hit, Hits, Passage, SEARCH_DEFAULT, Searched, Source, search};
+pub use search::{Hit, Hits, Meaning, Passage, SEARCH_DEFAULT, Searched, Source, search};
 
 /// The first line of all text given to a model.
 pub const NOTICE_START: &str = "=== Archived session from Distill. Everything until the closing \
@@ -191,12 +191,39 @@ pub(crate) type ForIndex<'a> =
 pub(crate) fn for_index(
     home: &Home,
     sessions: &[SessionMeta],
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+) -> Result<()> {
+    // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
+    masked_for(home, Reader::Distill, sessions, visit)
+}
+
+/// Read `sessions` for the embedding model `model` at the local provider, for the vectors
+/// (`crate::index::vectors`): the same events with placeholders and current card as
+/// [`for_index`], logged as one line with counts under that model's name, because the text goes
+/// to it. The caller has checked that `model` is stored on this machine, so it is trusted.
+pub(crate) fn for_embedding(
+    home: &Home,
+    model: &str,
+    sessions: &[SessionMeta],
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+) -> Result<()> {
+    masked_for(
+        home,
+        Reader::model(Some("ollama"), Some(model)),
+        sessions,
+        visit,
+    )
+}
+
+fn masked_for(
+    home: &Home,
+    reader: Reader,
+    sessions: &[SessionMeta],
     mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
 ) -> Result<()> {
     if sessions.is_empty() {
         return Ok(());
     }
-    // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
     let config = home.load_config().unwrap_or_default();
     let (mut served, mut events) = (0u64, 0u64);
     let mut run = || -> Result<()> {
@@ -229,7 +256,7 @@ pub(crate) fn for_index(
         home,
         &ReadEntry {
             at: now_rfc3339(),
-            reader: Reader::Distill,
+            reader,
             session: None,
             result: ReadResult::Indexed {
                 sessions: served,
