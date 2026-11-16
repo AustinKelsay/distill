@@ -30,5 +30,8 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 h.note.as_deref().unwrap_or("")
             );
         }
+        for w in &s.warnings {
+            println!("warning: {}", w.message);
+        }
     })
 }
