@@ -7,6 +7,7 @@ As of 2026-11-15. The spec is issue #72, with tickets #73 to #91; terms are in `
 | Ticket | What is built |
 | --- | --- |
 | #73 Strip the workspace | The workspace holds only capture and the parsers (ADR 0001). The previous build is tagged `agent-driven-final` (`a6e4be0`). Dataset recipes, builds, approval and publishing, recipe proposals, parser repair, legacy import, git outcome joins, the old steward and its provider setting, the old search, the old MCP tools and the old setup and dashboard screens are removed. Commands: `init`, `harnesses`, `sweep`, `verify`, `parse`, `tick`, `status`, `runs`, `schedule`, `gui`; none prints session text. The tick runs `tick::STEPS` (sweep, then parse) and writes one run-log entry. Status is one report in core (`status::status`). The MCP server and the GUI are shells that expose nothing. Config is written with the spec's names; a previous build's config still loads. Session facts hold no title and no git outcome (`META_VERSION` 4). |
+| #74 Trusted providers and reader identity | `distill providers` lists each provider with its kind and whether it is trusted; `providers add <name> [--trusted]`, `trust <name>` and `untrust <name>` edit `[[providers]]` in the config. `ollama` is built in as the local provider and always trusted; under it the command shows whether the runtime is installed and running and, when it is, each installed model as stored on this machine or served from a cloud (read from Ollama's model store by the check ported from the previous build). `ollama-cloud` is listed as a remote provider, untrusted until marked. A `[[providers]]` entry of kind local with another name is ignored with a warning; provider names match whatever their case. In core: `trust::Reader` (owner, a model at a named provider with its model when known, Distill itself), `Trust::check(reader, runtime)` returning `Access::Allowed` or `Access::Refused(reason)` with the command that fixes it, and `runtime::LocalRuntime`, the one client for the local runtime (state, generate, embed), which refuses a model not stored here before calling it and reaches Ollama on loopback only (`OLLAMA_HOST` is honoured only when it names this machine). `runtime::FakeRuntime` is its fake for tests: declared models, canned replies, a record of calls. |
 
 ## Kept from the previous build
 
@@ -19,13 +20,15 @@ As of 2026-11-15. The spec is issue #72, with tickets #73 to #91; terms are in `
 ## Parked, with no callers
 
 - `distill-core/src/parked/redact.rs`: the old redactor's patterns and tests, for the detector ticket.
-- `distill-core/src/parked/ollama.rs`: the check that a model's weights are stored on this machine rather than served from a cloud (`ollama_model_is_local`, `parse_ollama_list`), with its tests, for the providers ticket.
 
 ## Full Disk Access
 
 The timer job no longer needs Full Disk Access on macOS. The previous build needed it only for git outcome joins, which ran `git` inside each session's project, often under `~/Desktop`, `~/Documents` or `~/Downloads`, which macOS protects. The sweep reads only the harnesses' own folders (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.factory`, `~/.pi`, `~/.grok`, `~/.gemini`, `~/.hermes`, `~/.t3`, `~/.local/share/...`), none of which macOS protects, and exclusions compare paths without opening them. The signing step is dropped from `scripts/install.sh` and `scripts/setup-signing.sh` is removed. A harness root moved by hand into a protected folder would need the grant again.
 
 ## Known gaps
+
+- Whether a model is stored on this machine is read from the model store Distill sees (`OLLAMA_MODELS`, else `~/.ollama/models`). An Ollama server started with a different model directory is outside what this can check.
+- Nothing reads `--provider`, `--model`, `DISTILL_PROVIDER` or `DISTILL_MODEL` yet: no command or MCP tool returns session text until the read path lands.
 
 - Format drift is caught only when a capture parses to nothing: a change that drops some record types while others still parse is not detected.
 - With any privacy exclusion set, Antigravity and Hermes are not archived at all: their sessions don't record a working directory.
