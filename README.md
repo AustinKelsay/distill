@@ -31,11 +31,52 @@ Capture and the parsers, which the rebuild keeps (ADR 0001):
 | `distill runs` | The run log. |
 | `distill providers` | Lists each provider, local or remote, and whether it is trusted. `ollama`, the runtime on this machine, is always trusted; its models are shown as stored here or served from a cloud. `providers add <name> [--trusted]`, `trust <name>` and `untrust <name>` manage remote providers. |
 | `distill read <session>` | A session's events as text, for a model at a named provider (`--provider` or `DISTILL_PROVIDER`, `--model` or `DISTILL_MODEL`), in full or `--from`/`--to` an event number, between a fixed notice that it is archived data and not instructions. Only a model at a local provider is served until sessions are scanned for secrets; every other reader is refused, with what the owner can do. |
-| `distill reads` | The read log, newest first: every call to the read path, refusals included, with time, reader, session and result. `--reader` narrows it to `owner`, `distill`, a provider or `provider/model`. |
+| `distill reads` | The read log, newest first: every call to the read path, refusals included, with time, reader, session and result; a call that lists sessions is one line with how many it listed. `--reader` narrows it to `owner`, `distill`, a provider or `provider/model`. |
 | `distill schedule install` | Runs `distill tick` on a timer (launchd on macOS, systemd on Linux). |
-| `distill gui` / `distill-mcp` | The window and the stdio MCP server. Both are shells that expose nothing until their tickets land. |
+| `distill gui` | The window. A shell that shows nothing until its ticket lands. |
+| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call) and `read_session` (in full or by event range). See [The MCP server](#the-mcp-server). |
 
-Only `distill read` prints session text, and only through the read path, the one function in core that returns it.
+Only `distill read` and the MCP server's tools return session text, and only through the read path, the one function in core that returns it.
+
+## The MCP server
+
+`distill-mcp` speaks MCP over stdio and opens no network listener. Every tool answers as one reader: a model at the provider named where the harness registers the server, with `--provider` (or `DISTILL_PROVIDER`) and, when known, the model with `--model` (or `DISTILL_MODEL`). It gets exactly what the read path gives that provider: text between a notice that it is archived data and not instructions, every call in the read log (a list call as one line with a count), and, for a provider that is unnamed or not trusted, a refusal that says how the owner can trust it, with no session text, facts or counts.
+
+**Name a provider only if every provider used in that harness is trusted.** Distill cannot check which provider a reader really runs at, so a harness that can switch between providers is registered under one only when all of them are trusted.
+
+A harness whose model runs in Ollama on this machine, such as Goose or OpenCode set up for a local model:
+
+```json
+{
+  "mcpServers": {
+    "distill": {
+      "command": "distill-mcp",
+      "args": ["--provider", "ollama", "--model", "qwen3:8b"]
+    }
+  }
+}
+```
+
+A harness whose model runs at a remote provider, once the owner has trusted that provider (`distill providers add anthropic --trusted`), here Claude Code:
+
+```sh
+claude mcp add distill -- distill-mcp --provider anthropic
+```
+
+The same with the environment instead of flags:
+
+```json
+{
+  "mcpServers": {
+    "distill": {
+      "command": "distill-mcp",
+      "env": { "DISTILL_PROVIDER": "anthropic" }
+    }
+  }
+}
+```
+
+The server reads the home from `DISTILL_HOME`, else `~/distill`. Until sessions are scanned for secrets (the detector ticket), only a model at a local provider is served; a trusted remote provider is listed sessions with their facts and no openings, and refused their text.
 
 ## Building
 
