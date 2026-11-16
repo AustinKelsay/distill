@@ -9,8 +9,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 use super::blocks::millis_to_rfc3339;
+use crate::harness::Candidate;
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::Candidate;
 
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
@@ -114,7 +114,6 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     .get("directory")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                out.title = v.get("title").and_then(Value::as_str).map(str::to_string);
                 out.harness_version = v.get("version").and_then(Value::as_str).map(str::to_string);
                 out.parent_session = v
                     .get("parent_id")

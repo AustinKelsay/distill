@@ -4,9 +4,33 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::config::Config;
-use crate::util::set_private;
+use crate::harness::Harness;
+use crate::util::{safe_component, set_private};
 
 /// A Distill home directory. `DISTILL_HOME` overrides the default `~/distill`.
+///
+/// The layout is fixed by the spec (issue #72, "On disk"):
+///
+/// ```text
+/// <home>/
+///   config.toml                  config_path
+///   raw/                         raw_dir, manifest_path: captures and their manifest
+///   sessions/index.jsonl         session_list_path: every session's facts
+///   sessions/<harness>/<id>/     session_dir
+///     meta.json                  meta_path: session facts
+///     events.jsonl               events_path
+///     findings.json              findings_path
+///     card.json                  card_path
+///   index/                       index_dir: word index and vectors
+///   state/                       state_dir: locks and progress markers
+///   log/reads.jsonl              read_log_path
+///   runs/                        runs_dir: the run log
+///   reveals/                     reveals_dir: one file per reveal request
+///   keys/fingerprint.key         fingerprint_key_path
+/// ```
+///
+/// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. Folders a previous
+/// build left in a home (`recipes/`, `exports/`, `steward/`) are ignored, never deleted.
 #[derive(Debug, Clone)]
 pub struct Home {
     pub root: PathBuf,
@@ -29,17 +53,14 @@ impl Home {
         Ok(Self::new(user_home()?.join("distill")))
     }
 
-    /// Create the directory tree with owner-only permissions.
+    /// Create the folders capture and the parsers write, with owner-only permissions.
     pub fn ensure(&self) -> Result<()> {
         for dir in [
             self.root.clone(),
             self.raw_dir(),
             self.sessions_dir(),
-            self.recipes_dir(),
-            self.exports_dir(),
             self.runs_dir(),
             self.state_dir(),
-            self.steward_dir(),
         ] {
             fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
             set_private(&dir);
@@ -59,25 +80,54 @@ impl Home {
     pub fn sessions_dir(&self) -> PathBuf {
         self.root.join("sessions")
     }
-    pub fn index_path(&self) -> PathBuf {
+    /// The session list: one line of session facts per session, rebuilt by the parse step.
+    pub fn session_list_path(&self) -> PathBuf {
         self.sessions_dir().join("index.jsonl")
     }
-    pub fn recipes_dir(&self) -> PathBuf {
-        self.root.join("recipes")
+    /// The folder holding one session's files.
+    pub fn session_dir(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.sessions_dir()
+            .join(harness.id())
+            .join(safe_component(session_id))
     }
-    pub fn exports_dir(&self) -> PathBuf {
-        self.root.join("exports")
+    /// A session's facts.
+    pub fn meta_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(harness, session_id).join("meta.json")
     }
-    pub fn runs_dir(&self) -> PathBuf {
-        self.root.join("runs")
+    pub fn events_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(harness, session_id).join("events.jsonl")
+    }
+    pub fn findings_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(harness, session_id).join("findings.json")
+    }
+    pub fn card_path(&self, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(harness, session_id).join("card.json")
+    }
+    /// The search index: word index and vectors.
+    pub fn index_dir(&self) -> PathBuf {
+        self.root.join("index")
     }
     pub fn state_dir(&self) -> PathBuf {
         self.root.join("state")
     }
-    /// Working directory for steward agent runs. Sessions whose cwd is inside the home are the
-    /// steward's own, and are tagged so datasets leave them out.
-    pub fn steward_dir(&self) -> PathBuf {
-        self.root.join("steward")
+    pub fn log_dir(&self) -> PathBuf {
+        self.root.join("log")
+    }
+    pub fn read_log_path(&self) -> PathBuf {
+        self.log_dir().join("reads.jsonl")
+    }
+    /// The run log.
+    pub fn runs_dir(&self) -> PathBuf {
+        self.root.join("runs")
+    }
+    pub fn reveals_dir(&self) -> PathBuf {
+        self.root.join("reveals")
+    }
+    pub fn keys_dir(&self) -> PathBuf {
+        self.root.join("keys")
+    }
+    pub fn fingerprint_key_path(&self) -> PathBuf {
+        self.keys_dir().join("fingerprint.key")
     }
 
     /// Hold the archive writer lock until the returned file is dropped. Sweeps from the timer
@@ -102,6 +152,8 @@ impl Home {
         Config::load(&self.config_path())
     }
 
+    /// Whether a path is this home or inside it. A session that worked inside the home was run
+    /// by the previous build's steward.
     pub fn is_inside(&self, path: &str) -> bool {
         let root = self.root.to_string_lossy();
         let root = root.trim_end_matches('/');
@@ -113,4 +165,33 @@ pub fn user_home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_entry_in_the_layout_has_its_path() {
+        let h = Home::new("/h");
+        let p = |p: PathBuf| p.to_string_lossy().into_owned();
+        assert_eq!(p(h.config_path()), "/h/config.toml");
+        assert_eq!(p(h.manifest_path()), "/h/raw/manifest.jsonl");
+        assert_eq!(p(h.session_list_path()), "/h/sessions/index.jsonl");
+        let (k, id) = (Harness::Codex, "s1");
+        assert_eq!(p(h.session_dir(k, id)), "/h/sessions/codex/s1");
+        assert_eq!(p(h.meta_path(k, id)), "/h/sessions/codex/s1/meta.json");
+        assert_eq!(p(h.events_path(k, id)), "/h/sessions/codex/s1/events.jsonl");
+        assert_eq!(
+            p(h.findings_path(k, id)),
+            "/h/sessions/codex/s1/findings.json"
+        );
+        assert_eq!(p(h.card_path(k, id)), "/h/sessions/codex/s1/card.json");
+        assert_eq!(p(h.index_dir()), "/h/index");
+        assert_eq!(p(h.state_dir()), "/h/state");
+        assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");
+        assert_eq!(p(h.runs_dir()), "/h/runs");
+        assert_eq!(p(h.reveals_dir()), "/h/reveals");
+        assert_eq!(p(h.fingerprint_key_path()), "/h/keys/fingerprint.key");
+    }
 }

@@ -1,5 +1,8 @@
-//! The raw archive: exact source bytes, content-addressed, plus an append-only manifest of every
-//! capture. Nothing else in Distill writes here, and agents never do.
+//! The raw archive: exact harness bytes, named by their capture hash, plus an append-only
+//! manifest of every capture. Nothing else in Distill writes here, and agents never do.
+//!
+//! The on-disk format is the previous build's, unchanged (ADR 0001): `raw/<aa>/<sha256>` and
+//! `raw/manifest.jsonl`, with every manifest field name kept.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -10,8 +13,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::harness::Harness;
 use crate::home::Home;
-use crate::source::SourceKind;
 use crate::util::{append_jsonl, now_rfc3339, read_jsonl, set_private};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,18 +29,25 @@ pub enum CaptureKind {
     Rewrite,
 }
 
-/// One line of `raw/manifest.jsonl`.
+/// One line of `raw/manifest.jsonl`. The field names on disk are the previous build's
+/// (`source`, `sha256`, `fingerprint`) and never change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CaptureRecord {
-    pub source: SourceKind,
+    #[serde(rename = "source")]
+    pub harness: Harness,
     pub origin: String,
-    pub sha256: String,
+    /// The capture hash: the SHA-256 of the captured bytes, which names the blob.
+    #[serde(rename = "sha256")]
+    pub capture_hash: String,
     pub size: u64,
     pub kind: CaptureKind,
+    /// The capture hash this one replaced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<String>,
-    /// The candidate's change signal when captured, so a sweep can skip unchanged sources.
-    pub fingerprint: String,
+    /// The candidate's change signal when captured, so a sweep can skip unchanged files. Not a
+    /// hash.
+    #[serde(rename = "fingerprint")]
+    pub change_signal: String,
     pub captured_at: String,
 }
 
@@ -90,8 +100,8 @@ impl Archive {
         let mut seen = HashSet::new();
         self.records
             .iter()
-            .filter(|r| seen.insert(r.sha256.clone()))
-            .filter_map(|r| fs::metadata(self.blob_path(&r.sha256)).ok())
+            .filter(|r| seen.insert(r.capture_hash.clone()))
+            .filter_map(|r| fs::metadata(self.blob_path(&r.capture_hash)).ok())
             .map(|m| m.len())
             .sum()
     }
@@ -99,9 +109,9 @@ impl Archive {
     /// Store bytes for an origin. Returns the record, or None when the content is unchanged.
     pub fn put(
         &mut self,
-        source: SourceKind,
+        harness: Harness,
         origin: &str,
-        fingerprint: &str,
+        change_signal: &str,
         mut reader: impl Read,
     ) -> Result<Option<CaptureRecord>> {
         let previous = self.latest.get(origin).cloned();
@@ -138,13 +148,13 @@ impl Archive {
         let sha = hex::encode(full.finalize());
 
         if let Some(p) = &previous
-            && p.sha256 == sha
+            && p.capture_hash == sha
         {
             fs::remove_file(&tmp)?;
-            if p.fingerprint != fingerprint {
-                // Same bytes, new mtime: remember the new fingerprint so the next sweep skips it.
+            if p.change_signal != change_signal {
+                // Same bytes, new mtime: remember the new signal so the next sweep skips it.
                 let mut rec = p.clone();
-                rec.fingerprint = fingerprint.to_string();
+                rec.change_signal = change_signal.to_string();
                 rec.captured_at = now_rfc3339();
                 append_jsonl(&self.manifest, &rec)?;
                 self.latest.insert(origin.to_string(), rec.clone());
@@ -155,7 +165,7 @@ impl Archive {
 
         let kind = match &previous {
             None => CaptureKind::New,
-            Some(p) if total > p.size && prefix_sha.as_deref() == Some(p.sha256.as_str()) => {
+            Some(p) if total > p.size && prefix_sha.as_deref() == Some(p.capture_hash.as_str()) => {
                 CaptureKind::Append
             }
             Some(_) => CaptureKind::Rewrite,
@@ -180,13 +190,13 @@ impl Archive {
         crate::util::sync_dir(&shard)?;
 
         let rec = CaptureRecord {
-            source,
+            harness,
             origin: origin.to_string(),
-            sha256: sha,
+            capture_hash: sha,
             size: total,
             kind,
-            previous: previous.as_ref().map(|p| p.sha256.clone()),
-            fingerprint: fingerprint.to_string(),
+            previous: previous.as_ref().map(|p| p.capture_hash.clone()),
+            change_signal: change_signal.to_string(),
             captured_at: now_rfc3339(),
         };
         // The manifest line is written after the blob is in place, so every record points at
@@ -198,7 +208,7 @@ impl Archive {
         if kind == CaptureKind::Append
             && let Some(p) = previous
         {
-            self.drop_if_unreferenced(&p.sha256)?;
+            self.drop_if_unreferenced(&p.capture_hash)?;
         }
         Ok(Some(rec))
     }
@@ -206,7 +216,7 @@ impl Archive {
     /// Remove a blob that only a superseded append referred to.
     fn drop_if_unreferenced(&self, sha: &str) -> Result<()> {
         // Still the latest for some origin, or kept as the older side of a rewrite.
-        let in_use = self.latest.values().any(|r| r.sha256 == sha)
+        let in_use = self.latest.values().any(|r| r.capture_hash == sha)
             || self
                 .records
                 .iter()
@@ -225,12 +235,12 @@ impl Archive {
         let mut report = VerifyReport::default();
         let mut expected: BTreeMap<String, u64> = BTreeMap::new();
         for r in self.latest.values() {
-            expected.insert(r.sha256.clone(), r.size);
+            expected.insert(r.capture_hash.clone(), r.size);
         }
         for r in &self.records {
             if r.kind == CaptureKind::Rewrite
                 && let Some(prev) = &r.previous
-                && let Some(p) = self.records.iter().find(|x| &x.sha256 == prev)
+                && let Some(p) = self.records.iter().find(|x| &x.capture_hash == prev)
             {
                 expected.insert(prev.clone(), p.size);
             }
@@ -323,7 +333,7 @@ mod tests {
     fn append_replaces_and_rewrite_keeps_both() {
         let (_d, home) = home();
         let mut a = Archive::open(&home).unwrap();
-        let k = SourceKind::Pi;
+        let k = Harness::Pi;
         let r1 = a.put(k, "s", "1", &b"line1\n"[..]).unwrap().unwrap();
         assert_eq!(r1.kind, CaptureKind::New);
         assert!(
@@ -334,23 +344,85 @@ mod tests {
         let r2 = a.put(k, "s", "2", &b"line1\nline2\n"[..]).unwrap().unwrap();
         assert_eq!(r2.kind, CaptureKind::Append);
         assert!(
-            !a.blob_path(&r1.sha256).exists(),
+            !a.blob_path(&r1.capture_hash).exists(),
             "appended-over blob is dropped"
         );
 
         let r3 = a.put(k, "s", "3", &b"compacted\n"[..]).unwrap().unwrap();
         assert_eq!(r3.kind, CaptureKind::Rewrite);
         assert!(
-            a.blob_path(&r2.sha256).exists(),
+            a.blob_path(&r2.capture_hash).exists(),
             "rewrite keeps the old version"
         );
-        assert!(a.blob_path(&r3.sha256).exists());
+        assert!(a.blob_path(&r3.capture_hash).exists());
 
         let reopened = Archive::open(&home).unwrap();
-        assert_eq!(reopened.latest()["s"].sha256, r3.sha256);
+        assert_eq!(reopened.latest()["s"].capture_hash, r3.capture_hash);
         let v = reopened.verify().unwrap();
         assert!(v.ok(), "{v:?}");
         assert_eq!(v.checked, 2);
+    }
+
+    #[test]
+    fn a_manifest_and_capture_written_by_the_previous_build_are_read() {
+        let (_d, home) = home();
+        // Exactly what the previous build wrote: a blob at `raw/<aa>/<sha256>` and a manifest
+        // line with its field names (synthetic content).
+        let bytes = b"{\"type\":\"session\",\"id\":\"p1\"}\n";
+        let sha = crate::util::sha256_hex(bytes);
+        fs::create_dir_all(home.raw_dir().join(&sha[..2])).unwrap();
+        fs::write(home.raw_dir().join(&sha[..2]).join(&sha), bytes).unwrap();
+        let line = format!(
+            r#"{{"source":"pi","origin":"/u/.pi/agent/sessions/p1.jsonl","sha256":"{sha}","size":{},"kind":"new","fingerprint":"{}:1794436930000000000","captured_at":"2026-11-14T10:00:00Z"}}"#,
+            bytes.len(),
+            bytes.len()
+        );
+        fs::write(home.manifest_path(), format!("{line}\n")).unwrap();
+
+        let mut a = Archive::open(&home).unwrap();
+        let rec = &a.latest()["/u/.pi/agent/sessions/p1.jsonl"];
+        assert_eq!(rec.harness, Harness::Pi);
+        assert_eq!(rec.capture_hash, sha);
+        assert_eq!(
+            rec.change_signal,
+            format!("{}:1794436930000000000", bytes.len())
+        );
+        assert_eq!(a.read_blob(&sha).unwrap(), bytes);
+        assert!(a.verify().unwrap().ok());
+
+        // A new capture appends a line in the same format, leaving the old line as it was.
+        a.put(
+            Harness::Pi,
+            "/u/.pi/agent/sessions/p2.jsonl",
+            "9:9",
+            &b"x\n"[..],
+        )
+        .unwrap()
+        .unwrap();
+        let manifest = fs::read_to_string(home.manifest_path()).unwrap();
+        let lines: Vec<&str> = manifest.lines().collect();
+        assert_eq!(lines[0], line);
+        let added: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let mut keys: Vec<&str> = added
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "captured_at",
+                "fingerprint",
+                "kind",
+                "origin",
+                "sha256",
+                "size",
+                "source"
+            ]
+        );
+        assert_eq!(added["source"], "pi");
     }
 
     #[test]
@@ -385,11 +457,11 @@ mod tests {
         let (_d, home) = home();
         let mut a = Archive::open(&home).unwrap();
         let r = a
-            .put(SourceKind::Pi, "s", "1", &b"hello"[..])
+            .put(Harness::Pi, "s", "1", &b"hello"[..])
             .unwrap()
             .unwrap();
-        fs::write(a.blob_path(&r.sha256), b"tampered").unwrap();
+        fs::write(a.blob_path(&r.capture_hash), b"tampered").unwrap();
         let v = Archive::open(&home).unwrap().verify().unwrap();
-        assert_eq!(v.corrupt, vec![r.sha256]);
+        assert_eq!(v.corrupt, vec![r.capture_hash]);
     }
 }

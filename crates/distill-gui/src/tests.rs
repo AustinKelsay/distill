@@ -1,296 +1,35 @@
-//! Headless runs of the real view over fixture state: no window, no disk.
+//! Headless runs of the real view: no window, no disk.
 
-use distill_core::config::{Config, Harness};
-use distill_core::source::SourceKind;
+use distill_core::Home;
 use rune::{Env, Runtime};
 
-use crate::data::{Reply, Request};
-use crate::{Screen, State, fixture, view};
+use crate::{State, view};
 
-const SIZE: (f32, f32) = (1040.0, 760.0);
-
-fn runtime(s: State) -> Runtime<State> {
-    let mut rt = Runtime::new(s, view, SIZE, Env::new(true, 1.0));
+#[test]
+fn the_shell_window_shows_distill_and_its_home() {
+    let mut rt = Runtime::new(
+        State::new(Home::new("/tmp/some-home")),
+        view,
+        (1040.0, 760.0),
+        Env::new(true, 1.0),
+    );
     rt.frame(0.0);
-    rt
-}
-
-fn settle(rt: &mut Runtime<State>) {
-    for _ in 0..20 {
-        rt.frame(1.0 / 60.0);
-    }
-}
-
-fn press(rt: &mut Runtime<State>, key: &str) {
-    let (x, y) = rt
-        .find(key)
-        .unwrap_or_else(|| panic!("no element {key:?} on screen"));
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    settle(rt);
-}
-
-fn texts(rt: &Runtime<State>) -> Vec<String> {
-    rt.elements()
+    let texts: Vec<String> = rt
+        .elements()
         .into_iter()
         .filter_map(|e| e.text.or(e.label))
-        .collect()
-}
-
-fn shows(rt: &Runtime<State>, needle: &str) -> bool {
-    texts(rt).iter().any(|t| t.contains(needle))
-}
-
-#[test]
-fn setup_steps_through_and_finish_queues_the_chosen_config() {
-    let mut s = fixture::state(None);
-    s.detections = Some(fixture::detections());
-    let mut rt = runtime(s);
-    assert_eq!(rt.state.screen, Screen::Setup);
+        .collect();
+    assert!(texts.iter().any(|t| t == "Distill"), "{texts:?}");
     assert!(
-        !shows(&rt, "no parser yet, archived only"),
-        "every source has a parser"
+        texts.iter().any(|t| t.contains("/tmp/some-home")),
+        "{texts:?}"
     );
-    assert!(shows(&rt, "not found"), "Droid is missing in the fixture");
-
-    // Step 1: turn Cursor off.
-    press(&mut rt, "source-cursor/switch");
-    assert!(!rt.state.setup.enabled(SourceKind::Cursor));
-
-    // Next and Back move one step; Back stops at the first.
-    press(&mut rt, "next");
-    assert_eq!(rt.state.setup.step, 1);
-    assert!(shows(&rt, "~/distill"), "storage shows the home path");
-    press(&mut rt, "back");
-    assert_eq!(rt.state.setup.step, 0);
-    press(&mut rt, "next");
-    press(&mut rt, "next");
-    assert_eq!(rt.state.setup.step, 2);
-
-    // Step 3: a $5 budget (shown only for Claude Code, which reports cost), then Codex and a
-    // model. The Claude default model doesn't follow to Codex.
-    press(&mut rt, "budget/segment3");
-    assert_eq!(rt.state.setup.config.steward.daily_budget_usd, 5.0);
-    press(&mut rt, "harness/segment3");
-    assert_eq!(rt.state.setup.config.steward.harness, Harness::Codex);
-    assert_eq!(rt.state.setup.model.text, "");
-    assert!(
-        !shows(&rt, "Daily budget"),
-        "no budget for a harness without cost"
-    );
-    rt.update(|s, _| s.setup.model.replace_text("gpt-5-codex"));
-
-    // Step 4: exclude a path, turn redaction off.
-    press(&mut rt, "next");
-    assert_eq!(rt.state.setup.step, 3);
-    rt.update(|s, _| s.setup.exclude.replace_text("  /work/secret  "));
-    settle(&mut rt);
-    press(&mut rt, "add-exclude");
-    assert_eq!(
-        rt.state.setup.config.privacy.exclude_paths,
-        vec!["/work/secret".to_string()]
-    );
-    assert_eq!(
-        rt.state.setup.exclude.text, "",
-        "the field clears after Add"
-    );
-    press(&mut rt, "redact");
-    assert!(!rt.state.setup.config.privacy.redact_exports);
-
-    // Step 5: sweep every 30 minutes, enrich every 6 hours, then Finish.
-    press(&mut rt, "next");
-    assert_eq!(rt.state.setup.step, 4);
-    assert!(
-        rt.find("next").is_none() && rt.find("finish").is_some(),
-        "the last step offers Finish"
-    );
-    press(&mut rt, "sweep/segment1");
-    press(&mut rt, "enrich/segment0");
-    assert!(
-        rt.state.outbox.is_empty(),
-        "nothing is written before Finish"
-    );
-    press(&mut rt, "finish");
-
-    let mut want = Config::default();
-    want.source_mut(SourceKind::Cursor).enabled = false;
-    want.steward.harness = Harness::Codex;
-    want.steward.model = Some("gpt-5-codex".to_string());
-    want.steward.daily_budget_usd = 5.0;
-    want.privacy.exclude_paths = vec!["/work/secret".to_string()];
-    want.privacy.redact_exports = false;
-    want.schedule.sweep_every_minutes = 30;
-    want.schedule.enrich_every_hours = 6;
-    assert_eq!(
-        rt.state.outbox,
-        vec![Request::SaveConfig(Box::new(want.clone()))]
-    );
-    assert_eq!(rt.state.config, want);
-    assert_eq!(rt.state.screen, Screen::Dashboard);
-
-    // The save landing asks for the dashboard.
-    rt.state.outbox.clear();
-    rt.state.land(Reply::Saved(Ok(())));
-    assert!(rt.state.outbox.contains(&Request::LoadDashboard));
-}
-
-#[test]
-fn rail_jumps_to_a_step() {
-    let mut rt = runtime(fixture::state(None));
-    press(&mut rt, "rail-4");
-    assert_eq!(rt.state.setup.step, 4);
-    press(&mut rt, "rail-2");
-    assert_eq!(rt.state.setup.step, 2);
-}
-
-#[test]
-fn dashboard_shows_tiles_and_approve_queues_the_build_once() {
-    let mut s = fixture::state(Some(Config::default()));
-    fixture::dashboard(&mut s);
-    let sessions = s.dash.data.as_ref().unwrap().totals.sessions;
-    let mut rt = runtime(s);
-
-    for key in [
-        "tile-sessions",
-        "tile-archive",
-        "tile-enriched",
-        "tile-datasets",
-        "chart",
-        "sources",
-        "runs",
-        "needs-you",
-    ] {
-        assert!(rt.find(key).is_some(), "{key} is on screen");
+    assert!(rt.find("title").is_some());
+    // Nothing of the previous build's screens is left.
+    for gone in ["Settings", "Approve", "Needs you"] {
+        assert!(
+            !texts.iter().any(|t| t.contains(gone)),
+            "{gone} in {texts:?}"
+        );
     }
-    assert!(shows(&rt, &crate::data::thousands(sessions)));
-    assert!(shows(&rt, "2.6 GB"));
-    assert!(shows(&rt, "83%"));
-    assert!(shows(&rt, "Last sweep 12 min ago"));
-    assert!(
-        rt.find("week-11/stack").is_some(),
-        "the newest week has a bar"
-    );
-    assert!(
-        rt.find("run-5").is_some() && rt.find("run-6").is_none(),
-        "six newest runs"
-    );
-
-    press(&mut rt, "approve-0");
-    let want = Request::Approve {
-        recipe: "agentic-rust".to_string(),
-        build: "20261113-1402".to_string(),
-    };
-    assert_eq!(rt.state.outbox, vec![want.clone()]);
-    assert!(shows(&rt, "Approving…"));
-
-    // A second press while it is on its way does nothing.
-    press(&mut rt, "approve-0");
-    assert_eq!(rt.state.outbox, vec![want]);
-
-    rt.update(|s, _| {
-        s.outbox.clear();
-        s.land(Reply::Approved {
-            recipe: "agentic-rust".to_string(),
-            build: "20261113-1402".to_string(),
-            result: Ok(()),
-        });
-    });
-    assert!(rt.state.dash.approving.is_empty());
-    assert_eq!(rt.state.outbox, vec![Request::LoadDashboard]);
-    settle(&mut rt);
-    assert!(shows(&rt, "Approved \"agentic-rust\""));
-}
-
-#[test]
-fn a_proposed_recipe_is_accepted_from_the_dashboard() {
-    let mut s = fixture::state(Some(Config::default()));
-    fixture::dashboard(&mut s);
-    // Tall enough that the whole "Needs you" list is on screen.
-    let mut rt = Runtime::new(s, view, (1040.0, 1600.0), Env::new(true, 1.0));
-    settle(&mut rt);
-    assert!(shows(
-        &rt,
-        "proposes a dataset \"rust-successes\" (48 sessions)"
-    ));
-    press(&mut rt, "accept-3");
-    let want = Request::AcceptRecipe("rust-successes".to_string());
-    assert_eq!(rt.state.outbox, vec![want]);
-    assert!(shows(&rt, "Accepting…"));
-    rt.update(|s, _| {
-        s.outbox.clear();
-        s.land(Reply::Accepted {
-            name: "rust-successes".to_string(),
-            result: Ok(()),
-        });
-    });
-    assert!(rt.state.dash.accepting.is_empty());
-    assert_eq!(rt.state.outbox, vec![Request::LoadDashboard]);
-    settle(&mut rt);
-    assert!(shows(&rt, "\"rust-successes\" is now a dataset recipe"));
-}
-
-#[test]
-fn empty_dashboard_says_so() {
-    let mut s = fixture::state(Some(Config::default()));
-    fixture::dashboard_empty(&mut s);
-    let rt = runtime(s);
-    for key in ["chart-empty", "runs-empty", "needs-empty"] {
-        assert!(rt.find(key).is_some(), "{key} is on screen");
-    }
-    assert!(shows(&rt, "No sweep yet"));
-}
-
-#[test]
-fn settings_opens_setup_over_the_saved_config_and_cancel_returns() {
-    let mut s = fixture::state(Some(Config::default()));
-    fixture::dashboard(&mut s);
-    s.config.schedule.sweep_every_minutes = 15;
-    let mut rt = runtime(s);
-    press(&mut rt, "settings");
-    assert_eq!(rt.state.screen, Screen::Setup);
-    assert_eq!(rt.state.setup.config.schedule.sweep_every_minutes, 15);
-    press(&mut rt, "cancel");
-    assert_eq!(rt.state.screen, Screen::Dashboard);
-    assert!(rt.state.outbox.is_empty(), "cancel writes nothing");
-}
-
-#[test]
-fn setup_offers_local_providers_with_a_privacy_note() {
-    let mut s = State::new(
-        distill_core::home::Home::new("/tmp/none"),
-        Some(Config::default()),
-    );
-    s.setup.ollama_models = vec!["qwen3.6:35b-a3b".into(), "gpt-oss:20b".into()];
-    // The Claude default model is swapped for Ollama's first installed model.
-    s.setup.set_harness(Harness::Ollama);
-    assert_eq!(s.setup.model.text, "qwen3.6:35b-a3b");
-    assert!(Harness::Ollama.local() && !Harness::Claude.local());
-    let c = s.setup.finish();
-    assert_eq!(c.steward.harness, Harness::Ollama);
-    assert_eq!(c.steward.model.as_deref(), Some("qwen3.6:35b-a3b"));
-    // A custom command is split into program and arguments.
-    s.setup.set_harness(Harness::Command);
-    s.setup
-        .command
-        .replace_text("llama-cli -m /models/a.gguf  -no-cnv");
-    assert_eq!(
-        s.setup.finish().steward.command,
-        ["llama-cli", "-m", "/models/a.gguf", "-no-cnv"]
-    );
-}
-
-#[test]
-fn saving_settings_keeps_command_arguments_with_spaces() {
-    let mut config = Config::default();
-    config.steward.harness = Harness::Command;
-    config.steward.command = vec![
-        "llama-cli".into(),
-        "-m".into(),
-        "/models/My Model.gguf".into(),
-    ];
-    let s = State::new(
-        distill_core::home::Home::new("/tmp/none"),
-        Some(config.clone()),
-    );
-    assert_eq!(s.setup.finish().steward.command, config.steward.command);
 }

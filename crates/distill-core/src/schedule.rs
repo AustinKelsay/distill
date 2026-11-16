@@ -54,7 +54,7 @@ pub fn launchd_plist(exe: &Path, home: &Home, config: &Config) -> String {
 
 pub fn systemd_units(exe: &Path, home: &Home, config: &Config) -> (String, String) {
     let service = format!(
-        "[Unit]\nDescription=Distill sweep and steward\n\n[Service]\nType=oneshot\nEnvironment=DISTILL_HOME={}\nExecStart={} tick\nNice=10\n",
+        "[Unit]\nDescription=Distill tick\n\n[Service]\nType=oneshot\nEnvironment=DISTILL_HOME={}\nExecStart={} tick\nNice=10\n",
         home.root.display(),
         exe.display()
     );

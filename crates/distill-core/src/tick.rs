@@ -1,126 +1,144 @@
-//! One scheduled pass: sweep, normalize, let the steward work if it is due, rebuild datasets.
+//! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
+//! tick writes one entry to the run log. Today the steps are sweep then parse; the spec's later
+//! steps (scan, word index, cards, vectors, model detection pass) are added to [`STEPS`] by the
+//! tickets that build them.
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, Harness};
-use crate::export;
+use crate::config::Config;
 use crate::home::Home;
-use crate::normalize::{self, NormalizeReport};
-use crate::propose;
-use crate::runlog;
-use crate::steward::{self, RunOptions, StewardReport};
-use crate::sweep::{self, SweepReport};
+use crate::normalize;
+use crate::runlog::{self, RunEntry, StepOutcome};
+use crate::sweep;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// One step of a tick.
+pub struct Step {
+    pub name: &'static str,
+    pub run: fn(&Home, &Config) -> Result<StepOutcome>,
+}
+
+/// The tick's steps, in order. Capture comes first and never waits on a model.
+pub const STEPS: &[Step] = &[
+    Step {
+        name: "sweep",
+        run: sweep_step,
+    },
+    Step {
+        name: "parse",
+        run: parse_step,
+    },
+];
+
+/// Copy new and changed harness files into the raw archive.
+pub fn sweep_step(home: &Home, config: &Config) -> Result<StepOutcome> {
+    let r = sweep::sweep(home, config, None)?;
+    Ok(StepOutcome {
+        name: "sweep".into(),
+        ok: r.errors.is_empty(),
+        summary: r.summary(),
+        errors: r.errors.clone(),
+        report: serde_json::to_value(&r)?,
+    })
+}
+
+/// Turn captures into events and session facts.
+pub fn parse_step(home: &Home, _config: &Config) -> Result<StepOutcome> {
+    parse_outcome(&normalize::normalize(home, false)?)
+}
+
+pub fn parse_outcome(r: &normalize::NormalizeReport) -> Result<StepOutcome> {
+    Ok(StepOutcome {
+        name: "parse".into(),
+        ok: r.failed == 0,
+        summary: r.summary(),
+        errors: Vec::new(),
+        report: serde_json::to_value(r)?,
+    })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TickReport {
-    pub sweep: SweepReport,
-    pub normalize: NormalizeReport,
-    pub steward: Option<StewardReport>,
-    /// Recipes the steward proposed this tick, waiting to be accepted.
-    #[serde(default)]
-    pub proposed: Vec<String>,
-    pub builds: Vec<String>,
-    pub errors: Vec<String>,
+    pub steps: Vec<StepOutcome>,
 }
 
-pub fn steward_due(home: &Home, config: &Config) -> Result<bool> {
-    if config.steward.harness == Harness::None {
-        return Ok(false);
-    }
-    let Some(last) = runlog::last_ok(home, "steward")? else {
-        return Ok(true);
-    };
-    let Ok(last) = DateTime::parse_from_rfc3339(&last) else {
-        return Ok(true);
-    };
-    Ok(Utc::now() - last.with_timezone(&Utc)
-        >= Duration::hours(config.schedule.enrich_every_hours as i64))
-}
-
-pub fn tick(home: &Home, config: &Config, force_steward: bool) -> Result<TickReport> {
-    let mut report = TickReport {
-        sweep: sweep::sweep(home, config, None)?,
-        ..Default::default()
-    };
-    report.normalize = normalize::normalize(home, false)?;
-    if force_steward || steward_due(home, config)? {
-        // Weekly: ask which datasets are worth making. First, so a card backlog can't spend
-        // the day's budget or calls before it gets its one call.
-        if propose::due(home, config) {
-            match propose::propose(home, config) {
-                Ok(r) => report.proposed = r.proposed.into_iter().map(|p| p.name).collect(),
-                Err(e) => report.errors.push(format!("propose: {e:#}")),
-            }
-        }
-        match steward::run(home, config, &RunOptions::default()) {
-            Ok(r) => report.steward = Some(r),
-            Err(e) => report.errors.push(format!("steward: {e:#}")),
-        }
-    }
-    for name in export::list_recipes(home)? {
-        match export::build(home, &name) {
-            Ok(b) => report.builds.push(format!("{}/{}", b.recipe, b.build)),
-            Err(e) => report.errors.push(format!("recipe {name}: {e:#}")),
-        }
-    }
-    Ok(report)
+/// Run every step in order and record the tick. A step that fails is recorded and the next one
+/// still runs.
+pub fn tick(home: &Home, config: &Config) -> Result<TickReport> {
+    home.ensure()?;
+    let steps: Vec<StepOutcome> = STEPS
+        .iter()
+        .map(|s| (s.run)(home, config).unwrap_or_else(|e| StepOutcome::failed(s.name, &e)))
+        .collect();
+    runlog::record(home, &RunEntry::of("tick", steps.clone()))?;
+    Ok(TickReport { steps })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archive::Archive;
-    use crate::source::SourceKind;
+    use crate::harness::Harness;
 
     #[test]
-    fn a_due_proposal_gets_its_call_before_the_card_backlog() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::new(dir.path().join("home"));
-        home.ensure().unwrap();
-        {
-            let _lock = home.lock_archive().unwrap();
-            let mut archive = Archive::open(&home).unwrap();
-            let s = r#"{"type":"user","cwd":"/w","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"task"}}
-"#;
-            archive
-                .put(
-                    SourceKind::ClaudeCode,
-                    "/u/.claude/projects/-w/s.jsonl",
-                    "f",
-                    s.as_bytes(),
-                )
-                .unwrap();
-        }
-        let stub = dir.path().join("stub.sh");
-        std::fs::write(&stub, "#!/bin/sh\ncat > /dev/null\necho '[]'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let mut config = Config::default();
-        // Nothing on this machine is swept; the archive above is the backlog.
-        for s in &mut config.sources {
-            s.enabled = false;
-        }
-        config.steward.harness = Harness::Command;
-        config.steward.command = vec![stub.to_string_lossy().into_owned()];
-        config.steward.max_sessions_per_run = 1;
+    fn the_steps_are_sweep_then_parse() {
+        let names: Vec<_> = STEPS.iter().map(|s| s.name).collect();
+        assert_eq!(names, ["sweep", "parse"]);
+    }
 
-        let r = tick(&home, &config, true).unwrap();
-        assert!(
-            r.errors.iter().all(|e| !e.starts_with("propose")),
-            "{:?}",
-            r.errors
-        );
-        let today = runlog::today(&home).unwrap();
-        assert!(today.iter().any(|e| e.step == "propose" && e.ok));
+    #[test]
+    fn a_tick_sweeps_and_parses_and_writes_one_run_log_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let pi = dir.path().join("pi");
+        std::fs::create_dir_all(&pi).unwrap();
+        std::fs::write(
+            pi.join("2026-11-01_p1.jsonl"),
+            r#"{"type":"session","id":"p1","cwd":"/r","version":3}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"rename the widget"}],"timestamp":1794436930000}}
+"#,
+        )
+        .unwrap();
+        let home = Home::new(dir.path().join("home"));
+        // Folders a previous build left in the home stay as they were.
+        for old in ["recipes", "exports/good-sessions/b1", "steward"] {
+            std::fs::create_dir_all(home.root.join(old)).unwrap();
+            std::fs::write(home.root.join(old).join("keep.txt"), "old").unwrap();
+        }
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let h = config.harness_mut(Harness::Pi);
+        h.enabled = true;
+        h.roots = vec![pi];
+
+        let r = tick(&home, &config).unwrap();
+        let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["sweep", "parse"]);
+        assert!(r.steps.iter().all(|s| s.ok), "{r:?}");
+        assert_eq!(r.steps[0].report["new"], 1);
+        assert_eq!(r.steps[1].report["sessions"], 1);
+        assert!(home.meta_path(Harness::Pi, "p1").exists());
+
+        let runs = runlog::recent(&home, 10).unwrap();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert_eq!(runs[0].step, "tick");
+        assert_eq!(runs[0].steps, r.steps);
+
+        // Nothing but the kept features was written, and the old folders are untouched.
+        let mut top: Vec<String> = std::fs::read_dir(&home.root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        top.sort();
         assert_eq!(
-            r.steward.unwrap().carded,
-            0,
-            "the one call went to the proposal"
+            top,
+            [
+                "exports", "raw", "recipes", "runs", "sessions", "state", "steward"
+            ]
         );
+        for old in ["recipes", "exports/good-sessions/b1", "steward"] {
+            assert!(home.root.join(old).join("keep.txt").exists(), "{old}");
+        }
+        assert!(!home.card_path(Harness::Pi, "p1").exists());
     }
 }

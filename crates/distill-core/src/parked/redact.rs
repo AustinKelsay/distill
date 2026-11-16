@@ -1,4 +1,5 @@
-//! Secret scanning for exports. Raw captures are never edited; this runs on the way out.
+//! The previous build's secret scanner, parked for the detector ticket (see `parked`). Raw captures
+//! are never edited; this rewrote text on its way out of the machine.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;

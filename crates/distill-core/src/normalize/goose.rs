@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::blocks::millis_to_rfc3339;
+use crate::harness::Candidate;
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::Candidate;
 
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
@@ -76,7 +76,7 @@ pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     Ok(hashes
         .into_iter()
         .map(|(session_id, h)| Candidate::DbSession {
-            kind: crate::source::SourceKind::Goose,
+            kind: crate::harness::Harness::Goose,
             db: db.to_path_buf(),
             session_id,
             updated: hex::encode(h.finalize())[..16].to_string(),
@@ -336,7 +336,7 @@ mod tests {
         );
 
         // A message edited in place changes the fingerprint.
-        let before = list_sessions(&db).unwrap()[0].fingerprint();
+        let before = list_sessions(&db).unwrap()[0].change_signal();
         Connection::open(&db)
             .unwrap()
             .execute(
@@ -344,14 +344,14 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
+        assert_ne!(list_sessions(&db).unwrap()[0].change_signal(), before);
         // NULL and an empty value are different exports, so different fingerprints.
-        let before = list_sessions(&db).unwrap()[0].fingerprint();
+        let before = list_sessions(&db).unwrap()[0].change_signal();
         Connection::open(&db)
             .unwrap()
             .execute("UPDATE sessions SET parent_session_id = ''", [])
             .unwrap();
-        assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
+        assert_ne!(list_sessions(&db).unwrap()[0].change_signal(), before);
         let sessions = list_sessions(&db).unwrap();
         let export = export_session(&db, "20261101_1").unwrap();
 
@@ -367,8 +367,8 @@ mod tests {
         let grown = export_session(&db, "20261101_1").unwrap().bytes;
         assert!(grown.starts_with(&export.bytes));
         assert_ne!(
-            list_sessions(&db).unwrap()[0].fingerprint(),
-            sessions[0].fingerprint()
+            list_sessions(&db).unwrap()[0].change_signal(),
+            sessions[0].change_signal()
         );
     }
 }

@@ -904,7 +904,6 @@ name = "distill-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "distill-core",
  "rune",
  "rune-kit",

@@ -16,8 +16,8 @@ use sha2::{Digest, Sha256};
 
 use super::blocks::ts;
 use super::chat::push_message;
+use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
-use crate::source::{Candidate, SourceKind};
 
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
@@ -126,7 +126,7 @@ pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     Ok(hashes
         .into_iter()
         .map(|(session_id, h)| Candidate::DbSession {
-            kind: SourceKind::Hermes,
+            kind: Harness::Hermes,
             db: db.to_path_buf(),
             session_id,
             updated: hex::encode(h.finalize())[..16].to_string(),
@@ -219,7 +219,7 @@ pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
         .session_id
         .clone()
         .unwrap_or_else(|| file_id(origin).to_string());
-    out.mirror_of = vec![SourceKind::Hermes];
+    out.mirror_of = vec![Harness::Hermes];
     out.mirror_refs = vec![format!("hermes/db-{id}")];
     Ok(out)
 }
@@ -245,7 +245,6 @@ fn parse_export(id: &str, bytes: &[u8]) -> Parsed {
         if role == "session_meta" && m.get("platform").is_some() {
             out.cwd = s(&m, "cwd").filter(|c| c.starts_with('/'));
             out.git_branch = s(&m, "git_branch");
-            out.title = s(&m, "title");
             out.parent_session = s(&m, "parent_session_id");
             out.harness_version = s(&m, "platform");
             if let Some(md) = s(&m, "model") {
@@ -393,7 +392,6 @@ mod tests {
         assert_eq!(export.cwd.as_deref(), Some("/work/app"));
         let p = parse(&origin, &export.bytes).unwrap();
         assert_eq!(p.session_id.as_deref(), Some("db-20261101_100000_aa"));
-        assert_eq!(p.title.as_deref(), Some("Weather"));
         assert_eq!(p.git_branch.as_deref(), Some("main"));
         assert!(!p.is_mirror());
         let kinds: Vec<_> = p.events.iter().map(|e| e.kind).collect();
@@ -432,9 +430,9 @@ mod tests {
                 .bytes
                 .starts_with(&export.bytes)
         );
-        let before = list_sessions(&db).unwrap()[0].fingerprint();
+        let before = list_sessions(&db).unwrap()[0].change_signal();
         conn.execute("UPDATE messages SET compacted = 1 WHERE id = 1", [])
             .unwrap();
-        assert_ne!(list_sessions(&db).unwrap()[0].fingerprint(), before);
+        assert_ne!(list_sessions(&db).unwrap()[0].change_signal(), before);
     }
 }

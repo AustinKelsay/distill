@@ -18,11 +18,6 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             "session_start" => {
                 out.session_id = v.get("id").and_then(Value::as_str).map(str::to_string);
                 out.cwd = v.get("cwd").and_then(Value::as_str).map(str::to_string);
-                out.title = v
-                    .get("sessionTitle")
-                    .or_else(|| v.get("title"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
                 out.parent_session = v
                     .get("callingSessionId")
                     .and_then(Value::as_str)
@@ -70,7 +65,6 @@ mod tests {
 {"type":"message","timestamp":"2026-10-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"ok"}]}}"#;
         let p = parse(src.as_bytes()).unwrap();
         assert_eq!(p.session_id.as_deref(), Some("d1"));
-        assert_eq!(p.title.as_deref(), Some("Refactor"));
         assert_eq!(p.events.len(), 3);
         assert_eq!(p.events[2].kind, EventKind::ToolResult);
     }

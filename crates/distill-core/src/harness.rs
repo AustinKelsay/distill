@@ -1,3 +1,6 @@
+//! The eleven harnesses: where each keeps its sessions, which captured files are sessions, and
+//! how the sweep finds and names what to capture.
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -10,7 +13,7 @@ use crate::home::user_home;
 /// A harness whose sessions Distill collects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum SourceKind {
+pub enum Harness {
     ClaudeCode,
     Codex,
     #[serde(rename = "opencode")]
@@ -27,50 +30,50 @@ pub enum SourceKind {
     Goose,
 }
 
-impl SourceKind {
-    pub const ALL: [SourceKind; 11] = [
-        SourceKind::ClaudeCode,
-        SourceKind::Codex,
-        SourceKind::OpenCode,
-        SourceKind::Droid,
-        SourceKind::Pi,
-        SourceKind::Cursor,
-        SourceKind::Grok,
-        SourceKind::Antigravity,
-        SourceKind::Hermes,
-        SourceKind::T3Code,
-        SourceKind::Goose,
+impl Harness {
+    pub const ALL: [Harness; 11] = [
+        Harness::ClaudeCode,
+        Harness::Codex,
+        Harness::OpenCode,
+        Harness::Droid,
+        Harness::Pi,
+        Harness::Cursor,
+        Harness::Grok,
+        Harness::Antigravity,
+        Harness::Hermes,
+        Harness::T3Code,
+        Harness::Goose,
     ];
 
     pub fn id(self) -> &'static str {
         match self {
-            SourceKind::ClaudeCode => "claude-code",
-            SourceKind::Codex => "codex",
-            SourceKind::OpenCode => "opencode",
-            SourceKind::Droid => "droid",
-            SourceKind::Pi => "pi",
-            SourceKind::Cursor => "cursor",
-            SourceKind::Grok => "grok",
-            SourceKind::Antigravity => "antigravity",
-            SourceKind::Hermes => "hermes",
-            SourceKind::T3Code => "t3code",
-            SourceKind::Goose => "goose",
+            Harness::ClaudeCode => "claude-code",
+            Harness::Codex => "codex",
+            Harness::OpenCode => "opencode",
+            Harness::Droid => "droid",
+            Harness::Pi => "pi",
+            Harness::Cursor => "cursor",
+            Harness::Grok => "grok",
+            Harness::Antigravity => "antigravity",
+            Harness::Hermes => "hermes",
+            Harness::T3Code => "t3code",
+            Harness::Goose => "goose",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            SourceKind::ClaudeCode => "Claude Code",
-            SourceKind::Codex => "Codex",
-            SourceKind::OpenCode => "OpenCode",
-            SourceKind::Droid => "Droid",
-            SourceKind::Pi => "Pi",
-            SourceKind::Cursor => "Cursor",
-            SourceKind::Grok => "Grok",
-            SourceKind::Antigravity => "Antigravity",
-            SourceKind::Hermes => "Hermes",
-            SourceKind::T3Code => "T3 Code",
-            SourceKind::Goose => "Goose",
+            Harness::ClaudeCode => "Claude Code",
+            Harness::Codex => "Codex",
+            Harness::OpenCode => "OpenCode",
+            Harness::Droid => "Droid",
+            Harness::Pi => "Pi",
+            Harness::Cursor => "Cursor",
+            Harness::Grok => "Grok",
+            Harness::Antigravity => "Antigravity",
+            Harness::Hermes => "Hermes",
+            Harness::T3Code => "T3 Code",
+            Harness::Goose => "Goose",
         }
     }
 
@@ -78,7 +81,7 @@ impl SourceKind {
         Self::ALL.into_iter().find(|k| k.id() == s)
     }
 
-    /// Whether Distill can turn this source's raw captures into trajectories. Sources without a
+    /// Whether Distill can turn this harness's captures into events. Harnesses without a
     /// parser are still archived, so nothing is lost while one is written.
     pub fn has_parser(self) -> bool {
         crate::normalize::parser_version(self).is_some()
@@ -89,61 +92,61 @@ impl SourceKind {
             return Vec::new();
         };
         match self {
-            SourceKind::ClaudeCode => vec![home.join(".claude/projects")],
-            SourceKind::Codex => {
+            Harness::ClaudeCode => vec![home.join(".claude/projects")],
+            Harness::Codex => {
                 vec![
                     home.join(".codex/sessions"),
                     home.join(".codex/archived_sessions"),
                 ]
             }
-            SourceKind::OpenCode => vec![home.join(".local/share/opencode/opencode.db")],
-            SourceKind::Droid => vec![home.join(".factory/sessions")],
-            SourceKind::Pi => vec![home.join(".pi/agent/sessions")],
+            Harness::OpenCode => vec![home.join(".local/share/opencode/opencode.db")],
+            Harness::Droid => vec![home.join(".factory/sessions")],
+            Harness::Pi => vec![home.join(".pi/agent/sessions")],
             // Chats from the agent CLI and IDE, sessions run over ACP, agents run through the SDK
             // (`projects/*/sdk-agent-store`), and the plain transcripts it keeps per project.
-            SourceKind::Cursor => vec![
+            Harness::Cursor => vec![
                 home.join(".cursor/chats"),
                 home.join(".cursor/acp-sessions"),
                 home.join(".cursor/projects"),
             ],
-            SourceKind::Grok => vec![home.join(".grok/sessions")],
-            SourceKind::Antigravity => vec![
+            Harness::Grok => vec![home.join(".grok/sessions")],
+            Harness::Antigravity => vec![
                 home.join(".t3/userdata/providers/antigravity"),
                 home.join(".gemini/antigravity"),
             ],
-            SourceKind::Hermes => {
+            Harness::Hermes => {
                 vec![home.join(".hermes/sessions"), home.join(".hermes/state.db")]
             }
-            SourceKind::T3Code => vec![home.join(".t3/userdata/statev2.sqlite")],
-            SourceKind::Goose => vec![home.join(".local/share/goose/sessions/sessions.db")],
+            Harness::T3Code => vec![home.join(".t3/userdata/statev2.sqlite")],
+            Harness::Goose => vec![home.join(".local/share/goose/sessions/sessions.db")],
         }
     }
 
-    /// Whether a captured file is a session this source's parser reads. Everything else under
-    /// a source's roots (tool-result files, attachments, settings, databases) is archived as a
+    /// Whether a captured file is a session this harness's parser reads. Everything else under
+    /// a harness's roots (tool-result files, attachments, settings, databases) is archived as a
     /// sidecar so nothing is lost, but not parsed on its own.
     pub fn is_primary(self, origin: &str) -> bool {
         let name = origin.rsplit('/').next().unwrap_or(origin);
         match self {
-            SourceKind::ClaudeCode | SourceKind::Droid | SourceKind::Pi => name.ends_with(".jsonl"),
-            SourceKind::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
-            SourceKind::OpenCode => true,
+            Harness::ClaudeCode | Harness::Droid | Harness::Pi => name.ends_with(".jsonl"),
+            Harness::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
+            Harness::OpenCode => true,
             // A thread's native references are archived beside it but aren't a session.
-            SourceKind::T3Code => !origin.ends_with(crate::normalize::t3code::NATIVE_SUFFIX),
-            SourceKind::Grok => name == "chat_history.jsonl",
-            SourceKind::Antigravity => name == "transcript_full.jsonl",
-            SourceKind::Hermes => {
+            Harness::T3Code => !origin.ends_with(crate::normalize::t3code::NATIVE_SUFFIX),
+            Harness::Grok => name == "chat_history.jsonl",
+            Harness::Antigravity => name == "transcript_full.jsonl",
+            Harness::Hermes => {
                 name.ends_with(".jsonl")
                     || (name.starts_with("session_") && name.ends_with(".json"))
                     || origin.contains("#session=")
             }
-            SourceKind::Cursor => name == "store.db" || cursor_transcript(origin),
-            SourceKind::Goose => true,
+            Harness::Cursor => name == "store.db" || cursor_transcript(origin),
+            Harness::Goose => true,
         }
     }
 }
 
-impl std::fmt::Display for SourceKind {
+impl std::fmt::Display for Harness {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.id())
     }
@@ -154,14 +157,14 @@ impl std::fmt::Display for SourceKind {
 pub enum Candidate {
     /// A session file copied byte for byte.
     File {
-        kind: SourceKind,
+        kind: Harness,
         path: PathBuf,
         size: u64,
         mtime_ns: i128,
     },
     /// A SQLite file copied through SQLite's backup API, so a live writer can't tear it.
     Sqlite {
-        kind: SourceKind,
+        kind: Harness,
         path: PathBuf,
         size: u64,
         mtime_ns: i128,
@@ -181,7 +184,7 @@ pub enum Candidate {
     /// One session of a harness that keeps them all in one database (Goose, Hermes), exported
     /// as JSONL rows. `updated` is a hash of what the export holds.
     DbSession {
-        kind: SourceKind,
+        kind: Harness,
         db: PathBuf,
         session_id: String,
         updated: String,
@@ -189,11 +192,11 @@ pub enum Candidate {
 }
 
 impl Candidate {
-    pub fn kind(&self) -> SourceKind {
+    pub fn kind(&self) -> Harness {
         match self {
             Candidate::File { kind, .. } | Candidate::Sqlite { kind, .. } => *kind,
-            Candidate::OpenCodeSession { .. } => SourceKind::OpenCode,
-            Candidate::T3Thread { .. } => SourceKind::T3Code,
+            Candidate::OpenCodeSession { .. } => Harness::OpenCode,
+            Candidate::T3Thread { .. } => Harness::T3Code,
             Candidate::DbSession { kind, .. } => *kind,
         }
     }
@@ -216,8 +219,9 @@ impl Candidate {
         }
     }
 
-    /// A cheap change signal: if this matches the last sweep, the bytes are not re-read.
-    pub fn fingerprint(&self) -> String {
+    /// The change signal: if this matches the last sweep's, the bytes are not re-read. The
+    /// manifest stores it as `fingerprint`; it is not a hash.
+    pub fn change_signal(&self) -> String {
         match self {
             Candidate::File { size, mtime_ns, .. } | Candidate::Sqlite { size, mtime_ns, .. } => {
                 format!("{size}:{mtime_ns}")
@@ -232,7 +236,7 @@ impl Candidate {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Detection {
-    pub kind: SourceKind,
+    pub kind: Harness,
     pub roots: Vec<PathBuf>,
     pub found: bool,
     pub bytes: u64,
@@ -240,8 +244,8 @@ pub struct Detection {
     pub has_parser: bool,
 }
 
-/// What exists on disk for a source, for setup and the dashboard.
-pub fn detect(kind: SourceKind, roots: &[PathBuf]) -> Detection {
+/// What exists on disk for a harness, for `distill harnesses` and setup.
+pub fn detect(kind: Harness, roots: &[PathBuf]) -> Detection {
     let mut bytes = 0;
     let mut files = 0;
     let mut found = false;
@@ -275,15 +279,15 @@ fn mtime_ns(meta: &fs::Metadata) -> i128 {
         .unwrap_or(0)
 }
 
-/// List capture candidates under a source's roots.
-pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candidate>> {
+/// List capture candidates under a harness's roots.
+pub fn discover(kind: Harness, roots: &[PathBuf]) -> anyhow::Result<Vec<Candidate>> {
     let mut out = Vec::new();
     for root in roots {
         if !root.exists() {
             continue;
         }
         match kind {
-            SourceKind::OpenCode => {
+            Harness::OpenCode => {
                 let db = if root.is_dir() {
                     root.join("opencode.db")
                 } else {
@@ -293,19 +297,19 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                     out.extend(crate::normalize::opencode::list_sessions(&db)?);
                 }
             }
-            SourceKind::T3Code => {
+            Harness::T3Code => {
                 if root.is_file() {
                     out.extend(crate::normalize::t3code::list_threads(root)?);
                 }
             }
-            SourceKind::Goose => {
+            Harness::Goose => {
                 if root.is_file() {
                     out.extend(crate::normalize::goose::list_sessions(root)?);
                 }
             }
             // Hermes keeps every session in `state.db` too (more of them than it writes out as
             // files); it is exported one session at a time, not copied whole.
-            SourceKind::Hermes
+            Harness::Hermes
                 if root.is_file()
                     && [".db", ".sqlite", ".sqlite3"]
                         .iter()
@@ -334,7 +338,7 @@ pub fn discover(kind: SourceKind, roots: &[PathBuf]) -> anyhow::Result<Vec<Candi
                     }
                     // Cursor makes an ACP session folder for every connection; only the ones
                     // that held a conversation have a store beside their `meta.json`.
-                    if kind == SourceKind::Cursor
+                    if kind == Harness::Cursor
                         && name == "meta.json"
                         && path.components().any(|c| c.as_os_str() == "acp-sessions")
                         && !path.with_file_name("store.db").exists()
@@ -382,33 +386,29 @@ pub enum PathEncoding {
 }
 
 /// Working directory encoded in a file's path, for harnesses that name folders after it: the
-/// first folder below the source root it was found under.
-pub fn path_cwd(
-    kind: SourceKind,
-    roots: &[PathBuf],
-    path: &Path,
-) -> Option<(String, PathEncoding)> {
+/// first folder below the harness root it was found under.
+pub fn path_cwd(kind: Harness, roots: &[PathBuf], path: &Path) -> Option<(String, PathEncoding)> {
     let rel = roots.iter().find_map(|r| path.strip_prefix(r).ok())?;
     let mut parts = rel.components();
     let first = parts.next()?.as_os_str().to_str()?.to_string();
     // A file directly in the root has no folder to read.
     parts.next()?;
     match kind {
-        SourceKind::ClaudeCode => Some((first, PathEncoding::DashSlashDot)),
-        SourceKind::Droid => first
+        Harness::ClaudeCode => Some((first, PathEncoding::DashSlashDot)),
+        Harness::Droid => first
             .starts_with('-')
             .then_some((first, PathEncoding::DashSlash)),
-        SourceKind::Grok => Some((percent_decode(&first), PathEncoding::Exact)),
+        Harness::Grok => Some((percent_decode(&first), PathEncoding::Exact)),
         _ => None,
     }
 }
 
-/// Sources whose sessions record no working directory at all, so exclusions can't be checked.
+/// Harnesses whose sessions record no working directory at all, so exclusions can't be checked.
 /// (Cursor's transcripts don't; its chat stores are databases, which fail closed anyway.)
-pub fn records_no_cwd(kind: SourceKind) -> bool {
+pub fn records_no_cwd(kind: Harness) -> bool {
     matches!(
         kind,
-        SourceKind::Antigravity | SourceKind::Hermes | SourceKind::Cursor
+        Harness::Antigravity | Harness::Hermes | Harness::Cursor
     )
 }
 
@@ -461,7 +461,7 @@ pub fn path_cwd_excluded(encoded: &str, enc: PathEncoding, exclude: &[String]) -
 
 /// Best-effort working directory of a session file, read from its first records, so excluded
 /// repos can be skipped before anything is copied.
-pub fn peek_cwd(kind: SourceKind, path: &Path) -> Option<String> {
+pub fn peek_cwd(kind: Harness, path: &Path) -> Option<String> {
     let mut buf = Vec::new();
     let file = fs::File::open(path).ok()?;
     // Compressed Codex sessions: read the head of the decompressed stream.
@@ -477,7 +477,7 @@ pub fn peek_cwd(kind: SourceKind, path: &Path) -> Option<String> {
 }
 
 /// The working directory a session's first records name, read from its bytes.
-pub fn cwd_in(kind: SourceKind, bytes: &[u8]) -> Option<String> {
+pub fn cwd_in(kind: Harness, bytes: &[u8]) -> Option<String> {
     let head = &bytes[..bytes.len().min(256 * 1024)];
     let text = String::from_utf8_lossy(head);
     for line in text.lines().take(50) {
@@ -485,7 +485,7 @@ pub fn cwd_in(kind: SourceKind, bytes: &[u8]) -> Option<String> {
             continue;
         };
         let cwd = match kind {
-            SourceKind::Codex => v.pointer("/payload/cwd"),
+            Harness::Codex => v.pointer("/payload/cwd"),
             _ => v.get("cwd"),
         };
         if let Some(s) = cwd.and_then(|c| c.as_str()) {
@@ -501,9 +501,9 @@ mod tests {
 
     #[test]
     fn config_names_match_ids() {
-        for k in SourceKind::ALL {
+        for k in Harness::ALL {
             assert_eq!(serde_json::to_value(k).unwrap(), k.id(), "{k:?}");
-            assert_eq!(SourceKind::parse(k.id()), Some(k));
+            assert_eq!(Harness::parse(k.id()), Some(k));
         }
     }
 }
