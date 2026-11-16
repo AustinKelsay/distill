@@ -8,6 +8,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 
 use super::{NOTICE_END, NOTICE_START, defuse, mask, scanned};
+use crate::config::Config;
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::model::{Event, EventKind, Originals, SessionMeta};
@@ -143,7 +144,8 @@ fn serve(
     page: Page,
     listed_rows: &mut u64,
 ) -> Result<Listed> {
-    let trust = Trust::new(&home.load_config().unwrap_or_default());
+    let config = home.load_config().unwrap_or_default();
+    let trust = Trust::new(&config);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Listed::Refused(why));
     }
@@ -160,7 +162,7 @@ fn serve(
         .skip(page.offset)
         .take(limit)
         .map(|facts| Row {
-            opening: opening(home, reader, &facts),
+            opening: opening(home, &config, reader, &facts),
             facts,
         })
         .collect();
@@ -182,8 +184,8 @@ const OPENING_CHARS: usize = 200;
 
 /// The opening of what the owner first wrote in `facts`, as the read path would serve it to
 /// `reader`.
-fn opening(home: &Home, reader: &Reader, facts: &SessionMeta) -> Opening {
-    let (events, scan) = match scanned(home, facts) {
+fn opening(home: &Home, config: &Config, reader: &Reader, facts: &SessionMeta) -> Opening {
+    let (events, scan) = match scanned(home, config, facts) {
         Ok(Ok(scanned)) => scanned,
         Ok(Err(why)) => return Opening::Withheld(why),
         Err(e) => return Opening::Withheld(format!("{} could not be read: {e:#}", facts.key())),

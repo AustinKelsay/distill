@@ -45,7 +45,7 @@ fn facts(home: &Home, id: &str) -> SessionMeta {
 fn findings_place_each_secret_and_never_hold_its_value() {
     let key = fake_key();
     let (_d, home) = home_with_sessions(&[&format!("use {key} for the deploy")]);
-    let r = scan_all(&home).unwrap();
+    let r = scan_all(&home, &Config::default()).unwrap();
     assert_eq!((r.sessions, r.scanned, r.current, r.failed), (1, 1, 0, 0));
     assert_eq!((r.findings, r.secrets), (3, 3));
 
@@ -133,7 +133,7 @@ fn the_key_is_made_on_first_use_owner_only_and_the_same_value_has_one_fingerprin
     assert!(FingerprintKey::existing(&home).unwrap().is_none());
     assert!(!home.fingerprint_key_path().exists());
 
-    scan_all(&home).unwrap();
+    scan_all(&home, &Config::default()).unwrap();
     assert!(home.fingerprint_key_path().exists());
     #[cfg(unix)]
     {
@@ -168,7 +168,7 @@ fn the_key_is_made_on_first_use_owner_only_and_the_same_value_has_one_fingerprin
     // A key file that is not a key fails, rather than being replaced.
     fs::write(home.fingerprint_key_path(), "not a key").unwrap();
     assert!(FingerprintKey::open(&home).is_err());
-    assert!(scan_all(&home).is_err());
+    assert!(scan_all(&home, &Config::default()).is_err());
 }
 
 #[test]
@@ -181,8 +181,8 @@ fn findings_go_out_of_date_when_what_they_were_made_from_changes() {
         "status creates nothing"
     );
 
-    assert_eq!(scan_all(&home).unwrap().scanned, 1);
-    let again = scan_all(&home).unwrap();
+    assert_eq!(scan_all(&home, &Config::default()).unwrap().scanned, 1);
+    let again = scan_all(&home, &Config::default()).unwrap();
     assert_eq!((again.scanned, again.current), (0, 1));
     let p = progress(&home).unwrap();
     assert_eq!((p.current, p.pending, p.secrets), (1, 0, 2));
@@ -193,33 +193,42 @@ fn findings_go_out_of_date_when_what_they_were_made_from_changes() {
         ("capture_hash", serde_json::json!("0".repeat(64))),
         ("parser", serde_json::json!(999)),
         ("key", serde_json::json!("0123456789abcdef")),
+        ("personal_terms", serde_json::json!("0123456789abcdef")),
     ] {
         let mut f: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         f["made_from"][field] = other;
         fs::write(&path, f.to_string()).unwrap();
         assert_eq!(progress(&home).unwrap().pending, 1, "{field}");
-        assert_eq!(scan_all(&home).unwrap().scanned, 1, "{field}");
-        assert_eq!(scan_all(&home).unwrap().current, 1, "{field}");
+        assert_eq!(
+            scan_all(&home, &Config::default()).unwrap().scanned,
+            1,
+            "{field}"
+        );
+        assert_eq!(
+            scan_all(&home, &Config::default()).unwrap().current,
+            1,
+            "{field}"
+        );
     }
 
     // A new key changes every fingerprint at the next scan.
     let old = load(&home, &facts(&home, "s0")).unwrap();
     fs::remove_file(home.fingerprint_key_path()).unwrap();
-    assert_eq!(scan_all(&home).unwrap().scanned, 1);
+    assert_eq!(scan_all(&home, &Config::default()).unwrap().scanned, 1);
     let new = load(&home, &facts(&home, "s0")).unwrap();
     assert_ne!(old.findings[0].fingerprint, new.findings[0].fingerprint);
 
     // A file that can't be read is missing.
     fs::write(&path, "{").unwrap();
-    assert_eq!(scan_all(&home).unwrap().scanned, 1);
+    assert_eq!(scan_all(&home, &Config::default()).unwrap().scanned, 1);
 }
 
 #[test]
 fn a_short_form_finds_every_fingerprint_it_starts() {
     let key = fake_key();
     let (_d, home) = home_with_sessions(&[&format!("use {key}")]);
-    scan_all(&home).unwrap();
+    scan_all(&home, &Config::default()).unwrap();
     let f = load(&home, &facts(&home, "s0")).unwrap();
     let fp = f.findings[0].fingerprint.clone();
     let short = fp.short().to_string();
@@ -236,4 +245,76 @@ fn a_short_form_finds_every_fingerprint_it_starts() {
     assert!(lookup(&home, &short[..2]).unwrap().contains(&fp));
     assert!(lookup(&home, "").unwrap().is_empty());
     assert!(lookup(&home, "zz").unwrap().is_empty());
+}
+
+#[test]
+fn personal_details_are_stored_beside_the_secrets_with_their_own_kinds() {
+    let key = fake_key();
+    let (_d, home) = home_with_sessions(&[&format!(
+        "mail jane@example.com about Project Falcon, then use {key}"
+    )]);
+    let mut config = Config::default();
+    config.privacy.personal_terms = vec!["project falcon".into()];
+    config.save(&home.config_path()).unwrap();
+    let r = scan_all(&home, &config).unwrap();
+    assert_eq!((r.findings, r.secrets), (5, 3));
+
+    let s0 = facts(&home, "s0");
+    let f = load(&home, &s0).unwrap();
+    let text = normalize::read_events(&home, &s0).unwrap()[0]
+        .text
+        .clone()
+        .unwrap();
+    let in_text: Vec<_> = f
+        .in_event(0)
+        .map(|x| (x.kind, x.is_secret(), &text[x.start..x.end]))
+        .collect();
+    assert_eq!(
+        in_text,
+        [
+            (Kind::Email, false, "jane@example.com"),
+            (Kind::PersonalTerm, false, "Project Falcon"),
+            (Kind::AnthropicKey, true, key.as_str()),
+        ]
+    );
+    let file = fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s0")).unwrap();
+    for value in ["jane@example.com", "Falcon", "falcon"] {
+        assert!(!file.contains(value), "{file}");
+    }
+    let stored: serde_json::Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(stored["findings"][0]["kind"], "email");
+    assert_eq!(stored["findings"][1]["kind"], "personal_term");
+    // The same address has one fingerprint wherever it appears.
+    let email = &f.findings[0].fingerprint;
+    assert_eq!(
+        *email,
+        FingerprintKey::open(&home)
+            .unwrap()
+            .fingerprint("jane@example.com")
+    );
+
+    // Changing the list makes every session's findings out of date.
+    assert_eq!(progress(&home).unwrap().pending, 0);
+    config.privacy.personal_terms.push("Acme".into());
+    config.save(&home.config_path()).unwrap();
+    assert_eq!(progress(&home).unwrap().pending, 1);
+    assert_eq!(scan_all(&home, &config).unwrap().scanned, 1);
+    assert_eq!(scan_all(&home, &config).unwrap().current, 1);
+    // Back to no terms: the term is no longer found.
+    assert_eq!(scan_all(&home, &Config::default()).unwrap().scanned, 1);
+    let f = load(&home, &s0).unwrap();
+    assert!(f.findings.iter().all(|x| x.kind != Kind::PersonalTerm));
+}
+
+#[test]
+fn the_detector_is_told_the_personal_terms_and_the_owners_username() {
+    let mut config = Config::default();
+    config.privacy.personal_terms = vec!["Acme".into()];
+    let owner = owner(&config);
+    assert_eq!(owner.terms, ["Acme"]);
+    let home = crate::home::user_home().unwrap();
+    assert_eq!(
+        owner.username.as_deref(),
+        home.file_name().and_then(|n| n.to_str())
+    );
 }

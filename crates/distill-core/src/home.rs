@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::config::Config;
 use crate::harness::Harness;
-use crate::util::{safe_component, set_private};
+use crate::util::{create_dir_private, private_file, safe_component, set_private};
 
 /// A Distill home directory. `DISTILL_HOME` overrides the default `~/distill`.
 ///
@@ -25,7 +25,7 @@ use crate::util::{safe_component, set_private};
 ///   state/                       state_dir: locks and progress markers
 ///   log/reads.jsonl              read_log_path
 ///   runs/                        runs_dir: the run log
-///   reveals/                     reveals_dir: one file per reveal request
+///   reveals/                     reveals_dir: one file per reveal request (reveal_path)
 ///   keys/fingerprint.key         fingerprint_key_path
 /// ```
 ///
@@ -62,7 +62,7 @@ impl Home {
             self.runs_dir(),
             self.state_dir(),
         ] {
-            fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+            create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
             set_private(&dir);
         }
         Ok(())
@@ -124,6 +124,11 @@ impl Home {
     pub fn reveals_dir(&self) -> PathBuf {
         self.root.join("reveals")
     }
+    /// One reveal request's file, by its ID.
+    pub fn reveal_path(&self, id: &str) -> PathBuf {
+        self.reveals_dir()
+            .join(format!("{}.json", safe_component(id)))
+    }
     pub fn keys_dir(&self) -> PathBuf {
         self.root.join("keys")
     }
@@ -171,9 +176,9 @@ impl Home {
 
 fn lock_at(path: &Path, name: &str) -> Result<fs::File> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        create_dir_private(dir)?;
     }
-    let f = fs::OpenOptions::new()
+    let f = private_file()
         .create(true)
         .truncate(false)
         .write(true)
@@ -213,6 +218,7 @@ mod tests {
         assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");
         assert_eq!(p(h.runs_dir()), "/h/runs");
         assert_eq!(p(h.reveals_dir()), "/h/reveals");
+        assert_eq!(p(h.reveal_path("0a1b")), "/h/reveals/0a1b.json");
         assert_eq!(p(h.fingerprint_key_path()), "/h/keys/fingerprint.key");
         assert_eq!(
             p(h.findings_lock_path(k, id)),

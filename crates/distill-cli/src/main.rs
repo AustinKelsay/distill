@@ -45,6 +45,8 @@ enum Cmd {
     Parse(parse::Args),
     /// Scan every session whose findings are missing or out of date for secrets
     Scan(scan::Args),
+    /// Findings by fingerprint: the rotation list, or where one fingerprint appears
+    Findings(findings::Args),
     /// What the timer runs: every step of a tick, in order
     Tick(tick::Args),
     /// Sessions, capture health and format drift per harness, the last sweep, scan and index progress
@@ -59,8 +61,13 @@ enum Cmd {
     Reads(reads::Args),
     /// Search sessions by exact words as a model at a named provider
     Search(search::Args),
+    /// Ask for a secret's value as a model, and collect it once the owner approves in the GUI
+    Reveal(reveal::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
+    /// Whether Distill is no more exposed than the harness folders: file modes, the fingerprint
+    /// key, synced folders and network listeners
+    Exposure(exposure::Args),
     /// Open the Distill window
     Gui(gui::Args),
 }
@@ -88,6 +95,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Verify(a) => verify::run(&ctx, a),
         Cmd::Parse(a) => parse::run(&ctx, a),
         Cmd::Scan(a) => scan::run(&ctx, a),
+        Cmd::Findings(a) => findings::run(&ctx, a),
         Cmd::Tick(a) => tick::run(&ctx, a),
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),
@@ -95,7 +103,9 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Search(a) => search::run(&ctx, a),
+        Cmd::Reveal(a) => reveal::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
+        Cmd::Exposure(a) => exposure::run(&ctx, a),
         Cmd::Gui(a) => gui::run(&ctx, a),
     }
 }

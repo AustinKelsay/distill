@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use super::list::{LEFT_OUT, facts_line, opening_line, opening_of};
 use super::{Filter, NOTICE_END, NOTICE_START, Opening, PAGE_MAX, Page, defuse, mask, scanned};
+use crate::config::Config;
 use crate::findings::{Field, Finding, Findings};
 use crate::home::Home;
 use crate::index;
@@ -210,7 +211,8 @@ fn serve(
     page: Page,
     served: &mut u64,
 ) -> Result<Searched> {
-    let trust = Trust::new(&home.load_config().unwrap_or_default());
+    let config = home.load_config().unwrap_or_default();
+    let trust = Trust::new(&config);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Searched::Refused(why));
     }
@@ -233,7 +235,7 @@ fn serve(
         .into_iter()
         .skip(page.offset)
         .take(limit)
-        .map(|m| hit(home, reader, candidates[&m.key], m, &words))
+        .map(|m| hit(home, &config, reader, candidates[&m.key], m, &words))
         .collect();
     *served = hits.len() as u64;
     let end = page.offset + hits.len();
@@ -250,14 +252,21 @@ fn serve(
 }
 
 /// One hit, read through the read path for `reader`.
-fn hit(home: &Home, reader: &Reader, facts: &SessionMeta, m: Merged, words: &[String]) -> Hit {
+fn hit(
+    home: &Home,
+    config: &Config,
+    reader: &Reader,
+    facts: &SessionMeta,
+    m: Merged,
+    words: &[String],
+) -> Hit {
     let withheld = |why: String| Hit {
         facts: facts.clone(),
         opening: Opening::Withheld(why),
         passage: None,
         found_by: m.found_by.clone(),
     };
-    let (events, scan) = match scanned(home, facts) {
+    let (events, scan) = match scanned(home, config, facts) {
         Ok(Ok(scanned)) => scanned,
         Ok(Err(why)) => return withheld(why),
         Err(e) => return withheld(format!("{} could not be read: {e:#}", facts.key())),

@@ -1,7 +1,7 @@
 //! The detector as text in, findings out. The secret cases come from the previous build's
 //! redactor suite (`agent-driven-final`, `redact.rs`): where it asserted what replaced a secret,
-//! these assert the span and kind found in the original text. Its personal-detail cases are for
-//! #77; its assertions that only checked the rewriting (JSON still valid, untouched bytes, key
+//! these assert the span and kind found in the original text, for secrets and personal details
+//! alike. Its assertions that only checked the rewriting (JSON still valid, untouched bytes, key
 //! collisions) are dropped.
 //!
 //! Every secret here is fake. Values shaped like real credentials are built from pieces at run
@@ -10,6 +10,15 @@
 use serde_json::json;
 
 use super::*;
+
+/// What a detector that knows nothing about the owner finds.
+fn detect(text: &str) -> Vec<Hit> {
+    Detector::default().detect(text)
+}
+
+fn detect_value(v: &Value) -> Vec<ValueHit> {
+    Detector::default().detect_value(v)
+}
 
 /// What `detect` finds: each hit's kind and the bytes of `text` it covers.
 fn found(text: &str) -> Vec<(Kind, String)> {
@@ -307,7 +316,7 @@ fn assignment_values_are_found_whole_in_json() {
         ),
         // Classified by the key as written.
         (
-            r#"{"tail0c0ffe-password":"synthetic-secret"}"#,
+            r#"{"tab0c0ffe-password":"synthetic-secret"}"#,
             Kind::CredentialField,
             "synthetic-secret",
             "synthetic",
@@ -663,7 +672,7 @@ fn json_is_read_token_by_token() {
     );
 
     // A JSON value is read by the key as written, and long numbers in any form are found.
-    let v = json!({"tail0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12,
+    let v = json!({"tab0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12,
         "secret": ["synthetic-a"], "api_key": {"type": "string"}});
     assert_eq!(
         places(&v),
@@ -675,7 +684,7 @@ fn json_is_read_token_by_token() {
                 "synthetic-a".into()
             ),
             (
-                "/tail0c0ffe-password".into(),
+                "/tab0c0ffe-password".into(),
                 false,
                 Kind::CredentialField,
                 "synthetic-secret".into()
@@ -809,4 +818,236 @@ fn leaves_ordinary_text_alone() {
 fn a_hit_never_prints_its_value() {
     let h = &detect("password=synthetic-value")[0];
     assert!(!format!("{h:?}").contains("synthetic"), "{h:?}");
+}
+
+// Personal details (#77). The previous build's cases, with made-up addresses and tailnets.
+
+/// What a detector told about an owner finds.
+fn found_for(owner: &Owner, text: &str) -> Vec<(Kind, String)> {
+    Detector::new(owner)
+        .detect(text)
+        .iter()
+        .map(|h| (h.kind, text[h.range.clone()].to_string()))
+        .collect()
+}
+
+#[test]
+fn catches_personal_and_network_identifiers() {
+    let text = "mail alice@proton.me, ssh box.tail1234.ts.net or 100.101.2.3, OTHER.tail1.TS.NET, noreply+bob@proton.me; \
+                clone git@github.com:o/r.git, from noreply@anthropic.com, NO-REPLY@example.com, not 10.0.0.1";
+    assert_eq!(
+        found(text),
+        [
+            (Kind::Email, "alice@proton.me".into()),
+            (Kind::TailnetHost, "box.tail1234.ts.net".into()),
+            (Kind::TailnetAddress, "100.101.2.3".into()),
+            (Kind::TailnetHost, "OTHER.tail1.TS.NET".into()),
+            (Kind::Email, "noreply+bob@proton.me".into()),
+        ]
+    );
+}
+
+#[test]
+fn catches_slugged_addresses_and_cut_off_tailnet_names() {
+    let text = "contacts: jane-roe-gmail-com, user123-protonmail-com, J-Doe-OUTLOOK-com; \
+                ssh -L 1:2 me@box-a1b2.tail0c0f\nshot-gateway-tail0c0ffe-ts-net.png; \
+                on tailnet `tailbe9c07`, tailed and tailing stay; \
+                keep 2026-01-01-help-me, alice-drink-me, sys-subsystem-net, detail-view, \
+                git clone git@github.com:my-github-org/my-repo.git; gh api orgs/my-github-org/repos";
+    assert_eq!(
+        found(text),
+        [
+            (Kind::EmailSlug, "jane-roe-gmail-com".into()),
+            (Kind::EmailSlug, "user123-protonmail-com".into()),
+            (Kind::EmailSlug, "J-Doe-OUTLOOK-com".into()),
+            (Kind::TailnetName, "box-a1b2.tail0c0f".into()),
+            (Kind::TailnetName, "shot-gateway-tail0c0ffe-ts-net".into()),
+            (Kind::TailnetName, "tailbe9c07".into()),
+        ]
+    );
+
+    // Any domain, when an address follows: a contact list. The previous build found the address
+    // already rewritten; on the original text the address is a finding of its own.
+    assert_eq!(
+        found("unknown: jdoe-example-org ['jdoe@example.org'] []\npm-sync-org stays"),
+        [
+            (Kind::EmailSlug, "jdoe-example-org".into()),
+            (Kind::Email, "jdoe@example.org".into()),
+        ]
+    );
+    // A service's address after a slug is no address of a person's.
+    assert_eq!(found("my-github-org via git@github.com:x/y.git"), []);
+    // Too far away, or on the next line.
+    assert_eq!(
+        found(&format!(
+            "jdoe-example-org{}jdoe@example.org",
+            " ".repeat(41)
+        )),
+        [(Kind::Email, "jdoe@example.org".into())]
+    );
+    assert_eq!(
+        found("jdoe-example-org\njdoe@example.org"),
+        [(Kind::Email, "jdoe@example.org".into())]
+    );
+}
+
+#[test]
+fn other_hostnames_addresses_and_phone_numbers_are_not_personal_details() {
+    for text in [
+        "ping 10.0.0.1, 192.168.1.20, 8.8.8.8, 100.63.255.255 and 100.128.0.1",
+        "version 1.100.2 and 100.64.300.1",
+        "open https://example.com/docs and api.github.com, box.local, localhost:3000",
+        "call +1 (555) 010-0199 or 555-0100",
+        "my-github-org, pm-sync-org, release-2026-01-01",
+        "\\n@router.get(\"/s\")",
+    ] {
+        assert_eq!(found(text), [], "{text}");
+    }
+}
+
+#[test]
+fn tailnet_addresses_in_either_range_are_found() {
+    assert_eq!(
+        found(
+            "100.64.0.1 100.127.255.254 fd7a:115c:a1e0:ab12:4843:cd96:6258:b240 FD7A:115C:A1E0::1"
+        ),
+        hits(
+            Kind::TailnetAddress,
+            &[
+                "100.64.0.1",
+                "100.127.255.254",
+                "fd7a:115c:a1e0:ab12:4843:cd96:6258:b240",
+                "FD7A:115C:A1E0::1"
+            ]
+        )
+    );
+}
+
+#[test]
+fn identifiers_are_found_in_json_keys_and_escaped_text() {
+    let v =
+        json!({"alice@proton.me": "active", "box.tail1234.ts.net": "100.101.2.3", "plain": "x"});
+    assert_eq!(
+        places(&v),
+        [
+            (
+                "/alice@proton.me".into(),
+                true,
+                Kind::Email,
+                "alice@proton.me".into()
+            ),
+            (
+                "/box.tail1234.ts.net".into(),
+                false,
+                Kind::TailnetAddress,
+                "100.101.2.3".into()
+            ),
+            (
+                "/box.tail1234.ts.net".into(),
+                true,
+                Kind::TailnetHost,
+                "box.tail1234.ts.net".into()
+            ),
+        ]
+    );
+    // JSON cut short is read as text: an escape before an address is not part of it.
+    let text = r#"{"a":"x\nalice@example.com\tbob@example.org"#;
+    assert_eq!(
+        found(text),
+        hits(Kind::Email, &["alice@example.com", "bob@example.org"])
+    );
+}
+
+#[test]
+fn a_secret_always_wins_over_a_personal_detail() {
+    let key = tinfoil();
+    // Same place: the secret.
+    assert_eq!(
+        found("password=alice@example.com"),
+        hits(Kind::AssignedSecret, &["alice@example.com"])
+    );
+    // A personal detail around or across a secret is dropped, so the secret is masked whole.
+    let ant = ["sk-", "ant-", "api03-", &"Zz9".repeat(9)].concat();
+    assert_eq!(
+        found(&format!("{ant}@example.com")),
+        [(Kind::AnthropicKey, ant)]
+    );
+    assert_eq!(
+        found_for(
+            &Owner {
+                username: None,
+                terms: vec![format!("acme {key}")],
+            },
+            &format!("acme {key} here")
+        ),
+        [(Kind::TinfoilKey, key)]
+    );
+}
+
+#[test]
+fn the_owners_username_is_found_inside_paths() {
+    let owner = Owner {
+        username: Some("jdoe".into()),
+        terms: Vec::new(),
+    };
+    let text =
+        r#"cd /Users/jdoe/proj; ls /home/JDoe; C:\Users\jdoe\src and "C:\\Users\\jdoe\\x"; ~/x"#;
+    assert_eq!(
+        found_for(&owner, text),
+        hits(Kind::Username, &["jdoe", "JDoe", "jdoe", "jdoe"])
+    );
+    // Only as the folder itself, and only after a home folder.
+    assert_eq!(
+        found_for(
+            &owner,
+            "/Users/jdoe2/x /Users/xjdoe /srv/jdoe/x; jdoe wrote it; /Users/jdoe.old"
+        ),
+        []
+    );
+    // A detector told nothing about the owner finds no username.
+    assert_eq!(found("/Users/jdoe/proj"), []);
+}
+
+#[test]
+fn personal_terms_match_whole_words_ignoring_case() {
+    let owner = Owner {
+        username: None,
+        terms: vec![
+            "Acme".into(),
+            "  ".into(),
+            "Acme Labs".into(),
+            "Project Falcon".into(),
+            "@zed".into(),
+            "ACME".into(),
+        ],
+    };
+    let text = "acme, ACME Labs; project  falcon at Acmes or acmecorp, ping @zed and x@zedd";
+    assert_eq!(
+        found_for(&owner, text),
+        hits(
+            Kind::PersonalTerm,
+            &["acme", "ACME Labs", "project  falcon", "@zed"]
+        )
+    );
+    // In JSON cut short, after an escape.
+    assert_eq!(
+        found_for(&owner, r#"{"a":"x\nAcme"#),
+        hits(Kind::PersonalTerm, &["Acme"])
+    );
+}
+
+#[test]
+fn personal_details_are_not_secrets() {
+    for kind in [
+        Kind::Email,
+        Kind::EmailSlug,
+        Kind::TailnetHost,
+        Kind::TailnetName,
+        Kind::TailnetAddress,
+        Kind::Username,
+        Kind::PersonalTerm,
+    ] {
+        assert_eq!(kind.class(), Class::PersonalDetail, "{kind:?}");
+    }
+    assert_eq!(Kind::Jwt.class(), Class::Secret);
 }

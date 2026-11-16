@@ -117,7 +117,12 @@ impl Writer {
         let dir = path.parent().context("a segment path has no folder")?;
         let tmp = path.with_extension("tmp");
         let mut out = BufWriter::new(
-            File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?,
+            crate::util::private_file()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)
+                .with_context(|| format!("create {}", tmp.display()))?,
         );
         out.write_all(MAGIC)?;
         out.write_all(&u32::try_from(sessions.len())?.to_le_bytes())?;
@@ -187,7 +192,6 @@ impl Writer {
         out.write_all(MAGIC)?;
         let file = out.into_inner()?;
         file.sync_all()?;
-        crate::util::set_private(&tmp);
         fs::rename(&tmp, &path).with_context(|| format!("put {} in place", path.display()))?;
         Ok(table_start + table_len + FOOTER)
     }

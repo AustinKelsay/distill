@@ -23,11 +23,12 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
-use crate::detect::{self, Class, DETECTOR_VERSION, Kind};
-use crate::home::Home;
+use crate::config::Config;
+use crate::detect::{self, Class, DETECTOR_VERSION, Detector, Kind, Owner};
+use crate::home::{self, Home};
 use crate::model::{Event, SessionMeta};
 use crate::normalize;
-use crate::util::{set_private, sync_dir, write_json_pretty};
+use crate::util::{create_dir_private, private_file, set_private, sync_dir, write_json_pretty};
 
 /// A keyed hash of a finding's value: the same wherever that value appears, and the value cannot
 /// be recovered from it. Stored whole (64 hex characters); readers are shown [`short`](Self::short).
@@ -106,7 +107,7 @@ impl FingerprintKey {
 /// replaced.
 fn create_key(home: &Home) -> Result<()> {
     let dir = home.keys_dir();
-    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
     set_private(&home.root);
     set_private(&dir);
     let mut key = [0u8; 32];
@@ -130,11 +131,9 @@ fn create_key(home: &Home) -> Result<()> {
 
 /// Create `path`, readable by the owner only from the start, holding `bytes`.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut opts = fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut f = opts
+    let mut f = private_file()
+        .write(true)
+        .create_new(true)
         .open(path)
         .with_context(|| format!("create {}", path.display()))?;
     f.write_all(bytes)?;
@@ -193,18 +192,47 @@ pub struct MadeFrom {
     pub parser: u32,
     /// The fingerprint key's [`id`](FingerprintKey::id).
     pub key: String,
+    /// A hash of the config's `personal_terms`, with the owner's username, which the detector
+    /// is told beside them ([`owner`]).
+    pub personal_terms: String,
 }
 
 impl MadeFrom {
-    /// What findings for `facts` would be made from now.
-    pub fn current(facts: &SessionMeta, key: &FingerprintKey) -> Self {
+    /// What findings for `facts` would be made from now, with `config`.
+    pub fn current(facts: &SessionMeta, key: &FingerprintKey, config: &Config) -> Self {
         Self {
             detector: DETECTOR_VERSION,
             capture_hash: facts.raw.sha256.clone(),
             parser: facts.normalizer.version,
             key: key.id(),
+            personal_terms: personal_terms_hash(&owner(config)),
         }
     }
+}
+
+/// What the detector is told about the owner: the config's `personal_terms`, and the owner's
+/// username, the name of their home folder.
+pub fn owner(config: &Config) -> Owner {
+    let username = home::user_home()
+        .ok()
+        .and_then(|h| h.file_name()?.to_str().map(str::to_string));
+    Owner {
+        username,
+        terms: config.privacy.personal_terms.clone(),
+    }
+}
+
+/// Names what the detector was told about the owner without holding it: a findings file is not
+/// a list of the owner's terms.
+fn personal_terms_hash(owner: &Owner) -> String {
+    use sha2::Digest;
+    let mut h = Sha256::new();
+    for part in owner.username.iter().chain(&owner.terms) {
+        h.update((part.len() as u64).to_le_bytes());
+        h.update(part.as_bytes());
+    }
+    h.update([owner.username.is_some() as u8]);
+    hex::encode(h.finalize())[..16].to_string()
 }
 
 /// A session's findings file.
@@ -218,9 +246,9 @@ pub struct Findings {
 }
 
 impl Findings {
-    /// Whether these findings are current for `facts` with `key`.
-    pub fn is_current(&self, facts: &SessionMeta, key: &FingerprintKey) -> bool {
-        self.session == facts.key() && self.made_from == MadeFrom::current(facts, key)
+    /// Whether these findings are current for `facts` with `key` and `config`.
+    pub fn is_current(&self, facts: &SessionMeta, key: &FingerprintKey, config: &Config) -> bool {
+        self.session == facts.key() && self.made_from == MadeFrom::current(facts, key, config)
     }
     /// The findings in one event.
     pub fn in_event(&self, seq: u64) -> impl Iterator<Item = &Finding> {
@@ -228,35 +256,64 @@ impl Findings {
     }
 }
 
-/// Everything the detector finds in `events`, placed and fingerprinted.
-pub fn find(events: &[Event], key: &FingerprintKey) -> Vec<Finding> {
-    let mut out = Vec::new();
-    for e in events {
-        if let Some(text) = &e.text {
-            out.extend(detect::detect(text).into_iter().map(|h| Finding {
-                event: e.seq,
-                field: Field::Text,
-                start: h.range.start,
-                end: h.range.end,
-                kind: h.kind,
-                fingerprint: key.fingerprint(&h.value),
-            }));
-        }
-        if let Some(input) = &e.input {
-            out.extend(detect::detect_value(input).into_iter().map(|v| Finding {
-                event: e.seq,
-                field: Field::Input {
-                    pointer: v.pointer,
-                    key: v.key,
-                },
-                start: v.hit.range.start,
-                end: v.hit.range.end,
-                kind: v.hit.kind,
-                fingerprint: key.fingerprint(&v.hit.value),
-            }));
-        }
-    }
-    out
+/// Everything `detector` finds in `events`, placed and fingerprinted.
+pub fn find(events: &[Event], key: &FingerprintKey, detector: &Detector) -> Vec<Finding> {
+    placed(events, key, detector).map(|(f, _)| f).collect()
+}
+
+/// The value of each secret in `events` whose fingerprint is in `wanted`, by fingerprint, with
+/// its kind. Values come only from running the detector over the stored text again; nothing
+/// stores them. Only a reveal the owner approved asks for them (`crate::reveal`).
+pub(crate) fn values(
+    events: &[Event],
+    key: &FingerprintKey,
+    detector: &Detector,
+    wanted: &BTreeSet<Fingerprint>,
+) -> std::collections::BTreeMap<Fingerprint, (Kind, String)> {
+    placed(events, key, detector)
+        .filter(|(f, _)| f.is_secret() && wanted.contains(&f.fingerprint))
+        .map(|(f, value)| (f.fingerprint, (f.kind, value)))
+        .collect()
+}
+
+/// Each finding in `events` with the value it was made from.
+fn placed<'a>(
+    events: &'a [Event],
+    key: &'a FingerprintKey,
+    detector: &'a Detector,
+) -> impl Iterator<Item = (Finding, String)> + 'a {
+    events.iter().flat_map(move |e| {
+        let in_text = e.text.iter().flat_map(move |text| {
+            detector.detect(text).into_iter().map(move |h| {
+                let f = Finding {
+                    event: e.seq,
+                    field: Field::Text,
+                    start: h.range.start,
+                    end: h.range.end,
+                    kind: h.kind,
+                    fingerprint: key.fingerprint(&h.value),
+                };
+                (f, h.value)
+            })
+        });
+        let in_input = e.input.iter().flat_map(move |input| {
+            detector.detect_value(input).into_iter().map(move |v| {
+                let f = Finding {
+                    event: e.seq,
+                    field: Field::Input {
+                        pointer: v.pointer,
+                        key: v.key,
+                    },
+                    start: v.hit.range.start,
+                    end: v.hit.range.end,
+                    kind: v.hit.kind,
+                    fingerprint: key.fingerprint(&v.hit.value),
+                };
+                (f, v.hit.value)
+            })
+        });
+        in_text.chain(in_input)
+    })
 }
 
 /// A session's findings file as stored, current or not. A file that can't be read counts as
@@ -270,28 +327,32 @@ pub fn load(home: &Home, facts: &SessionMeta) -> Option<Findings> {
 /// a new scan of `events`, stored before it is returned.
 pub(crate) fn current_or_scan(
     home: &Home,
+    config: &Config,
     facts: &SessionMeta,
     events: &[Event],
 ) -> Result<Findings> {
     let key = FingerprintKey::open(home)?;
-    if let Some(f) = load(home, facts).filter(|f| f.is_current(facts, &key)) {
+    if let Some(f) = load(home, facts).filter(|f| f.is_current(facts, &key, config)) {
         return Ok(f);
     }
-    scan(home, facts, events, &key)
+    let detector = Detector::new(&owner(config));
+    scan(home, config, facts, events, &key, &detector)
 }
 
 /// Scan `events` and replace the session's findings file whole. The per-session lock is held
 /// only for the write, so a read never waits on a tick's scan of other sessions.
 fn scan(
     home: &Home,
+    config: &Config,
     facts: &SessionMeta,
     events: &[Event],
     key: &FingerprintKey,
+    detector: &Detector,
 ) -> Result<Findings> {
     let findings = Findings {
         session: facts.key(),
-        made_from: MadeFrom::current(facts, key),
-        findings: find(events, key),
+        made_from: MadeFrom::current(facts, key, config),
+        findings: find(events, key, detector),
     };
     let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
     write_json_pretty(
@@ -335,8 +396,8 @@ impl ScanReport {
     }
 }
 
-/// Scan every session whose findings are missing or out of date, with no limit.
-pub fn scan_all(home: &Home) -> Result<ScanReport> {
+/// Scan every session whose findings are missing or out of date with `config`, with no limit.
+pub fn scan_all(home: &Home, config: &Config) -> Result<ScanReport> {
     let sessions = normalize::read_session_list(home)?;
     let mut r = ScanReport {
         sessions: sessions.len() as u64,
@@ -346,13 +407,14 @@ pub fn scan_all(home: &Home) -> Result<ScanReport> {
         return Ok(r);
     }
     let key = FingerprintKey::open(home)?;
+    let detector = Detector::new(&owner(config));
     for facts in &sessions {
-        if load(home, facts).is_some_and(|f| f.is_current(facts, &key)) {
+        if load(home, facts).is_some_and(|f| f.is_current(facts, &key, config)) {
             r.current += 1;
             continue;
         }
-        let scanned =
-            normalize::read_events(home, facts).and_then(|events| scan(home, facts, &events, &key));
+        let scanned = normalize::read_events(home, facts)
+            .and_then(|events| scan(home, config, facts, &events, &key, &detector));
         match scanned {
             Ok(f) => {
                 r.scanned += 1;
@@ -381,7 +443,9 @@ pub struct ScanProgress {
 }
 
 /// Scan progress over the session list. Creates nothing: with no key yet, nothing is current.
+/// With no config, or one that can't be read, the owner has no `personal_terms`.
 pub fn progress(home: &Home) -> Result<ScanProgress> {
+    let config = home.load_config().unwrap_or_default();
     let sessions = normalize::read_session_list(home)?;
     let key = FingerprintKey::existing(home).ok().flatten();
     let mut p = ScanProgress {
@@ -390,7 +454,7 @@ pub fn progress(home: &Home) -> Result<ScanProgress> {
     };
     for facts in &sessions {
         match (&key, load(home, facts)) {
-            (Some(k), Some(f)) if f.is_current(facts, k) => {
+            (Some(k), Some(f)) if f.is_current(facts, k, &config) => {
                 p.current += 1;
                 p.secrets += f.findings.iter().filter(|f| f.is_secret()).count() as u64;
             }

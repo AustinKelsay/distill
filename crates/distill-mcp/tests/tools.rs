@@ -72,7 +72,17 @@ fn it_offers_list_read_and_search_tools_whose_descriptions_say_session_text_is_d
     let tools = rpc(&s, "tools/list", json!({}));
     let tools = tools["result"]["tools"].as_array().unwrap();
     let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_sessions", "read_session", "search_sessions"]);
+    assert_eq!(
+        names,
+        [
+            "list_sessions",
+            "read_session",
+            "search_sessions",
+            "list_findings",
+            "request_reveal",
+            "collect_reveal"
+        ]
+    );
     for t in tools {
         let d = t["description"].as_str().unwrap();
         assert!(
@@ -220,6 +230,81 @@ fn a_trusted_model_searches_sessions_by_words_narrowed_by_filters() {
     }
 }
 
+/// The server's home with a second session that holds a fake key, built at run time so no secret
+/// scanner mistakes this file for a leak, and scanned.
+fn with_secret(s: &Server, key: &str) {
+    let said = serde_json::to_string(&format!("deploy with {key}")).unwrap();
+    let body = format!(
+        r#"{{"type":"user","cwd":"/work/app","timestamp":"2026-11-12T10:00:00Z","message":{{"role":"user","content":{said}}}}}
+"#
+    );
+    Archive::open(&s.home)
+        .unwrap()
+        .put(
+            Harness::ClaudeCode,
+            "/s/proj/s2.jsonl",
+            "1",
+            body.as_bytes(),
+        )
+        .unwrap();
+    distill_core::normalize::normalize(&s.home, false).unwrap();
+    distill_core::findings::scan_all(&s.home, &s.home.load_config().unwrap_or_default()).unwrap();
+}
+
+#[test]
+fn a_trusted_model_lists_findings_by_fingerprint_and_where_one_appears() {
+    let key = ["sk-", "ant-", "api03-", &"Wd2".repeat(9)].concat();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = server(tmp.path(), ollama());
+    with_secret(&s, &key);
+
+    let (err, t) = call(&s, "list_findings", json!({}));
+    assert!(!err, "{t}");
+    assert!(
+        t.contains("anthropic_key") && t.contains("1 session") && t.contains("claude-code"),
+        "{t}"
+    );
+    let short = t
+        .split('#')
+        .nth(1)
+        .map(|r| r[..8].to_string())
+        .unwrap_or_else(|| panic!("no short form: {t}"));
+    let (err, found) = call(&s, "list_findings", json!({"fingerprint": short}));
+    assert!(
+        !err && found.contains("claude-code/s2") && !found.contains("claude-code/s1 "),
+        "{found}"
+    );
+
+    let (_, t) = call(
+        &s,
+        "list_findings",
+        json!({"kind": "all", "harness": "claude-code", "since": "2026-11-01",
+               "until": "2026-11-30", "sort": "recent", "offset": 0, "limit": 5}),
+    );
+    assert!(t.contains(&short), "{t}");
+    let (_, t) = call(&s, "list_findings", json!({"kind": "personal"}));
+    assert!(t.contains("No fingerprints match"), "{t}");
+    for (args, says) in [
+        (json!({"kind": "tea_leaves"}), "unknown kind"),
+        (json!({"sort": "loudest"}), "sort"),
+        (json!({"harness": "nope"}), "harness"),
+        (json!({"since": "last week"}), "YYYY-MM-DD"),
+        (json!({"limit": 0}), "limit"),
+    ] {
+        let (err, t) = call(&s, "list_findings", args.clone());
+        assert!(err && t.contains(says), "{args}: {t}");
+    }
+
+    // The four calls that reached the read path are in its log, one line each.
+    let log = distill_core::readlog::list(&s.home, None, usize::MAX).unwrap();
+    let results: Vec<_> = log
+        .iter()
+        .map(|e| serde_json::to_value(e).unwrap()["result"].clone())
+        .collect();
+    assert_eq!(results, ["findings", "findings", "findings", "findings"]);
+    assert!(log.iter().all(|e| e.reader == ollama()));
+}
+
 /// Every tool, with arguments that a trusted reader would be served.
 fn every_tool(s: &Server) -> Vec<(String, Value)> {
     let tools = rpc(s, "tools/list", json!({}));
@@ -232,6 +317,12 @@ fn every_tool(s: &Server) -> Vec<(String, Value)> {
             let args = match name.as_str() {
                 "read_session" => json!({"session": "claude-code/s1"}),
                 "search_sessions" => json!({"query": "widget"}),
+                "request_reveal" => json!({
+                    "session": "claude-code/s1",
+                    "fingerprints": ["0123abcd"],
+                    "reason": "rotate it"
+                }),
+                "collect_reveal" => json!({"request": "0123456789abcdef"}),
                 _ => json!({}),
             };
             (name, args)
@@ -249,7 +340,7 @@ fn with_no_provider_or_an_untrusted_one_every_tool_returns_the_refusal_and_nothi
         let tmp = tempfile::tempdir().unwrap();
         let s = server(tmp.path(), reader.clone());
         let calls = every_tool(&s);
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 6);
         for (tool, args) in calls {
             let (err, t) = call(&s, &tool, args);
             assert!(err, "{reader:?} {tool}: {t}");

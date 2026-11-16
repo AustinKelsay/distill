@@ -185,7 +185,7 @@ fn an_entry_is_rebuilt_when_its_secret_findings_change() {
 
     // A new fingerprint key: every fingerprint, so every placeholder, changes.
     fs::remove_file(home.fingerprint_key_path()).unwrap();
-    crate::findings::scan_all(&home).unwrap();
+    crate::findings::scan_all(&home, &home.load_config().unwrap_or_default()).unwrap();
     assert_eq!(progress(&home).unwrap().pending, 1);
     assert_eq!(build(&home).unwrap().indexed, 1);
     let new = short(&home);

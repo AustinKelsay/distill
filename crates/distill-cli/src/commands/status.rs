@@ -30,6 +30,10 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             s.index.pending,
             human_bytes(s.index.bytes)
         );
+        println!(
+            "reveals: {} waiting for the owner in the GUI",
+            distill_core::util::count(s.pending_reveals, "request")
+        );
         for h in &s.harnesses {
             println!(
                 "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",

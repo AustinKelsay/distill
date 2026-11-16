@@ -28,6 +28,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::Config;
 use crate::findings::{Findings, FingerprintKey};
 use crate::home::Home;
 use crate::model::{Event, SessionMeta};
@@ -127,6 +128,7 @@ fn load(home: &Home) -> Manifest {
 /// no current findings, nothing is current: the read path would scan the session first.
 fn is_current(
     home: &Home,
+    config: &Config,
     key: Option<&FingerprintKey>,
     facts: &SessionMeta,
     entry: Option<&Entry>,
@@ -140,7 +142,7 @@ fn is_current(
         return false;
     }
     crate::findings::load(home, facts)
-        .filter(|f| f.is_current(facts, key))
+        .filter(|f| f.is_current(facts, key, config))
         .is_some_and(|f| MadeFrom::of(facts, &f) == entry.made_from)
 }
 
@@ -185,9 +187,7 @@ impl IndexReport {
 /// the read path as Distill itself (one read-log line for the whole build), and drop entries whose
 /// session is gone. One writer at a time.
 pub fn build(home: &Home) -> Result<IndexReport> {
-    fs::create_dir_all(dir(home))?;
-    crate::util::set_private(&home.index_dir());
-    crate::util::set_private(&dir(home));
+    crate::util::create_dir_private(&dir(home))?;
     let _lock = home.lock("index")?;
     let sessions = normalize::read_session_list(home)?;
     let mut m = load(home);
@@ -200,10 +200,11 @@ pub fn build(home: &Home) -> Result<IndexReport> {
     m.entries.retain(|k, _| keys.contains(k));
     r.removed = (before - m.entries.len()) as u64;
 
+    let config = home.load_config().unwrap_or_default();
     let key = FingerprintKey::existing(home).ok().flatten();
     let pending: Vec<SessionMeta> = sessions
         .into_iter()
-        .filter(|f| !is_current(home, key.as_ref(), f, m.entries.get(&f.key())))
+        .filter(|f| !is_current(home, &config, key.as_ref(), f, m.entries.get(&f.key())))
         .collect();
     r.current = r.sessions - pending.len() as u64;
 
@@ -641,10 +642,11 @@ pub struct IndexProgress {
 pub fn progress(home: &Home) -> Result<IndexProgress> {
     let sessions = normalize::read_session_list(home)?;
     let m = load(home);
+    let config = home.load_config().unwrap_or_default();
     let key = FingerprintKey::existing(home).ok().flatten();
     let current = sessions
         .iter()
-        .filter(|f| is_current(home, key.as_ref(), f, m.entries.get(&f.key())))
+        .filter(|f| is_current(home, &config, key.as_ref(), f, m.entries.get(&f.key())))
         .count() as u64;
     Ok(IndexProgress {
         sessions: sessions.len() as u64,

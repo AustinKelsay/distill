@@ -1,13 +1,14 @@
 //! The read log (`log/reads.jsonl`): one line for every call to the read path, refusals included,
-//! saying when, which reader, which session and what it got. It never holds session text. It
-//! cannot be rebuilt from the raw archive.
+//! saying when, which reader, which session and what it got, and one line for each step of a
+//! reveal request. It never holds session text or a secret's value. It cannot be rebuilt from
+//! the raw archive.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::home::Home;
 use crate::trust::Reader;
-use crate::util::{append_jsonl, read_jsonl, set_private};
+use crate::util::{append_jsonl, create_dir_private, read_jsonl, set_private};
 
 /// One line of the read log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,10 +36,35 @@ pub enum ReadResult {
     /// Distill itself read this many sessions, and this many of their events, to build the word
     /// index: one line per tick.
     Indexed { sessions: u64, events: u64 },
+    /// A reveal request was filed for these secrets, by their short fingerprints (`crate::reveal`).
+    RevealRequested {
+        request: String,
+        secrets: Vec<String>,
+    },
+    /// The owner approved the reader's reveal request, in the GUI.
+    RevealApproved { request: String },
+    /// The owner denied the reader's reveal request, in the GUI.
+    RevealDenied { request: String },
+    /// The reader collected the values of its approved request, this many of them. Never the
+    /// values themselves.
+    RevealCollected { request: String, secrets: u64 },
+    /// The reader's request passed its 24 hours before it was answered or collected.
+    RevealExpired { request: String },
+    /// Findings by fingerprint: this many fingerprints, and the sessions listed for them (none
+    /// for the rotation list, which gives counts). Never a value or session text.
+    Findings {
+        fingerprints: u64,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        sessions: u64,
+    },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.
     Failed { error: String },
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl ReadEntry {
@@ -63,7 +89,7 @@ impl ReadEntry {
 /// Append one line. The read path serves nothing it could not log.
 pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
     let dir = home.log_dir();
-    std::fs::create_dir_all(&dir)?;
+    create_dir_private(&dir)?;
     set_private(&dir);
     append_jsonl(&home.read_log_path(), entry)
 }
