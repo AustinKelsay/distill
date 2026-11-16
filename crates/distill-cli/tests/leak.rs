@@ -135,8 +135,19 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
             "m",
         ],
         &["reads"],
+        &["findings"],
+        &["findings", "--kind", "all", "--sort", "recent"],
     ] {
         step(args, true);
+    }
+    // Where each fingerprint appears, by its short form.
+    let (_, listed) = m.run(&["--json", "findings", "--kind", "all"]);
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let rows = listed["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{listed}");
+    for r in rows {
+        let short = r["fingerprint"].as_str().unwrap()[..8].to_string();
+        step(&["findings", &short], true);
     }
     // Refused reads print nothing of the session either.
     step(&["read", "leak1"], false);

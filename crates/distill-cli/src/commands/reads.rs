@@ -26,6 +26,19 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 ReadResult::Listed { sessions } => {
                     format!("listed {}", distill_core::util::count(*sessions, "session"))
                 }
+                ReadResult::Findings {
+                    fingerprints,
+                    sessions,
+                } => {
+                    let mut s = format!(
+                        "listed {}",
+                        distill_core::util::count(*fingerprints, "fingerprint")
+                    );
+                    if *sessions > 0 {
+                        s += &format!(" in {}", distill_core::util::count(*sessions, "session"));
+                    }
+                    s
+                }
                 ReadResult::Refused { reason } => format!("refused: {reason}"),
                 ReadResult::Failed { error } => format!("failed: {error}"),
             };
@@ -33,7 +46,10 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 "{}  {:<28} {:<36} {result}",
                 e.at,
                 e.reader.to_string(),
-                e.session.as_deref().unwrap_or("(a list of sessions)")
+                e.session.as_deref().unwrap_or(match e.result {
+                    ReadResult::Findings { .. } => "(findings)",
+                    _ => "(a list of sessions)",
+                })
             );
         }
     })
