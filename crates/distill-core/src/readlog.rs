@@ -4,11 +4,12 @@
 //! the raw archive.
 
 use anyhow::Result;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::home::Home;
 use crate::trust::Reader;
-use crate::util::{append_jsonl, create_dir_private, read_jsonl, set_private};
+use crate::util::{append_jsonl, count, create_dir_private, read_jsonl, set_private};
 
 /// One line of the read log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,11 +98,247 @@ pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
 /// The read log, newest first, only `who`'s lines when given (see [`ReadEntry::is_by`]), at
 /// most `limit` of them.
 pub fn list(home: &Home, who: Option<&str>, limit: usize) -> Result<Vec<ReadEntry>> {
+    find(
+        home,
+        &LogFilter {
+            reader: who.map(str::to_string),
+            ..LogFilter::default()
+        },
+        limit,
+    )
+}
+
+/// Which lines of the read log. Every filter that is set must match.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogFilter {
+    /// Only this reader's lines (see [`ReadEntry::is_by`]).
+    pub reader: Option<String>,
+    /// Lines written on or after this day (UTC).
+    pub since: Option<NaiveDate>,
+    /// Lines written on or before this day (UTC).
+    pub until: Option<NaiveDate>,
+}
+
+impl LogFilter {
+    fn matches(&self, e: &ReadEntry) -> bool {
+        let day = || {
+            DateTime::parse_from_rfc3339(&e.at)
+                .ok()
+                .map(|t| t.with_timezone(&Utc).date_naive())
+        };
+        self.reader.as_deref().is_none_or(|w| e.is_by(w))
+            && self.since.is_none_or(|s| day().is_some_and(|d| d >= s))
+            && self.until.is_none_or(|u| day().is_some_and(|d| d <= u))
+    }
+}
+
+/// The lines of the read log that match `filter`, newest first, at most `limit` of them.
+pub fn find(home: &Home, filter: &LogFilter, limit: usize) -> Result<Vec<ReadEntry>> {
     let mut lines: Vec<ReadEntry> = read_jsonl(&home.read_log_path())?;
     lines.reverse();
     Ok(lines
         .into_iter()
-        .filter(|e| who.is_none_or(|w| e.is_by(w)))
+        .filter(|e| filter.matches(e))
         .take(limit)
         .collect())
+}
+
+impl ReadResult {
+    /// What the reader got, as one line: `served 3 events`, `reveal <id> approved by the owner`.
+    pub fn text(&self) -> String {
+        match self {
+            ReadResult::Served { events } => format!("served {}", count(*events, "event")),
+            ReadResult::Listed { sessions } => format!("listed {}", count(*sessions, "session")),
+            ReadResult::Indexed { sessions, events } => format!(
+                "indexed {}, {}",
+                count(*sessions, "session"),
+                count(*events, "event")
+            ),
+            ReadResult::RevealRequested { request, secrets } => {
+                let fps: Vec<String> = secrets.iter().map(|s| format!("#{s}")).collect();
+                format!("reveal {request} requested: {}", fps.join(" "))
+            }
+            ReadResult::RevealApproved { request } => {
+                format!("reveal {request} approved by the owner")
+            }
+            ReadResult::RevealDenied { request } => format!("reveal {request} denied by the owner"),
+            ReadResult::RevealCollected { request, secrets } => {
+                format!("reveal {request} collected: {}", count(*secrets, "value"))
+            }
+            ReadResult::RevealExpired { request } => format!("reveal {request} expired"),
+            ReadResult::Findings {
+                fingerprints,
+                sessions,
+            } => {
+                let mut s = format!("listed {}", count(*fingerprints, "fingerprint"));
+                if *sessions > 0 {
+                    s += &format!(" in {}", count(*sessions, "session"));
+                }
+                s
+            }
+            ReadResult::Refused { reason } => format!("refused: {reason}"),
+            ReadResult::Failed { error } => format!("failed: {error}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(home: &Home, at: &str, reader: Reader, result: ReadResult) {
+        append(
+            home,
+            &ReadEntry {
+                at: at.into(),
+                reader,
+                session: Some("claude-code/s1".into()),
+                result,
+            },
+        )
+        .unwrap();
+    }
+
+    fn day(s: &str) -> chrono::NaiveDate {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn the_log_is_filtered_by_reader_and_by_the_day_each_line_was_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let cloud = || Reader::model(Some("example-cloud"), Some("m"));
+        line(
+            &home,
+            "2026-11-10T23:59:00Z",
+            Reader::Owner,
+            ReadResult::Served { events: 3 },
+        );
+        line(
+            &home,
+            "2026-11-11T08:00:00Z",
+            cloud(),
+            ReadResult::Served { events: 1 },
+        );
+        line(
+            &home,
+            "2026-11-12T08:00:00Z",
+            cloud(),
+            ReadResult::RevealApproved {
+                request: "ab".into(),
+            },
+        );
+        line(
+            &home,
+            "2026-11-13T00:00:00Z",
+            Reader::Owner,
+            ReadResult::Listed { sessions: 2 },
+        );
+
+        let all = find(&home, &LogFilter::default(), 100).unwrap();
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0].at, "2026-11-13T00:00:00Z", "newest first");
+
+        let f = LogFilter {
+            reader: Some("example-cloud".into()),
+            ..LogFilter::default()
+        };
+        assert_eq!(find(&home, &f, 100).unwrap().len(), 2);
+
+        let f = LogFilter {
+            since: Some(day("2026-11-11")),
+            until: Some(day("2026-11-12")),
+            ..LogFilter::default()
+        };
+        let got: Vec<String> = find(&home, &f, 100)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.at)
+            .collect();
+        assert_eq!(got, ["2026-11-12T08:00:00Z", "2026-11-11T08:00:00Z"]);
+
+        let f = LogFilter {
+            reader: Some("owner".into()),
+            since: Some(day("2026-11-11")),
+            until: None,
+        };
+        assert_eq!(find(&home, &f, 100).unwrap().len(), 1);
+        assert_eq!(find(&home, &LogFilter::default(), 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn each_result_reads_as_one_line() {
+        let cases = [
+            (ReadResult::Served { events: 1 }, "served 1 event"),
+            (ReadResult::Listed { sessions: 2 }, "listed 2 sessions"),
+            (
+                ReadResult::Indexed {
+                    sessions: 2,
+                    events: 9,
+                },
+                "indexed 2 sessions, 9 events",
+            ),
+            (
+                ReadResult::RevealRequested {
+                    request: "ab".into(),
+                    secrets: vec!["a1b2c3d4".into()],
+                },
+                "reveal ab requested: #a1b2c3d4",
+            ),
+            (
+                ReadResult::RevealApproved {
+                    request: "ab".into(),
+                },
+                "reveal ab approved by the owner",
+            ),
+            (
+                ReadResult::RevealDenied {
+                    request: "ab".into(),
+                },
+                "reveal ab denied by the owner",
+            ),
+            (
+                ReadResult::RevealCollected {
+                    request: "ab".into(),
+                    secrets: 1,
+                },
+                "reveal ab collected: 1 value",
+            ),
+            (
+                ReadResult::RevealExpired {
+                    request: "ab".into(),
+                },
+                "reveal ab expired",
+            ),
+            (
+                ReadResult::Findings {
+                    fingerprints: 3,
+                    sessions: 0,
+                },
+                "listed 3 fingerprints",
+            ),
+            (
+                ReadResult::Findings {
+                    fingerprints: 1,
+                    sessions: 2,
+                },
+                "listed 1 fingerprint in 2 sessions",
+            ),
+            (
+                ReadResult::Refused {
+                    reason: "no".into(),
+                },
+                "refused: no",
+            ),
+            (
+                ReadResult::Failed {
+                    error: "boom".into(),
+                },
+                "failed: boom",
+            ),
+        ];
+        for (r, want) in cases {
+            assert_eq!(r.text(), want);
+        }
+    }
 }

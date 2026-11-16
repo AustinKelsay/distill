@@ -1,0 +1,62 @@
+      title: Distill
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        heading: Findings
+      text: Every value found in the archive, by fingerprint: what to rotate, and where it appears. Values are never shown here; open a session to see one.
+          filter-kind-trigger: Kind
+            text: Secrets: the rotation list
+          filter-harness-trigger: Harness
+            text: Any harness
+          filter-order-trigger: Sort
+            text: Most sessions first
+              input: 
+              input: 
+          apply: Apply
+            label: Apply
+        summary: 4 fingerprints
+        pending: 3 sessions not scanned yet, or scanned by an older detector, so not counted here; the next tick scans them.
+            fingerprint: #a1a1a1a1
+            kinds: ‹anthropic key›
+            spread: 4 sessions
+            facts: Claude Code, Codex · First seen Sep 2, 2026, last seen Nov 14, 2026
+              session: claude-code/5d1f0c2a
+              facts: Claude Code · /work/app · started Nov 14, 2026 17:02 UTC · events 0, 14
+              open-where-0: Open session
+                label: Open session
+              session: codex/rollout-0042
+              facts: Codex · /work/app · started Nov 2, 2026 09:30 UTC · event 3
+              open-where-1: Open session
+                label: Open session
+              session: claude-code/9e8a7b10
+              facts: Claude Code · /work/infra · started Oct 11, 2026 13:15 UTC · event 7
+              open-where-2: Open session
+                label: Open session
+              session: claude-code/1a2b3c4d
+              facts: Claude Code · /work/app · started Sep 2, 2026 09:14 UTC · events 1, 2, 9
+              open-where-3: Open session
+                label: Open session
+            fingerprint: #b2b2b2b2
+            kinds: ‹github token›
+            spread: 2 sessions
+            facts: Claude Code · First seen Oct 20, 2026, last seen Nov 3, 2026
+            fingerprint: #c3c3c3c3
+            kinds: ‹assigned secret›
+            spread: 1 session
+            facts: Codex · First seen Nov 12, 2026, last seen Nov 12, 2026
+            fingerprint: #d4d4d4d4
+            kinds: ‹bearer› ‹credential field›
+            spread: 1 session
+            facts: T3 Code · First seen Aug 30, 2026, last seen Aug 30, 2026

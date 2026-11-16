@@ -3,7 +3,6 @@
 pub mod approvals;
 pub mod findings;
 pub mod overview;
-pub mod placeholder;
 pub mod read_log;
 pub mod sessions;
 pub mod setup;

@@ -22,6 +22,7 @@ use rune::{El, TextEdit};
 
 use crate::State;
 use crate::jobs::{self, Job};
+use crate::nav::{self, Screen};
 use crate::ui::Paint;
 
 #[cfg(test)]
@@ -125,6 +126,8 @@ pub struct Open {
     pub loaded: Loaded,
     /// The findings shown, by mark id; all others are covered.
     pub revealed: BTreeSet<String>,
+    /// The screen it was opened from, when not the list: Back returns there.
+    pub from: Option<Screen>,
 }
 
 impl Open {
@@ -317,6 +320,7 @@ pub fn open_row(s: &mut State, i: usize) {
         row,
         loaded: Loaded::Loading,
         revealed: BTreeSet::new(),
+        from: None,
     });
     s.ask(Job::new("read session", move |core| {
         let r = read::read(
@@ -354,11 +358,59 @@ pub fn land(s: &mut State, key: &str, loaded: Loaded) {
     }
 }
 
-/// Close the open session: every finding in it is covered again next time.
+/// Open the session `key` from another screen (Findings, Approvals): read it as the owner, then
+/// show it here, where Back returns to `from`. A refusal or failure is handed to `failed`, for
+/// the screen that asked, and nothing moves.
+pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, String)) {
+    let key = key.to_string();
+    s.ask(Job::new("read session", move |core| {
+        let r = read::read(
+            &core.home,
+            &core.runtime,
+            &Reader::Owner,
+            &key,
+            Range::default(),
+        );
+        let got = match r {
+            Ok(Read::Events(x)) => {
+                let row = ResultRow {
+                    facts: x.facts.clone(),
+                    card: None,
+                    opening: Opening::None,
+                    opening_findings: Vec::new(),
+                    passage: None,
+                };
+                Ok((row, loaded(Ok(Read::Events(x)))))
+            }
+            Ok(Read::Refused(why)) => Err(format!("Could not open {key}: {why}")),
+            Ok(Read::Text(_)) => Err("the read path answered as for a model".into()),
+            Err(e) => Err(format!("Could not open {key}: {}", jobs::line(e))),
+        };
+        Box::new(move |s: &mut State| match got {
+            Ok((row, loaded)) => {
+                s.sessions.menu = None;
+                s.sessions.open = Some(Open {
+                    key: row.facts.key(),
+                    row,
+                    loaded,
+                    revealed: BTreeSet::new(),
+                    from: Some(from),
+                });
+                nav::go(s, Screen::Sessions);
+            }
+            Err(e) => failed(s, e),
+        })
+    }));
+}
+
+/// Close the open session: every finding in it is covered again next time. A session opened
+/// from another screen goes back to it.
 pub fn close(s: &mut State) {
-    s.sessions.open = None;
-    if s.sessions.results.is_none() {
-        search(s);
+    let from = s.sessions.open.take().and_then(|o| o.from);
+    match from {
+        Some(screen) => nav::go(s, screen),
+        None if s.sessions.results.is_none() => search(s),
+        None => {}
     }
 }
 

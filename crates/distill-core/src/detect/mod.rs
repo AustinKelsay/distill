@@ -95,6 +95,35 @@ pub enum Class {
 }
 
 impl Kind {
+    /// Every kind, secrets first, in the order above: for a face's kind filter.
+    pub const ALL: [Kind; 25] = [
+        Kind::PrivateKey,
+        Kind::AnthropicKey,
+        Kind::OpenaiKey,
+        Kind::GithubToken,
+        Kind::AwsAccessKey,
+        Kind::SlackToken,
+        Kind::TinfoilKey,
+        Kind::GoogleApiKey,
+        Kind::StripeKey,
+        Kind::Jwt,
+        Kind::NostrSecret,
+        Kind::Bearer,
+        Kind::AssignedSecret,
+        Kind::CredentialField,
+        Kind::Email,
+        Kind::EmailSlug,
+        Kind::TailnetHost,
+        Kind::TailnetName,
+        Kind::TailnetAddress,
+        Kind::Username,
+        Kind::PersonalTerm,
+        Kind::PersonName,
+        Kind::PostalAddress,
+        Kind::PhoneNumber,
+        Kind::Organization,
+    ];
+
     pub fn class(self) -> Class {
         match self {
             Kind::Email

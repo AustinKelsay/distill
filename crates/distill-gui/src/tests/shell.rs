@@ -39,11 +39,16 @@ fn the_navigation_lists_the_six_screens_and_moves_between_them() {
 }
 
 #[test]
-fn screens_later_tickets_build_say_they_are_not_yet_available() {
+fn every_screen_is_built() {
     let mut rt = runtime(fixture::running());
-    for id in ["findings", "approvals", "read-log"] {
-        press(&mut rt, &format!("nav-{id}"));
-        assert!(shows(&rt, "Not yet available"), "{id}: {:?}", texts(&rt));
+    for entry in SCREENS {
+        press(&mut rt, &format!("nav-{}", entry.id));
+        assert!(
+            !shows(&rt, "Not yet available"),
+            "{}: {:?}",
+            entry.label,
+            texts(&rt)
+        );
     }
 }
 

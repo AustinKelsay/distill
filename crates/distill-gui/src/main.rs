@@ -158,7 +158,8 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
     for land in landed {
         land(s);
     }
-    if let Some(wait) = overview::refresh(s, clock) {
+    let waits = [overview::refresh(s, clock), approvals::refresh(s, clock)];
+    if let Some(wait) = waits.into_iter().flatten().reduce(f64::min) {
         tx.wake_after(Duration::from_secs_f64(wait));
     }
     if let Some(link) = &s.link {

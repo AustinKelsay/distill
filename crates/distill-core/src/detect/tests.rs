@@ -1051,3 +1051,43 @@ fn personal_details_are_not_secrets() {
     }
     assert_eq!(Kind::Jwt.class(), Class::Secret);
 }
+
+#[test]
+fn every_kind_is_listed_once_and_its_name_reads_back() {
+    let mut names: Vec<&str> = Kind::ALL.iter().map(|k| k.name()).collect();
+    for k in Kind::ALL {
+        let back: Kind = serde_json::from_value(serde_json::json!(k.name())).unwrap();
+        assert_eq!(back, k);
+        // A match with no wildcard: a new kind fails to compile here until it is listed.
+        match k {
+            Kind::PrivateKey
+            | Kind::AnthropicKey
+            | Kind::OpenaiKey
+            | Kind::GithubToken
+            | Kind::AwsAccessKey
+            | Kind::SlackToken
+            | Kind::TinfoilKey
+            | Kind::GoogleApiKey
+            | Kind::StripeKey
+            | Kind::Jwt
+            | Kind::NostrSecret
+            | Kind::Bearer
+            | Kind::AssignedSecret
+            | Kind::CredentialField
+            | Kind::Email
+            | Kind::EmailSlug
+            | Kind::TailnetHost
+            | Kind::TailnetName
+            | Kind::TailnetAddress
+            | Kind::Username
+            | Kind::PersonalTerm
+            | Kind::PersonName
+            | Kind::PostalAddress
+            | Kind::PhoneNumber
+            | Kind::Organization => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), Kind::ALL.len());
+}

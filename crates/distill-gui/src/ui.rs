@@ -231,6 +231,23 @@ pub fn ago(rfc3339: &str, now: DateTime<Utc>) -> String {
     }
 }
 
+/// How long until `rfc3339`: "23 h 59 min left", "12 min left", "under a minute left", or
+/// "expired".
+pub fn left(rfc3339: &str, now: DateTime<Utc>) -> String {
+    let Ok(t) = DateTime::parse_from_rfc3339(rfc3339) else {
+        return "expired".to_string();
+    };
+    let secs = (t.with_timezone(&Utc) - now).num_seconds();
+    let (h, m) = (secs / 3600, secs % 3600 / 60);
+    match secs {
+        ..=0 => "expired".to_string(),
+        1..60 => "under a minute left".to_string(),
+        60..3600 => format!("{m} min left"),
+        _ if m == 0 => format!("{h} h left"),
+        _ => format!("{h} h {m} min left"),
+    }
+}
+
 /// A path with the user's home folder written as `~`.
 pub fn tilde(path: &std::path::Path) -> String {
     let s = path.to_string_lossy().into_owned();
@@ -258,5 +275,10 @@ mod tests {
         assert_eq!(ago("2026-11-13T11:48:00Z", now), "12 min ago");
         assert_eq!(ago("2026-11-13T09:00:00Z", now), "3 h ago");
         assert_eq!(ago("2026-11-12T09:00:00Z", now), "yesterday");
+        assert_eq!(left("2026-11-14T11:59:00Z", now), "23 h 59 min left");
+        assert_eq!(left("2026-11-13T15:00:00Z", now), "3 h left");
+        assert_eq!(left("2026-11-13T12:12:30Z", now), "12 min left");
+        assert_eq!(left("2026-11-13T12:00:20Z", now), "under a minute left");
+        assert_eq!(left("2026-11-13T11:00:00Z", now), "expired");
     }
 }

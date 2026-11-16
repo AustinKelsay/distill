@@ -11,9 +11,10 @@ use distill_core::status::{HarnessStatus, Health, Status, Warning, WarningKind};
 use distill_core::{Config, Harness, Home};
 
 use crate::State;
-use crate::nav::{self, Screen};
 
+mod reveals;
 mod sessions;
+pub use reveals::*;
 pub use sessions::*;
 
 /// Named fixture states for `--snap --scene`; the snapshot tests render each.
@@ -34,9 +35,11 @@ pub const SCENES: &[Scene] = &[
     ("sessions-search", |s| *s = sessions_searched()),
     ("sessions-open", |s| *s = session_covered()),
     ("sessions-open-shown", |s| *s = session_revealed()),
-    ("findings", |s| shown(s, Screen::Findings)),
-    ("approvals", |s| shown(s, Screen::Approvals)),
-    ("read-log", |s| shown(s, Screen::ReadLog)),
+    ("findings", |s| *s = findings_listed()),
+    ("findings-where", |s| *s = findings_where()),
+    ("approvals", |s| *s = approvals_waiting()),
+    ("approvals-confirm", |s| *s = approvals_confirming()),
+    ("read-log", |s| *s = read_log_listed()),
 ];
 
 /// 2026-11-15 12:00 UTC: "now" in every fixture.
@@ -46,7 +49,7 @@ pub fn clock() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-fn at(minutes_ago: i64) -> String {
+pub(crate) fn at(minutes_ago: i64) -> String {
     (clock() - chrono::Duration::minutes(minutes_ago))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
@@ -91,11 +94,6 @@ fn setup_step(s: &mut State, step: usize) {
         s.setup.draft.privacy.personal_terms = vec!["Northwind".into(), "Jo Example".into()];
         s.setup.draft.privacy.exclude_paths = vec!["~/work/client-x".into()];
     }
-}
-
-fn shown(s: &mut State, screen: Screen) {
-    *s = running();
-    nav::go(s, screen);
 }
 
 pub fn detections() -> Vec<Detection> {

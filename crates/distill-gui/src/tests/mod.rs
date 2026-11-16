@@ -2,7 +2,11 @@
 //! the tests that run the window's jobs do so against a temporary home, the fake local runtime
 //! and a stand-in for the timer installer, so no test reaches a real model or the real timer.
 
+mod approvals;
+mod findings;
+mod home;
 mod overview;
+mod read_log;
 mod sessions;
 mod setup;
 mod shell;
