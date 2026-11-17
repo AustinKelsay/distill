@@ -66,12 +66,16 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     out.push(Event::text(EventKind::System, s).at(ts(&v)));
                 }
             }
-            // The model's plan, repeated in full on every update: kept when it changes.
+            // The model's plan, repeated in full on every update: kept when it changes. Droid
+            // writes it as text under `todos.todos` (seen in a real archive); a list of steps
+            // is read too.
             "todo_state" => {
                 let body = nested(&v, "todo_state");
-                let items = ["todos", "items", "list"]
-                    .iter()
-                    .find_map(|k| body.get(*k).or_else(|| v.get(*k)));
+                let keys = ["todos", "items", "list"];
+                let mut items = keys.iter().find_map(|k| body.get(*k).or_else(|| v.get(*k)));
+                if let Some(inner) = items.and_then(|i| i.as_object()) {
+                    items = keys.iter().find_map(|k| inner.get(*k));
+                }
                 let lines = match items {
                     Some(Value::Array(items)) => items
                         .iter()
@@ -134,10 +138,11 @@ mod tests {
 {"type":"compaction_state","timestamp":"2026-10-01T00:00:00Z","summaryText":"We fixed the parser."}
 {"type":"todo_state","timestamp":"2026-10-01T00:00:01Z","todos":[{"content":"write test","status":"completed"},{"content":"ship","status":"in_progress"}]}
 {"type":"todo_state","timestamp":"2026-10-01T00:00:02Z","todos":[{"content":"write test","status":"completed"},{"content":"ship","status":"in_progress"}]}
-{"type":"todo_state","timestamp":"2026-10-01T00:00:03Z","todos":[{"content":"write test","status":"completed"},{"content":"ship","status":"completed"}]}"#;
+{"type":"todo_state","timestamp":"2026-10-01T00:00:03Z","todos":[{"content":"write test","status":"completed"},{"content":"ship","status":"completed"}]}
+{"type":"todo_state","id":"t4","messageIndex":9,"timestamp":"2026-10-01T00:00:04Z","todos":{"todos":"1. [completed] write test\n2. [completed] ship\n3. [pending] announce"}}"#;
         let p = parse(src.as_bytes()).unwrap();
         assert!(p.skipped.is_empty(), "{:?}", p.skipped);
-        assert_eq!(p.events.len(), 3);
+        assert_eq!(p.events.len(), 4);
         assert!(p.events.iter().all(|e| e.kind == EventKind::System));
         assert_eq!(p.events[0].text.as_deref(), Some("We fixed the parser."));
         assert_eq!(
@@ -147,6 +152,11 @@ mod tests {
         assert_eq!(
             p.events[2].text.as_deref(),
             Some("[done] write test\n[done] ship")
+        );
+        // The shape Droid writes: the plan as text under `todos.todos`.
+        assert_eq!(
+            p.events[3].text.as_deref(),
+            Some("1. [completed] write test\n2. [completed] ship\n3. [pending] announce")
         );
     }
 }
