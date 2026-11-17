@@ -600,7 +600,11 @@ fn the_session_under_way_at_the_deadline_is_finished_whole_and_the_rest_wait() {
         std::thread::sleep(std::time::Duration::from_millis(300));
         reply(&[])
     });
-    let deadline = Deadline::after(std::time::Duration::from_millis(150));
+    // The step's share passes during the first part; the tick's budget is not over.
+    let deadline = Deadline::between(
+        std::time::Duration::from_millis(150),
+        std::time::Duration::from_secs(60),
+    );
     let r = find(&home, &config, &slow.runtime(), deadline).unwrap();
     assert_eq!(
         prompts(&slow).len(),
@@ -618,4 +622,32 @@ fn the_session_under_way_at_the_deadline_is_finished_whole_and_the_rest_wait() {
     assert_eq!((r.current, r.written, r.failed), (1, 1, 0), "{r:?}");
     assert!(!r.stopped_at_deadline);
     assert_eq!(found(&home, "short").len(), 5, "Jane Roe is written twice");
+}
+
+#[test]
+fn a_session_still_under_way_when_the_ticks_budget_is_over_fails_as_too_long() {
+    let long = "the widget invoice is due ".repeat(PART_BUDGET / 20);
+    let (_d, home, mut config) = home_with(&[
+        ("long", "2026-11-02T10:00:00Z", &long),
+        ("short", "2026-11-01T10:00:00Z", SAID),
+    ]);
+    let slow = model(|_, _| {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        reply(&[])
+    });
+    let deadline = Deadline::after(std::time::Duration::from_millis(150));
+    let r = find(&home, &config, &slow.runtime(), deadline).unwrap();
+    assert_eq!(prompts(&slow).len(), 1, "it stops between its parts");
+    assert_eq!((r.written, r.failed), (0, 1), "{r:?}");
+    assert!(r.errors[0].ends_with(TOO_LONG), "{r:?}");
+    assert!(r.stopped_at_deadline, "the other session waits: {r:?}");
+    let failures = crate::model_step::load_failures(&home.detail_failures_path());
+    assert_eq!(failures["claude-code/long"].attempts, 1);
+
+    // Next time, the session never tried goes before the one that was too long.
+    config.steward.sessions_per_run = 1;
+    let fake = model(|_, _| careful());
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
+    assert_eq!(found(&home, "short").len(), 5);
 }

@@ -26,28 +26,51 @@ use crate::runtime::LocalRuntime;
 use crate::schedule;
 use crate::sweep;
 
-/// When a model step stops taking sessions. The session under way then is finished: cutting it
-/// off would start it over next tick, and one longer than a step's share would never be done.
+/// When a model step stops taking sessions, and when the tick's time is over. The session under
+/// way when the step's share passes is finished, since cutting it off would start it over next
+/// tick. Only once the tick's whole budget is over does the model detection pass stop between a
+/// session's parts, recording the session as too long for one tick so it goes behind the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Deadline(Option<Instant>);
+pub struct Deadline {
+    start_by: Option<Instant>,
+    finish_by: Option<Instant>,
+}
 
 impl Deadline {
     /// No deadline: the step takes up to `sessions_per_run` sessions however long they take.
-    pub const NONE: Deadline = Deadline(None);
+    pub const NONE: Deadline = Deadline {
+        start_by: None,
+        finish_by: None,
+    };
 
-    /// `budget` from now.
+    /// No session is started, and none is carried on, `budget` from now.
     pub fn after(budget: Duration) -> Self {
-        Deadline(Instant::now().checked_add(budget))
+        Self::between(budget, budget)
     }
 
+    /// No session is started `start` from now, and none is carried on `finish` from now.
+    pub fn between(start: Duration, finish: Duration) -> Self {
+        let now = Instant::now();
+        Deadline {
+            start_by: now.checked_add(start),
+            finish_by: now.checked_add(finish.max(start)),
+        }
+    }
+
+    /// The step takes no more sessions.
     pub fn passed(&self) -> bool {
-        self.0.is_some_and(|at| Instant::now() >= at)
+        self.start_by.is_some_and(|at| Instant::now() >= at)
+    }
+
+    /// The tick's budget is over: work under way stops where it can.
+    pub fn over(&self) -> bool {
+        self.finish_by.is_some_and(|at| Instant::now() >= at)
     }
 }
 
 /// How long the model steps of one tick may run, counted from the tick's start: half the timer's
-/// interval, so a tick ends well before the timer's next one is due even with a session still
-/// under way at the deadline.
+/// interval. Each model call is bounded by the runtime's own timeout, so the model steps end
+/// within the budget and one call, well before the timer's next tick on the hourly default.
 pub fn model_budget(config: &Config) -> Duration {
     Duration::from_secs(u64::from(schedule::interval_minutes(config)) * 60 / 2)
 }
@@ -261,7 +284,8 @@ pub fn tick_within(
         let deadline = match end {
             Some(end) if s.model => {
                 let sharing = STEPS[i..].iter().filter(|s| s.model).count() as u32;
-                Deadline::after(end.saturating_duration_since(Instant::now()) / sharing)
+                let left = end.saturating_duration_since(Instant::now());
+                Deadline::between(left / sharing, left)
             }
             _ => Deadline::NONE,
         };
@@ -557,9 +581,12 @@ mod tests {
         );
         let model: Vec<_> = STEPS.iter().filter(|s| s.model).map(|s| s.name).collect();
         assert_eq!(model, ["cards", "vectors", "details"]);
-        assert!(!Deadline::NONE.passed());
+        assert!(!Deadline::NONE.passed() && !Deadline::NONE.over());
         assert!(Deadline::after(Duration::ZERO).passed());
+        assert!(Deadline::after(Duration::ZERO).over());
         assert!(!Deadline::after(Duration::from_secs(60)).passed());
+        let share = Deadline::between(Duration::ZERO, Duration::from_secs(60));
+        assert!(share.passed() && !share.over());
         assert_eq!(Deadline::after(Duration::MAX), Deadline::NONE);
     }
 }

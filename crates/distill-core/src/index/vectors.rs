@@ -381,55 +381,52 @@ pub fn build(
     pending.truncate(config.steward.sessions_per_run);
     let pending: Vec<SessionMeta> = pending.into_iter().cloned().collect();
 
-    read::for_embedding(home, &model, &pending, |facts, served| {
-        if deadline.passed() {
-            r.stopped_at_deadline = true;
-            return Ok(ControlFlow::Break(()));
-        }
-        let (events, found, card) = match served {
-            Ok(s) => s,
-            Err(why) => {
-                changed |= store.sessions.remove(&facts.key()).is_some();
-                r.failed += 1;
-                r.errors.push(why);
-                return Ok(ControlFlow::Continue(()));
-            }
-        };
-        let texts = texts_of(&events, card.as_ref());
-        let made_from = MadeFrom::of(facts, found, card.as_ref());
-        match embed(runtime, &model, &texts, store.dims) {
-            Ok(vectors) => {
-                if store.dims == 0 && !vectors.is_empty() {
-                    store.dims = vectors.len() / texts.len();
+    r.stopped_at_deadline =
+        read::for_embedding(home, &model, &pending, deadline, |facts, served| {
+            let (events, found, card) = match served {
+                Ok(s) => s,
+                Err(why) => {
+                    changed |= store.sessions.remove(&facts.key()).is_some();
+                    r.failed += 1;
+                    r.errors.push(why);
+                    return Ok(ControlFlow::Continue(()));
                 }
-                store.sessions.insert(
-                    facts.key(),
-                    Session {
-                        made_from,
-                        events: texts.into_iter().map(|(e, _)| e).collect(),
-                        vectors,
-                    },
-                );
-                changed = true;
-                r.embedded += 1;
-                Ok(ControlFlow::Continue(()))
+            };
+            let texts = texts_of(&events, card.as_ref());
+            let made_from = MadeFrom::of(facts, found, card.as_ref());
+            match embed(runtime, &model, &texts, store.dims) {
+                Ok(vectors) => {
+                    if store.dims == 0 && !vectors.is_empty() {
+                        store.dims = vectors.len() / texts.len();
+                    }
+                    store.sessions.insert(
+                        facts.key(),
+                        Session {
+                            made_from,
+                            events: texts.into_iter().map(|(e, _)| e).collect(),
+                            vectors,
+                        },
+                    );
+                    changed = true;
+                    r.embedded += 1;
+                    Ok(ControlFlow::Continue(()))
+                }
+                // With the runtime gone, every other session would fail the same way, and none was
+                // sent.
+                Err(e @ (RuntimeError::NotRunning | RuntimeError::NotStoredHere(_))) => {
+                    r.failed += 1;
+                    r.errors
+                        .push(format!("{}: the model failed: {e}", facts.key()));
+                    Ok(ControlFlow::Break(()))
+                }
+                Err(e) => {
+                    r.failed += 1;
+                    r.errors
+                        .push(format!("{}: the model failed: {e}", facts.key()));
+                    Ok(ControlFlow::Continue(()))
+                }
             }
-            // With the runtime gone, every other session would fail the same way, and none was
-            // sent.
-            Err(e @ (RuntimeError::NotRunning | RuntimeError::NotStoredHere(_))) => {
-                r.failed += 1;
-                r.errors
-                    .push(format!("{}: the model failed: {e}", facts.key()));
-                Ok(ControlFlow::Break(()))
-            }
-            Err(e) => {
-                r.failed += 1;
-                r.errors
-                    .push(format!("{}: the model failed: {e}", facts.key()));
-                Ok(ControlFlow::Continue(()))
-            }
-        }
-    })?;
+        })?;
     if changed {
         write_atomic(&home.vectors_path(), &encode(&store)?)?;
     }
