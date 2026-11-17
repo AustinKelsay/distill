@@ -5,6 +5,7 @@ use crate::findings::Field;
 use crate::harness::Harness;
 use crate::read::{NOTICE_END, NOTICE_START, Range, Read};
 use crate::runtime::{Call, FakeRuntime, Stored};
+use crate::tick::Deadline;
 
 const MODEL: &str = "small:8b";
 
@@ -136,7 +137,7 @@ fn the_steward_sends_what_the_owner_and_the_agent_wrote_to_the_detail_model_and_
     let (_d, home, config) = home_with(&[("s1", "2026-11-10T10:00:00Z", SAID)]);
     let fake = model(|_, _| careful());
 
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!(
         (r.written, r.failed, r.skipped.as_deref()),
         (1, 0, None),
@@ -212,7 +213,7 @@ fn an_answer_not_written_in_what_the_owner_or_the_agent_wrote_is_dropped() {
             ("organization", "[secret: anthropic_key"),
         ])
     });
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.found, r.unplaced), (1, 2, 4), "{r:?}");
     assert_eq!(
         found(&home, "s1"),
@@ -274,7 +275,13 @@ fn a_reply_is_parsed_strictly() {
 #[test]
 fn each_pass_can_be_rerun_alone_and_neither_overwrites_the_other() {
     let (_d, home, mut config) = home_with(&[("s1", "2026-11-10T10:00:00Z", SAID)]);
-    find(&home, &config, &model(|_, _| careful()).runtime()).unwrap();
+    find(
+        &home,
+        &config,
+        &model(|_, _| careful()).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     let f = facts(&home, "s1");
     let before = crate::findings::load(&home, &f).unwrap();
     assert_eq!(before.model_findings().len(), 5);
@@ -299,7 +306,7 @@ fn each_pass_can_be_rerun_alone_and_neither_overwrites_the_other() {
     );
     // So the model pass does not run again.
     let fake = model(|_, _| panic!("asked again"));
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.current, r.written), (1, 0), "{r:?}");
 
     // Another model makes only the model's findings out of date; the pass rewrites them alone.
@@ -307,7 +314,7 @@ fn each_pass_can_be_rerun_alone_and_neither_overwrites_the_other() {
     let fake = FakeRuntime::running()
         .with_model("other:3b", Stored::Here)
         .replying(|_, _| reply(&[("phone_number", "555-0134")]));
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.found), (1, 1), "{r:?}");
     let again = crate::findings::load(&home, &f).unwrap();
     assert_eq!(
@@ -331,7 +338,13 @@ fn a_session_without_current_model_findings_is_still_served() {
 
     // Model findings for events that have since changed are out of date: still served, and the
     // owner is not given places that no longer fit.
-    find(&home, &config, &model(|_, _| careful()).runtime()).unwrap();
+    find(
+        &home,
+        &config,
+        &model(|_, _| careful()).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     let mut a = Archive::open(&home).unwrap();
     let longer = session(
         "s1",
@@ -352,7 +365,13 @@ fn a_session_without_current_model_findings_is_still_served() {
     assert_eq!(found(&home, "s1"), []);
     assert_eq!(progress(&home).unwrap().pending, 1);
     // The pass finds them again in the new events.
-    let r = find(&home, &config, &model(|_, _| careful()).runtime()).unwrap();
+    let r = find(
+        &home,
+        &config,
+        &model(|_, _| careful()).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
     assert_eq!(
         found(&home, "s1")[0],
@@ -369,7 +388,7 @@ fn sessions_get_the_pass_newest_first_up_to_sessions_per_run_and_never_twice() {
     ]);
     config.steward.sessions_per_run = 2;
     let fake = model(|_, _| reply(&[("person_name", "Jane Roe")]));
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.sessions, r.pending, r.written), (3, 3, 2), "{r:?}");
     let asked: Vec<String> = prompts(&fake)
         .iter()
@@ -384,9 +403,9 @@ fn sessions_get_the_pass_newest_first_up_to_sessions_per_run_and_never_twice() {
         })
         .collect();
     assert_eq!(asked, ["third", "second"]);
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.current, r.pending, r.written), (2, 1, 1), "{r:?}");
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.current, r.written), (3, 0), "{r:?}");
     assert_eq!(
         prompts(&fake).len(),
@@ -408,7 +427,7 @@ fn an_unusable_answer_is_a_failure_for_that_session_and_is_retried_after_the_res
             reply(&[])
         }
     });
-    let r = find(&home, &config, &bad.runtime()).unwrap();
+    let r = find(&home, &config, &bad.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.failed), (1, 1), "{r:?}");
     assert!(
         r.errors[0].starts_with("claude-code/b: the model's answer is not a usable list"),
@@ -419,7 +438,13 @@ fn an_unusable_answer_is_a_failure_for_that_session_and_is_retried_after_the_res
         "no answer text in the run log: {r:?}"
     );
     assert_eq!(progress(&home).unwrap().failing, 1);
-    let r = find(&home, &config, &model(|_, _| reply(&[])).runtime()).unwrap();
+    let r = find(
+        &home,
+        &config,
+        &model(|_, _| reply(&[])).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
     assert_eq!(progress(&home).unwrap().failing, 0);
 }
@@ -436,7 +461,7 @@ fn a_long_session_is_sent_in_parts_each_between_the_notices() {
             reply(&[])
         }
     });
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.found), (1, 2), "{r:?}");
     let prompts = prompts(&fake);
     assert!(prompts.len() >= 2, "{}", prompts.len());
@@ -465,14 +490,14 @@ fn with_no_model_or_no_local_runtime_that_can_run_it_the_pass_is_skipped() {
         ),
     ];
     for (fake, why) in cases {
-        let r = find(&home, &config, &fake.runtime()).unwrap();
+        let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
         assert_eq!(r.skipped.as_deref(), Some(why), "{r:?}");
         assert_eq!(r.summary(), format!("model detection skipped: {why}"));
         assert_eq!(fake.calls(), []);
     }
     config.steward.card_model = None;
     let fake = model(|_, _| careful());
-    let r = find(&home, &config, &fake.runtime()).unwrap();
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!(
         r.skipped.as_deref(),
         Some("no detail_model or card_model is set")
@@ -534,7 +559,13 @@ fn the_pass_is_the_last_step_of_the_tick_and_status_shows_its_progress() {
 fn the_rotation_list_and_lookups_include_the_models_findings() {
     use crate::read::{FindingFilter, Kinds, Order, Page};
     let (_d, home, config) = home_with(&[("s1", "2026-11-10T10:00:00Z", SAID)]);
-    find(&home, &config, &model(|_, _| careful()).runtime()).unwrap();
+    find(
+        &home,
+        &config,
+        &model(|_, _| careful()).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     let runtime = FakeRuntime::stopped().runtime();
     let filter = FindingFilter {
         kinds: Kinds::parse("person_name").unwrap(),
@@ -555,4 +586,68 @@ fn the_rotation_list_and_lookups_include_the_models_findings() {
     assert_eq!(list.rows[0].kinds, [Kind::PersonName]);
     let short = list.rows[0].fingerprint.short().to_string();
     assert_eq!(crate::findings::lookup(&home, &short).unwrap().len(), 1);
+}
+
+#[test]
+fn the_session_under_way_at_the_deadline_is_finished_whole_and_the_rest_wait() {
+    // The newest is long enough to be sent in two parts.
+    let long = "the widget invoice is due ".repeat(PART_BUDGET / 20);
+    let (_d, home, config) = home_with(&[
+        ("long", "2026-11-02T10:00:00Z", &long),
+        ("short", "2026-11-01T10:00:00Z", SAID),
+    ]);
+    let slow = model(|_, _| {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        reply(&[])
+    });
+    // The step's share passes during the first part; the tick's budget is not over.
+    let deadline = Deadline::between(
+        std::time::Duration::from_millis(150),
+        std::time::Duration::from_secs(60),
+    );
+    let r = find(&home, &config, &slow.runtime(), deadline).unwrap();
+    assert_eq!(
+        prompts(&slow).len(),
+        2,
+        "both parts of the session under way"
+    );
+    assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
+    assert!(r.stopped_at_deadline, "{r:?}");
+    assert!(r.summary().ends_with(", stopped at the tick's time limit"));
+    assert!(crate::model_step::load_failures(&home.detail_failures_path()).is_empty());
+
+    // The session not reached waits, not as a failure, and is done next time.
+    let fake = model(|_, _| careful());
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.current, r.written, r.failed), (1, 1, 0), "{r:?}");
+    assert!(!r.stopped_at_deadline);
+    assert_eq!(found(&home, "short").len(), 5, "Jane Roe is written twice");
+}
+
+#[test]
+fn a_session_still_under_way_when_the_ticks_budget_is_over_fails_as_too_long() {
+    let long = "the widget invoice is due ".repeat(PART_BUDGET / 20);
+    let (_d, home, mut config) = home_with(&[
+        ("long", "2026-11-02T10:00:00Z", &long),
+        ("short", "2026-11-01T10:00:00Z", SAID),
+    ]);
+    let slow = model(|_, _| {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        reply(&[])
+    });
+    let deadline = Deadline::after(std::time::Duration::from_millis(150));
+    let r = find(&home, &config, &slow.runtime(), deadline).unwrap();
+    assert_eq!(prompts(&slow).len(), 1, "it stops between its parts");
+    assert_eq!((r.written, r.failed), (0, 1), "{r:?}");
+    assert!(r.errors[0].ends_with(TOO_LONG), "{r:?}");
+    assert!(r.stopped_at_deadline, "the other session waits: {r:?}");
+    let failures = crate::model_step::load_failures(&home.detail_failures_path());
+    assert_eq!(failures["claude-code/long"].attempts, 1);
+
+    // Next time, the session never tried goes before the one that was too long.
+    config.steward.sessions_per_run = 1;
+    let fake = model(|_, _| careful());
+    let r = find(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
+    assert_eq!(found(&home, "short").len(), 5);
 }

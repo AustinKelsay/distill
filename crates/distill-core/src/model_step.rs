@@ -1,7 +1,7 @@
 //! What the steward's model steps (`crate::cards`, `crate::details`) share: whether the local
 //! runtime can run the step's model, reading one session for it, and the batch it works through
-//! each tick, with the sessions it failed for kept under `state/` so they are retried after the
-//! rest. Each step keeps its own report, since what it counts differs.
+//! each tick, within the tick's deadline, with the sessions it failed for kept under `state/` so
+//! they are retried after the rest. Each step keeps its own report, since what it counts differs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::SessionMeta;
 use crate::read::Read;
 use crate::runtime::{LocalRuntime, RuntimeError, RuntimeState};
+use crate::tick::Deadline;
 use crate::util::{now_rfc3339, write_json_pretty};
 
 /// A session whose last attempt failed.
@@ -68,6 +69,14 @@ impl Failed {
     }
 }
 
+/// What a step's [`run`] did.
+pub(crate) struct Ran<T> {
+    /// Each result, by session key, in the order run.
+    pub results: Vec<(String, std::result::Result<T, Failed>)>,
+    /// The deadline passed with sessions of the batch left: they wait for the next tick.
+    pub stopped_at_deadline: bool,
+}
+
 /// The text the read path served the step's model, or why it served none.
 pub(crate) fn served_text(read: Result<Read>) -> std::result::Result<String, Failed> {
     match read {
@@ -87,15 +96,17 @@ pub(crate) fn model_failed(e: RuntimeError) -> Failed {
 }
 
 /// Run `one` for at most `limit` of `pending`: never tried first, then by fewest failed attempts,
-/// newest first within each. Failures are recorded in `failures_path`, where those of sessions
-/// no longer in `all` are forgotten. Each result, by session key, in the order run.
+/// newest first within each, taking no session once `deadline` has passed; the session under way
+/// then is finished, so every session is done whole however long it takes. Failures are recorded
+/// in `failures_path`, where those of sessions no longer in `all` are forgotten.
 pub(crate) fn run<T>(
     failures_path: &Path,
     all: &[SessionMeta],
     mut pending: Vec<&SessionMeta>,
     limit: usize,
+    deadline: Deadline,
     mut one: impl FnMut(&SessionMeta) -> std::result::Result<T, Failed>,
-) -> Result<Vec<(String, std::result::Result<T, Failed>)>> {
+) -> Result<Ran<T>> {
     let mut failures = load_failures(failures_path);
     let attempts = |f: &SessionMeta| failures.get(&f.key()).map_or(0, |x| x.attempts);
     pending.sort_by(|a, b| {
@@ -106,7 +117,12 @@ pub(crate) fn run<T>(
     });
     pending.truncate(limit);
     let mut out = Vec::with_capacity(pending.len());
+    let mut stopped_at_deadline = false;
     for facts in pending {
+        if deadline.passed() {
+            stopped_at_deadline = true;
+            break;
+        }
         let result = one(facts);
         let stop = match &result {
             Ok(_) => {
@@ -134,7 +150,10 @@ pub(crate) fn run<T>(
     let keys: BTreeSet<String> = all.iter().map(SessionMeta::key).collect();
     failures.retain(|k, _| keys.contains(k));
     write_json_pretty(failures_path, &failures)?;
-    Ok(out)
+    Ok(Ran {
+        results: out,
+        stopped_at_deadline,
+    })
 }
 
 fn started(f: &SessionMeta) -> Option<&str> {

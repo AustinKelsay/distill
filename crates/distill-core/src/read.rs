@@ -1,5 +1,7 @@
 //! The read path: the one way session text leaves Distill (issue #72, "The read path"; ADR 0002).
 
+use std::ops::ControlFlow;
+
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
@@ -10,6 +12,7 @@ use crate::model::{Event, EventKind, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
+use crate::tick::Deadline;
 use crate::trust::{Access, OLLAMA, Reader, Trust};
 use crate::util::now_rfc3339;
 
@@ -244,26 +247,38 @@ pub(crate) type ForIndex<'a> =
 pub(crate) fn for_index(
     home: &Home,
     sessions: &[SessionMeta],
-    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
 ) -> Result<()> {
     // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
-    masked_for(home, Reader::Distill, sessions, visit)
+    masked_for(
+        home,
+        Reader::Distill,
+        sessions,
+        Deadline::NONE,
+        |facts, served| visit(facts, served).map(|()| ControlFlow::Continue(())),
+    )
+    .map(|_| ())
 }
 
 /// Read `sessions` for the embedding model `model` at the local provider, for the vectors
 /// (`crate::index::vectors`): the same events with placeholders and current card as
 /// [`for_index`], logged as one line with counts under that model's name, because the text goes
 /// to it. The caller has checked that `model` is stored on this machine, so it is trusted.
+/// No session is read once `deadline` has passed; whether that left sessions unread is returned.
+/// `visit` breaks to stop the read when it did not use the session it was handed: that one is
+/// not counted, and those after it are not read.
 pub(crate) fn for_embedding(
     home: &Home,
     model: &str,
     sessions: &[SessionMeta],
-    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
-) -> Result<()> {
+    deadline: Deadline,
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<ControlFlow<()>>,
+) -> Result<bool> {
     masked_for(
         home,
         Reader::model(Some(OLLAMA), Some(model)),
         sessions,
+        deadline,
         visit,
     )
 }
@@ -272,15 +287,19 @@ fn masked_for(
     home: &Home,
     reader: Reader,
     sessions: &[SessionMeta],
-    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
-) -> Result<()> {
+    deadline: Deadline,
+    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<ControlFlow<()>>,
+) -> Result<bool> {
     if sessions.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let config = home.load_config().unwrap_or_default();
     let (mut served, mut events) = (0u64, 0u64);
-    let mut run = || -> Result<()> {
+    let mut run = || -> Result<bool> {
         for facts in sessions {
+            if deadline.passed() {
+                return Ok(true);
+            }
             let got = match scanned(home, &config, facts) {
                 Ok(Ok((evs, scan))) => match mask(evs, &scan) {
                     Ok(masked) => Ok((masked, scan)),
@@ -294,15 +313,25 @@ fn masked_for(
             };
             match got {
                 Ok((evs, scan)) => {
+                    let n = evs.len() as u64;
                     served += 1;
-                    events += evs.len() as u64;
+                    events += n;
                     let card = crate::cards::current(home, facts, &scan);
-                    visit(facts, Ok((evs, &scan, card)))?;
+                    // A session the visitor breaks at was not used, so it is not counted.
+                    if visit(facts, Ok((evs, &scan, card)))?.is_break() {
+                        served -= 1;
+                        events -= n;
+                        break;
+                    }
                 }
-                Err(why) => visit(facts, Err(why))?,
+                Err(why) => {
+                    if visit(facts, Err(why))?.is_break() {
+                        break;
+                    }
+                }
             }
         }
-        Ok(())
+        Ok(false)
     };
     let outcome = run();
     readlog::append(

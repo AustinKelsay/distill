@@ -67,22 +67,52 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
             .replying(move |_, _| reply.to_string())
     };
     // A failure first, so each step's failure file is written, then a usable answer.
-    let r = distill_core::cards::write(&home, &config, &model("no card").runtime()).unwrap();
+    let r = distill_core::cards::write(
+        &home,
+        &config,
+        &model("no card").runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.failed, 1, "{r:?}");
     owner_only("a card that failed");
     let card = r#"{"title":"Deploy the app","summary":"It was deployed.","tags":["deploy"],"outcome":"done"}"#;
-    let r = distill_core::cards::write(&home, &config, &model(card).runtime()).unwrap();
+    let r = distill_core::cards::write(
+        &home,
+        &config,
+        &model(card).runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
     owner_only("a card");
-    let r = distill_core::details::find(&home, &config, &model("no details").runtime()).unwrap();
+    let r = distill_core::details::find(
+        &home,
+        &config,
+        &model("no details").runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.failed, 1, "{r:?}");
     owner_only("details that failed");
     let found = r#"{"details":[{"kind":"person_name","text":"Jane Roe"}]}"#;
-    let r = distill_core::details::find(&home, &config, &model(found).runtime()).unwrap();
+    let r = distill_core::details::find(
+        &home,
+        &config,
+        &model(found).runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.found, 1, "{r:?}");
     owner_only("details");
     distill_core::index::build(&home).unwrap();
-    distill_core::index::vectors::build(&home, &config, &model(card).runtime()).unwrap();
+    distill_core::index::vectors::build(
+        &home,
+        &config,
+        &model(card).runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert!(home.vectors_path().exists());
     owner_only("the index and vectors");
 
