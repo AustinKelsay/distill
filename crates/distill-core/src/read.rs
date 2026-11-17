@@ -13,7 +13,7 @@ use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
 use crate::tick::Deadline;
-use crate::trust::{Access, OLLAMA, Reader, Trust};
+use crate::trust::{Access, Reader, Trust};
 use crate::util::now_rfc3339;
 
 mod fingerprints;
@@ -260,7 +260,7 @@ pub(crate) fn for_index(
     .map(|_| ())
 }
 
-/// Read `sessions` for the embedding model `model` at the local provider, for the vectors
+/// Read `sessions` for the embedding model `model` at `provider` (the runtime's), for the vectors
 /// (`crate::index::vectors`): the same events with placeholders and current card as
 /// [`for_index`], logged as one line with counts under that model's name, because the text goes
 /// to it. The caller has checked that `model` is stored on this machine, so it is trusted.
@@ -269,6 +269,7 @@ pub(crate) fn for_index(
 /// not counted, and those after it are not read.
 pub(crate) fn for_embedding(
     home: &Home,
+    provider: &str,
     model: &str,
     sessions: &[SessionMeta],
     deadline: Deadline,
@@ -276,7 +277,7 @@ pub(crate) fn for_embedding(
 ) -> Result<bool> {
     masked_for(
         home,
-        Reader::model(Some(OLLAMA), Some(model)),
+        Reader::model(Some(provider), Some(model)),
         sessions,
         deadline,
         visit,

@@ -20,5 +20,10 @@ toml.workspace = true
 walkdir.workspace = true
 zstd.workspace = true
 
+[features]
+# A trusted provider's OpenAI-compatible server on this machine as a stand-in for the local runtime,
+# for `distill-eval` only. The shipped binaries don't turn it on.
+eval = []
+
 [dev-dependencies]
 libc = "0.2"

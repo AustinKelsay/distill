@@ -1,0 +1,21 @@
+[package]
+name = "distill-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Judges the model steps with a trusted provider's real models, against a copy of a home. Not
+# installed, and not a default member, so the shipped binaries never build `distill-core/eval`.
+[[bin]]
+name = "distill-eval"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+distill-core = { workspace = true, features = ["eval"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

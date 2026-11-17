@@ -32,7 +32,7 @@ use crate::normalize;
 use crate::read::{self, Range};
 use crate::runtime::LocalRuntime;
 use crate::tick::Deadline;
-use crate::trust::{OLLAMA, Reader};
+use crate::trust::Reader;
 use crate::util::{clip, count, now_rfc3339, sha256_hex, write_json_pretty};
 
 /// The shape of a card file. A card of any other shape, such as the previous build's, counts as
@@ -373,7 +373,7 @@ pub fn write(
         }
     }
     r.pending = pending.len() as u64;
-    let reader = Reader::model(Some(OLLAMA), Some(&model));
+    let reader = Reader::model(Some(runtime.provider()), Some(&model));
     let ran = model_step::run(
         &home.card_failures_path(),
         &all,

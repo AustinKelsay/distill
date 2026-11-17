@@ -32,7 +32,7 @@ use crate::normalize;
 use crate::read::{self, NOTICE_END, NOTICE_START};
 use crate::runtime::LocalRuntime;
 use crate::tick::Deadline;
-use crate::trust::{OLLAMA, Reader};
+use crate::trust::Reader;
 use crate::util::count;
 
 /// The version of the model detection pass: its [`PROMPT`], how its answers are read and how
@@ -298,7 +298,7 @@ pub fn find(
         }
     }
     r.pending = pending.len() as u64;
-    let reader = Reader::model(Some(OLLAMA), Some(&model));
+    let reader = Reader::model(Some(runtime.provider()), Some(&model));
     let ran = model_step::run(
         &home.detail_failures_path(),
         &all,
