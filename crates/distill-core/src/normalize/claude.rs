@@ -1,9 +1,11 @@
 //! Claude Code: `~/.claude/projects/<project>/<session>.jsonl`, one record per line.
 
+use std::io::BufRead;
+
 use anyhow::Result;
 use serde_json::Value;
 
-use super::blocks::{push_content, ts};
+use super::blocks::{each_line, push_content, ts};
 use crate::model::{EventKind, Parsed};
 
 /// Record types the parser skips on purpose: the harness's bookkeeping (titles, summaries, file
@@ -36,11 +38,16 @@ pub const IGNORED: &[&str] = &[
 ];
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
+    parse_reader(bytes)
+}
+
+/// [`parse`] over a stream, one line at a time, so the capture is never held whole. (Every record is read, since
+/// the ones the parser skips still carry `cwd`, `gitBranch` and `version`.)
+pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
     let mut out = Parsed::default();
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
+    each_line(reader, |line| {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
+            return;
         };
         let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
         if out.cwd.is_none() {
@@ -58,11 +65,11 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
         match ty {
             "user" | "assistant" => {
                 let Some(msg) = v.get("message") else {
-                    continue;
+                    return;
                 };
                 // Synthetic records: API error stand-ins and harness meta prompts.
                 if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
-                    continue;
+                    return;
                 }
                 let mut role = if ty == "user" {
                     EventKind::User
@@ -90,7 +97,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             }
             _ => out.skip(ty, line.len()),
         }
-    }
+    })?;
     Ok(out)
 }
 

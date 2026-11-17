@@ -19,14 +19,14 @@ pub mod t3code;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{Archive, CaptureRecord};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::model::{Counts, Event, Parsed, Producer, RawRef, SessionMeta, Skipped};
-use crate::util::{read_jsonl, safe_component, write_atomic, write_json_pretty};
+use crate::util::{read_jsonl, safe_component, write_atomic, write_atomic_with, write_json_pretty};
 
 /// Bump a harness's version when its parser's output changes; its sessions are parsed again.
 pub fn parser_version(kind: Harness) -> Option<u32> {
@@ -67,13 +67,10 @@ pub fn ignored(kind: Harness) -> &'static [&'static str] {
 /// Parse one capture. What it skipped (`Parsed::skipped`) leaves out the types its parser
 /// ignores on purpose.
 pub fn parse(kind: Harness, origin: &str, bytes: &[u8]) -> Result<Parsed> {
+    if streams(kind) {
+        return parse_stream(kind, origin, bytes);
+    }
     let mut parsed = match kind {
-        Harness::ClaudeCode => claude::parse(bytes)?,
-        // Codex compresses older sessions; the archive keeps the compressed bytes as they were.
-        Harness::Codex if origin.ends_with(".zst") => {
-            codex::parse(&zstd::stream::decode_all(bytes).context("decompress zstd")?)?
-        }
-        Harness::Codex => codex::parse(bytes)?,
         Harness::OpenCode => opencode::parse(bytes)?,
         Harness::Droid => droid::parse(bytes)?,
         Harness::Pi => pi::parse(bytes)?,
@@ -83,6 +80,35 @@ pub fn parse(kind: Harness, origin: &str, bytes: &[u8]) -> Result<Parsed> {
         Harness::T3Code => t3code::parse(bytes)?,
         Harness::Goose => goose::parse(bytes)?,
         Harness::Cursor => cursor::parse(origin, bytes)?,
+        Harness::ClaudeCode | Harness::Codex => unreachable!("streamed above"),
+    };
+    parsed
+        .skipped
+        .retain(|ty, _| !ignored(kind).contains(&ty.as_str()));
+    Ok(parsed)
+}
+
+/// Whether a harness's parser reads a capture as a stream (#105), so a capture is never held
+/// whole: the line-based ones that meet giant files.
+pub fn streams(kind: Harness) -> bool {
+    matches!(kind, Harness::ClaudeCode | Harness::Codex)
+}
+
+/// [`parse`] for a harness that [`streams`], over a reader. Codex compresses older sessions,
+/// and the archive keeps the compressed bytes as they were: they are decompressed as they are
+/// read.
+pub fn parse_stream(kind: Harness, origin: &str, reader: impl std::io::Read) -> Result<Parsed> {
+    let mut parsed = match kind {
+        Harness::ClaudeCode => {
+            claude::parse_reader(std::io::BufReader::with_capacity(1 << 16, reader))?
+        }
+        Harness::Codex if origin.ends_with(".zst") => {
+            let decoder = zstd::stream::read::Decoder::new(reader).context("decompress zstd")?;
+            codex::parse_reader(std::io::BufReader::with_capacity(1 << 16, decoder))
+                .context("decompress zstd")?
+        }
+        Harness::Codex => codex::parse_reader(std::io::BufReader::with_capacity(1 << 16, reader))?,
+        other => bail!("{} is not parsed as a stream", other.id()),
     };
     parsed
         .skipped
@@ -393,9 +419,9 @@ fn normalize_one(
     version: u32,
     missing_spills: &mut Vec<String>,
 ) -> Result<(Option<SessionMeta>, BTreeMap<String, Skipped>)> {
-    let bytes = archive.read_blob(&rec.capture_hash)?;
     let mut attached = Vec::new();
     let mut parsed = if rec.harness == Harness::OpenCode {
+        let bytes = archive.read_blob(&rec.capture_hash)?;
         // Spilled tool outputs are captures of their own, at their own origins. One the archive
         // can't read now counts as missing, so the session is parsed again until it can.
         let (parsed, missing) = opencode::parse_with_spills(&bytes, |name| {
@@ -414,8 +440,19 @@ fn normalize_one(
         })?;
         *missing_spills = missing;
         parsed
+    } else if streams(rec.harness) {
+        // Read through the blob without holding it, hashing as it goes; a blob that does not
+        // hash to its name fails the capture, as it would when read whole.
+        let mut blob = archive.open_blob(&rec.capture_hash)?;
+        let parsed = parse_stream(rec.harness, &rec.origin, &mut blob)?;
+        blob.finish()?;
+        parsed
     } else {
-        parse(rec.harness, &rec.origin, &bytes)?
+        parse(
+            rec.harness,
+            &rec.origin,
+            &archive.read_blob(&rec.capture_hash)?,
+        )?
     };
     attached.sort();
     attached.dedup();
@@ -485,12 +522,13 @@ fn normalize_one(
         mirror_refs: parsed.mirror_refs,
         mirror_unresolved: parsed.mirror_unresolved,
     };
-    let mut lines = Vec::new();
-    for e in &events {
-        serde_json::to_writer(&mut lines, e)?;
-        lines.push(b'\n');
-    }
-    write_atomic(&home.events_path(meta.harness, &meta.session_id), &lines)?;
+    write_atomic_with(&home.events_path(meta.harness, &meta.session_id), |w| {
+        for e in &events {
+            serde_json::to_writer(&mut *w, e)?;
+            w.write_all(b"\n")?;
+        }
+        Ok(())
+    })?;
     write_json_pretty(&home.meta_path(meta.harness, &meta.session_id), &meta)?;
     Ok((Some(meta), unknown))
 }
@@ -892,5 +930,106 @@ mod tests {
         let mut p = Parsed::default();
         p.skip(" / ", 10);
         assert!(p.skipped.is_empty());
+    }
+
+    const CODEX: &str = "{\"timestamp\":\"2026-11-03T08:30:53Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"abc\",\"cwd\":\"/r\"}}\r\n\
+{\"type\":\"compacted\",\"payload\":{\"replacement_history\":[]}}\n\
+{\"type\":\"event_msg\"}\n\
+{\"type\":\"mystery\",\"payload\":{}}\n\
+{\"timestamp\":\"2026-11-03T08:30:55Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"caf\u{e9}\"}]}}\n\
+not json\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}";
+
+    /// One byte per read: nothing but the stream's own framing can hold a line together.
+    struct Trickle<'a>(&'a [u8]);
+    impl std::io::Read for Trickle<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.0.len().min(1).min(buf.len());
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn a_streamed_parse_equals_the_parse_of_the_whole_capture() {
+        let whole = parse(Harness::Codex, "r.jsonl", CODEX.as_bytes()).unwrap();
+        let streamed = parse_stream(Harness::Codex, "r.jsonl", Trickle(CODEX.as_bytes())).unwrap();
+        let zst = zstd::stream::encode_all(CODEX.as_bytes(), 1).unwrap();
+        let from_zst = parse_stream(Harness::Codex, "r.jsonl.zst", Trickle(&zst)).unwrap();
+        let json =
+            |p: &Parsed| serde_json::to_string(&(&p.events, &p.skipped, &p.session_id)).unwrap();
+        assert_eq!(whole.events.len(), 2);
+        // What the fixture must parse to, written out, so the comparisons below don't only
+        // check the streaming path against itself.
+        let said: Vec<_> = whole
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref(), e.ts.as_deref()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    crate::model::EventKind::User,
+                    Some("caf\u{e9}"),
+                    Some("2026-11-03T08:30:55Z")
+                ),
+                (crate::model::EventKind::Assistant, Some("done"), None),
+            ]
+        );
+        assert_eq!(
+            (whole.session_id.as_deref(), whole.cwd.as_deref()),
+            (Some("abc"), Some("/r"))
+        );
+        let mystery = &whole.skipped["mystery"];
+        assert_eq!(mystery.records, 1);
+        assert_eq!(json(&whole), json(&streamed));
+        assert_eq!(json(&whole), json(&from_zst));
+        // Only the unknown type is reported; the ignored ones are not.
+        assert_eq!(whole.skipped.keys().collect::<Vec<_>>(), ["mystery"]);
+
+        let claude = "{\"type\":\"user\",\"cwd\":\"/r\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n{\"type\":\"system\",\"version\":\"2.1.0\"}\n";
+        let a = parse(Harness::ClaudeCode, "c.jsonl", claude.as_bytes()).unwrap();
+        let b = parse_stream(Harness::ClaudeCode, "c.jsonl", Trickle(claude.as_bytes())).unwrap();
+        assert_eq!(json(&a), json(&b));
+        assert_eq!(a.harness_version.as_deref(), Some("2.1.0"));
+        assert_eq!(
+            (a.cwd.as_deref(), b.cwd.as_deref()),
+            (Some("/r"), Some("/r"))
+        );
+        let said: Vec<_> = b
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref()))
+            .collect();
+        assert_eq!(said, [(crate::model::EventKind::User, Some("hi"))]);
+    }
+
+    #[test]
+    fn a_streamed_capture_that_does_not_hash_to_its_name_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let origin = "/u/.codex/sessions/2026/11/03/rollout-1.jsonl";
+        let sha = {
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            archive
+                .put(Harness::Codex, origin, "f", CODEX.as_bytes())
+                .unwrap()
+                .unwrap()
+                .capture_hash
+        };
+        let blob = Archive::open(&home).unwrap().blob_path(&sha);
+        let mut bytes = std::fs::read(&blob).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(&blob, bytes).unwrap();
+        let r = normalize(&home, true).unwrap();
+        assert_eq!((r.normalized, r.failed), (0, 1), "{r:?}");
+        assert!(
+            !home.events_path(Harness::Codex, "abc").exists(),
+            "a corrupt capture left a session"
+        );
     }
 }
