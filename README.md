@@ -2,7 +2,7 @@
 
 Distill keeps every session your local agent harnesses record in one private archive you own, in one consistent shape, so that you or an agent can find the right sessions later. Distilling, training and analysis can then start from a search.
 
-**Distill is being rebuilt.** The spec is [issue #72](https://github.com/AustinKelsay/distill/issues/72), its terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and its decisions are recorded in [`docs/adr/`](docs/adr/). What is built so far is in [`docs/status.md`](docs/status.md). The previous build is tagged `agent-driven-final`; the one before it, `legacy-final`.
+**Distill was rebuilt** from the spec in [issue #72](https://github.com/AustinKelsay/distill/issues/72); its terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and its decisions are recorded in [`docs/adr/`](docs/adr/). What is built, and its known gaps, are in [`docs/status.md`](docs/status.md). The previous build is tagged `agent-driven-final`; the one before it, `legacy-final`.
 
 ```
 harnesses ──sweep──▶ raw archive ──parse──▶ events and session facts
@@ -17,7 +17,7 @@ harnesses ──sweep──▶ raw archive ──parse──▶ events and sessi
 
 ## What works today
 
-Capture and the parsers, which the rebuild keeps (ADR 0001):
+Capture and the parsers, kept from the previous build (ADR 0001), and everything built on them:
 
 | Command | What it does |
 | --- | --- |
@@ -28,18 +28,20 @@ Capture and the parsers, which the rebuild keeps (ADR 0001):
 | `distill parse` | Turns captures into `sessions/<harness>/<id>/events.jsonl` (prompts, replies, reasoning, tool calls and results) and `meta.json` (session facts, which hold no session text), and rebuilds the session list. Reports format drift. |
 | `distill scan` | Scans every session whose findings are missing or out of date for secrets, and stores `findings.json` beside it: each secret's place, kind and fingerprint (a keyed hash), never its value. Stored text is never changed. Prints counts only. |
 | `distill findings [<fingerprint>]` | The rotation list: each secret by fingerprint (its short form), with its kind, how many sessions it appears in, their harnesses, and when it was first and last seen. `--kind personal`, `all` or one kind (`github_token`) selects other kinds; `--harness`, `--since`, `--until` filter; `--sort spread` (the default) or `recent`. Given a fingerprint or its short form, every session it appears in, for every fingerprint that starts with it. Answers from stored findings, never a value. In the read log. |
-| `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, then personal details found by the local model. Writes one entry to the run log. |
-| `distill status` | Sessions, capture health and format drift per harness, the last sweep, and how many sessions are scanned. |
+| `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors for search by meaning, then personal details found by the local model. Writes one entry to the run log. |
+| `distill status` | Sessions, capture health and format drift per harness, the last sweep, the progress of the scan, word index, cards, vectors and personal details (and why a model step is skipped), pending reveal requests, and the exposure check. |
 | `distill exposure` | The exposure check: whether the home and everything in it, and the fingerprint key, are owner-only, whether the home is in a synced folder, and whether a Distill process listens on a network port, each as pass or fail. Also whether the disk is encrypted, a reminder that backups carry the archive, and the previous build's folders that hold session-derived data, with their modes. Fails when a rule fails. `--fix` takes the group's and others' permissions off an existing home. `distill status` carries the same results. |
 | `distill runs` | The run log. |
 | `distill providers` | Lists each provider, local or remote, and whether it is trusted. `ollama`, the runtime on this machine, is always trusted; its models are shown as stored here or served from a cloud. `providers add <name> [--trusted]`, `trust <name>` and `untrust <name>` manage remote providers. |
 | `distill read <session>` | A session's events as text, for a model at a named provider (`--provider` or `DISTILL_PROVIDER`, `--model` or `DISTILL_MODEL`), in full or `--from`/`--to` an event number, between a fixed notice that it is archived data and not instructions. A model at a trusted provider reads `[secret: <kind> #<fingerprint>]` in place of each secret; a session is scanned first if its findings are missing or out of date. Every other reader is refused, with what the owner can do. |
 | `distill reads` | The read log, newest first: every call to the read path, refusals included, with time, reader, session and result; a call that lists sessions is one line with how many it listed. `--reader` narrows it to `owner`, `distill`, a provider or `provider/model`. |
 | `distill schedule install` | Runs `distill tick` on a timer (launchd on macOS, systemd on Linux). |
-| `distill gui` | The window. A shell that shows nothing until its ticket lands. |
-| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call) `read_session` (in full or by event range) and `list_findings` (the rotation list, or where one fingerprint appears, never a value). See [The MCP server](#the-mcp-server). |
+| `distill search <words>...` | Sessions that have every word of the query, or are close to it in meaning, best first in one list, for a model at a named provider (`--provider`, `--model`, as for `distill read`): each one's facts, card (or opening) and matching passage. `--harness`, `--project`, `--used-model`, `--since`, `--until`, `--tag`, `--outcome`, `--mirrors`, `--steward` narrow it; `--offset` and `--limit` (up to 50) page it. Without an `embedding_model` or a local runtime it finds by words alone and says so. |
+| `distill reveal request <session> <fingerprint>... --reason <why>` | A model at a trusted provider asks the owner for the values of specific secrets; prints a request ID, never a value. `distill reveal collect <id>` gives the values once the owner has approved, once, to the model that asked. Requests expire after 24 hours. Approving and denying happen only in the GUI. |
+| `distill gui` | The window: Setup, Overview, Sessions (search and filters, an open session with each finding covered until clicked), Findings (the rotation list), Approvals (reveal requests to approve or deny) and the Read log. |
+| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call), `read_session` (in full or by event range), `search_sessions` (as `distill search`), `list_findings` (the rotation list, or where one fingerprint appears, never a value), and `request_reveal` and `collect_reveal` (as `distill reveal`). See [The MCP server](#the-mcp-server). |
 
-Only `distill read` and the MCP server's tools return session text, and only through the read path, the one function in core that returns it.
+Only `distill read`, `distill search`, the GUI and the MCP server's tools return session text, and only through the read path, the one function in core that returns it.
 
 ## The MCP server
 

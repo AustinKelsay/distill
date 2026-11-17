@@ -1100,12 +1100,16 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
     let long_token = format!("{}{}", "a1b2c3d4e5", "f6g7h8i9");
     let mixed_token = format!("{}{}", "Ab3dE6", "gH9k");
     let stand_in = format!("{}{}", "x".repeat(8), "-key");
-    let none: [String; 13] = [
+    let none: [String; 16] = [
         // An identifier name, under either rule.
         format!(r#"{{"element_token":"{id}","n":1}}"#),
         format!("element_token={id} next"),
         format!(r#"{{"a":"{{\"element_token\":\"{id}\"}}"}}"#),
         format!(r#"{{"eos_token":"<|end{}|>","bos_token":"<s>"}}"#, "oftext"),
+        // Long enough to pass the length floor, so only the name skip refuses them.
+        format!(r#"{{"bos_token":"<|begin_of_{}|>"}}"#, "text"),
+        format!("eos_token=<|end{}|> x", "oftext"),
+        format!("bos_token: <|begin_of_{}|> x", "text"),
         // Counters and short enum values under credential names.
         r#"{"pass": 3, "tests_pass": 1200, "user_authorization": "granted"}"#.into(),
         // A short id under a token name.

@@ -28,7 +28,7 @@ As of 2026-11-16. The spec is issue #72, with tickets #73 to #91; terms are in `
 
 ## Live cutover (#91), 2026-11-16
 
-The owner's home (`~/distill`) runs this build, installed from `main` at `db44709`, and the timer runs it hourly.
+The owner's home (`~/distill`) runs this build, installed from `main` at `db44709`, and the timer runs it hourly. launchd has one Distill job, `dev.distill.tick`, which runs `distill tick` from Cargo's bin directory, where `distill`, `distill-mcp` and `distill-gui` were all installed at the cutover; no other Distill binary is on the path. The installed build predates #98's narrower detector (`DETECTOR_VERSION` 4); installing `main` makes the next tick scan every session again.
 
 - **Before the switch:** `verify` passed on the live raw archive: 21,627 captures (53.4 GB), 0 missing, 0 corrupt. The timer was stopped, and a copy-on-write backup of the home was kept, owner-only.
 - **Rebuild:** a rehearsal tick on a clone of the home parsed, scanned and indexed all 12,984 sessions in 34 minutes, peaking at 10.5 GB of memory (the scan runs at about 125 sessions a minute on one core). The clone then became the home. Its raw archive is the live one plus the captures its own sweep added, and the one run-log line written to the live home in the meantime was carried over.
@@ -37,7 +37,7 @@ The owner's home (`~/distill`) runs this build, installed from `main` at `db4470
 - **Models:** `card_model = "qwen3:8b"` (it also runs the detection pass) and `embedding_model = "nomic-embed-text:latest"`, both stored on this machine. `sessions_per_run = 50`: the first live tick took 31 minutes, so a tick stays under the hourly interval. The backfill of about 10,000 sessions takes about 200 ticks.
 - **Providers:** `ollama` (local) and one remote provider the owner trusts. Anthropic, OpenAI and `ollama-cloud` are not trusted, so no harness registers `distill-mcp`, since their agents would be refused.
 - **Nothing lost:** both `verify` runs pass, and no harness deletes sessions sooner than the hourly sweep.
-- **Findable:** an agent at the trusted remote provider was given two vague descriptions and found each session (word search) in 3 calls, ranked first in its first search, with no refusals. Search by meaning returns results from the real embedding model, but its top-five check waits for the backfill, since only the 50 newest sessions had vectors.
+- **Findable:** an agent at the trusted remote provider, reading through `distill search` and `distill read` with `--provider` naming it (the read path an MCP registration would use), was given two vague descriptions and found each session (word search) in 3 calls, ranked first in its first search, with no refusals. Search by meaning returns results from the real embedding model, but its top-five check waits for the backfill, since only the 50 newest sessions had vectors.
 - **Private:** the read log's readers are Distill itself (index builds), `ollama/qwen3:8b` (cards and detection) and the trusted remote provider's model (the checks). No other provider read anything.
 - **Found and fixed during the cutover:** the Ollama client now asks for JSON mode (#95). The detection pass reads `{}` as no details, and both parsers refuse a reply that is a JSON array (#96).
 
