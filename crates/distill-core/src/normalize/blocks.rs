@@ -145,6 +145,43 @@ pub fn push_content(
     }
 }
 
+/// The first of `keys` in `v` that holds non-blank text.
+pub fn first_text<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .filter_map(|k| v.get(*k).and_then(Value::as_str))
+        .find(|s| !s.trim().is_empty())
+}
+
+/// One plan step as a line: `[done] step`, `[in progress] step`, `[pending] step`. A status
+/// the harness spells another way is kept as it is.
+pub fn plan_line(status: &str, step: &str) -> String {
+    let s = status.trim().to_ascii_lowercase().replace(['_', '-'], " ");
+    let s = match s.as_str() {
+        "completed" | "complete" | "done" => "done",
+        "pending" | "todo" | "" => "pending",
+        "inprogress" | "in progress" | "active" => "in progress",
+        other => other,
+    };
+    format!("[{s}] {}", step.trim())
+}
+
+/// Remembers the last plan a session showed, so a plan record that repeats on every update
+/// adds an event only when the plan changed.
+#[derive(Default)]
+pub struct PlanTracker(Option<String>);
+
+impl PlanTracker {
+    /// The plan as an event's text, unless it is empty or the same as the one before.
+    pub fn changed(&mut self, lines: Vec<String>) -> Option<String> {
+        let text = lines.join("\n");
+        if text.trim().is_empty() || self.0.as_deref() == Some(text.as_str()) {
+            return None;
+        }
+        self.0 = Some(text.clone());
+        Some(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,7 +4,7 @@
 use std::io::BufRead;
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::blocks::{each_line, is_ignored_record, result_text, ts};
 use crate::model::{Event, EventKind, Parsed};
@@ -154,8 +154,127 @@ fn push_item(out: &mut Parsed, p: &Value, at: Option<String>, model: Option<&str
             });
             out.push(e);
         }
+        "agent_message" => {
+            // Between agents (their ids): the text is the assistant's, so the ids stay in it.
+            let text = p
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            let id = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("?").to_string();
+            if !text.trim().is_empty() {
+                let mut e = Event::text(
+                    EventKind::Assistant,
+                    format!("[{} \u{2192} {}] {text}", id("author"), id("recipient")),
+                )
+                .at(at);
+                e.model = model.map(str::to_string);
+                out.push(e);
+            }
+        }
+        "tool_search_call" => {
+            let mut e = Event::new(EventKind::ToolCall).at(at);
+            e.tool = Some("tool_search".into());
+            e.call_id = item_call_id(p);
+            e.input = p.get("arguments").cloned();
+            e.model = model.map(str::to_string);
+            out.push(e);
+        }
+        "tool_search_output" => {
+            let mut e = Event::new(EventKind::ToolResult).at(at);
+            e.tool = Some("tool_search".into());
+            e.call_id = item_call_id(p);
+            let mut lines = Vec::new();
+            if let Some(tools) = p.get("tools").and_then(Value::as_array) {
+                list_tools(tools, &mut lines);
+            }
+            e.text = Some(bounded_tool_list(lines));
+            e.is_error =
+                (p.get("status").and_then(Value::as_str) == Some("failed")).then_some(true);
+            out.push(e);
+        }
+        "image_generation_call" => {
+            // The image itself (`result`, base64) is never kept: a placeholder stands in.
+            let call_id = item_call_id(p);
+            let mut call = Event::new(EventKind::ToolCall).at(at.clone());
+            call.tool = Some("image_generation".into());
+            call.call_id = call_id.clone();
+            call.input = Some(json!({"prompt": p.get("revised_prompt")}));
+            call.model = model.map(str::to_string);
+            out.push(call);
+            let mut res = Event::text(EventKind::ToolResult, "[image generated]").at(at);
+            res.tool = Some("image_generation".into());
+            res.call_id = call_id;
+            res.is_error =
+                (p.get("status").and_then(Value::as_str) == Some("failed")).then_some(true);
+            out.push(res);
+        }
         _ => out.skip_in("response_item", ptype, p),
     }
+}
+
+/// How a call and its result are paired: the `call_id`, else the item's own id.
+fn item_call_id(p: &Value) -> Option<String> {
+    p.get("call_id")
+        .or_else(|| p.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// The most tools a tool search's result lists, and the longest description kept for each.
+const TOOLS_LISTED: usize = 40;
+const DESCRIPTION_MAX: usize = 160;
+
+/// A tool search's result as one line per tool (`name: short description`), going into the
+/// tools a namespace holds. The schemas are left out.
+fn list_tools(tools: &[Value], lines: &mut Vec<String>) {
+    for t in tools {
+        if let Some(inner) = t.get("tools").and_then(Value::as_array) {
+            list_tools(inner, lines);
+            continue;
+        }
+        let name = t
+            .get("name")
+            .or_else(|| t.pointer("/function/name"))
+            .and_then(Value::as_str);
+        let Some(name) = name else { continue };
+        let desc = t
+            .get("description")
+            .or_else(|| t.pointer("/function/description"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let short: String = desc
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(DESCRIPTION_MAX)
+            .collect();
+        lines.push(if short.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}: {short}")
+        });
+    }
+}
+
+fn bounded_tool_list(mut lines: Vec<String>) -> String {
+    if lines.is_empty() {
+        return "[no tools found]".into();
+    }
+    let more = lines.len().saturating_sub(TOOLS_LISTED);
+    lines.truncate(TOOLS_LISTED);
+    if more > 0 {
+        lines.push(format!("... and {more} more"));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -177,5 +296,33 @@ mod tests {
         assert_eq!(p.events[1].input.as_ref().unwrap()["cmd"][0], "ls");
         assert_eq!(p.events[2].text.as_deref(), Some("a.txt\n"));
         assert_eq!(p.events[3].model.as_deref(), Some("gpt-6"));
+    }
+
+    #[test]
+    fn parses_agent_messages_tool_search_and_image_generation() {
+        let src = r#"{"timestamp":"2026-11-03T08:30:54Z","type":"turn_context","payload":{"model":"gpt-6"}}
+{"timestamp":"2026-11-03T08:31:00Z","type":"response_item","payload":{"type":"agent_message","author":"/root","recipient":"/root/worker","content":[{"type":"input_text","text":"check the build"}]}}
+{"timestamp":"2026-11-03T08:31:01Z","type":"response_item","payload":{"type":"tool_search_call","call_id":"s1","execution":"client","arguments":{"query":"calendar","limit":2}}}
+{"timestamp":"2026-11-03T08:31:02Z","type":"response_item","payload":{"type":"tool_search_output","call_id":"s1","status":"completed","execution":"client","tools":[{"type":"function","name":"cal_list","description":"List events.\nLong schema notes","parameters":{"type":"object"}},{"type":"namespace","name":"mail","tools":[{"type":"function","name":"mail_send"}]}]}}
+{"timestamp":"2026-11-03T08:31:03Z","type":"response_item","payload":{"type":"image_generation_call","id":"ig_1","status":"completed","revised_prompt":"a gray cat","result":"QUJDREVGRw=="}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+        let e = &p.events;
+        assert_eq!(e.len(), 5);
+        assert_eq!(e[0].kind, EventKind::Assistant);
+        assert_eq!(
+            e[0].text.as_deref(),
+            Some("[/root \u{2192} /root/worker] check the build")
+        );
+        assert_eq!(e[1].input.as_ref().unwrap()["query"], "calendar");
+        assert_eq!(e[2].call_id, e[1].call_id);
+        assert_eq!(
+            e[2].text.as_deref(),
+            Some("cal_list: List events.\nmail_send")
+        );
+        assert_eq!(e[3].input.as_ref().unwrap()["prompt"], "a gray cat");
+        assert_eq!(e[4].text.as_deref(), Some("[image generated]"));
+        assert_eq!(e[4].call_id.as_deref(), Some("ig_1"));
+        assert!(!serde_json::to_string(e).unwrap().contains("QUJD"));
     }
 }
