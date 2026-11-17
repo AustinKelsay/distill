@@ -24,6 +24,21 @@ use super::blocks::millis_to_rfc3339;
 use crate::harness::Candidate;
 use crate::model::{Event, EventKind, Parsed};
 
+/// Part types the parser skips on purpose: a step's start and finish (its tokens and cost), and
+/// the file snapshots and patches OpenCode keeps to undo a step. Any other type it skips is
+/// reported as format drift.
+pub const IGNORED: &[&str] = &[
+    "part:step-start",
+    "part:step-finish",
+    "part:snapshot",
+    "part:patch",
+    "message:idle",
+    "message:model-switched",
+    "message:agent-switched",
+    "message:location-switched",
+    "message:compaction",
+];
+
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         db,
@@ -456,7 +471,8 @@ pub fn parse_with_spills(
             .get("time_created")
             .and_then(Value::as_i64)
             .map(millis_to_rfc3339);
-        match v.get("row").and_then(Value::as_str).unwrap_or("") {
+        let row = v.get("row").and_then(Value::as_str).unwrap_or("");
+        match row {
             "session" => {
                 out.session_id = v.get("id").and_then(Value::as_str).map(str::to_string);
                 out.cwd = v
@@ -493,7 +509,8 @@ pub fn parse_with_spills(
                     .get(mid)
                     .cloned()
                     .unwrap_or((EventKind::Assistant, None));
-                match d.get("type").and_then(Value::as_str).unwrap_or("") {
+                let ty = d.get("type").and_then(Value::as_str).unwrap_or("");
+                match ty {
                     "text" => {
                         let mut e =
                             Event::text(role, d.get("text").and_then(Value::as_str).unwrap_or(""))
@@ -559,7 +576,7 @@ pub fn parse_with_spills(
                         )
                         .at(at),
                     ),
-                    _ => {}
+                    _ => out.skip_in("part", ty, d),
                 }
             }
             // OpenCode 2 (`session_message`). The message's own `type` says what it is; the
@@ -647,10 +664,11 @@ pub fn parse_with_spills(
                             out.push(res);
                         }
                     }
-                    // Ignored, with nothing to say in a transcript: `idle` (a turn's end marker),
+                    // Nothing to say in a transcript: `idle` (a turn's end marker),
                     // `model-switched`, `agent-switched` and `location-switched` (settings
-                    // changes), a running or failed `compaction`, and any type OpenCode adds.
-                    _ => {}
+                    // changes) and a running or failed `compaction`, all in `IGNORED`. A type
+                    // OpenCode adds is reported as format drift.
+                    other => out.skip_in("message", other, d),
                 }
             }
             "part_v2" => {
@@ -663,7 +681,7 @@ pub fn parse_with_spills(
                 }
                 push_v2_item(&mut out, &mut missing, &mut spilled, &item, &model, &at)?;
             }
-            _ => {}
+            _ => out.skip(row, line.len()),
         }
     }
     Ok((out, missing))

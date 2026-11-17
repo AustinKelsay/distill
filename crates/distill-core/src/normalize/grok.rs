@@ -9,6 +9,9 @@ use super::chat::push_message;
 use crate::harness::percent_decode;
 use crate::model::{Event, EventKind, Parsed};
 
+/// Entry types the parser skips on purpose. Any other type it skips is reported as format drift.
+pub const IGNORED: &[&str] = &[];
+
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let parts: Vec<&str> = origin.rsplit('/').collect();

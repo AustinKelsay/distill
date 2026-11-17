@@ -163,6 +163,8 @@ fn harness(
         capture_errors: 0,
         parse_failures: drift,
         drift,
+        partial_drift: 0,
+        unknown_types: Default::default(),
         note: note.map(str::to_string),
     }
 }

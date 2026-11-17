@@ -7,6 +7,10 @@ use serde_json::Value;
 
 use crate::model::{Event, EventKind, Parsed};
 
+/// Step types the parser skips on purpose. It skips none: a step of a type it doesn't name is
+/// a tool that ran, kept as its result.
+pub const IGNORED: &[&str] = &[];
+
 fn text_of(v: Option<&Value>) -> String {
     match v {
         Some(Value::String(s)) => s.clone(),

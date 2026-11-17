@@ -43,7 +43,7 @@ A session that repeats another session already in the archive, because one harne
 _Avoid_: Duplicate, copy
 
 **Format drift**:
-A harness changing how it records sessions, so that its captures no longer become events.
+A harness changing how it records sessions, so that its captures, or some of their records, no longer become events. Seen as a sizable capture that parses to nothing, or as records of a type the parser doesn't know.
 
 ### Organization
 

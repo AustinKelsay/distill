@@ -6,6 +6,18 @@ use serde_json::Value;
 use super::blocks::{push_content, ts};
 use crate::model::{EventKind, Parsed};
 
+/// Record types the parser skips on purpose: the harness's bookkeeping (titles, summaries, file
+/// snapshots, the prompt queue, status and progress notes). Any other type it skips is reported
+/// as format drift.
+pub const IGNORED: &[&str] = &[
+    "custom-title",
+    "summary",
+    "file-history-snapshot",
+    "queue-operation",
+    "system",
+    "progress",
+];
+
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let text = String::from_utf8_lossy(bytes);
@@ -59,7 +71,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     model,
                 );
             }
-            _ => {}
+            _ => out.skip(ty, line.len()),
         }
     }
     Ok(out)

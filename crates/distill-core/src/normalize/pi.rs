@@ -7,6 +7,10 @@ use serde_json::Value;
 use super::blocks::{push_content, result_text, ts};
 use crate::model::{Event, EventKind, Parsed};
 
+/// Record types the parser skips on purpose: a change of thinking level holds no part of the
+/// conversation. Any other type it skips is reported as format drift.
+pub const IGNORED: &[&str] = &["thinking_level_change"];
+
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let text = String::from_utf8_lossy(bytes);
@@ -14,7 +18,8 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        match v.get("type").and_then(Value::as_str).unwrap_or("") {
+        let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
+        match ty {
             "session" => {
                 out.session_id = v.get("id").and_then(Value::as_str).map(str::to_string);
                 out.cwd = v.get("cwd").and_then(Value::as_str).map(str::to_string);
@@ -36,7 +41,8 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 if let Some(m) = model {
                     out.add_model(m);
                 }
-                match msg.get("role").and_then(Value::as_str).unwrap_or("") {
+                let role = msg.get("role").and_then(Value::as_str).unwrap_or("");
+                match role {
                     "user" => push_content(
                         &mut out,
                         EventKind::User,
@@ -72,10 +78,10 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                         e.text = Some(result_text(msg.get("content").unwrap_or(&Value::Null)));
                         out.push(e);
                     }
-                    _ => {}
+                    _ => out.skip_in("message", role, msg),
                 }
             }
-            _ => {}
+            _ => out.skip(ty, line.len()),
         }
     }
     Ok(out)

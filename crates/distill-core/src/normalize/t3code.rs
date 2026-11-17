@@ -18,6 +18,9 @@ use serde_json::{Value, json};
 use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
+/// Item types the parser skips on purpose. Any other type it skips is reported as format drift.
+pub const IGNORED: &[&str] = &[];
+
 /// The harness Distill reads a T3 Code driver's sessions from directly, if any.
 fn native(driver: &str) -> Option<Harness> {
     Some(match driver {
@@ -394,7 +397,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 out.push(result("subagent", text(it.get("result")), failed));
             }
             "error" => out.push(result("error", text(it.get("failure")), true)),
-            _ => {}
+            _ => out.skip_in("item", ty, it),
         }
     }
     // A mirror only when every run went through a harness Distill reads natively; a thread

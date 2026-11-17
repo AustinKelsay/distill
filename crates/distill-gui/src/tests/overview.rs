@@ -139,6 +139,26 @@ fn warnings_drift_and_failing_rules_are_shown_with_a_fix() {
 }
 
 #[test]
+fn captures_holding_record_types_the_parser_does_not_know_count_as_drift() {
+    let mut s = fixture::running();
+    let st = s.overview.status.as_mut().expect("a status");
+    for h in &mut st.harnesses {
+        if h.harness == Harness::Codex {
+            h.health = distill_core::status::Health::Warn;
+            h.partial_drift = 3;
+            h.note = Some("record types the parser doesn't know: response_item:v2".into());
+        }
+    }
+    let rt = runtime_sized(s, (1080.0, 2400.0));
+    assert_eq!(text_of(&rt, "drift"), "3 captures look like format drift");
+    assert_eq!(text_of(&rt, "harness-codex/drift"), "3");
+    assert!(shows(
+        &rt,
+        "record types the parser doesn't know: response_item:v2"
+    ));
+}
+
+#[test]
 fn a_step_with_nothing_to_report_is_not_yet_available() {
     let rt = runtime_sized(fixture::just_set_up(), (1080.0, 2400.0));
     assert_eq!(text_of(&rt, "last-sweep"), "No sweep yet");

@@ -498,7 +498,7 @@ fn health(h: Health) -> &'static str {
 }
 
 fn harnesses(s: &State, st: &Status, p: &Paint) -> El {
-    let drift: u64 = st.harnesses.iter().map(|h| h.drift).sum();
+    let drift: u64 = st.harnesses.iter().map(|h| h.drift + h.partial_drift).sum();
     let drift_line = if drift == 0 {
         text("No format drift").color(p.muted())
     } else {
@@ -597,11 +597,13 @@ fn harness_row(s: &State, h: &HarnessStatus, p: &Paint, w: &[f32; 7]) -> El {
             .w(w[5]),
         )
         .child(
-            num("drift", thousands(h.drift), w[6]).color(if h.drift > 0 {
-                p.warn()
-            } else {
-                p.muted()
-            }),
+            num("drift", thousands(h.drift + h.partial_drift), w[6]).color(
+                if h.drift + h.partial_drift > 0 {
+                    p.warn()
+                } else {
+                    p.muted()
+                },
+            ),
         );
     let mut c = col()
         .key(format!("harness-{}", h.harness.id()))

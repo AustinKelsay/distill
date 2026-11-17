@@ -7,6 +7,9 @@ use serde_json::Value;
 use super::blocks::{push_content, ts};
 use crate::model::{EventKind, Parsed};
 
+/// Record types the parser skips on purpose. Any other type it skips is reported as format drift.
+pub const IGNORED: &[&str] = &[];
+
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let text = String::from_utf8_lossy(bytes);
@@ -14,7 +17,8 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        match v.get("type").and_then(Value::as_str).unwrap_or("") {
+        let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
+        match ty {
             "session_start" => {
                 out.session_id = v.get("id").and_then(Value::as_str).map(str::to_string);
                 out.cwd = v.get("cwd").and_then(Value::as_str).map(str::to_string);
@@ -47,7 +51,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     model,
                 );
             }
-            _ => {}
+            _ => out.skip(ty, line.len()),
         }
     }
     Ok(out)
