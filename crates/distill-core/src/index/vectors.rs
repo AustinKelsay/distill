@@ -381,8 +381,13 @@ pub fn build(
     pending.truncate(config.steward.sessions_per_run);
     let pending: Vec<SessionMeta> = pending.into_iter().cloned().collect();
 
-    r.stopped_at_deadline =
-        read::for_embedding(home, &model, &pending, deadline, |facts, served| {
+    r.stopped_at_deadline = read::for_embedding(
+        home,
+        runtime.provider(),
+        &model,
+        &pending,
+        deadline,
+        |facts, served| {
             let (events, found, card) = match served {
                 Ok(s) => s,
                 Err(why) => {
@@ -426,7 +431,8 @@ pub fn build(
                     Ok(ControlFlow::Continue(()))
                 }
             }
-        })?;
+        },
+    )?;
     if changed {
         write_atomic(&home.vectors_path(), &encode(&store)?)?;
     }

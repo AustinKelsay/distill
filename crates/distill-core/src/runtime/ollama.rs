@@ -2,10 +2,9 @@
 //! only. Which of its models are stored here is read from its model store on disk, not from what
 //! the server says.
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -87,7 +86,6 @@ impl Backend for Ollama {
 }
 
 impl Ollama {
-    /// One HTTP/1.0 request, so the answer is the rest of the stream with no chunking.
     fn request(
         &self,
         method: &str,
@@ -95,72 +93,9 @@ impl Ollama {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<Value, RuntimeError> {
-        let until = Instant::now() + timeout;
-        let mut stream =
-            TcpStream::connect_timeout(&self.addr, timeout.min(Duration::from_secs(2)))
-                .map_err(|_| RuntimeError::NotRunning)?;
-        let failed = |e: std::io::Error| RuntimeError::Failed(e.to_string());
-        let late = || {
-            RuntimeError::Failed(format!(
-                "{path}: no whole answer within {}s",
-                timeout.as_secs()
-            ))
-        };
-        // A socket timeout: the deadline came with no more progress.
-        let timed_out = |e: &std::io::Error| {
-            matches!(
-                e.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )
-        };
-        let body = body.map(Value::to_string).unwrap_or_default();
-        let request = format!(
-            "{method} {path} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\n\r\n{body}",
-            self.addr,
-            body.len()
-        );
-        // Write and read against the whole request's deadline, so neither a server that reads
-        // slowly nor an answer that trickles in can outlast it.
-        let mut sent = request.as_bytes();
-        while !sent.is_empty() {
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err(late());
-            }
-            stream.set_write_timeout(Some(left)).map_err(failed)?;
-            match stream.write(sent) {
-                Ok(0) => return Err(RuntimeError::Failed(format!("{path}: the server hung up"))),
-                Ok(n) => sent = &sent[n..],
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) if timed_out(&e) => return Err(late()),
-                Err(e) => return Err(failed(e)),
-            }
-        }
-        let mut answer = Vec::new();
-        let mut chunk = [0u8; 64 * 1024];
-        loop {
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err(late());
-            }
-            stream.set_read_timeout(Some(left)).map_err(failed)?;
-            match stream.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => answer.extend_from_slice(&chunk[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) if timed_out(&e) => return Err(late()),
-                Err(e) => return Err(failed(e)),
-            }
-        }
-        let text = String::from_utf8_lossy(&answer);
-        let (head, body) = text
-            .split_once("\r\n\r\n")
-            .ok_or_else(|| RuntimeError::Failed("an answer with no body".into()))?;
-        let status = head.split_whitespace().nth(1).unwrap_or("");
-        let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        let (status, value) = super::http::request(&self.addr, method, path, body, timeout)?;
         if status != "200" {
-            let why = value["error"].as_str().unwrap_or(status);
+            let why = value["error"].as_str().unwrap_or(&status);
             return Err(RuntimeError::Failed(format!("{path}: {why}")));
         }
         if value.is_null() {
@@ -309,8 +244,10 @@ mod tests {
     use super::*;
     use crate::runtime::{LocalRuntime, Model, RuntimeState, Stored};
     use serde_json::json;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     /// A canned stand-in for the Ollama server on a loopback port: answers each request by its
     /// path and records what it was sent.

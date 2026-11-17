@@ -17,6 +17,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy -p distill-core -p distill-cli -p distill-mcp --all-targets -- -D warnings
       - run: cargo test -p distill-core -p distill-cli -p distill-mcp
+      # Built on its own, so the shipped crates above never build distill-core's `eval` feature.
+      - run: cargo clippy -p distill-eval --all-targets -- -D warnings
+      - run: cargo test -p distill-eval
 
   gui:
     runs-on: ubuntu-latest

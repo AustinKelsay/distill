@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/distill-core", "crates/distill-cli", "crates/distill-mcp", "crates/distill-gui"]
+members = [
+    "crates/distill-core",
+    "crates/distill-cli",
+    "crates/distill-mcp",
+    "crates/distill-gui",
+    "crates/distill-eval",
+]
 default-members = ["crates/distill-core", "crates/distill-cli", "crates/distill-mcp"]
 
 [workspace.package]

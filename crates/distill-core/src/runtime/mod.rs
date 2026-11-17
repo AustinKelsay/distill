@@ -1,9 +1,15 @@
 //! The one client that reaches the local runtime on this machine, for generating text and for
 //! embedding (issue #72, "Trust"). It refuses any model the runtime serves from a cloud. In this
-//! version the runtime is Ollama ([`LocalRuntime::ollama`]); tests use [`FakeRuntime`].
+//! version the runtime is Ollama ([`LocalRuntime::ollama`]); tests use [`FakeRuntime`]. With the
+//! `eval` feature, which only `distill-eval` turns on, a trusted provider's OpenAI-compatible
+//! server on this machine can stand in for it ([`LocalRuntime::openai_compatible`]), so the model
+//! steps can be judged with real models without running one here.
 
 mod fake;
+mod http;
 mod ollama;
+#[cfg(feature = "eval")]
+mod openai;
 
 pub use fake::{Call, FakeRuntime};
 
@@ -45,6 +51,10 @@ pub enum Stored {
 
 /// How the client reaches a runtime: the real one or the fake.
 pub(crate) trait Backend: Send + Sync {
+    /// The provider its models run at, which readers name (`ollama/<model>`).
+    fn provider(&self) -> &str {
+        crate::trust::OLLAMA
+    }
     fn installed(&self) -> bool;
     /// The installed models' names, or `None` when nothing answers.
     fn models(&self) -> Option<Vec<String>>;
@@ -94,6 +104,20 @@ impl LocalRuntime {
     /// The Ollama server on this machine. Nothing is contacted until a call needs it.
     pub fn ollama() -> Self {
         Self::new(ollama::Ollama::on_this_machine())
+    }
+
+    /// The OpenAI-compatible server of the remote provider `provider` at `addr`, which must be on
+    /// this machine (a provider's local proxy). Its models count as stored here, so the model
+    /// steps run with them, and they read as `<provider>/<model>`: the home must trust
+    /// `provider`, or the read path refuses them. For evaluating the model steps only.
+    #[cfg(feature = "eval")]
+    pub fn openai_compatible(provider: &str, addr: std::net::SocketAddr) -> anyhow::Result<Self> {
+        Ok(Self::new(openai::OpenAiCompatible::new(provider, addr)?))
+    }
+
+    /// The provider the runtime's models run at: `ollama` but for an evaluation's stand-in.
+    pub fn provider(&self) -> &str {
+        self.backend.provider()
     }
 
     pub fn state(&self) -> RuntimeState {
