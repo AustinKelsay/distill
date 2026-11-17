@@ -1,10 +1,12 @@
 //! Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta`, `turn_context`,
 //! `response_item` and `event_msg` records.
 
+use std::io::BufRead;
+
 use anyhow::Result;
 use serde_json::Value;
 
-use super::blocks::{result_text, ts};
+use super::blocks::{each_line, is_ignored_record, result_text, ts};
 use crate::model::{Event, EventKind, Parsed};
 
 /// Record types the parser skips on purpose: `event_msg` records repeat what the response items
@@ -25,15 +27,23 @@ pub const IGNORED: &[&str] = &[
 ];
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
+    parse_reader(bytes)
+}
+
+/// [`parse`] over a stream, one line at a time: the capture is never held whole, and a record
+/// of a type the parser skips on purpose is recognised from its head, without building a tree.
+pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
     let mut out = Parsed::default();
     let mut model: Option<String> = None;
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
+    each_line(reader, |line| {
+        if is_ignored_record(line, IGNORED) {
+            return;
+        }
         let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
+            return;
         };
         let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
-        let Some(p) = v.get("payload") else { continue };
+        let Some(p) = v.get("payload") else { return };
         let at = ts(&v);
         match ty {
             "session_meta" => {
@@ -66,7 +76,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             "response_item" => push_item(&mut out, p, at, model.as_deref()),
             _ => out.skip(ty, line.len()),
         }
-    }
+    })?;
     Ok(out)
 }
 

@@ -1,8 +1,47 @@
 //! Helpers for the content-block shapes most harnesses share.
 
+use std::borrow::Cow;
+use std::io::BufRead;
+
+use anyhow::Result;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{Event, EventKind, Parsed};
+
+/// Call `f` on each line of a stream, as `str::lines` would on the whole text (invalid UTF-8
+/// becomes U+FFFD), holding one line at a time.
+pub fn each_line(mut reader: impl BufRead, mut f: impl FnMut(&str)) -> Result<()> {
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if reader.read_until(b'\n', &mut buf)? == 0 {
+            return Ok(());
+        }
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+        }
+        f(&String::from_utf8_lossy(&buf));
+    }
+}
+
+/// Whether a JSONL record's top-level `type` is one of `ignored`, read without building the
+/// record's tree (a record can be megabytes). A line it cannot read this way is not ignored:
+/// the caller parses it in full.
+pub fn is_ignored_record(line: &str, ignored: &[&str]) -> bool {
+    #[derive(Deserialize)]
+    struct Head<'a> {
+        #[serde(borrow)]
+        r#type: Option<Cow<'a, str>>,
+    }
+    serde_json::from_str::<Head>(line)
+        .ok()
+        .and_then(|h| h.r#type)
+        .is_some_and(|t| ignored.contains(&&*t))
+}
 
 pub fn ts(v: &Value) -> Option<String> {
     match v.get("timestamp")? {
@@ -103,5 +142,44 @@ pub fn push_content(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_record_is_ignored_by_its_head_alone() {
+        let ig = ["compacted", "event_msg"];
+        assert!(is_ignored_record(
+            r#"{"type":"compacted","payload":{"a":[1,2]}}"#,
+            &ig
+        ));
+        assert!(is_ignored_record(
+            r#"{"payload":{},"type":"event_msg"}"#,
+            &ig
+        ));
+        // An escaped name still reads; a name that is not a string, another type, no type, and
+        // a line that is not JSON are left for the full parse.
+        assert!(is_ignored_record(r#"{"type":"compacted"}"#, &ig));
+        assert!(!is_ignored_record(r#"{"type":7}"#, &ig));
+        assert!(!is_ignored_record(r#"{"type":"response_item"}"#, &ig));
+        assert!(!is_ignored_record(r#"{"payload":{}}"#, &ig));
+        assert!(!is_ignored_record(r#"{"type":"compacted""#, &ig));
+        assert!(!is_ignored_record("not json", &ig));
+    }
+
+    #[test]
+    fn lines_split_as_str_lines_does() {
+        let mut got = Vec::new();
+        let bytes = b"a\r\nb\n\nc\xff\nlast";
+        each_line(&bytes[..], |l| got.push(l.to_string())).unwrap();
+        let want: Vec<String> = String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 5);
     }
 }

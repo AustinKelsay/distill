@@ -33,6 +33,40 @@ pub fn private_file() -> fs::OpenOptions {
     o
 }
 
+/// [`write_atomic`] for bytes a writer produces, so a large file is never built in memory first.
+pub fn write_atomic_with(
+    path: &Path,
+    fill: impl FnOnce(&mut dyn Write) -> Result<()>,
+) -> Result<()> {
+    let dir = path.parent().context("path has no parent")?;
+    create_dir_private(dir)?;
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+        std::process::id()
+    ));
+    let written = (|| -> Result<()> {
+        let f = private_file()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut w = std::io::BufWriter::new(f);
+        fill(&mut w)?;
+        let f = w.into_inner().map_err(|e| e.into_error())?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    set_private(&tmp);
+    fs::rename(&tmp, path).with_context(|| format!("rename into {}", path.display()))?;
+    Ok(())
+}
+
 /// Write a file by writing a sibling temp file and renaming it, so readers never see half a file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().context("path has no parent")?;

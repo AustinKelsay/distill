@@ -19,6 +19,34 @@ use crate::util::{
     append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private,
 };
 
+/// A blob file read as a stream that hashes what passes through it.
+pub(crate) struct BlobReader {
+    file: fs::File,
+    hasher: Sha256,
+    sha: String,
+}
+
+impl Read for BlobReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.file.read(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+}
+
+impl BlobReader {
+    /// Read what is left (a decoder may stop before the end) and check that the whole blob
+    /// hashes to its name, as [`Archive::read_blob`] does.
+    pub(crate) fn finish(mut self) -> Result<()> {
+        std::io::copy(&mut self, &mut std::io::sink())?;
+        let actual = hex::encode(self.hasher.finalize());
+        if actual != self.sha {
+            bail!("blob {} is corrupt (hashes to {actual})", self.sha);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureKind {
@@ -95,6 +123,18 @@ impl Archive {
             bail!("blob {sha} is corrupt (hashes to {actual})");
         }
         Ok(bytes)
+    }
+
+    /// A blob as a stream, hashed as it is read, so nothing holds it whole. Call
+    /// [`BlobReader::finish`] after reading: it fails if the blob does not hash to its name.
+    pub(crate) fn open_blob(&self, sha: &str) -> Result<BlobReader> {
+        let file =
+            fs::File::open(self.blob_path(sha)).with_context(|| format!("blob {sha} missing"))?;
+        Ok(BlobReader {
+            file,
+            hasher: Sha256::new(),
+            sha: sha.to_string(),
+        })
     }
 
     /// Bytes on disk for every distinct blob still present.
