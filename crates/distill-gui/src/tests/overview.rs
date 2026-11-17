@@ -76,6 +76,21 @@ fn the_overview_shows_the_last_sweep_and_each_steps_progress() {
 }
 
 #[test]
+fn stale_cards_count_as_shown_and_are_named_apart_from_the_waiting() {
+    let mut s = fixture::running();
+    let cards = &mut s.overview.status.as_mut().unwrap().cards;
+    cards.current -= 200;
+    cards.stale = 200;
+    let rt = runtime_sized(s, (1080.0, 2400.0));
+    assert_eq!(
+        text_of(&rt, "step-cards/value"),
+        "1,212 of 5,300 with a card"
+    );
+    assert!(shows(&rt, "200 stale"));
+    assert!(shows(&rt, "4,088 waiting"));
+}
+
+#[test]
 fn pending_reveal_requests_are_counted_and_lead_to_approvals() {
     let mut rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
     assert!(shows(&rt, "2 reveal requests wait for you"));

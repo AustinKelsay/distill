@@ -298,6 +298,185 @@ fn a_card_from_the_previous_build_counts_as_absent() {
     assert_eq!(load(&home, &f).unwrap().title, "New");
 }
 
+const NEW_MODEL: &str = "better:14b";
+
+/// A runtime with both models stored here, whose answer names the model that wrote it, and that
+/// fails for every session whose text holds `failing`.
+fn both_models(failing: &'static str) -> FakeRuntime {
+    FakeRuntime::running()
+        .with_model(MODEL, Stored::Here)
+        .with_model(NEW_MODEL, Stored::Here)
+        .replying(move |model, prompt| {
+            if prompt.contains(failing) {
+                "no card".into()
+            } else {
+                reply(&format!("By {model}"))
+            }
+        })
+}
+
+/// Each session's card, as (id, model) for those that have one, and whether it is shown.
+fn cards_by_model(home: &Home, config: &Config, ids: &[&str]) -> Vec<(String, String, bool)> {
+    let key = FingerprintKey::existing(home).unwrap();
+    ids.iter()
+        .filter_map(|id| {
+            let f = facts(home, id);
+            let shown = stored_current(home, config, key.as_ref(), &f).is_some();
+            load(home, &f).map(|c| (id.to_string(), c.model, shown))
+        })
+        .collect()
+}
+
+#[test]
+fn a_new_card_model_makes_cards_stale_which_stay_shown_and_are_rewritten_after_every_missing_one() {
+    let (_d, home, mut config) = home_with(&[
+        ("old1", "2026-11-01T10:00:00Z", "the oldest"),
+        ("old2", "2026-11-02T10:00:00Z", "the older"),
+        ("new1", "2026-11-08T10:00:00Z", "the newer"),
+        ("new2", "2026-11-09T10:00:00Z", "the newest"),
+    ]);
+    let ids = ["old1", "old2", "new1", "new2"];
+    config.steward.sessions_per_run = 2;
+    let fake = both_models("never fails");
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    let shown = |id: &str, model: &str| (id.to_string(), model.to_string(), true);
+    assert_eq!(
+        cards_by_model(&home, &config, &ids),
+        [shown("new1", MODEL), shown("new2", MODEL)]
+    );
+
+    // A new card_model: the two cards are stale, and still shown, in a list too.
+    config.steward.card_model = Some(NEW_MODEL.into());
+    config.save(&home.config_path()).unwrap();
+    let card = load(&home, &facts(&home, "new2")).unwrap();
+    assert!(card.stale(NEW_MODEL) && !card.stale(MODEL));
+    let p = progress(&home).unwrap();
+    assert_eq!(
+        (p.sessions, p.current, p.stale, p.pending, p.failing),
+        (4, 0, 2, 2, 0),
+        "{p:?}"
+    );
+    let rt = FakeRuntime::not_installed().runtime();
+    let crate::read::Listed::Rows(rows) = crate::read::list(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &Default::default(),
+        Default::default(),
+    )
+    .unwrap() else {
+        panic!("the owner gets rows")
+    };
+    let listed: Vec<_> = rows
+        .rows
+        .iter()
+        .map(|r| r.card.as_ref().map(|c| c.card.model.as_str()))
+        .collect();
+    assert_eq!(listed, [Some(MODEL), Some(MODEL), None, None]);
+
+    // The missing cards go first, though their sessions are older; old1's attempt fails.
+    let fake = both_models("the oldest");
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!(
+        (
+            r.current,
+            r.pending,
+            r.stale,
+            r.written,
+            r.rewritten,
+            r.failed
+        ),
+        (0, 2, 2, 1, 0, 1),
+        "{r:?}"
+    );
+    assert_eq!(
+        r.summary(),
+        "wrote 1 card (0 already current, 1 waiting, 2 stale), 1 failed"
+    );
+    assert_eq!(
+        cards_by_model(&home, &config, &ids),
+        [
+            shown("old2", NEW_MODEL),
+            shown("new1", MODEL),
+            shown("new2", MODEL)
+        ]
+    );
+
+    // A failed session with no card is retried before any stale card is rewritten.
+    config.steward.sessions_per_run = 1;
+    let fake = both_models("never fails");
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.written, r.rewritten), (1, 0), "{r:?}");
+    assert_eq!(load(&home, &facts(&home, "old1")).unwrap().model, NEW_MODEL);
+
+    // Then the stale cards, newest session first.
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!(
+        (r.current, r.stale, r.written, r.rewritten),
+        (2, 2, 1, 1),
+        "{r:?}"
+    );
+    assert_eq!(
+        r.summary(),
+        "wrote 1 card (2 already current, 0 waiting, 1 stale)"
+    );
+    assert_eq!(
+        cards_by_model(&home, &config, &ids),
+        [
+            shown("old1", NEW_MODEL),
+            shown("old2", NEW_MODEL),
+            shown("new1", MODEL),
+            shown("new2", NEW_MODEL)
+        ]
+    );
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!(r.rewritten, 1, "{r:?}");
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.current, r.stale, r.written), (4, 0, 0), "{r:?}");
+    let p = progress(&home).unwrap();
+    assert_eq!((p.current, p.stale, p.pending), (4, 0, 0), "{p:?}");
+}
+
+#[test]
+fn a_card_written_with_an_older_prompt_version_is_stale_shown_and_rewritten() {
+    let (_d, home, config) =
+        home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
+    let fake = model(|_, _| reply("Rename"));
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    let f = facts(&home, "s1");
+    // The card as the previous prompt wrote it, scanned as it is.
+    let mut card = load(&home, &f).unwrap();
+    card.prompt_version = PROMPT_VERSION - 1;
+    assert!(card.stale(MODEL));
+    std::fs::write(
+        home.card_path(Harness::ClaudeCode, "s1"),
+        serde_json::to_string(&card).unwrap(),
+    )
+    .unwrap();
+    let fpath = home.findings_path(Harness::ClaudeCode, "s1");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fpath).unwrap()).unwrap();
+    v["card"]["hash"] = card.hash().into();
+    std::fs::write(&fpath, v.to_string()).unwrap();
+
+    let scan = crate::findings::load(&home, &f).unwrap();
+    assert_eq!(
+        current(&home, &f, &scan),
+        Some(card),
+        "a stale card is shown"
+    );
+    let p = progress(&home).unwrap();
+    assert_eq!((p.current, p.stale, p.pending), (0, 1, 0), "{p:?}");
+    let s = crate::status::status(&home).unwrap();
+    assert_eq!((s.cards.stale, s.cards.pending), (1, 0));
+
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.stale, r.written, r.rewritten), (1, 1, 1), "{r:?}");
+    assert_eq!(load(&home, &f).unwrap().prompt_version, PROMPT_VERSION);
+    let p = progress(&home).unwrap();
+    assert_eq!((p.current, p.stale), (1, 0), "{p:?}");
+}
+
 /// A fake key, built at run time so no secret scanner mistakes it for a leak.
 fn fake_key() -> String {
     ["sk-", "ant-", "api03-", &"Qw8".repeat(9)].concat()

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use distill_core::cards::CardProgress;
 use distill_core::status;
 
 use super::Ctx;
@@ -34,21 +35,7 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             s.index.pending,
             human_bytes(s.index.bytes)
         );
-        match &s.cards.skipped {
-            Some(why) => println!(
-                "cards: skipped ({why}) · {} of {} sessions have one",
-                s.cards.current, s.cards.sessions
-            ),
-            None => println!(
-                "cards: {} of {} sessions current, {} waiting, {} failing · model {}{}",
-                s.cards.current,
-                s.cards.sessions,
-                s.cards.pending,
-                s.cards.failing,
-                s.cards.model.as_deref().unwrap_or("none"),
-                stopped(s.cards.stopped_after)
-            ),
-        }
+        println!("{}", cards_line(&s.cards));
         match &s.vectors.skipped {
             Some(why) => println!(
                 "vectors: skipped ({why}) · {} of {} sessions have them · search by meaning is off",
@@ -101,6 +88,28 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
     })
 }
 
+/// The cards' line. A stale card (written with another prompt version or `card_model`) is still
+/// shown, so it counts among the sessions that have one, apart from the current and the waiting.
+fn cards_line(c: &CardProgress) -> String {
+    match &c.skipped {
+        Some(why) => format!(
+            "cards: skipped ({why}) · {} of {} sessions have one",
+            c.current + c.stale,
+            c.sessions
+        ),
+        None => format!(
+            "cards: {} of {} sessions current, {} waiting, {} stale, {} failing · model {}{}",
+            c.current,
+            c.sessions,
+            c.pending,
+            c.stale,
+            c.failing,
+            c.model.as_deref().unwrap_or("none"),
+            stopped(c.stopped_after)
+        ),
+    }
+}
+
 /// What a model step's line adds when the last tick stopped it at its time limit.
 fn stopped(after: Option<u64>) -> String {
     after.map_or_else(String::new, |n| {
@@ -109,4 +118,31 @@ fn stopped(after: Option<u64>) -> String {
             distill_core::util::count(n, "session")
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cards_line_counts_stale_cards_apart_from_missing_ones() {
+        let mut c = CardProgress {
+            model: Some("small:8b".into()),
+            sessions: 10,
+            current: 5,
+            stale: 3,
+            pending: 2,
+            failing: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            cards_line(&c),
+            "cards: 5 of 10 sessions current, 2 waiting, 3 stale, 1 failing · model small:8b"
+        );
+        c.skipped = Some("the local runtime is not running".into());
+        assert_eq!(
+            cards_line(&c),
+            "cards: skipped (the local runtime is not running) · 8 of 10 sessions have one"
+        );
+    }
 }

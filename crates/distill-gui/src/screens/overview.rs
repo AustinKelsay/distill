@@ -345,12 +345,13 @@ fn steps(st: &Status) -> Vec<Step> {
             value: (cards.sessions > 0).then(|| {
                 format!(
                     "{} of {} with a card",
-                    thousands(cards.current),
+                    thousands(cards.current + cards.stale),
                     thousands(cards.sessions)
                 )
             }),
             detail: [
                 waiting(cards.pending),
+                (cards.stale > 0).then(|| format!("{} stale", thousands(cards.stale))),
                 (cards.failing > 0).then(|| format!("{} failing", thousands(cards.failing))),
                 cards.model.clone(),
                 cards.skipped.as_ref().map(|why| format!("Skipped: {why}")),

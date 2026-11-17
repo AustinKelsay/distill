@@ -95,26 +95,32 @@ pub(crate) fn model_failed(e: RuntimeError) -> Failed {
     }
 }
 
-/// Run `one` for at most `limit` of `pending`: never tried first, then by fewest failed attempts,
-/// newest first within each, taking no session once `deadline` has passed; the session under way
-/// then is finished, so every session is done whole however long it takes. Failures are recorded
-/// in `failures_path`, where those of sessions no longer in `all` are forgotten.
-pub(crate) fn run<T>(
+/// Run `one` for at most `limit` sessions: every one of `pending` before any of `later` (for
+/// cards, those written with another prompt or model, which are still shown), and within each,
+/// never tried first, then by fewest failed attempts, newest first. It takes no session once
+/// `deadline` has passed; the session under way then is finished, so every session is done whole
+/// however long it takes. Failures are recorded in `failures_path`, where those of sessions no
+/// longer in `all` are forgotten.
+pub(crate) fn run<'a, T>(
     failures_path: &Path,
     all: &[SessionMeta],
-    mut pending: Vec<&SessionMeta>,
+    mut pending: Vec<&'a SessionMeta>,
+    mut later: Vec<&'a SessionMeta>,
     limit: usize,
     deadline: Deadline,
     mut one: impl FnMut(&SessionMeta) -> std::result::Result<T, Failed>,
 ) -> Result<Ran<T>> {
     let mut failures = load_failures(failures_path);
     let attempts = |f: &SessionMeta| failures.get(&f.key()).map_or(0, |x| x.attempts);
-    pending.sort_by(|a, b| {
-        attempts(a)
-            .cmp(&attempts(b))
-            .then_with(|| started(b).cmp(&started(a)))
-            .then_with(|| a.key().cmp(&b.key()))
-    });
+    for batch in [&mut pending, &mut later] {
+        batch.sort_by(|a, b| {
+            attempts(a)
+                .cmp(&attempts(b))
+                .then_with(|| started(b).cmp(&started(a)))
+                .then_with(|| a.key().cmp(&b.key()))
+        });
+    }
+    pending.append(&mut later);
     pending.truncate(limit);
     let mut out = Vec::with_capacity(pending.len());
     let mut stopped_at_deadline = false;
