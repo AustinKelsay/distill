@@ -18,22 +18,31 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
         return None;
     }
     let mut hits = Vec::new();
+    // The last credential key decoded, by its token's range: every element of an array under it
+    // shares it, so it is decoded once.
+    let mut last_key: Option<((usize, usize), String)> = None;
     for tok in json_tokens(text)? {
         let raw = &text[tok.start..tok.end];
         let string = raw.starts_with('"');
         // A value under a credential-named key that cannot be a secret (too short, an id, a
         // placeholder) is read as any other string.
         let secret = match tok.role {
-            Role::Secret { key } => {
-                let key = decode(&text[key.0..key.1]).0;
+            Role::Secret { key: at } => {
+                if last_key.as_ref().is_none_or(|(r, _)| *r != at) {
+                    last_key = Some((at, decode(&text[at.0..at.1]).0));
+                }
+                let key = &last_key.as_ref().expect("just set").1;
                 if string {
                     let value = decode(raw).0;
-                    weak::can_be_secret(&key, &value).then_some(value)
+                    weak::can_be_secret(key, &value).then_some(value)
                 } else {
                     // Gated on the number's one form, as `detect_value` gates it; the hit is
-                    // still the number as written.
-                    let can_be = serde_json::from_str::<serde_json::Number>(raw)
-                        .is_ok_and(|n| weak::can_be_secret_number(&key, &n));
+                    // still the number as written. One serde cannot hold (`1e400`, hundreds of
+                    // digits) is gated as written: no `Value` holds it, so nothing disagrees.
+                    let can_be = match serde_json::from_str::<serde_json::Number>(raw) {
+                        Ok(n) => weak::can_be_secret_number(key, &n),
+                        Err(_) => weak::can_be_secret(key, raw),
+                    };
                     can_be.then(|| raw.to_string())
                 }
             }

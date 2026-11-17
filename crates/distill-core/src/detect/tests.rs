@@ -1138,6 +1138,19 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
         assert_eq!(!places(&v).is_empty(), is_found, "{text} as a value");
     }
 
+    // A number too large for serde is still found, as written.
+    let huge = format!("9{}", "1".repeat(319));
+    assert!(serde_json::from_str::<serde_json::Number>(&huge).is_err());
+    assert_eq!(
+        found(&format!(r#"{{"api_secret":{huge}}}"#)),
+        hits(Kind::CredentialField, &[&huge])
+    );
+    assert_eq!(
+        found(r#"{"api_secret":1e400}"#),
+        [],
+        "five characters as written"
+    );
+
     // Real-shaped values under the same names are still found.
     assert_eq!(
         found(&format!("token={long_token} x")),
