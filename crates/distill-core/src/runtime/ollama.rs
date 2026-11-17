@@ -96,8 +96,9 @@ impl Ollama {
         timeout: Duration,
     ) -> Result<Value, RuntimeError> {
         let until = Instant::now() + timeout;
-        let mut stream = TcpStream::connect_timeout(&self.addr, Duration::from_secs(2))
-            .map_err(|_| RuntimeError::NotRunning)?;
+        let mut stream =
+            TcpStream::connect_timeout(&self.addr, timeout.min(Duration::from_secs(2)))
+                .map_err(|_| RuntimeError::NotRunning)?;
         let failed = |e: std::io::Error| RuntimeError::Failed(e.to_string());
         let late = || {
             RuntimeError::Failed(format!(
