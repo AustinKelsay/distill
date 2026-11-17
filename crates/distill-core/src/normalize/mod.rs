@@ -960,6 +960,30 @@ not json\n\
         let json =
             |p: &Parsed| serde_json::to_string(&(&p.events, &p.skipped, &p.session_id)).unwrap();
         assert_eq!(whole.events.len(), 2);
+        // What the fixture must parse to, written out, so the comparisons below don't only
+        // check the streaming path against itself.
+        let said: Vec<_> = whole
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref(), e.ts.as_deref()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    crate::model::EventKind::User,
+                    Some("caf\u{e9}"),
+                    Some("2026-11-03T08:30:55Z")
+                ),
+                (crate::model::EventKind::Assistant, Some("done"), None),
+            ]
+        );
+        assert_eq!(
+            (whole.session_id.as_deref(), whole.cwd.as_deref()),
+            (Some("abc"), Some("/r"))
+        );
+        let mystery = &whole.skipped["mystery"];
+        assert_eq!(mystery.records, 1);
         assert_eq!(json(&whole), json(&streamed));
         assert_eq!(json(&whole), json(&from_zst));
         // Only the unknown type is reported; the ignored ones are not.
@@ -970,6 +994,16 @@ not json\n\
         let b = parse_stream(Harness::ClaudeCode, "c.jsonl", Trickle(claude.as_bytes())).unwrap();
         assert_eq!(json(&a), json(&b));
         assert_eq!(a.harness_version.as_deref(), Some("2.1.0"));
+        assert_eq!(
+            (a.cwd.as_deref(), b.cwd.as_deref()),
+            (Some("/r"), Some("/r"))
+        );
+        let said: Vec<_> = b
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref()))
+            .collect();
+        assert_eq!(said, [(crate::model::EventKind::User, Some("hi"))]);
     }
 
     #[test]
