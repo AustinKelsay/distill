@@ -52,6 +52,24 @@ pub const MAX_WORD: usize = 64;
 /// How many sessions go into one new segment at most. Small in tests, so that they split the
 /// index into segments and merge them.
 const BATCH: usize = if cfg!(test) { 4 } else { 256 };
+/// How many bytes of words and postings a batch holds in memory at most before it is written, as
+/// [`Batch`] counts them (a little under what they take). A session is never split, so one
+/// session's words can pass it. Small in tests.
+const BUDGET: usize = if cfg!(test) {
+    64 * 1024
+} else {
+    96 * 1024 * 1024
+};
+/// A session with more bytes of text than this is indexed alone, in passes, so that its words
+/// are never all in memory at once.
+const GIANT: usize = if cfg!(test) {
+    256 * 1024
+} else {
+    16 * 1024 * 1024
+};
+/// How many occurrences of words one pass over a giant session holds at most. A distinct word
+/// takes about 300 bytes while it is counted.
+const PASS: u64 = if cfg!(test) { 20_000 } else { 1_500_000 };
 /// How many segments the index keeps before it merges the smallest.
 const MAX_SEGMENTS: usize = 8;
 /// How many events of a session each word records, for finding its passage.
@@ -197,6 +215,31 @@ impl IndexReport {
 /// the read path as Distill itself (one read-log line for the whole build), and drop entries whose
 /// session is gone. One writer at a time.
 pub fn build(home: &Home) -> Result<IndexReport> {
+    build_within(home, Limits::DEFAULT)
+}
+
+/// What bounds the memory of a build.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    /// A batch is written once it holds this many bytes (see [`BUDGET`]).
+    budget: usize,
+    /// A session whose text is longer than this many bytes is written as a segment of its own,
+    /// in passes over word ranges (see [`write_alone`]).
+    giant: usize,
+    /// How many occurrences of words one such pass holds at most.
+    pass: u64,
+}
+
+impl Limits {
+    const DEFAULT: Limits = Limits {
+        budget: BUDGET,
+        giant: GIANT,
+        pass: PASS,
+    };
+}
+
+/// [`build`] within `limits`.
+fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
     crate::util::create_dir_private(&home.words_dir())?;
     let _lock = home.lock("index")?;
     let sessions = normalize::read_session_list(home)?;
@@ -223,9 +266,24 @@ pub fn build(home: &Home) -> Result<IndexReport> {
         match served {
             Ok((events, findings, card)) => {
                 let made_from = MadeFrom::of(facts, findings, card.as_ref());
+                if text_bytes(&events, card.as_ref()) > limits.giant {
+                    batch.flush(home, &mut m)?;
+                    write_alone(
+                        home,
+                        &mut m,
+                        facts,
+                        &events,
+                        card.as_ref(),
+                        made_from,
+                        limits.pass,
+                    )?;
+                    r.indexed += 1;
+                    merge(home, &mut m)?;
+                    return Ok(());
+                }
                 batch.add(facts, &events, card.as_ref(), made_from);
                 r.indexed += 1;
-                if batch.sessions.len() >= BATCH {
+                if batch.is_full(limits.budget) {
                     batch.flush(home, &mut m)?;
                     // Merging as it goes keeps a first build of a large archive to a few
                     // segments open at a time.
@@ -273,9 +331,21 @@ fn remove_unlisted(home: &Home, m: &Manifest) {
 struct Batch {
     sessions: Vec<(String, u64, MadeFrom)>,
     words: BTreeMap<String, Vec<Posting>>,
+    /// What `words` takes, counted as [`WORD_COST`], [`POSTING_COST`] and the events' bytes.
+    bytes: usize,
 }
 
+/// What a word new to a batch takes besides its bytes: its map node and its list.
+const WORD_COST: usize = 64;
+/// What a posting takes besides its events: the struct and its list's slot.
+const POSTING_COST: usize = 48;
+
 impl Batch {
+    /// Whether the batch should be written now: it holds [`BATCH`] sessions or `budget` bytes.
+    fn is_full(&self, budget: usize) -> bool {
+        self.sessions.len() >= BATCH || self.bytes >= budget
+    }
+
     fn add(
         &mut self,
         facts: &SessionMeta,
@@ -284,40 +354,18 @@ impl Batch {
         made_from: MadeFrom,
     ) {
         let ord = self.sessions.len() as u32;
-        let mut found: HashMap<String, (u32, Vec<u64>)> = HashMap::new();
-        let mut total = 0u64;
-        // Each word of `text`, found in event `seq` or, for a card's, in none.
-        let mut words = |text: &str, seq: Option<u64>| {
-            for_each_word(text, |w| {
-                total += 1;
-                let mut note = |w: String| {
-                    let (n, evs) = found.entry(w).or_default();
-                    *n += 1;
-                    if let Some(seq) = seq
-                        && evs.len() < MAX_EVENTS
-                        && evs.last() != Some(&seq)
-                    {
-                        evs.push(seq);
-                    }
-                };
-                if w.contains('_') {
-                    for part in w.split('_').filter(|p| !p.is_empty()) {
-                        note(part.to_string());
-                    }
-                }
-                note(w);
-            });
-        };
-        for e in events {
-            for_each_text(e, |text| words(text, Some(e.seq)));
-        }
-        for (_, text) in card.map(Card::fields).unwrap_or_default() {
-            words(text, None);
-        }
+        let mut found = Found::new();
+        let total = notes(events, card, |w, seq| note(&mut found, w, seq));
         for (w, (n, mut evs)) in found {
+            let w_len = w.len();
             evs.sort_unstable();
             evs.dedup();
-            self.words.entry(w).or_default().push(Posting {
+            self.bytes += POSTING_COST + evs.len() * 8;
+            let list = self.words.entry(w).or_default();
+            if list.is_empty() {
+                self.bytes += WORD_COST + w_len;
+            }
+            list.push(Posting {
                 ord,
                 count: n,
                 events: evs,
@@ -335,6 +383,7 @@ impl Batch {
         m.next_segment += 1;
         let keys: Vec<String> = self.sessions.iter().map(|s| s.0.clone()).collect();
         let mut w = Writer::create(&home.words_segment_path(id), &keys)?;
+        self.bytes = 0;
         for (word, postings) in std::mem::take(&mut self.words) {
             w.add(&word, &segment::encode(&postings))?;
         }
@@ -361,6 +410,134 @@ impl Batch {
         }
         Ok(())
     }
+}
+
+/// A session's words, each with its count and the first events it is in.
+type Found = HashMap<String, (u32, Vec<u64>)>;
+
+/// Record one occurrence of `w`, found in event `seq` or, for a card's, in none.
+fn note(found: &mut Found, w: String, seq: Option<u64>) {
+    let (n, evs) = found.entry(w).or_default();
+    *n += 1;
+    if let Some(seq) = seq
+        && evs.len() < MAX_EVENTS
+        && evs.last() != Some(&seq)
+    {
+        evs.push(seq);
+    }
+}
+
+/// Call `f` with each occurrence of an indexed word in a session's events and card, in event
+/// order, with the event it is in (none for the card): a word with `_` in it once for each of its
+/// parts and once whole. Returns how many words the text has.
+fn notes(events: &[Event], card: Option<&Card>, mut f: impl FnMut(String, Option<u64>)) -> u64 {
+    let mut total = 0u64;
+    let mut words = |text: &str, seq: Option<u64>| {
+        for_each_word(text, |w| {
+            total += 1;
+            if w.contains('_') {
+                for part in w.split('_').filter(|p| !p.is_empty()) {
+                    f(part.to_string(), seq);
+                }
+            }
+            f(w, seq);
+        });
+    };
+    for e in events {
+        for_each_text(e, |text| words(text, Some(e.seq)));
+    }
+    for (_, text) in card.map(Card::fields).unwrap_or_default() {
+        words(text, None);
+    }
+    total
+}
+
+/// How many bytes of text a session has to index.
+fn text_bytes(events: &[Event], card: Option<&Card>) -> usize {
+    let mut n = 0;
+    for e in events {
+        for_each_text(e, |t| n += t.len());
+    }
+    n + card
+        .map(Card::fields)
+        .unwrap_or_default()
+        .iter()
+        .map(|(_, t)| t.len())
+        .sum::<usize>()
+}
+
+/// Where a word sorts, by its first two bytes: never lower for a later word.
+fn bucket(w: &str) -> usize {
+    let b = w.as_bytes();
+    (usize::from(b[0]) << 8) | usize::from(b.get(1).copied().unwrap_or(0))
+}
+
+/// Index one session as a segment of its own, in passes over ranges of words, so that its words
+/// are never all in memory at once: a first pass counts the occurrences in each [`bucket`], the
+/// buckets are cut into ranges of about `pass` occurrences, and each range is counted and written
+/// in word order before the next. The segment is the one a batch of this session alone would
+/// write.
+fn write_alone(
+    home: &Home,
+    m: &mut Manifest,
+    facts: &SessionMeta,
+    events: &[Event],
+    card: Option<&Card>,
+    made_from: MadeFrom,
+    pass: u64,
+) -> Result<()> {
+    let mut sizes = vec![0u64; 1 << 16];
+    let total = notes(events, card, |w, _| sizes[bucket(&w)] += 1);
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let (mut start, mut held) = (0, 0u64);
+    for (b, &n) in sizes.iter().enumerate() {
+        if held > 0 && held + n > pass {
+            ranges.push((start, b));
+            (start, held) = (b, 0);
+        }
+        held += n;
+    }
+    ranges.push((start, sizes.len()));
+    drop(sizes);
+
+    let id = m.next_segment;
+    m.next_segment += 1;
+    let key = facts.key();
+    let mut w = Writer::create(&home.words_segment_path(id), std::slice::from_ref(&key))?;
+    for (from, to) in ranges {
+        let mut found = Found::new();
+        notes(events, card, |word, seq| {
+            if (from..to).contains(&bucket(&word)) {
+                note(&mut found, word, seq);
+            }
+        });
+        let mut sorted: Vec<_> = found.into_iter().collect();
+        sorted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        for (word, (count, mut evs)) in sorted {
+            evs.sort_unstable();
+            evs.dedup();
+            w.add(
+                &word,
+                &segment::encode(&[Posting {
+                    ord: 0,
+                    count,
+                    events: evs,
+                }]),
+            )?;
+        }
+    }
+    let bytes = w.finish()?;
+    m.segments.insert(id, SegmentInfo { sessions: 1, bytes });
+    m.entries.insert(
+        key,
+        Entry {
+            segment: id,
+            ord: 0,
+            words: total,
+            made_from,
+        },
+    );
+    Ok(())
 }
 
 /// The text of an event that is indexed: its text, and every key and string inside a tool call's
