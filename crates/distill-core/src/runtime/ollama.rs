@@ -5,7 +5,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -31,7 +31,8 @@ impl Ollama {
     }
 }
 
-/// How long the server may take to answer: a list is quick, a generation on a laptop is not.
+/// How long a whole request may take, answer included: a list is quick, a generation on a laptop
+/// is not. The tick's time budget (`crate::tick`) relies on a call never outlasting this.
 const LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -94,10 +95,10 @@ impl Ollama {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<Value, RuntimeError> {
+        let until = Instant::now() + timeout;
         let mut stream = TcpStream::connect_timeout(&self.addr, Duration::from_secs(2))
             .map_err(|_| RuntimeError::NotRunning)?;
         let failed = |e: std::io::Error| RuntimeError::Failed(e.to_string());
-        stream.set_read_timeout(Some(timeout)).map_err(failed)?;
         stream.set_write_timeout(Some(timeout)).map_err(failed)?;
         let body = body.map(Value::to_string).unwrap_or_default();
         write!(
@@ -108,8 +109,37 @@ impl Ollama {
             body.len()
         )
         .map_err(failed)?;
+        // Read against the whole request's deadline, so an answer that trickles in can't outlast it.
         let mut answer = Vec::new();
-        stream.read_to_end(&mut answer).map_err(failed)?;
+        let mut chunk = [0u8; 64 * 1024];
+        let late = || {
+            RuntimeError::Failed(format!(
+                "{path}: no whole answer within {}s",
+                timeout.as_secs()
+            ))
+        };
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(late());
+            }
+            stream.set_read_timeout(Some(left)).map_err(failed)?;
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => answer.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                // A read timeout: the deadline came with no more of the answer.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Err(late());
+                }
+                Err(e) => return Err(failed(e)),
+            }
+        }
         let text = String::from_utf8_lossy(&answer);
         let (head, body) = text
             .split_once("\r\n\r\n")
@@ -386,6 +416,36 @@ mod tests {
         assert_eq!(
             body(2),
             json!({"model": "small:8b", "input": ["one", "two"]})
+        );
+    }
+
+    #[test]
+    fn an_answer_that_trickles_in_cannot_outlast_the_requests_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let _ = conn.read(&mut [0u8; 4096]);
+            let _ = conn.write_all(b"HTTP/1.0 200 OK\r\n\r\n");
+            // A byte every 50 ms, well inside any read timeout, forever.
+            while conn.write_all(b" ").is_ok() {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let ollama = Ollama {
+            addr,
+            models_dir: PathBuf::from("/nonexistent"),
+        };
+        let started = Instant::now();
+        let r = ollama.request("POST", "/api/generate", None, Duration::from_millis(400));
+        assert!(
+            matches!(&r, Err(RuntimeError::Failed(why)) if why.contains("no whole answer")),
+            "{r:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
         );
     }
 
