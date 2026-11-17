@@ -18,6 +18,15 @@ use serde_json::{Value, json};
 use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
+/// Item types the parser skips on purpose. Any other type it skips is reported as format drift.
+///
+/// File-change stats of a checkpoint, and fixed labels of a run interrupt (#104).
+pub const IGNORED: &[&str] = &[
+    "item:checkpoint",
+    "item:run_interrupt_request",
+    "item:run_interrupt_result",
+];
+
 /// The harness Distill reads a T3 Code driver's sessions from directly, if any.
 fn native(driver: &str) -> Option<Harness> {
     Some(match driver {
@@ -394,7 +403,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 out.push(result("subagent", text(it.get("result")), failed));
             }
             "error" => out.push(result("error", text(it.get("failure")), true)),
-            _ => {}
+            _ => out.skip_in("item", ty, it),
         }
     }
     // A mirror only when every run went through a harness Distill reads natively; a thread

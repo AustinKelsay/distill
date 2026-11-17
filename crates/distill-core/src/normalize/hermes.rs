@@ -19,6 +19,10 @@ use super::chat::push_message;
 use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
+/// Message roles the parser skips on purpose. Any other role it skips is reported as format
+/// drift.
+pub const IGNORED: &[&str] = &[];
+
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         db,

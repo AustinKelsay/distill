@@ -19,6 +19,12 @@ use super::blocks::{millis_to_rfc3339, result_text};
 use crate::harness::percent_decode;
 use crate::model::{Event, EventKind, Parsed};
 
+/// Message parts (`<role>:<type>`) the parser skips on purpose. Any other part it skips is
+/// reported as format drift.
+///
+/// Reasoning Cursor keeps encrypted, so it has no text to read (#104).
+pub const IGNORED: &[&str] = &["assistant:redacted-reasoning"];
+
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
     if crate::harness::cursor_transcript(origin) {
         return Ok(parse_transcript(origin, bytes));
@@ -98,7 +104,7 @@ pub fn parse_transcript(origin: &str, bytes: &[u8]) -> Parsed {
                     e.input = b.get("input").cloned();
                     out.push(e);
                 }
-                _ => {}
+                (role, ty) => out.skip_in(role, ty, b),
             }
         }
     }
@@ -203,13 +209,17 @@ fn push_message(out: &mut Parsed, m: &Value, at: &mut Option<String>) {
             ("system", "text") => out.push(Event::text(EventKind::System, text()).at(at.clone())),
             ("user", "text") => push_user_text(out, text(), at),
             ("user", "image") => out.push(Event::text(EventKind::User, "[image]").at(at.clone())),
-            ("assistant", "text") if !text().is_empty() => {
-                let mut e = Event::text(EventKind::Assistant, text()).at(at.clone());
-                e.model = model;
-                out.push(e);
+            ("assistant", "text") => {
+                if !text().is_empty() {
+                    let mut e = Event::text(EventKind::Assistant, text()).at(at.clone());
+                    e.model = model;
+                    out.push(e);
+                }
             }
-            ("assistant", "reasoning") if !text().is_empty() => {
-                out.push(Event::text(EventKind::Reasoning, text()).at(at.clone()))
+            ("assistant", "reasoning") => {
+                if !text().is_empty() {
+                    out.push(Event::text(EventKind::Reasoning, text()).at(at.clone()))
+                }
             }
             ("assistant", "tool-call") => {
                 let mut e = Event::new(EventKind::ToolCall).at(at.clone());
@@ -246,7 +256,7 @@ fn push_message(out: &mut Parsed, m: &Value, at: &mut Option<String>) {
                 }
                 out.push(e);
             }
-            _ => {}
+            (role, ty) => out.skip_in(role, ty, p),
         }
     }
 }

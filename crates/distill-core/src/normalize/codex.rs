@@ -7,6 +7,23 @@ use serde_json::Value;
 use super::blocks::{result_text, ts};
 use crate::model::{Event, EventKind, Parsed};
 
+/// Record types the parser skips on purpose: `event_msg` records repeat what the response items
+/// hold, for the harness's own display; a ghost snapshot is the git state Codex keeps to undo a
+/// turn; `compacted` replays the history the parser already read; and the rest are environment
+/// snapshots, token usage, tool manifests and settings. Checked against parsed sessions in a
+/// real archive (#104). Any other type it skips is reported as format drift.
+pub const IGNORED: &[&str] = &[
+    "event_msg",
+    "response_item:ghost_snapshot",
+    "compacted",
+    "world_state",
+    "token_usage_record",
+    "inter_agent_communication_metadata",
+    "realtime_item",
+    "response_item:additional_tools",
+    "response_item:configuration_update",
+];
+
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let mut model: Option<String> = None;
@@ -47,7 +64,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 }
             }
             "response_item" => push_item(&mut out, p, at, model.as_deref()),
-            _ => {}
+            _ => out.skip(ty, line.len()),
         }
     }
     Ok(out)
@@ -127,7 +144,7 @@ fn push_item(out: &mut Parsed, p: &Value, at: Option<String>, model: Option<&str
             });
             out.push(e);
         }
-        _ => {}
+        _ => out.skip_in("response_item", ptype, p),
     }
 }
 

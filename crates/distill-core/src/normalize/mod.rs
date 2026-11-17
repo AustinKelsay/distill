@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::archive::{Archive, CaptureRecord};
 use crate::harness::Harness;
 use crate::home::Home;
-use crate::model::{Counts, Event, Parsed, Producer, RawRef, SessionMeta};
+use crate::model::{Counts, Event, Parsed, Producer, RawRef, SessionMeta, Skipped};
 use crate::util::{read_jsonl, safe_component, write_atomic, write_json_pretty};
 
 /// Bump a harness's version when its parser's output changes; its sessions are parsed again.
@@ -46,8 +46,28 @@ pub fn parser_version(kind: Harness) -> Option<u32> {
     }
 }
 
+/// The record types a harness's parser skips on purpose (each parser's `IGNORED`): not format
+/// drift.
+pub fn ignored(kind: Harness) -> &'static [&'static str] {
+    match kind {
+        Harness::ClaudeCode => claude::IGNORED,
+        Harness::Codex => codex::IGNORED,
+        Harness::OpenCode => opencode::IGNORED,
+        Harness::Droid => droid::IGNORED,
+        Harness::Pi => pi::IGNORED,
+        Harness::Grok => grok::IGNORED,
+        Harness::Antigravity => antigravity::IGNORED,
+        Harness::Hermes => hermes::IGNORED,
+        Harness::T3Code => t3code::IGNORED,
+        Harness::Goose => goose::IGNORED,
+        Harness::Cursor => cursor::IGNORED,
+    }
+}
+
+/// Parse one capture. What it skipped (`Parsed::skipped`) leaves out the types its parser
+/// ignores on purpose.
 pub fn parse(kind: Harness, origin: &str, bytes: &[u8]) -> Result<Parsed> {
-    let parsed = match kind {
+    let mut parsed = match kind {
         Harness::ClaudeCode => claude::parse(bytes)?,
         // Codex compresses older sessions; the archive keeps the compressed bytes as they were.
         Harness::Codex if origin.ends_with(".zst") => {
@@ -64,6 +84,9 @@ pub fn parse(kind: Harness, origin: &str, bytes: &[u8]) -> Result<Parsed> {
         Harness::Goose => goose::parse(bytes)?,
         Harness::Cursor => cursor::parse(origin, bytes)?,
     };
+    parsed
+        .skipped
+        .retain(|ty, _| !ignored(kind).contains(&ty.as_str()));
     Ok(parsed)
 }
 
@@ -84,8 +107,9 @@ fn drift_suspect(rec: &CaptureRecord) -> bool {
 }
 
 /// The session-facts version. Bump when what the parse step derives beyond the parsers changes;
-/// every session is parsed again. 4: the title and the git outcome were removed.
-pub const META_VERSION: u32 = 4;
+/// every session is parsed again. 4: the title and the git outcome were removed. 5: the record
+/// types each capture's parser skipped are kept (`NormalizeState::unknown`).
+pub const META_VERSION: u32 = 5;
 
 /// Per-origin result of the last normalize, so unchanged captures are skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -115,6 +139,10 @@ pub struct NormalizeState {
     /// when it was parsed (file names only), so it is parsed again once one is captured.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_spills: Vec<String>,
+    /// Record types in the capture its parser doesn't know, by name only, with how many records
+    /// and bytes each holds: format drift that drops some records while the rest still parse.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unknown: BTreeMap<String, Skipped>,
 }
 
 fn first_meta_version() -> u32 {
@@ -297,7 +325,12 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             empty: false,
             refs,
             missing_spills,
+            unknown: BTreeMap::new(),
         };
+        let result = result.map(|(meta, unknown)| {
+            entry.unknown = unknown;
+            meta
+        });
         match result {
             Ok(Some(meta)) => {
                 report.normalized += 1;
@@ -359,7 +392,7 @@ fn normalize_one(
     rec: &CaptureRecord,
     version: u32,
     missing_spills: &mut Vec<String>,
-) -> Result<Option<SessionMeta>> {
+) -> Result<(Option<SessionMeta>, BTreeMap<String, Skipped>)> {
     let bytes = archive.read_blob(&rec.capture_hash)?;
     let mut attached = Vec::new();
     let mut parsed = if rec.harness == Harness::OpenCode {
@@ -386,6 +419,7 @@ fn normalize_one(
     };
     attached.sort();
     attached.dedup();
+    let unknown = std::mem::take(&mut parsed.skipped);
     // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
     // threads captured before references were kept) fall back to their harnesses.
     if rec.harness == Harness::T3Code && parsed.is_mirror() {
@@ -402,7 +436,7 @@ fn normalize_one(
         parsed.mirror_refs = refs.keys;
     }
     if parsed.events.is_empty() {
-        return Ok(None);
+        return Ok((None, unknown));
     }
     let mut session_id = parsed
         .session_id
@@ -458,7 +492,7 @@ fn normalize_one(
     }
     write_atomic(&home.events_path(meta.harness, &meta.session_id), &lines)?;
     write_json_pretty(&home.meta_path(meta.harness, &meta.session_id), &meta)?;
-    Ok(Some(meta))
+    Ok((Some(meta), unknown))
 }
 
 /// A Codex session file's name without the compression suffix: the same file whether it is
@@ -526,17 +560,53 @@ pub(crate) fn read_events(home: &Home, meta: &SessionMeta) -> Result<Vec<Event>>
     read_jsonl(&home.events_path(meta.harness, &meta.session_id))
 }
 
-/// Captures that failed to parse, per harness, from the last parse.
+/// Captures that failed to parse, per harness, from the last parse, and record types its
+/// parser doesn't know.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Failures {
     pub failed: u64,
     /// Of those, the ones that look like format drift.
     pub drift: u64,
+    /// Captures that parsed but hold record types the parser doesn't know.
+    #[serde(default)]
+    pub partial_drift: u64,
+    /// Those types, in every capture, failed or not.
+    #[serde(default)]
+    pub unknown: BTreeMap<String, UnknownType>,
+}
+
+/// One record type a harness's parser doesn't know, across that harness's captures.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnknownType {
+    /// Captures holding it.
+    pub captures: u64,
+    pub records: u64,
+    pub bytes: u64,
 }
 
 pub fn failures(home: &Home) -> HashMap<Harness, Failures> {
     let mut out: HashMap<Harness, Failures> = HashMap::new();
     for s in load_state(home).values() {
+        // A type a parser has since learned to ignore isn't drift, though its captures are
+        // unchanged and not parsed again.
+        let ignored = ignored(s.harness);
+        let unknown: Vec<_> = s
+            .unknown
+            .iter()
+            .filter(|(ty, _)| !ignored.contains(&ty.as_str()))
+            .collect();
+        if !unknown.is_empty() {
+            let f = out.entry(s.harness).or_default();
+            if s.error.is_none() {
+                f.partial_drift += 1;
+            }
+            for (ty, n) in unknown {
+                let t = f.unknown.entry(ty.clone()).or_default();
+                t.captures += 1;
+                t.records += n.records;
+                t.bytes += n.bytes;
+            }
+        }
         if s.error.is_some() {
             let f = out.entry(s.harness).or_default();
             f.failed += 1;
@@ -687,6 +757,7 @@ mod tests {
                     empty: true,
                     refs: None,
                     missing_spills: Vec::new(),
+                    unknown: BTreeMap::new(),
                 },
             );
         }
@@ -700,12 +771,126 @@ mod tests {
         assert!(fails[0].0.ends_with("big.jsonl"));
         assert!(fails[0].1.contains("format may have changed"));
         let by_harness = failures(&home);
+        let f = &by_harness[&Harness::ClaudeCode];
+        assert_eq!((f.failed, f.drift, f.partial_drift), (1, 1, 0));
+        // The failed capture's records are of a type the parser doesn't know, named too.
+        assert_eq!(f.unknown["turn.v2"].records, 400);
+    }
+
+    #[test]
+    fn record_types_a_parser_does_not_know_are_counted_by_name_while_the_rest_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        // One record of a type the parser doesn't know among ones it reads, one content block it
+        // doesn't know, and a title record, which it ignores on purpose.
+        let unknown = r#"{"type":"tool-output.v2","timestamp":"2026-11-01T00:00:03Z","text":"the widget key is rotated"}"#;
+        let session = format!(
+            r#"{{"type":"custom-title","customTitle":"Rotate the widget key","sessionId":"s1"}}
+{{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{{"role":"user","content":"please rotate the widget key"}}}}
+{unknown}
+{{"type":"assistant","timestamp":"2026-11-01T00:00:05Z","message":{{"role":"assistant","model":"m-1","content":[{{"type":"text","text":"Rotated."}},{{"type":"widget_card","body":"widget art"}}]}}}}
+"#
+        );
+        let origin = "/u/.claude/projects/-w/s1.jsonl";
+        {
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            archive
+                .put(Harness::ClaudeCode, origin, "f", session.as_bytes())
+                .unwrap();
+        }
+        let r = normalize(&home, false).unwrap();
+        assert_eq!((r.normalized, r.failed, r.drift), (1, 0, 0), "{r:?}");
+        let meta = find(&home, Harness::ClaudeCode, "s1").unwrap().unwrap();
+        let events = read_events(&home, &meta).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].text.as_deref(), Some("Rotated."));
+
+        let state = load_state(&home);
+        let names: Vec<&str> = state[origin].unknown.keys().map(String::as_str).collect();
+        assert_eq!(names, ["block:widget_card", "tool-output.v2"]);
         assert_eq!(
-            by_harness[&Harness::ClaudeCode],
-            Failures {
-                failed: 1,
-                drift: 1
+            state[origin].unknown["tool-output.v2"],
+            Skipped {
+                records: 1,
+                bytes: unknown.len() as u64
             }
         );
+        let f = &failures(&home)[&Harness::ClaudeCode];
+        assert_eq!((f.failed, f.drift, f.partial_drift), (0, 0, 1));
+        assert_eq!(f.unknown["tool-output.v2"].captures, 1);
+        // The state holds the type names, never the records' text.
+        let text = std::fs::read_to_string(state_path(&home)).unwrap();
+        for words in [
+            "widget key",
+            "rotated",
+            "widget art",
+            "Rotate",
+            "custom-title",
+        ] {
+            assert!(!text.contains(words), "{words} in {text}");
+        }
+
+        // Unchanged, it is not parsed again and keeps its tallies.
+        let r = normalize(&home, false).unwrap();
+        assert_eq!((r.normalized, r.skipped), (0, 1));
+        assert_eq!(failures(&home)[&Harness::ClaudeCode].partial_drift, 1);
+    }
+
+    #[test]
+    fn a_capture_parsed_before_types_were_counted_is_parsed_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let session = r#"{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}
+{"type":"turn.v2","text":"hello"}
+"#;
+        let origin = "/u/.claude/projects/-w/s1.jsonl";
+        {
+            let _lock = home.lock_archive().unwrap();
+            let mut archive = Archive::open(&home).unwrap();
+            archive
+                .put(Harness::ClaudeCode, origin, "f", session.as_bytes())
+                .unwrap();
+        }
+        let rec = Archive::open(&home).unwrap().latest()[origin].clone();
+        // What the previous build left: the session parsed, no tallies, an older facts version.
+        let mut state = BTreeMap::new();
+        state.insert(
+            origin.to_string(),
+            serde_json::json!({"harness": "claude-code", "capture_hash": rec.capture_hash,
+                "version": 1, "meta_version": 4, "session": "s1"}),
+        );
+        write_json_pretty(&state_path(&home), &state).unwrap();
+        assert!(failures(&home).is_empty());
+
+        let r = normalize(&home, false).unwrap();
+        assert_eq!(r.normalized, 1, "{r:?}");
+        assert_eq!(failures(&home)[&Harness::ClaudeCode].partial_drift, 1);
+    }
+
+    #[test]
+    fn nested_types_are_named_within_their_record_and_ignored_ones_are_left_out() {
+        let src = r#"{"timestamp":"2026-11-03T08:30:53Z","type":"session_meta","payload":{"id":"abc","cwd":"/r"}}
+{"timestamp":"2026-11-03T08:30:54Z","type":"event_msg","payload":{"type":"user_message","message":"list files"}}
+{"timestamp":"2026-11-03T08:30:55Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]}}
+{"timestamp":"2026-11-03T08:30:56Z","type":"response_item","payload":{"type":"tool_output_v2","call_id":"c1","output":"a.txt"}}
+{"timestamp":"2026-11-03T08:30:57Z","type":"turn_summary","payload":{"text":"listed"}}"#;
+        let p = parse(Harness::Codex, "/u/.codex/sessions/r.jsonl", src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 1);
+        let names: Vec<&str> = p.skipped.keys().map(String::as_str).collect();
+        assert_eq!(names, ["response_item:tool_output_v2", "turn_summary"]);
+    }
+
+    #[test]
+    fn type_names_keep_only_identifier_characters_and_are_capped() {
+        use crate::model::type_name;
+        assert_eq!(type_name("tool_result.v2:x-y"), "tool_result.v2:x-y");
+        assert_eq!(type_name("a b/c\n\"d\"\u{e9}"), "abcd");
+        assert_eq!(type_name(&"x".repeat(200)).len(), 64);
+        let mut p = Parsed::default();
+        p.skip(" / ", 10);
+        assert!(p.skipped.is_empty());
     }
 }

@@ -1,5 +1,7 @@
 //! The shapes every harness's sessions are turned into: events and session facts.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -276,6 +278,28 @@ pub struct Parsed {
     pub mirror_refs: Vec<String>,
     /// Harnesses of runs whose original isn't known.
     pub mirror_unresolved: Vec<Harness>,
+    /// Records the parser skipped because it doesn't know their type, by type name only.
+    pub skipped: BTreeMap<String, Skipped>,
+}
+
+/// What a capture holds of one record type its parser doesn't know: how many records and how
+/// many bytes. Never their content.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Skipped {
+    pub records: u64,
+    pub bytes: u64,
+}
+
+/// The longest type name kept for a skipped record.
+pub const TYPE_NAME_MAX: usize = 64;
+
+/// A record's type name as it may be stored: only `[A-Za-z0-9_.:-]`, at most
+/// [`TYPE_NAME_MAX`] characters, so nothing else in the record can reach the parse step's state.
+pub fn type_name(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+        .take(TYPE_NAME_MAX)
+        .collect()
 }
 
 impl Parsed {
@@ -288,6 +312,32 @@ impl Parsed {
             self.models.push(m.to_string());
         }
     }
+    /// Count a record of a type the parser doesn't know, by its type name and size. A record
+    /// with no type name isn't counted.
+    pub fn skip(&mut self, ty: &str, bytes: usize) {
+        let name = type_name(ty);
+        if name.is_empty() {
+            return;
+        }
+        let s = self.skipped.entry(name).or_default();
+        s.records += 1;
+        s.bytes += bytes as u64;
+    }
+
+    /// [`Parsed::skip`] for a record held inside another (a block in a message, an item in a
+    /// response), named `<within>:<type>` and sized as its JSON serializes.
+    pub fn skip_in(&mut self, within: &str, ty: &str, v: &Value) {
+        if type_name(ty).is_empty() {
+            return;
+        }
+        let bytes = serde_json::to_string(v).map_or(0, |t| t.len());
+        if within.is_empty() {
+            self.skip(ty, bytes);
+        } else {
+            self.skip(&format!("{within}:{ty}"), bytes);
+        }
+    }
+
     pub fn push(&mut self, mut e: Event) {
         let empty_text = e.text.as_deref().is_none_or(|t| t.trim().is_empty());
         if empty_text && e.input.is_none() && e.tool.is_none() && e.kind != EventKind::ToolResult {

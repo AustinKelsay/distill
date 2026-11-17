@@ -61,6 +61,6 @@ pub fn push_message(out: &mut Parsed, role: &str, m: &Value, ts: Option<String>)
             e.text = Some(result_text(content));
             out.push(e);
         }
-        _ => {}
+        _ => out.skip_in("", role, m),
     }
 }

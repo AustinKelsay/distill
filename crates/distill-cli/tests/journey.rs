@@ -416,6 +416,54 @@ enrich_every_hours = 24
 }
 
 #[test]
+fn status_names_a_record_type_the_parser_does_not_know() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let user = root.join("user");
+    let home = root.join("home");
+    let claude = root.join("claude");
+    fs::create_dir_all(&user).unwrap();
+    fs::create_dir_all(claude.join("proj")).unwrap();
+    // A session with one record of a type its parser doesn't know among ones it reads, and a
+    // title record, which the parser ignores on purpose.
+    let mut session = claude_session("/work/app");
+    session.push_str(
+        r#"{"type":"tool-output.v2","timestamp":"2026-11-10T10:00:10Z","text":"All tests pass"}
+{"type":"custom-title","customTitle":"fix the failing test","sessionId":"aaaa"}
+"#,
+    );
+    fs::write(claude.join("proj/aaaa.jsonl"), session).unwrap();
+    json(&user, &home, &["init"]);
+    fs::write(
+        home.join("config.toml"),
+        format!(
+            "[[harnesses]]\nkind = \"claude-code\"\nenabled = true\nroots = [\"{}\"]\n",
+            claude.display()
+        ),
+    )
+    .unwrap();
+    json(&user, &home, &["tick"]);
+
+    let st = json(&user, &home, &["status"]);
+    assert_eq!(st["sessions"], 1, "{st}");
+    let c = st["harnesses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["harness"] == "claude-code")
+        .unwrap();
+    assert_eq!(c["health"], "warn", "{st}");
+    assert_eq!(c["partial_drift"], 1, "{st}");
+    assert_eq!(c["unknown_types"]["tool-output.v2"]["records"], 1, "{st}");
+    assert!(c["unknown_types"].get("custom-title").is_none(), "{st}");
+    let printed = human(&user, &home, &["status"]);
+    assert!(
+        printed.contains("record types the parser doesn't know: tool-output.v2"),
+        "{printed}"
+    );
+}
+
+#[test]
 fn schedule_print_is_valid() {
     let tmp = tempfile::tempdir().unwrap();
     let user = tmp.path().join("user");

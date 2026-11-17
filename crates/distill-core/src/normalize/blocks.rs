@@ -94,7 +94,10 @@ pub fn push_content(
                         e
                     }
                     "image" | "input_image" => Event::text(role, "[image]"),
-                    _ => continue,
+                    _ => {
+                        out.skip_in("block", ty, b);
+                        continue;
+                    }
                 };
                 out.push(with_model(e.at(ts.clone())));
             }

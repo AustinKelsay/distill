@@ -20,7 +20,7 @@ use crate::harness::Harness;
 use crate::home::Home;
 use crate::index::vectors::VectorProgress;
 use crate::index::{self, IndexProgress};
-use crate::normalize;
+use crate::normalize::{self, Failures, UnknownType};
 use crate::pruning;
 use crate::runlog;
 use crate::sweep::SweepReport;
@@ -113,7 +113,43 @@ pub struct HarnessStatus {
     pub parse_failures: u64,
     /// Of those, captures that look like format drift.
     pub drift: u64,
+    /// Captures that parsed but hold record types their parser doesn't know: format drift that
+    /// drops some records while the rest still parse.
+    #[serde(default)]
+    pub partial_drift: u64,
+    /// Those record types by name (never content), with the captures holding each and the
+    /// records and bytes they hold.
+    #[serde(default)]
+    pub unknown_types: BTreeMap<String, UnknownType>,
     pub note: Option<String>,
+}
+
+/// How many type names a harness's note lists before it counts the rest.
+const NOTE_TYPES: usize = 5;
+
+/// The note for a harness's format drift: whole captures that parsed to nothing, and captures
+/// holding record types the parser doesn't know, named.
+fn drift_note(f: &Failures) -> String {
+    let mut parts = Vec::new();
+    if f.drift > 0 {
+        parts.push(format!("{} look like format drift", f.drift));
+    }
+    if !f.unknown.is_empty() {
+        let mut names: Vec<&str> = f
+            .unknown
+            .keys()
+            .map(String::as_str)
+            .take(NOTE_TYPES)
+            .collect();
+        let more = f.unknown.len().saturating_sub(NOTE_TYPES);
+        let more = (more > 0).then(|| format!("{more} more"));
+        names.extend(more.as_deref());
+        parts.push(format!(
+            "record types the parser doesn't know: {}",
+            names.join(", ")
+        ));
+    }
+    parts.join("; ")
 }
 
 pub fn status(home: &Home) -> Result<Status> {
@@ -170,11 +206,8 @@ pub fn status(home: &Home) -> Result<Status> {
                 Health::Warn,
                 Some(format!("deletes {deletes} sooner than the sweep runs")),
             )
-        } else if f.drift > 0 {
-            (
-                Health::Warn,
-                Some(format!("{} look like format drift", f.drift)),
-            )
+        } else if f.drift > 0 || !f.unknown.is_empty() {
+            (Health::Warn, Some(drift_note(&f)))
         } else if f.failed > 0 {
             (Health::Warn, Some(format!("{} failed to parse", f.failed)))
         } else if capture_errors > 0 {
@@ -199,6 +232,8 @@ pub fn status(home: &Home) -> Result<Status> {
             capture_errors,
             parse_failures: f.failed,
             drift: f.drift,
+            partial_drift: f.partial_drift,
+            unknown_types: f.unknown.clone(),
             note,
         });
         warnings.extend(prunes.map(|(w, _)| w));
@@ -360,6 +395,74 @@ mod tests {
         assert_eq!(of(Harness::Codex).health, Health::Disabled);
         assert_eq!(s.harnesses.len(), Harness::ALL.len());
         assert_eq!((s.scan.sessions, s.scan.current, s.scan.pending), (1, 1, 0));
+    }
+
+    #[test]
+    fn status_names_record_types_a_parser_does_not_know_while_the_rest_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join("claude");
+        std::fs::create_dir_all(claude.join("-w")).unwrap();
+        // A small capture: one record of a type the parser doesn't know among ones it reads,
+        // and a title record, which it ignores on purpose.
+        std::fs::write(
+            claude.join("-w/s1.jsonl"),
+            r#"{"type":"custom-title","customTitle":"Rotate the widget key","sessionId":"s1"}
+{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"please rotate the widget key"}}
+{"type":"tool-output.v2","timestamp":"2026-11-01T00:00:03Z","text":"the widget key is rotated"}
+{"type":"assistant","timestamp":"2026-11-01T00:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Rotated."}]}}
+"#,
+        )
+        .unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let mut config = Config::default();
+        for h in &mut config.harnesses {
+            h.enabled = false;
+        }
+        let h = config.harness_mut(Harness::ClaudeCode);
+        h.enabled = true;
+        h.roots = vec![claude];
+        home.ensure().unwrap();
+        config.save(&home.config_path()).unwrap();
+
+        crate::tick::tick(&home, &config).unwrap();
+        let s = status(&home).unwrap();
+        assert_eq!(s.sessions, 1);
+        let c = s
+            .harnesses
+            .iter()
+            .find(|h| h.harness == Harness::ClaudeCode)
+            .unwrap();
+        assert_eq!(c.health, Health::Warn);
+        assert_eq!((c.parse_failures, c.drift, c.partial_drift), (0, 0, 1));
+        assert_eq!(
+            c.note.as_deref(),
+            Some("record types the parser doesn't know: tool-output.v2")
+        );
+        let names: Vec<&str> = c.unknown_types.keys().map(String::as_str).collect();
+        assert_eq!(names, ["tool-output.v2"]);
+        assert_eq!(c.unknown_types["tool-output.v2"].records, 1);
+        // The report names types and counts them; it holds no session text.
+        let text = serde_json::to_string(&s).unwrap();
+        for words in ["widget", "Rotated", "custom-title"] {
+            assert!(!text.contains(words), "{words} in {text}");
+        }
+    }
+
+    #[test]
+    fn a_drift_note_names_a_few_types_and_counts_the_rest() {
+        let mut f = Failures {
+            failed: 2,
+            drift: 2,
+            ..Default::default()
+        };
+        assert_eq!(drift_note(&f), "2 look like format drift");
+        for ty in ["a", "b", "c", "d", "e", "f", "g"] {
+            f.unknown.insert(ty.into(), UnknownType::default());
+        }
+        assert_eq!(
+            drift_note(&f),
+            "2 look like format drift; record types the parser doesn't know: a, b, c, d, e, 2 more"
+        );
     }
 }
 

@@ -16,6 +16,10 @@ use super::blocks::millis_to_rfc3339;
 use crate::harness::Candidate;
 use crate::model::{Event, EventKind, Parsed};
 
+/// Message block types the parser skips on purpose. Any other type it skips is reported as format
+/// drift.
+pub const IGNORED: &[&str] = &[];
+
 fn open(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         db,
@@ -260,7 +264,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                             );
                             out.push(e);
                         }
-                        _ => {}
+                        _ => out.skip_in("block", ty, b),
                     }
                 }
             }
