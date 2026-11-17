@@ -32,6 +32,7 @@ pub const IGNORED: &[&str] = &[
     "part:step-finish",
     "part:snapshot",
     "part:patch",
+    "part:compaction",
     "message:idle",
     "message:model-switched",
     "message:agent-switched",

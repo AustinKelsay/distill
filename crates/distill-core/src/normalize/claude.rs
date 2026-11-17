@@ -7,8 +7,10 @@ use super::blocks::{push_content, ts};
 use crate::model::{EventKind, Parsed};
 
 /// Record types the parser skips on purpose: the harness's bookkeeping (titles, summaries, file
-/// snapshots, the prompt queue, status and progress notes). Any other type it skips is reported
-/// as format drift.
+/// snapshots, the prompt queue, status and progress notes, cost and mode, links and lineage), the
+/// context it injects (`attachment`: environment, tool and skill listings, reminders), and the API
+/// request log, whose blobs replay the conversation the parser already reads. Checked against
+/// parsed sessions in a real archive (#104). Any other type it skips is reported as format drift.
 pub const IGNORED: &[&str] = &[
     "custom-title",
     "summary",
@@ -16,6 +18,21 @@ pub const IGNORED: &[&str] = &[
     "queue-operation",
     "system",
     "progress",
+    "ai-title",
+    "agent-name",
+    "api-request",
+    "api-request-blob",
+    "api-request-shape",
+    "atis-latch",
+    "attachment",
+    "cost-state",
+    "fork-context-ref",
+    "frame-link",
+    "last-prompt",
+    "mode",
+    "pr-link",
+    "session-owner",
+    "tools-used",
 ];
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {

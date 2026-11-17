@@ -8,7 +8,9 @@ use super::blocks::{push_content, ts};
 use crate::model::{EventKind, Parsed};
 
 /// Record types the parser skips on purpose. Any other type it skips is reported as format drift.
-pub const IGNORED: &[&str] = &[];
+///
+/// `session_end` repeats the final assistant message (#104).
+pub const IGNORED: &[&str] = &["session_end"];
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();

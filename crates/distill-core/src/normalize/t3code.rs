@@ -19,7 +19,13 @@ use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
 /// Item types the parser skips on purpose. Any other type it skips is reported as format drift.
-pub const IGNORED: &[&str] = &[];
+///
+/// File-change stats of a checkpoint, and fixed labels of a run interrupt (#104).
+pub const IGNORED: &[&str] = &[
+    "item:checkpoint",
+    "item:run_interrupt_request",
+    "item:run_interrupt_result",
+];
 
 /// The harness Distill reads a T3 Code driver's sessions from directly, if any.
 fn native(driver: &str) -> Option<Harness> {

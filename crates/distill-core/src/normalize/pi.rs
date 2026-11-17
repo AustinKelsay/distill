@@ -9,7 +9,7 @@ use crate::model::{Event, EventKind, Parsed};
 
 /// Record types the parser skips on purpose: a change of thinking level holds no part of the
 /// conversation. Any other type it skips is reported as format drift.
-pub const IGNORED: &[&str] = &["thinking_level_change"];
+pub const IGNORED: &[&str] = &["thinking_level_change", "session_info", "context_edit"];
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();

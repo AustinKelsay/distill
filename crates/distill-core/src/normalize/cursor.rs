@@ -21,7 +21,9 @@ use crate::model::{Event, EventKind, Parsed};
 
 /// Message parts (`<role>:<type>`) the parser skips on purpose. Any other part it skips is
 /// reported as format drift.
-pub const IGNORED: &[&str] = &[];
+///
+/// Reasoning Cursor keeps encrypted, so it has no text to read (#104).
+pub const IGNORED: &[&str] = &["assistant:redacted-reasoning"];
 
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
     if crate::harness::cursor_transcript(origin) {
