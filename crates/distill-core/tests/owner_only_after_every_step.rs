@@ -29,6 +29,16 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
     );
 
     let tmp = tempfile::tempdir().unwrap();
+    let nest = tmp.path().join("nest");
+    // Checked after every step, so a file a later step rewrites is checked as first written.
+    let owner_only = |step: &str| {
+        let open = loose(&nest);
+        assert!(
+            open.is_empty(),
+            "after {step}, not owner-only:\n{}",
+            open.join("\n")
+        );
+    };
     // Folders made on the way to the home count too.
     let home = Home::new(tmp.path().join("nest/distill"));
     home.ensure().unwrap();
@@ -44,6 +54,7 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
     distill_core::normalize::normalize(&home, false).unwrap();
     let mut config = home.load_config().unwrap_or_default();
     distill_core::findings::scan_all(&home, &config).unwrap();
+    owner_only("scan");
     trust::add(&mut config, "example-cloud", true).unwrap();
     config.steward.card_model = Some("small:8b".into());
     config.steward.embedding_model = Some("embed:small".into());
@@ -58,25 +69,26 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
     // A failure first, so each step's failure file is written, then a usable answer.
     let r = distill_core::cards::write(&home, &config, &model("no card").runtime()).unwrap();
     assert_eq!(r.failed, 1, "{r:?}");
+    owner_only("a card that failed");
     let card = r#"{"title":"Deploy the app","summary":"It was deployed.","tags":["deploy"],"outcome":"done"}"#;
     let r = distill_core::cards::write(&home, &config, &model(card).runtime()).unwrap();
     assert_eq!(r.written, 1, "{r:?}");
+    owner_only("a card");
     let r = distill_core::details::find(&home, &config, &model("no details").runtime()).unwrap();
     assert_eq!(r.failed, 1, "{r:?}");
+    owner_only("details that failed");
     let found = r#"{"details":[{"kind":"person_name","text":"Jane Roe"}]}"#;
     let r = distill_core::details::find(&home, &config, &model(found).runtime()).unwrap();
     assert_eq!(r.found, 1, "{r:?}");
+    owner_only("details");
     distill_core::index::build(&home).unwrap();
     distill_core::index::vectors::build(&home, &config, &model(card).runtime()).unwrap();
     assert!(home.vectors_path().exists());
+    owner_only("the index and vectors");
 
     // A reveal, requested, approved and collected.
     let findings: Value = serde_json::from_str(
-        &fs::read_to_string(
-            home.session_dir(Harness::ClaudeCode, "s1")
-                .join("findings.json"),
-        )
-        .unwrap(),
+        &fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s1")).unwrap(),
     )
     .unwrap();
     let fingerprint = findings["findings"]
@@ -103,7 +115,9 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
         Filed::Filed(r) => r,
         Filed::Refused(why) => panic!("refused: {why}"),
     };
+    owner_only("a reveal request");
     distill_core::reveal::approve(&home, &filed.id).unwrap();
+    owner_only("approving it");
     distill_core::reveal::collect(&home, &stopped, &reader, &filed.id).unwrap();
 
     for made in [
@@ -115,8 +129,7 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
     ] {
         assert!(made.exists(), "{} was not made", made.display());
     }
-    let open = loose(&tmp.path().join("nest"));
-    assert!(open.is_empty(), "not owner-only:\n{}", open.join("\n"));
+    owner_only("collecting it");
     let check = exposure::check(&home);
     let owner_only = check
         .rules
