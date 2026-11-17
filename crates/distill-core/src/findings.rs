@@ -203,7 +203,7 @@ impl Finding {
 pub struct MadeFrom {
     /// [`DETECTOR_VERSION`].
     pub detector: u32,
-    /// The session's capture hash.
+    /// The session's capture hash, with any attached captures' ([`RawRef::source`]).
     pub capture_hash: String,
     /// The version of the parser that wrote the session's events.
     pub parser: u32,
@@ -219,7 +219,7 @@ impl MadeFrom {
     pub fn current(facts: &SessionMeta, key: &FingerprintKey, config: &Config) -> Self {
         Self {
             detector: DETECTOR_VERSION,
-            capture_hash: facts.raw.sha256.clone(),
+            capture_hash: facts.raw.source(),
             parser: facts.normalizer.version,
             key: key.id(),
             personal_terms: personal_terms_hash(&owner(config)),
@@ -345,7 +345,7 @@ impl BuiltFrom {
     pub fn of(facts: &SessionMeta, findings: &Findings) -> Self {
         let secrets: Vec<_> = findings.findings.iter().filter(|f| f.is_secret()).collect();
         Self {
-            capture_hash: facts.raw.sha256.clone(),
+            capture_hash: facts.raw.source(),
             parser: facts.normalizer.version,
             secrets: crate::util::sha256_hex(&serde_json::to_vec(&secrets).unwrap_or_default()),
         }

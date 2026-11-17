@@ -361,12 +361,22 @@ fn normalize_one(
     missing_spills: &mut Vec<String>,
 ) -> Result<Option<SessionMeta>> {
     let bytes = archive.read_blob(&rec.capture_hash)?;
+    let mut attached = Vec::new();
     let mut parsed = if rec.harness == Harness::OpenCode {
-        // Spilled tool outputs are captures of their own, at their own origins.
+        // Spilled tool outputs are captures of their own, at their own origins. One the archive
+        // can't read now counts as missing, so the session is parsed again until it can.
         let (parsed, missing) = opencode::parse_with_spills(&bytes, |name| {
-            match opencode::spill_origin(&rec.origin, name).and_then(|o| archive.latest().get(&o)) {
-                Some(r) => archive.read_blob(&r.capture_hash).map(Some),
-                None => Ok(None),
+            let Some(r) =
+                opencode::spill_origin(&rec.origin, name).and_then(|o| archive.latest().get(&o))
+            else {
+                return Ok(None);
+            };
+            match archive.read_blob(&r.capture_hash) {
+                Ok(b) => {
+                    attached.push(r.capture_hash.clone());
+                    Ok(Some(b))
+                }
+                Err(_) => Ok(None),
             }
         })?;
         *missing_spills = missing;
@@ -374,6 +384,8 @@ fn normalize_one(
     } else {
         parse(rec.harness, &rec.origin, &bytes)?
     };
+    attached.sort();
+    attached.dedup();
     // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
     // threads captured before references were kept) fall back to their harnesses.
     if rec.harness == Harness::T3Code && parsed.is_mirror() {
@@ -427,6 +439,7 @@ fn normalize_one(
             origin: rec.origin.clone(),
             sha256: rec.capture_hash.clone(),
             size: rec.size,
+            attached,
         },
         normalizer: Producer {
             name: rec.harness.id().to_string(),

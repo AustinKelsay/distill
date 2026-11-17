@@ -76,8 +76,12 @@ pub fn spill_name(path: &str) -> Option<&str> {
 /// The spilled outputs beside the database at `db`, each captured as a file of its own.
 pub fn list_spills(db: &Path) -> Result<Vec<Candidate>> {
     let dir = spill_dir(db);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(Vec::new());
+    // The folder is optional; any other failure to read it leaves outputs uncaptured, so it is
+    // an error the sweep reports.
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("read {}", dir.display())),
     };
     let mut out = Vec::new();
     for entry in entries {
@@ -85,7 +89,9 @@ pub fn list_spills(db: &Path) -> Result<Vec<Candidate>> {
         if entry.file_name().to_str().and_then(spill_name).is_none() {
             continue;
         }
-        let Ok(meta) = entry.metadata() else { continue };
+        let meta = entry
+            .metadata()
+            .with_context(|| format!("read {}", entry.path().display()))?;
         if !meta.is_file() {
             continue;
         }
@@ -561,6 +567,85 @@ mod tests {
             crate::normalize::normalize(&home, false).unwrap().skipped,
             1
         );
+    }
+
+    #[test]
+    fn a_secret_in_a_spill_that_arrives_later_is_found_before_any_model_reads_it() {
+        use crate::read::{Range, Read};
+        use crate::runtime::{FakeRuntime, Stored};
+        use crate::trust::Reader;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        let spill = "tool_0a1b2c3d4e5fSyntheticCcc3";
+        let db = opencode_data(&data, &[("ses1", "/w/app", spill)]);
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let config = Config::default();
+        config.save(&home.config_path()).unwrap();
+        let session_origin = format!("{}#session=ses1", db.to_string_lossy());
+        let export = export_session(&db, "ses1").unwrap();
+        let mut archive = Archive::open(&home).unwrap();
+        archive
+            .put(
+                Harness::OpenCode,
+                &session_origin,
+                "updated:5000",
+                &export.bytes[..],
+            )
+            .unwrap();
+        drop(archive);
+        crate::normalize::normalize(&home, false).unwrap();
+        crate::findings::scan_all(&home, &config).unwrap();
+        let facts = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+            .unwrap()
+            .unwrap();
+        let key = crate::findings::FingerprintKey::open(&home).unwrap();
+        assert!(
+            crate::findings::load(&home, &facts)
+                .unwrap()
+                .is_current(&facts, &key, &config)
+        );
+
+        // The spill holds a secret the preview didn't; its capture changes neither the session's
+        // capture hash nor its parser version.
+        let secret = ["sk-", "ant-", "api03-", &"Vq3".repeat(9)].concat();
+        Archive::open(&home)
+            .unwrap()
+            .put(
+                Harness::OpenCode,
+                &spill_origin(&session_origin, spill).unwrap(),
+                "1:1",
+                format!("deploy key {secret}\n").as_bytes(),
+            )
+            .unwrap();
+        crate::normalize::normalize(&home, false).unwrap();
+        let facts = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(facts.raw.attached.len(), 1);
+        assert_ne!(facts.raw.source(), facts.raw.sha256);
+        assert!(
+            !crate::findings::load(&home, &facts)
+                .unwrap()
+                .is_current(&facts, &key, &config),
+            "the old findings were made from other events"
+        );
+
+        let runtime = FakeRuntime::running()
+            .with_model("m", Stored::Here)
+            .runtime();
+        let Read::Text(text) = crate::read::read(
+            &home,
+            &runtime,
+            &Reader::model(Some("ollama"), Some("m")),
+            "opencode/ses1",
+            Range::default(),
+        )
+        .unwrap() else {
+            panic!("a model is served text")
+        };
+        assert!(!text.contains(&secret), "the secret is masked");
+        assert!(text.contains("[secret:"), "{text}");
     }
 
     #[test]
