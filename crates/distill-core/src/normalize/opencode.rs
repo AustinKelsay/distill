@@ -60,14 +60,22 @@ pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
         }
     };
     let v1 = has_table(&conn, "session")?;
+    let v2 = has_table(&conn, "session_v2")? && has_table(&conn, "session_message")?;
     if v1 {
-        let mut stmt = conn.prepare("SELECT id, time_updated FROM session ORDER BY id")?;
+        // A v1 session OpenCode 2 carried on changes when one of its v2 messages does.
+        let sql = if v2 {
+            "SELECT s.id, MAX(s.time_updated, COALESCE((SELECT MAX(m.time_updated) FROM session_message m WHERE m.session_id = s.id), 0))
+             FROM session s ORDER BY s.id"
+        } else {
+            "SELECT id, time_updated FROM session ORDER BY id"
+        };
+        let mut stmt = conn.prepare(sql)?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         push(rows);
     }
-    if has_table(&conn, "session_v2")? && has_table(&conn, "session_message")? {
+    if v2 {
         // A session changes when its row does or when a message does, whichever is later.
         let sql = format!(
             "SELECT s.id, MAX(s.time_updated, COALESCE((SELECT MAX(m.time_updated) FROM session_message m WHERE m.session_id = s.id), 0))
@@ -246,7 +254,8 @@ pub struct Export {
 
 pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
     let conn = open(db)?;
-    // A session in both sets of tables is exported from v1, as it always was.
+    // A session in both sets of tables is exported from v1, as it always was, unless OpenCode 2
+    // carried it on: then only the v2 tables hold all of it.
     let in_v1 = has_table(&conn, "session")?
         && conn
             .query_row("SELECT 1 FROM session WHERE id = ?1", [session_id], |_| {
@@ -254,7 +263,7 @@ pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
             })
             .optional()?
             .is_some();
-    if !in_v1 {
+    if !in_v1 || continued_in_v2(&conn, session_id)? {
         return export_session_v2(&conn, session_id);
     }
     let session: Value = conn.query_row(
@@ -309,6 +318,39 @@ pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
 
 /// Export a session that only OpenCode 2's tables hold: the session, then its messages in `seq`
 /// order, each followed by its `session_part` rows (when the table exists) in ordinal order.
+/// Whether OpenCode 2 holds a message of the v1 session `session_id` newer than any its v1 tables
+/// hold: the session was carried on after the upgrade, and its new messages are only in v2.
+fn continued_in_v2(conn: &Connection, session_id: &str) -> Result<bool> {
+    if !(has_table(conn, "session_v2")? && has_table(conn, "session_message")?) {
+        return Ok(false);
+    }
+    let in_v2 = conn
+        .query_row(
+            "SELECT 1 FROM session_v2 WHERE id = ?1",
+            [session_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !in_v2 {
+        return Ok(false);
+    }
+    let newest = |sql: &str| -> Result<Option<i64>> {
+        Ok(conn.query_row(sql, [session_id], |r| r.get::<_, Option<i64>>(0))?)
+    };
+    let v2 = newest("SELECT MAX(time_created) FROM session_message WHERE session_id = ?1")?;
+    let v1 = if has_table(conn, "message")? {
+        newest("SELECT MAX(time_created) FROM message WHERE session_id = ?1")?
+    } else {
+        None
+    };
+    Ok(match (v2, v1) {
+        (Some(v2), Some(v1)) => v2 > v1,
+        (Some(_), None) => true,
+        (None, _) => false,
+    })
+}
+
 fn export_session_v2(conn: &Connection, session_id: &str) -> Result<Export> {
     let session: Value = conn.query_row(
         "SELECT id, parent_id, directory, title, version, model, agent, time_created FROM session_v2 WHERE id = ?1",
@@ -1147,6 +1189,58 @@ mod tests {
             (r.new, r.appended, r.rewritten, r.errors.len()),
             (0, 0, 0, 0),
             "{r:?}"
+        );
+    }
+
+    #[test]
+    fn a_v1_session_opencode_2_carried_on_is_exported_from_v2_with_its_new_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        let db = opencode_data(
+            &data,
+            &[("ses1", "/w/app", "tool_0a1b2c3d4e5fSyntheticEee5")],
+        );
+        add_v2(
+            &db,
+            &data.join(SPILL_DIR).join("tool_0a1b2c3d4e5fSyntheticFff6"),
+        );
+        let home = Home::new(dir.path().join("home"));
+        let config = opencode_config(&db);
+        crate::sweep::sweep(&home, &config, None).unwrap();
+        let before = export_session(&db, "ses1").unwrap();
+        assert!(!String::from_utf8_lossy(&before.bytes).contains("carried on"));
+
+        // The owner resumes the session after the upgrade: the new message is only in v2.
+        Connection::open(&db)
+            .unwrap()
+            .execute(
+                "INSERT INTO session_message VALUES ('v2m-new', 'ses1', 'user', 9, 9000, 9000, '{\"text\":\"carried on after the upgrade\"}')",
+                [],
+            )
+            .unwrap();
+        let after = export_session(&db, "ses1").unwrap();
+        assert!(String::from_utf8_lossy(&after.bytes).contains("carried on after the upgrade"));
+        let r = crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(r.errors.len(), 0, "{r:?}");
+        assert_eq!(
+            r.new + r.appended + r.rewritten,
+            1,
+            "the session is captured again: {r:?}"
+        );
+        crate::normalize::normalize(&home, false).unwrap();
+        let meta = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+            .unwrap()
+            .unwrap();
+        let said: Vec<String> = crate::normalize::read_events(&home, &meta)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == EventKind::User)
+            .filter_map(|e| e.text)
+            .collect();
+        assert!(
+            said.iter()
+                .any(|t| t.contains("carried on after the upgrade")),
+            "{said:?}"
         );
     }
 
