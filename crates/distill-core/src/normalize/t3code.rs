@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
+use super::blocks::{PlanTracker, first_text, plan_line};
 use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
@@ -294,12 +295,34 @@ fn text(v: Option<&Value>) -> String {
     }
 }
 
+/// An answer or decision as text: a string, a list of strings (joined), or an object holding
+/// either under `answers`, `answer` or `value`.
+fn answer_text(v: &Value) -> String {
+    match v {
+        Value::String(x) => x.clone(),
+        Value::Null => String::new(),
+        Value::Array(items) => items
+            .iter()
+            .map(answer_text)
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        Value::Object(o) => ["answers", "answer", "value"]
+            .iter()
+            .find_map(|k| o.get(*k))
+            .map(answer_text)
+            .unwrap_or_else(|| v.to_string()),
+        other => other.to_string(),
+    }
+}
+
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     let mut out = Parsed::default();
     let raw = String::from_utf8_lossy(bytes);
     let mut model = None;
     let mut drivers: Vec<String> = Vec::new();
     let mut thread_instance: Option<String> = None;
+    let mut plan = PlanTracker::default();
     for line in raw.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -403,6 +426,79 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 out.push(result("subagent", text(it.get("result")), failed));
             }
             "error" => out.push(result("error", text(it.get("failure")), true)),
+            // The owner's answers to questions the model asked; the questions are already in
+            // the assistant's message. Nothing is kept until there is an answer.
+            "user_input_request" => {
+                let questions = it.get("questions").and_then(Value::as_array);
+                let label = |key: &str| {
+                    questions
+                        .into_iter()
+                        .flatten()
+                        .find(|q| s(q, "id").as_deref() == Some(key))
+                        .and_then(|q| first_text(q, &["question", "header", "title"]))
+                        .unwrap_or(key)
+                        .to_string()
+                };
+                let lines: Vec<String> = it
+                    .pointer("/questionAnswer/answers")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(k, a)| {
+                        let a = answer_text(a);
+                        (!a.trim().is_empty()).then(|| format!("{}: {a}", label(k)))
+                    })
+                    .collect();
+                if !lines.is_empty() {
+                    out.push(Event::text(EventKind::User, lines.join("\n")).at(at));
+                }
+            }
+            "approval_request" => {
+                let mut lines = vec![format!("Approval requested: {}", text(it.get("prompt")))];
+                for (label, key) in [("Reason", "reason"), ("Decision", "decision")] {
+                    let t = answer_text(it.get(key).unwrap_or(&Value::Null));
+                    if !t.trim().is_empty() {
+                        lines.push(format!("{label}: {t}"));
+                    }
+                }
+                out.push(Event::text(EventKind::System, lines.join("\n")).at(at));
+            }
+            // Only what was asked for: the secret's value is never in the record.
+            "secret_request" => {
+                let mut lines = vec![format!("Secret requested: {}", text(it.get("label")))];
+                let reason = text(it.get("reason"));
+                if !reason.trim().is_empty() {
+                    lines.push(format!("Reason: {reason}"));
+                }
+                out.push(Event::text(EventKind::System, lines.join("\n")).at(at));
+            }
+            "link_request" => {
+                let mut lines = vec![format!("Link requested: {}", text(it.get("title")))];
+                let reason = text(it.get("reason"));
+                if !reason.trim().is_empty() {
+                    lines.push(format!("Reason: {reason}"));
+                }
+                out.push(Event::text(EventKind::System, lines.join("\n")).at(at));
+            }
+            // The plan, repeated on every update: kept when it changes.
+            "todo_list" => {
+                let lines = it
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|st| {
+                        let step = first_text(st, &["text", "title", "step"])?;
+                        Some(plan_line(
+                            st.get("status").and_then(Value::as_str).unwrap_or(""),
+                            step,
+                        ))
+                    })
+                    .collect();
+                if let Some(plan) = plan.changed(lines) {
+                    out.push(Event::text(EventKind::System, plan).at(at));
+                }
+            }
             _ => out.skip_in("item", ty, it),
         }
     }
@@ -623,6 +719,46 @@ mod tests {
         assert_eq!(partial.keys, vec!["claude-code/c-1"]);
         assert_eq!(partial.unresolved, vec![Harness::ClaudeCode]);
         assert_eq!(native_refs(b""), NativeRefs::default());
+    }
+
+    #[test]
+    fn parses_requests_answers_and_plans() {
+        let src = r#"{"row":"thread","thread_id":"t5","provider_instance":"fragment"}
+{"row":"item","item":{"type":"user_input_request","startedAt":"2026-01-01T00:00:01Z","questions":[{"id":"q1","question":"Which branch?"},{"id":"q2","question":"Run tests?"}],"questionAnswer":{"answers":{"q1":["main"],"q2":"yes"}}}}
+{"row":"item","item":{"type":"user_input_request","questions":[{"id":"q1","question":"Pending?"}]}}
+{"row":"item","item":{"type":"approval_request","prompt":"Run rm -rf build","reason":"clean up","decision":"accept"}}
+{"row":"item","item":{"type":"secret_request","label":"API key","reason":"to call the service"}}
+{"row":"item","item":{"type":"link_request","title":"Docs page","reason":"needs sign-in"}}
+{"row":"item","item":{"type":"todo_list","steps":[{"text":"write","status":"completed"},{"text":"ship","status":"pending"}]}}
+{"row":"item","item":{"type":"todo_list","steps":[{"text":"write","status":"completed"},{"text":"ship","status":"pending"}]}}
+{"row":"item","item":{"type":"todo_list","steps":[{"text":"write","status":"completed"},{"text":"ship","status":"inProgress"}]}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+        let t: Vec<_> = p
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref().unwrap()))
+            .collect();
+        assert_eq!(
+            t,
+            vec![
+                (EventKind::User, "Which branch?: main\nRun tests?: yes"),
+                (
+                    EventKind::System,
+                    "Approval requested: Run rm -rf build\nReason: clean up\nDecision: accept"
+                ),
+                (
+                    EventKind::System,
+                    "Secret requested: API key\nReason: to call the service"
+                ),
+                (
+                    EventKind::System,
+                    "Link requested: Docs page\nReason: needs sign-in"
+                ),
+                (EventKind::System, "[done] write\n[pending] ship"),
+                (EventKind::System, "[done] write\n[in progress] ship"),
+            ]
+        );
     }
 
     #[test]
