@@ -62,6 +62,17 @@ pub(super) fn can_be_secret(name: &str, value: &str) -> bool {
     !is_stand_in(value)
 }
 
+/// [`can_be_secret`] for a JSON number, on one form whatever its notation, so the text path
+/// (`5.00000000`, `1e21`) and the `Value` path (`5.0`, `1e+21`) agree: an integral number as all
+/// its digits (`5`, `1000000000000000000000`), any other as serde writes it.
+pub(super) fn can_be_secret_number(name: &str, n: &serde_json::Number) -> bool {
+    let text = match n.as_f64() {
+        Some(f) if n.is_f64() && f.is_finite() && f.fract() == 0.0 => format!("{f:.0}"),
+        _ => n.to_string(),
+    };
+    can_be_secret(name, &text)
+}
+
 /// `token`, or a name ending in `_token` or `-token`.
 fn is_token_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();

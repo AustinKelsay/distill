@@ -1125,6 +1125,19 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
     }
     assert!(places(&json!({"element_token": id, "pass": 3, "eos_token": "</s>"})).is_empty());
 
+    // A number is gated on one form in both paths, whatever its notation: as JSON text and as
+    // a parsed value, the same number under the same key is found by neither or both.
+    for (text, is_found) in [
+        (r#"{"password":5.00000000}"#, false),
+        (r#"{"password":44170000.0}"#, true),
+        (r#"{"password":1000000000000000000000}"#, true),
+        (r#"{"token":123456789}"#, false),
+    ] {
+        let v: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(!found(text).is_empty(), is_found, "{text}");
+        assert_eq!(!places(&v).is_empty(), is_found, "{text} as a value");
+    }
+
     // Real-shaped values under the same names are still found.
     assert_eq!(
         found(&format!("token={long_token} x")),

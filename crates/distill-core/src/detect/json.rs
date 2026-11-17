@@ -25,13 +25,17 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
         // placeholder) is read as any other string.
         let secret = match tok.role {
             Role::Secret { key } => {
-                let value = if string {
-                    decode(raw).0
-                } else {
-                    raw.to_string()
-                };
                 let key = decode(&text[key.0..key.1]).0;
-                weak::can_be_secret(&key, &value).then_some(value)
+                if string {
+                    let value = decode(raw).0;
+                    weak::can_be_secret(&key, &value).then_some(value)
+                } else {
+                    // Gated on the number's one form, as `detect_value` gates it; the hit is
+                    // still the number as written.
+                    let can_be = serde_json::from_str::<serde_json::Number>(raw)
+                        .is_ok_and(|n| weak::can_be_secret_number(&key, &n));
+                    can_be.then(|| raw.to_string())
+                }
             }
             Role::Str => None,
         };

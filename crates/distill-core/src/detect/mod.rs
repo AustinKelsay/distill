@@ -317,11 +317,12 @@ impl Detector {
                 key: false,
                 hit,
             })),
-            Value::Number(n) if can_be(&n.to_string()) => out.push(ValueHit {
-                path: path.clone(),
-                key: false,
-                hit: whole(n.to_string()),
-            }),
+            Value::Number(n) if secret.is_some_and(|key| weak::can_be_secret_number(key, n)) => out
+                .push(ValueHit {
+                    path: path.clone(),
+                    key: false,
+                    hit: whole(n.to_string()),
+                }),
             Value::Array(a) => {
                 for (i, x) in a.iter().enumerate() {
                     path.push(i);
