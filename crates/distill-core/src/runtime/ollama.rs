@@ -99,25 +99,45 @@ impl Ollama {
         let mut stream = TcpStream::connect_timeout(&self.addr, Duration::from_secs(2))
             .map_err(|_| RuntimeError::NotRunning)?;
         let failed = |e: std::io::Error| RuntimeError::Failed(e.to_string());
-        stream.set_write_timeout(Some(timeout)).map_err(failed)?;
-        let body = body.map(Value::to_string).unwrap_or_default();
-        write!(
-            stream,
-            "{method} {path} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\n\r\n{body}",
-            self.addr,
-            body.len()
-        )
-        .map_err(failed)?;
-        // Read against the whole request's deadline, so an answer that trickles in can't outlast it.
-        let mut answer = Vec::new();
-        let mut chunk = [0u8; 64 * 1024];
         let late = || {
             RuntimeError::Failed(format!(
                 "{path}: no whole answer within {}s",
                 timeout.as_secs()
             ))
         };
+        // A socket timeout: the deadline came with no more progress.
+        let timed_out = |e: &std::io::Error| {
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )
+        };
+        let body = body.map(Value::to_string).unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            self.addr,
+            body.len()
+        );
+        // Write and read against the whole request's deadline, so neither a server that reads
+        // slowly nor an answer that trickles in can outlast it.
+        let mut sent = request.as_bytes();
+        while !sent.is_empty() {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(late());
+            }
+            stream.set_write_timeout(Some(left)).map_err(failed)?;
+            match stream.write(sent) {
+                Ok(0) => return Err(RuntimeError::Failed(format!("{path}: the server hung up"))),
+                Ok(n) => sent = &sent[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) if timed_out(&e) => return Err(late()),
+                Err(e) => return Err(failed(e)),
+            }
+        }
+        let mut answer = Vec::new();
+        let mut chunk = [0u8; 64 * 1024];
         loop {
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -128,15 +148,7 @@ impl Ollama {
                 Ok(0) => break,
                 Ok(n) => answer.extend_from_slice(&chunk[..n]),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                // A read timeout: the deadline came with no more of the answer.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Err(late());
-                }
+                Err(e) if timed_out(&e) => return Err(late()),
                 Err(e) => return Err(failed(e)),
             }
         }
@@ -444,6 +456,38 @@ mod tests {
         );
         assert!(
             started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_server_that_never_reads_the_request_cannot_hold_it_past_its_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            // Accept, then never read, so the socket buffers fill and the client's write blocks.
+            let (_conn, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        let ollama = Ollama {
+            addr,
+            models_dir: PathBuf::from("/nonexistent"),
+        };
+        let prompt = json!({"prompt": "w".repeat(16 * 1024 * 1024)});
+        let started = Instant::now();
+        let r = ollama.request(
+            "POST",
+            "/api/generate",
+            Some(&prompt),
+            Duration::from_millis(400),
+        );
+        assert!(
+            matches!(&r, Err(RuntimeError::Failed(why)) if why.contains("no whole answer")),
+            "{r:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
             "{:?}",
             started.elapsed()
         );

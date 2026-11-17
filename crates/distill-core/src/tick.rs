@@ -3,8 +3,9 @@
 //! cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
 //! model gets the local runtime, and the steps before it never wait on one.
 //!
-//! The model steps share one time budget per tick, [`model_budget`], counted from the tick's
-//! start, so a slow or stuck model never delays the next tick's sweep (issue #100). Each model
+//! The model steps share one time budget per tick for starting work, [`model_budget`], counted
+//! from the tick's start, so a slow or stuck model holds a tick past it by at most one model call
+//! (issue #100). Each model
 //! step gets an even share of what is left of it when the step starts, so time a step does not use
 //! passes to the ones after it, and stops taking sessions at its [`Deadline`]. The sessions it did
 //! not reach stay pending for the next tick and are not failures.
