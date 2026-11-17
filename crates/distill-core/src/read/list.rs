@@ -509,6 +509,7 @@ mod tests {
                     origin: format!("/s/{}.jsonl", s.id),
                     sha256: "0".repeat(64),
                     size: 1,
+                    attached: Vec::new(),
                 },
                 normalizer: Producer {
                     name: s.harness.id().into(),

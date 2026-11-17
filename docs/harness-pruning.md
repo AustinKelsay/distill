@@ -12,7 +12,7 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 | --- | --- | --- | --- | --- |
 | Claude Code | Yes, by default | Older than 30 days, in the background after a session starts | `cleanupPeriodDays` in `~/.claude/settings.json` (default 30, minimum 1); `desktopSessionCleanupPeriodDays` for Desktop sessions (default 0, never) | Yes: the owner's settings and the managed settings files |
 | Codex | No | | | |
-| OpenCode | No (only full tool outputs, see below) | | | |
+| OpenCode | No; only spilled full tool outputs | A fixed 7 days | None | The fixed 7 days |
 | Droid | Only orphaned `/btw` side questions and empty drafts | A fixed 7 days | None | The fixed 7 days |
 | Pi | No | | | |
 | Cursor | No | | | |
@@ -42,10 +42,11 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 ## OpenCode
 
 - **Prunes:** no. Sessions in `opencode.db` are deleted only when the owner removes one.
-- **Side files:** full tool outputs spilled to `<data>/tool-output/tool_*` are deleted after a fixed 7 days; the database keeps only a truncated preview. Distill's root for OpenCode is the database alone, so these files are not captured at all today.
+- **Side files:** a tool output longer than 2,000 lines or 50 KB (by default; `tool_output` in its config) is spilled whole to `<data>/tool-output/tool_<id>`, beside `opencode.db`; the tool part keeps a preview and names the file in `state.metadata.outputPath`. OpenCode deletes `tool_*` files whose mtime is older than a fixed 7 days, checking every hour while it runs. Not configurable.
+- **Status reads:** the fixed 7 days, so it warns if the timer is set to sweep less often than weekly. The sweep captures the spilled files in `tool-output/` beside the database it reads, each at its own origin (since #107). With any privacy exclusion set, it skips a file that no session names yet (retried next sweep) or that an excluded session names. The parse step puts the full output in the tool result that names it, for sessions in the tables Distill reads (OpenCode's v1 `session`, `message`, `part`).
 - **Compaction:** v2 appends a `compaction` message row (`compaction.auto`, `compaction.buffer`, `compaction.keep.tokens`). In v1 (up to 1.19.5), `compaction.prune` (default false) marked old tool outputs as cleared for the model but kept them stored. The first v2 run migrates the v1 tables in place.
 - **Where:** `$XDG_DATA_HOME/opencode/opencode.db` (default `~/.local/share/opencode/`), or `OPENCODE_DB`; config in `~/.config/opencode/opencode.json`.
-- Sources: [tool-output.ts](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/tool-output.ts), [v1 compaction.ts](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/opencode/src/session/compaction.ts), [config docs](https://opencode.ai/docs/config/).
+- Sources: [tool-output.ts](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/tool-output.ts), [file-retention.ts](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/file-retention.ts), [database-path.ts](https://github.com/anomalyco/opencode/blob/dev/packages/cli/src/database-path.ts), [v1 truncate.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/tool/truncate.ts), [v1 tool.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/tool/tool.ts), [v1 processor.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/session/processor.ts), [v1 compaction.ts](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/opencode/src/session/compaction.ts), [config docs](https://opencode.ai/docs/config/).
 
 ## Droid
 
@@ -116,5 +117,7 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 ## Not covered
 
 - Status reads the owner's own settings files and, for Claude Code, the managed settings files. It does not read project-level settings (a project's `.claude/settings.json` can set a shorter `cleanupPeriodDays`), MDM profiles or server-managed settings.
-- Antigravity's size trimming, OpenCode's 7-day tool-output files and every in-place rewrite above have no setting to read, so status can't warn about them.
+- Antigravity's size trimming and every in-place rewrite above have no setting to read, so status can't warn about them.
+- Sessions OpenCode 2 writes only to its new tables (`session_v2`, `session_message`) are not archived yet, nor their spilled outputs attached (#110).
+- OpenCode's spilled outputs are looked for only beside the database Distill reads. With `OPENCODE_DB` pointing elsewhere, they stay in OpenCode's data folder and are not captured.
 - These findings are as of the date above. A harness can change its defaults in any release; recheck when one does.

@@ -143,7 +143,7 @@ fn is_current(
     let (Some(key), Some(entry)) = (key, entry) else {
         return false;
     };
-    if entry.made_from.session.capture_hash != facts.raw.sha256
+    if entry.made_from.session.capture_hash != facts.raw.source()
         || entry.made_from.session.parser != facts.normalizer.version
     {
         return false;

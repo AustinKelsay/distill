@@ -23,7 +23,7 @@ Capture and the parsers, kept from the previous build (ADR 0001), and everything
 | --- | --- |
 | `distill init` | Creates the home (`~/distill`, or `DISTILL_HOME` / `--home`) and a config with every harness found on this machine enabled. |
 | `distill harnesses` | Shows each harness and what of it is on this machine. |
-| `distill sweep` | Copies new and changed harness files into `raw/`. A file that only grew replaces its old capture; a rewritten file keeps both. Every file under a harness's roots is kept. SQLite files are read through SQLite's backup API; OpenCode sessions, T3 Code threads and Goose and Hermes sessions are exported one per session. Excluded projects are never copied. |
+| `distill sweep` | Copies new and changed harness files into `raw/`. A file that only grew replaces its old capture; a rewritten file keeps both. Every file under a harness's roots is kept. SQLite files are read through SQLite's backup API; OpenCode sessions, T3 Code threads and Goose and Hermes sessions are exported one per session; the full tool outputs OpenCode spills to `tool-output/` beside its database are copied as files of their own. Excluded projects are never copied. |
 | `distill verify` | Checks every capture in the raw archive against its hash. |
 | `distill parse` | Turns captures into `sessions/<harness>/<id>/events.jsonl` (prompts, replies, reasoning, tool calls and results) and `meta.json` (session facts, which hold no session text), and rebuilds the session list. Reports format drift. |
 | `distill scan` | Scans every session whose findings are missing or out of date for secrets, and stores `findings.json` beside it: each secret's place, kind and fingerprint (a keyed hash), never its value. Stored text is never changed. Prints counts only. |

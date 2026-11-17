@@ -165,10 +165,10 @@ pub fn status(home: &Home) -> Result<Status> {
             (Health::Disabled, None)
         } else if !present {
             (Health::Missing, Some("not found on this machine".into()))
-        } else if prunes.is_some() {
+        } else if let Some((_, deletes)) = &prunes {
             (
                 Health::Warn,
-                Some("deletes sessions sooner than the sweep runs".into()),
+                Some(format!("deletes {deletes} sooner than the sweep runs")),
             )
         } else if f.drift > 0 {
             (
@@ -201,7 +201,7 @@ pub fn status(home: &Home) -> Result<Status> {
             drift: f.drift,
             note,
         });
-        warnings.extend(prunes);
+        warnings.extend(prunes.map(|(w, _)| w));
     }
 
     let exposure = exposure::check(home);
@@ -244,30 +244,34 @@ fn span(minutes: i64) -> String {
     }
 }
 
-/// A warning when `kind`'s own setting deletes sessions sooner than the timer sweeps, so that
-/// one could go before it is captured.
-fn prunes_sooner(kind: Harness, config: &Config) -> Option<Warning> {
+/// A warning when `kind`'s own setting deletes sessions (or files of a session) sooner than the
+/// timer sweeps, so that one could go before it is captured; with what it deletes.
+fn prunes_sooner(kind: Harness, config: &Config) -> Option<(Warning, String)> {
     let every = crate::schedule::interval_minutes(config);
     let r = pruning::retention(kind, &config.roots_for(kind))?;
-    (r.minutes < u64::from(every)).then(|| Warning {
-        kind: WarningKind::PrunesSooner,
-        harness: Some(kind),
-        message: format!(
-            "{} deletes sessions {} ({}), sooner than the timer sweeps (every {}): {}.",
-            kind.label(),
-            if r.minutes == 0 {
-                "as soon as they end".to_string()
-            } else {
-                format!("untouched for {}", span(r.minutes as i64))
-            },
-            r.setting,
-            span(i64::from(every)),
-            if r.fixed {
-                "sweep more often"
-            } else {
-                "raise the setting or sweep more often"
-            }
-        ),
+    (r.minutes < u64::from(every)).then(|| {
+        let warning = Warning {
+            kind: WarningKind::PrunesSooner,
+            harness: Some(kind),
+            message: format!(
+                "{} deletes {} {} ({}), sooner than the timer sweeps (every {}): {}.",
+                kind.label(),
+                r.deletes,
+                if r.minutes == 0 {
+                    "as soon as they end".to_string()
+                } else {
+                    format!("untouched for {}", span(r.minutes as i64))
+                },
+                r.setting,
+                span(i64::from(every)),
+                if r.fixed {
+                    "sweep more often"
+                } else {
+                    "raise the setting or sweep more often"
+                }
+            ),
+        };
+        (warning, r.deletes.clone())
     })
 }
 
@@ -526,6 +530,51 @@ mod warning_tests {
         assert_eq!(
             prune_warning(&status(&home).unwrap(), Harness::ClaudeCode),
             None
+        );
+    }
+
+    #[test]
+    fn status_warns_when_the_sweep_is_too_slow_to_catch_opencodes_spilled_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("opencode.db"), b"").unwrap();
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let h = config.harness_mut(Harness::OpenCode);
+        h.enabled = true;
+        h.roots = vec![data.join("opencode.db")];
+        // A spilled output lasts a week: sweeping every six days catches it.
+        config.schedule.sweep_every_minutes = 6 * 24 * 60;
+        let (_home_dir, home) = home_with(&config);
+        assert_eq!(
+            prune_warning(&status(&home).unwrap(), Harness::OpenCode),
+            None
+        );
+
+        config.schedule.sweep_every_minutes = 8 * 24 * 60;
+        let (_home_dir, home) = home_with(&config);
+        let s = status(&home).unwrap();
+        let w = prune_warning(&s, Harness::OpenCode).expect("warns");
+        assert!(
+            w.message
+                .starts_with("OpenCode deletes spilled tool outputs untouched for 7 days"),
+            "{}",
+            w.message
+        );
+        assert!(w.message.contains("tool-output"), "{}", w.message);
+        assert!(w.message.ends_with("sweep more often."), "{}", w.message);
+        let o = s
+            .harnesses
+            .iter()
+            .find(|h| h.harness == Harness::OpenCode)
+            .unwrap();
+        assert_eq!(o.health, Health::Warn);
+        assert_eq!(
+            o.note.as_deref(),
+            Some("deletes spilled tool outputs sooner than the sweep runs")
         );
     }
 }

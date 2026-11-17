@@ -98,6 +98,29 @@ pub struct RawRef {
     pub origin: String,
     pub sha256: String,
     pub size: u64,
+    /// The capture hashes of other captures whose bytes the session's events hold (OpenCode's
+    /// spilled tool outputs), sorted. They are part of what the session is made from, so
+    /// anything built from its events goes out of date when one arrives ([`RawRef::source`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attached: Vec<String>,
+}
+
+impl RawRef {
+    /// What the session's events are made from, as one hash: the capture hash, or, with
+    /// attached captures, a hash of it and theirs. Findings, cards and the indexes record it, so
+    /// a session whose events change without its capture changing is scanned again before
+    /// anything is built from the new events.
+    pub fn source(&self) -> String {
+        if self.attached.is_empty() {
+            return self.sha256.clone();
+        }
+        let mut all = self.sha256.clone();
+        for h in &self.attached {
+            all.push('\n');
+            all.push_str(h);
+        }
+        crate::util::sha256_hex(all.as_bytes())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
