@@ -23,6 +23,7 @@
 
 mod assign;
 mod json;
+mod weak;
 
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -32,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The detector's version. Findings made by another version are out of date.
-pub const DETECTOR_VERSION: u32 = 3;
+pub const DETECTOR_VERSION: u32 = 4;
 
 /// How many levels of JSON inside JSON strings are read token by token; deeper text goes to the
 /// text scanner rather than risk the stack.
@@ -286,18 +287,27 @@ pub struct ValueHit {
 impl Detector {
     pub fn detect_value(&self, v: &Value) -> Vec<ValueHit> {
         let mut out = Vec::new();
-        self.walk(v, &mut Vec::new(), false, &mut out);
+        self.walk(v, &mut Vec::new(), None, &mut out);
         out
     }
 
-    fn walk(&self, v: &Value, path: &mut Vec<usize>, secret: bool, out: &mut Vec<ValueHit>) {
+    /// `secret` is the credential-named key the value sits under, if any. A value there that
+    /// cannot be a secret (too short, an id, a placeholder) is read as any other.
+    fn walk(
+        &self,
+        v: &Value,
+        path: &mut Vec<usize>,
+        secret: Option<&str>,
+        out: &mut Vec<ValueHit>,
+    ) {
         let whole = |written: String| Hit {
             kind: Kind::CredentialField,
             range: 0..written.len(),
             value: written,
         };
+        let can_be = |value: &str| secret.is_some_and(|key| weak::can_be_secret(key, value));
         match v {
-            Value::String(s) if secret && !s.is_empty() => out.push(ValueHit {
+            Value::String(s) if can_be(s) => out.push(ValueHit {
                 path: path.clone(),
                 key: false,
                 hit: whole(s.clone()),
@@ -307,11 +317,12 @@ impl Detector {
                 key: false,
                 hit,
             })),
-            Value::Number(n) if secret => out.push(ValueHit {
-                path: path.clone(),
-                key: false,
-                hit: whole(n.to_string()),
-            }),
+            Value::Number(n) if secret.is_some_and(|key| weak::can_be_secret_number(key, n)) => out
+                .push(ValueHit {
+                    path: path.clone(),
+                    key: false,
+                    hit: whole(n.to_string()),
+                }),
             Value::Array(a) => {
                 for (i, x) in a.iter().enumerate() {
                     path.push(i);
@@ -327,7 +338,8 @@ impl Detector {
                         key: true,
                         hit,
                     }));
-                    self.walk(x, path, json::is_credential_key(k), out);
+                    let key = json::is_credential_key(k).then_some(k.as_str());
+                    self.walk(x, path, key, out);
                     path.pop();
                 }
             }

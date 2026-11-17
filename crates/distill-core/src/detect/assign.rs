@@ -12,8 +12,6 @@ use regex::Regex;
 /// any prefix, since a bare `\b` would stop at the `_`, and may follow an escaped newline
 /// (`\npassword=`), where `\b` finds no boundary after the `n`. `scan_value` finds where the value ends.
 const ASSIGNMENT_HEAD: &str = r#"(?i)(?:\b|\\+[nrtbf])(?P<name>(?:[A-Za-z0-9]*[_-]+)*(?:password|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key))\b(?P<nq>\\*["'])?(?:\s|\\+[nrtf])*[:=](?:\s|\\+[nrtf])*(?P<q>\\*["'])?"#;
-/// Shorter values are rarely secrets (`csrf_token=short`, `max_token=4096`).
-const MIN_SECRET_CHARS: usize = 8;
 
 fn assignment_head() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -47,7 +45,8 @@ pub(super) fn assignments(text: &str) -> Vec<Range<usize>> {
         let (head_start, head_end) = (whole.start(), whole.end());
         // The next name may start inside this one's separator (`token=\npassword:`), so it is
         // looked for from the end of this name.
-        let name_end = c.name("name").expect("name group").end();
+        let name = c.name("name").expect("name group");
+        let name_end = name.end();
         let next_c = assignment_head().captures_at(text, name_end);
         if let Some(nl) = text[seen..head_start].rfind('\n') {
             line_start = seen + nl + 1;
@@ -76,13 +75,13 @@ pub(super) fn assignments(text: &str) -> Vec<Range<usize>> {
             ranges.push((head_end, text.len()));
             break;
         }
-        if let Some((s, e)) = scan_value(text, head_end, quote, &ctx, &mut memo)
+        if !super::weak::is_identifier_name(name.as_str())
+            && let Some((s, e)) = scan_value(text, head_end, quote, &ctx, &mut memo)
             && s <= e
             && e <= text.len()
             && text.is_char_boundary(s)
             && text.is_char_boundary(e)
-            // Counted only as far as needed: many candidates can share one long value.
-            && text[s..e].chars().nth(MIN_SECRET_CHARS - 1).is_some()
+            && super::weak::can_be_secret(name.as_str(), &text[s..e])
             && !placeholders.iter().any(|p| p.start <= s && e <= p.end)
         {
             ranges.push((s, e));
@@ -325,10 +324,26 @@ fn scan_value(
     // A bare token. A backslash ends it only when it escapes a quote or whitespace; any other
     // escape (`\u0073`, `\\`) is part of the value, so no half of it is left behind. After a
     // quoted JSON key, a container is not a value to replace, and `]` ends a number in an array.
-    if ctx.json_key && matches!(b.get(at), Some(b'[' | b'{')) {
+    if (ctx.json_key && matches!(b.get(at), Some(b'[' | b'{'))) || opens_json(&b[at..]) {
         return None;
     }
     Some((at, char_end(text, memo.word_end(b, at, ctx))))
+}
+
+/// Whether a bare value opens a JSON object or array (`{"a":`, `[{`, `{\"a\"`, `[]`): a
+/// fragment the scan would run on into, not a secret. `[synthetic-value]` is a value.
+fn opens_json(b: &[u8]) -> bool {
+    let next = || {
+        b[1..]
+            .iter()
+            .copied()
+            .find(|c| !matches!(c, b' ' | b'\t' | b'\r' | b'\n' | b'\\'))
+    };
+    match b.first() {
+        Some(b'{') => matches!(next(), Some(b'"' | b'}')),
+        Some(b'[') => matches!(next(), Some(b'"' | b'{' | b'[' | b']')),
+        _ => false,
+    }
 }
 
 /// `i`, or the next char boundary after it.

@@ -187,10 +187,10 @@ fn catches_prefixed_secret_names() {
         [(Kind::TinfoilKey, key)]
     );
 
-    let v = json!({"TINFOIL_API_KEY": "short", "max_tokens": 10});
+    let v = json!({"TINFOIL_API_KEY": "synthetic", "max_tokens": 10});
     assert_eq!(
         places(&v),
-        [(vec![0], false, Kind::CredentialField, "short".into())]
+        [(vec![0], false, Kind::CredentialField, "synthetic".into())]
     );
 }
 
@@ -294,12 +294,12 @@ fn assignment_values_are_found_whole_in_json() {
             "synthetic-value",
             "synthetic",
         ),
-        // A number in an array under a secret name, however short; one elsewhere is not a
-        // secret. (Cut short, the text scanner leaves a JSON array alone.)
+        // A number in an array under a secret name; one elsewhere is not a secret. (Cut short,
+        // the text scanner leaves a JSON array alone.)
         (
-            r#"{"token":[4417],"ok":2}"#,
+            r#"{"password":[44170000123],"ok":2}"#,
             Kind::CredentialField,
-            "4417",
+            "44170000123",
             "",
         ),
         // Every occurrence of a duplicate key.
@@ -519,9 +519,10 @@ fn assignment_values_are_found_whole_in_text() {
             "password: | # token=x\n  synthetic-secret\nnext: 1".into(),
             hits(Kind::AssignedSecret, &["synthetic-secret"]),
         ),
+        // (The second `token=`'s value, `password:`, is id-shaped and short: not a token.)
         (
             "token=token=\\npassword: synthetic-secret".into(),
-            hits(Kind::AssignedSecret, &["password:", "synthetic-secret"]),
+            hits(Kind::AssignedSecret, &["synthetic-secret"]),
         ),
         // An escaped form feed ends a bare value, like `\n`, `\r` and `\t`.
         (
@@ -535,7 +536,7 @@ fn assignment_values_are_found_whole_in_text() {
     for (text, want) in cases {
         assert_eq!(found(&text), want, "{text:?}");
     }
-    let v = json!({"APP__DB_PASSWORD": "short", "_token": "x"});
+    let v = json!({"APP__DB_PASSWORD": "synthetic", "_token": "synthetic-x"});
     let p: Vec<_> = places(&v).into_iter().map(|p| p.0).collect();
     assert_eq!(p, [[0], [1]]);
 }
@@ -603,18 +604,19 @@ fn json_text_is_read_field_by_field_at_any_depth() {
 fn json_is_read_token_by_token() {
     let nested = json!({"a": r#"{"password":"synthetic-secret","password":null}"#}).to_string();
     assert!(covered(&nested, "synthetic"));
-    // Numbers: any one under a credential key is found, whatever its notation; others not.
+    // Numbers: any one of eight characters or more under a credential key is found, whatever
+    // its notation; others not.
     assert_eq!(
         found(r#"{"password":1000000000000000000000}"#),
         hits(Kind::CredentialField, &["1000000000000000000000"])
     );
     assert_eq!(
-        found(r#"{"pin_token": 4417, "count": 3, "api_key": [-2.5]}"#),
-        hits(Kind::CredentialField, &["4417", "-2.5"])
+        found(r#"{"pin_secret": 44170000, "count": 3, "api_key": [-2.5000001]}"#),
+        hits(Kind::CredentialField, &["44170000", "-2.5000001"])
     );
     assert_eq!(
-        places(&json!({"pin_token": 4417, "count": 3})),
-        [(vec![1], false, Kind::CredentialField, "4417".into())]
+        places(&json!({"pin_secret": 44170000, "count": 3})),
+        [(vec![1], false, Kind::CredentialField, "44170000".into())]
     );
     assert_eq!(
         found(
@@ -652,8 +654,8 @@ fn json_is_read_token_by_token() {
         hits(Kind::CredentialField, &["synthetic-secret"])
     );
     assert_eq!(
-        found(r#"{"token":1e21,"x":"\ud800"}"#),
-        hits(Kind::CredentialField, &["1e21"])
+        found(r#"{"token":1.5e+210,"x":"\ud800"}"#),
+        hits(Kind::CredentialField, &["1.5e+210"])
     );
     // Arrays under a credential key hold secrets too; objects are read as usual, so a tool
     // schema holds none.
@@ -675,7 +677,7 @@ fn json_is_read_token_by_token() {
     );
 
     // A JSON value is read by the key as written, and long numbers in any form are found.
-    let v = json!({"tab0c0ffe-password": "synthetic-secret", "token": 1e21, "n": 12,
+    let v = json!({"tab0c0ffe-password": "synthetic-secret", "token": 1.5e210, "n": 12,
         "secret": ["synthetic-a"], "api_key": {"type": "string"}});
     assert_eq!(
         places(&v),
@@ -692,7 +694,7 @@ fn json_is_read_token_by_token() {
                 Kind::CredentialField,
                 "synthetic-secret".into()
             ),
-            (vec![4], false, Kind::CredentialField, "1e+21".into()),
+            (vec![4], false, Kind::CredentialField, "1.5e+210".into()),
         ]
     );
 }
@@ -1088,4 +1090,85 @@ fn every_kind_is_listed_once_and_its_name_reads_back() {
     names.sort();
     names.dedup();
     assert_eq!(names.len(), Kind::ALL.len());
+}
+
+#[test]
+fn ids_counters_placeholders_and_fragments_are_not_secrets() {
+    // Built from pieces, so no whole value sits in the source.
+    let id = format!("e{}:{}", 12, "abc45");
+    let id_token = format!("{}{}", "a1b2c3", "d4e5");
+    let long_token = format!("{}{}", "a1b2c3d4e5", "f6g7h8i9");
+    let mixed_token = format!("{}{}", "Ab3dE6", "gH9k");
+    let stand_in = format!("{}{}", "x".repeat(8), "-key");
+    let none: [String; 13] = [
+        // An identifier name, under either rule.
+        format!(r#"{{"element_token":"{id}","n":1}}"#),
+        format!("element_token={id} next"),
+        format!(r#"{{"a":"{{\"element_token\":\"{id}\"}}"}}"#),
+        format!(r#"{{"eos_token":"<|end{}|>","bos_token":"<s>"}}"#, "oftext"),
+        // Counters and short enum values under credential names.
+        r#"{"pass": 3, "tests_pass": 1200, "user_authorization": "granted"}"#.into(),
+        // A short id under a token name.
+        format!("token={id_token} x"),
+        format!("token: {id} x"),
+        format!(r#"{{"token":"{id}"}}"#),
+        // Placeholders.
+        format!("API_KEY={}-api-key-here x", "your"),
+        format!("DB_PASSWORD={}{} x", "change", "me123"),
+        format!("token={stand_in} x"),
+        // A JSON fragment after a bare separator.
+        format!(r#"token: {{"a": "synthetic-{}"}}"#, "value"),
+        format!(r#"cmd \"token\":[\"synthetic-{}\"]"#, "value"),
+    ];
+    for text in none {
+        assert_eq!(found(&text), [], "{text}");
+    }
+    assert!(places(&json!({"element_token": id, "pass": 3, "eos_token": "</s>"})).is_empty());
+
+    // A number is gated on one form in both paths, whatever its notation: as JSON text and as
+    // a parsed value, the same number under the same key is found by neither or both.
+    for (text, is_found) in [
+        (r#"{"password":5.00000000}"#, false),
+        (r#"{"password":44170000.0}"#, true),
+        (r#"{"password":1000000000000000000000}"#, true),
+        (r#"{"token":123456789}"#, false),
+    ] {
+        let v: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(!found(text).is_empty(), is_found, "{text}");
+        assert_eq!(!places(&v).is_empty(), is_found, "{text} as a value");
+    }
+
+    // A number too large for serde is still found, as written.
+    let huge = format!("9{}", "1".repeat(319));
+    assert!(serde_json::from_str::<serde_json::Number>(&huge).is_err());
+    assert_eq!(
+        found(&format!(r#"{{"api_secret":{huge}}}"#)),
+        hits(Kind::CredentialField, &[&huge])
+    );
+    assert_eq!(
+        found(r#"{"api_secret":1e400}"#),
+        [],
+        "five characters as written"
+    );
+
+    // Real-shaped values under the same names are still found.
+    assert_eq!(
+        found(&format!("token={long_token} x")),
+        hits(Kind::AssignedSecret, &[&long_token])
+    );
+    assert_eq!(
+        found(&format!("token={mixed_token} x")),
+        hits(Kind::AssignedSecret, &[&mixed_token])
+    );
+    assert_eq!(
+        found(&format!(
+            r#"{{"element_token":"{id}","api_key":"synthetic-{}"}}"#,
+            "key-1"
+        )),
+        hits(Kind::CredentialField, &["synthetic-key-1"])
+    );
+    assert_eq!(
+        places(&json!({"element_token": id, "password": format!("synthetic-{}", "pw")})),
+        [(vec![1], false, Kind::CredentialField, "synthetic-pw".into())]
+    );
 }

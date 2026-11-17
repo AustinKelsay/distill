@@ -75,9 +75,10 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     let key = ["sk-", "ant-", "api03-", &"Lk7".repeat(9)].concat();
     let password = ["synthetic", "-leak-", "pass-4417"].concat();
-    // A token written as a JSON object key, and a short number under a credential-named key.
+    // A token written as a JSON object key, and a number under a credential-named key (eight
+    // digits: a shorter one is a counter, not a secret).
     let key_token = ["ghp_", &"Zq9".repeat(12)].concat();
-    let pin: u64 = 9_000_000 + 382_617;
+    let pin: u64 = 90_000_000 + 382_617;
     let pin_text = pin.to_string();
     let secrets = [
         key.as_str(),
@@ -98,7 +99,7 @@ fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
         format!("export DB_PASSWORD={password} && deploy").into(),
     );
     input.insert(key_token.clone(), "on".into());
-    input.insert("api_token".into(), pin.into());
+    input.insert("api_secret".into(), pin.into());
     let input = serde_json::Value::Object(input);
     fs::write(
         claude.join("proj/leak1.jsonl"),
