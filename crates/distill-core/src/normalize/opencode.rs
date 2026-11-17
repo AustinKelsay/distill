@@ -6,11 +6,18 @@
 //! `tool-output/` beside the database, keeps a preview in the tool part, and deletes the file
 //! after a fixed 7 days. The sweep captures those files on their own ([`list_spills`]), and the
 //! parse step puts a spilled output back in its tool result ([`parse_with_spills`]).
+//!
+//! OpenCode 2 keeps new sessions in other tables: `session_v2`, `session_message` (one row per
+//! message, its `data` the message without `type` and `id`; an assistant message holds its text,
+//! reasoning and tool calls in `data.content`, or in `session_part` rows when OpenCode's
+//! `part_rows` flag is on). Its sessions that the v1 tables lack are exported at the same
+//! `<db>#session=<id>` origin, as `message_v2` and `part_v2` rows; a session in both sets of
+//! tables is exported from v1 only, so what is already archived never changes.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 
 use super::blocks::millis_to_rfc3339;
@@ -27,18 +34,51 @@ fn open(db: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+fn has_table(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// The sessions in the database: those in the v1 tables, then those only in OpenCode 2's. A
+/// database without either set of tables (older or newer OpenCode) just has fewer.
 pub fn list_sessions(db: &Path) -> Result<Vec<Candidate>> {
     let conn = open(db)?;
-    let mut stmt = conn.prepare("SELECT id, time_updated FROM session ORDER BY id")?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
     let mut out = Vec::new();
-    for row in rows {
-        let (session_id, updated) = row?;
-        out.push(Candidate::OpenCodeSession {
-            db: db.to_path_buf(),
-            session_id,
-            updated,
-        });
+    let mut push = |rows: Vec<(String, i64)>| {
+        for (session_id, updated) in rows {
+            out.push(Candidate::OpenCodeSession {
+                db: db.to_path_buf(),
+                session_id,
+                updated,
+            });
+        }
+    };
+    let v1 = has_table(&conn, "session")?;
+    if v1 {
+        let mut stmt = conn.prepare("SELECT id, time_updated FROM session ORDER BY id")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        push(rows);
+    }
+    if has_table(&conn, "session_v2")? && has_table(&conn, "session_message")? {
+        // A session changes when its row does or when a message does, whichever is later.
+        let sql = format!(
+            "SELECT s.id, MAX(s.time_updated, COALESCE((SELECT MAX(m.time_updated) FROM session_message m WHERE m.session_id = s.id), 0))
+             FROM session_v2 s {} ORDER BY s.id",
+            if v1 { "WHERE s.id NOT IN (SELECT id FROM session)" } else { "" }
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        push(rows);
     }
     Ok(out)
 }
@@ -139,26 +179,64 @@ fn spill_path(state: &Value) -> Option<&str> {
 /// exclusions can be checked for it. Empty when no session names it (yet).
 pub fn spill_projects(db: &Path, name: &str) -> Result<Vec<String>> {
     let conn = open(db)?;
+    let mut out = Vec::new();
     // `instr`, not `LIKE`, whose wildcards include the `_` in every spill's name. Each row it
     // finds is checked for the name in the right place.
-    let mut stmt = conn.prepare(
-        "SELECT p.data, s.directory FROM part p JOIN session s ON s.id = p.session_id
-         WHERE instr(p.data, ?1) > 0",
-    )?;
-    let rows = stmt.query_map([name], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        let (data, directory) = row?;
-        let Ok(v) = serde_json::from_str::<Value>(&data) else {
-            continue;
-        };
-        if spill_path(&v["state"]).and_then(spill_name) == Some(name) && !out.contains(&directory) {
-            out.push(directory);
+    if has_table(&conn, "part")? && has_table(&conn, "session")? {
+        let mut stmt = conn.prepare(
+            "SELECT p.data, s.directory FROM part p JOIN session s ON s.id = p.session_id
+             WHERE instr(p.data, ?1) > 0",
+        )?;
+        let rows = stmt.query_map([name], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (data, directory) = row?;
+            let Ok(v) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
+            if spill_path(&v["state"]).and_then(spill_name) == Some(name)
+                && !out.contains(&directory)
+            {
+                out.push(directory);
+            }
+        }
+    }
+    if has_table(&conn, "session_v2")? {
+        let mut sources = Vec::new();
+        if has_table(&conn, "session_message")? {
+            sources.push("SELECT m.data, s.directory FROM session_message m JOIN session_v2 s ON s.id = m.session_id WHERE instr(m.data, ?1) > 0");
+        }
+        if has_table(&conn, "session_part")? {
+            sources.push("SELECT p.data, s.directory FROM session_part p JOIN session_v2 s ON s.id = p.session_id WHERE instr(p.data, ?1) > 0");
+        }
+        for sql in sources {
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map([name], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (data, directory) = row?;
+                let Ok(v) = serde_json::from_str::<Value>(&data) else {
+                    continue;
+                };
+                // A message holds its tools in `content`; a `session_part` row is one tool.
+                let named = match v.get("content").and_then(Value::as_array) {
+                    Some(items) => items.iter().any(|i| spill_in(i, name)),
+                    None => spill_in(&v, name),
+                };
+                if named && !out.contains(&directory) {
+                    out.push(directory);
+                }
+            }
         }
     }
     Ok(out)
+}
+
+/// Whether an OpenCode 2 tool item names the spilled output `name`.
+fn spill_in(item: &Value, name: &str) -> bool {
+    spill_path(&item["state"]).and_then(spill_name) == Some(name)
 }
 
 pub struct Export {
@@ -168,6 +246,17 @@ pub struct Export {
 
 pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
     let conn = open(db)?;
+    // A session in both sets of tables is exported from v1, as it always was.
+    let in_v1 = has_table(&conn, "session")?
+        && conn
+            .query_row("SELECT 1 FROM session WHERE id = ?1", [session_id], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some();
+    if !in_v1 {
+        return export_session_v2(&conn, session_id);
+    }
     let session: Value = conn.query_row(
         "SELECT id, parent_id, directory, title, version, model, agent, time_created, time_updated FROM session WHERE id = ?1",
         [session_id],
@@ -209,6 +298,88 @@ pub fn export_session(db: &Path, session_id: &str) -> Result<Export> {
         let (kind, id, message_id, created, data) = row?;
         let data: Value = serde_json::from_str(&data).unwrap_or(Value::String(data));
         lines.push(json!({"row": kind, "id": id, "message_id": message_id, "time_created": created, "data": data}));
+    }
+    let mut bytes = Vec::new();
+    for l in &lines {
+        serde_json::to_writer(&mut bytes, l)?;
+        bytes.push(b'\n');
+    }
+    Ok(Export { bytes, directory })
+}
+
+/// Export a session that only OpenCode 2's tables hold: the session, then its messages in `seq`
+/// order, each followed by its `session_part` rows (when the table exists) in ordinal order.
+fn export_session_v2(conn: &Connection, session_id: &str) -> Result<Export> {
+    let session: Value = conn.query_row(
+        "SELECT id, parent_id, directory, title, version, model, agent, time_created FROM session_v2 WHERE id = ?1",
+        [session_id],
+        |r| {
+            // `model` is JSON ({id, providerID, variant}); keep the model's id.
+            let model = r
+                .get::<_, Option<String>>(5)?
+                .and_then(|m| serde_json::from_str::<Value>(&m).ok())
+                .and_then(|m| m.get("id").and_then(Value::as_str).map(str::to_string));
+            Ok(json!({
+                "row": "session",
+                "id": r.get::<_, String>(0)?,
+                "parent_id": r.get::<_, Option<String>>(1)?,
+                "directory": r.get::<_, String>(2)?,
+                "title": r.get::<_, Option<String>>(3)?,
+                "version": r.get::<_, String>(4)?,
+                "model": model,
+                "agent": r.get::<_, Option<String>>(6)?,
+                "time_created": r.get::<_, i64>(7)?,
+            }))
+        },
+    )?;
+    let directory = session
+        .get("directory")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut lines = vec![session];
+    let mut parts: std::collections::HashMap<String, Vec<Value>> = Default::default();
+    if has_table(conn, "session_part")? {
+        let mut stmt = conn.prepare(
+            "SELECT message_id, ordinal, type, call_id, time_created, data FROM session_part
+             WHERE session_id = ?1 ORDER BY message_id, ordinal",
+        )?;
+        let rows = stmt.query_map([session_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (message_id, ordinal, kind, call_id, created, data) = row?;
+            let data: Value = serde_json::from_str(&data).unwrap_or(Value::String(data));
+            parts.entry(message_id.clone()).or_default().push(json!({
+                "row": "part_v2", "message_id": message_id, "ordinal": ordinal, "type": kind,
+                "call_id": call_id, "time_created": created, "data": data,
+            }));
+        }
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, seq, type, time_created, data FROM session_message WHERE session_id = ?1 ORDER BY seq",
+    )?;
+    let rows = stmt.query_map([session_id], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, String>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, seq, kind, created, data) = row?;
+        let data: Value = serde_json::from_str(&data).unwrap_or(Value::String(data));
+        let parts = parts.remove(&id).unwrap_or_default();
+        lines.push(json!({"row": "message_v2", "id": id, "seq": seq, "type": kind, "time_created": created, "data": data}));
+        lines.extend(parts);
     }
     let mut bytes = Vec::new();
     for l in &lines {
@@ -349,10 +520,199 @@ pub fn parse_with_spills(
                     _ => {}
                 }
             }
+            // OpenCode 2 (`session_message`). The message's own `type` says what it is; the
+            // `data` holds the rest. An assistant message's content is inline, or in the
+            // `part_v2` rows that follow it.
+            "message_v2" => {
+                let d = &v["data"];
+                let id = v.get("id").and_then(Value::as_str).unwrap_or("");
+                let text_of = |d: &Value| {
+                    d.get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                };
+                match v.get("type").and_then(Value::as_str).unwrap_or("") {
+                    "user" => {
+                        out.push(Event::text(EventKind::User, text_of(d)).at(at.clone()));
+                        for f in d
+                            .get("files")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                        {
+                            out.push(Event::text(EventKind::User, file_note(f)).at(at.clone()));
+                        }
+                    }
+                    "assistant" => {
+                        let model = d
+                            .pointer("/model/id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        if let Some(m) = &model {
+                            out.add_model(m);
+                        }
+                        roles.insert(id.to_string(), (EventKind::Assistant, model.clone()));
+                        for item in d
+                            .get("content")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                        {
+                            push_v2_item(&mut out, &mut missing, &mut spilled, item, &model, &at)?;
+                        }
+                    }
+                    // Text OpenCode gave the model: the session's own, not the owner's.
+                    "system" | "synthetic" | "skill" => {
+                        out.push(Event::text(EventKind::System, text_of(d)).at(at))
+                    }
+                    // A compaction's summary replaces earlier turns in the model's context.
+                    // Only a completed one has a summary worth keeping.
+                    "compaction"
+                        if d.get("status").and_then(Value::as_str) == Some("completed") =>
+                    {
+                        out.push(
+                            Event::text(
+                                EventKind::System,
+                                d.get("summary").and_then(Value::as_str).unwrap_or(""),
+                            )
+                            .at(at),
+                        )
+                    }
+                    // A shell command the owner ran: a call and, once it ends, its result.
+                    "shell" => {
+                        let mut call = Event::new(EventKind::ToolCall).at(at.clone());
+                        call.tool = Some("shell".into());
+                        call.call_id = d.get("shellID").and_then(Value::as_str).map(str::to_string);
+                        call.input = Some(json!({"command": d.get("command")}));
+                        let (call_id, status) = (
+                            call.call_id.clone(),
+                            d.get("status").and_then(Value::as_str),
+                        );
+                        out.push(call);
+                        if status != Some("running")
+                            && let Some(o) = d.get("output")
+                        {
+                            let mut res = Event::new(EventKind::ToolResult).at(at);
+                            res.tool = Some("shell".into());
+                            res.call_id = call_id;
+                            res.text = Some(
+                                o.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| o.to_string()),
+                            );
+                            res.is_error = d.get("exit").and_then(Value::as_i64).map(|c| c != 0);
+                            out.push(res);
+                        }
+                    }
+                    // Ignored, with nothing to say in a transcript: `idle` (a turn's end marker),
+                    // `model-switched`, `agent-switched` and `location-switched` (settings
+                    // changes), a running or failed `compaction`, and any type OpenCode adds.
+                    _ => {}
+                }
+            }
+            "part_v2" => {
+                let mid = v.get("message_id").and_then(Value::as_str).unwrap_or("");
+                let model = roles.get(mid).and_then(|(_, m)| m.clone());
+                // The row's `type` column is the part's type; `data` may not repeat it.
+                let mut item = v["data"].clone();
+                if let (Some(o), Some(t)) = (item.as_object_mut(), v.get("type")) {
+                    o.entry("type").or_insert_with(|| t.clone());
+                }
+                push_v2_item(&mut out, &mut missing, &mut spilled, &item, &model, &at)?;
+            }
             _ => {}
         }
     }
     Ok((out, missing))
+}
+
+/// A note naming an attached file, never its bytes: a file's `name`, else its `uri` unless that
+/// holds the data itself.
+fn file_note(f: &Value) -> String {
+    let name = f
+        .get("name")
+        .or_else(|| f.get("filename"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            f.get("uri")
+                .and_then(Value::as_str)
+                .filter(|u| !u.starts_with("data:"))
+        })
+        .unwrap_or("");
+    format!("[file {name}]")
+}
+
+/// One entry of an OpenCode 2 assistant message's content: text, reasoning, or a tool (a call, and
+/// its result once the tool completed or failed).
+fn push_v2_item(
+    out: &mut Parsed,
+    missing: &mut Vec<String>,
+    spilled: &mut impl FnMut(&str) -> Result<Option<Vec<u8>>>,
+    item: &Value,
+    model: &Option<String>,
+    at: &Option<String>,
+) -> Result<()> {
+    let text = item.get("text").and_then(Value::as_str).unwrap_or("");
+    match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        "text" => {
+            let mut e = Event::text(EventKind::Assistant, text).at(at.clone());
+            e.model = model.clone();
+            out.push(e);
+        }
+        "reasoning" => out.push(Event::text(EventKind::Reasoning, text).at(at.clone())),
+        "tool" => {
+            let state = &item["state"];
+            let tool = item.get("name").and_then(Value::as_str).map(str::to_string);
+            let call_id = item.get("id").and_then(Value::as_str).map(str::to_string);
+            let mut call = Event::new(EventKind::ToolCall).at(at.clone());
+            call.tool = tool.clone();
+            call.call_id = call_id.clone();
+            call.input = state.get("input").cloned();
+            call.model = model.clone();
+            out.push(call);
+            let status = state.get("status").and_then(Value::as_str).unwrap_or("");
+            // A streaming or running tool has no result yet.
+            if matches!(status, "completed" | "error") {
+                let mut res = Event::new(EventKind::ToolResult).at(at.clone());
+                res.tool = tool;
+                res.call_id = call_id;
+                res.is_error = Some(status == "error");
+                let mut pieces: Vec<String> = state
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| match c.get("text").and_then(Value::as_str) {
+                        Some(t) => t.to_string(),
+                        None => file_note(c),
+                    })
+                    .collect();
+                if let Some(e) = state.get("error") {
+                    pieces.push(
+                        e.get("message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| e.to_string()),
+                    );
+                }
+                res.text = Some(pieces.join("\n"));
+                if let Some(name) = spill_path(state).and_then(spill_name) {
+                    match spilled(name)? {
+                        Some(full) => res.text = Some(String::from_utf8_lossy(&full).into_owned()),
+                        None if !missing.iter().any(|m| m == name) => {
+                            missing.push(name.to_string())
+                        }
+                        None => {}
+                    }
+                }
+                out.push(res);
+            }
+        }
+        // Ignored: any content type OpenCode adds.
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -687,5 +1047,190 @@ mod tests {
         config.privacy.exclude_paths.clear();
         let r = crate::sweep::sweep(&home, &config, None).unwrap();
         assert_eq!(r.new, 3, "{r:?}");
+    }
+
+    /// Add OpenCode 2's tables to the database at `db`, with one session `ses_v2only` that only
+    /// they hold, and `ses1`, which they hold too (its messages here are never exported).
+    fn add_v2(db: &Path, spill: &Path) {
+        let conn = Connection::open(db).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT, title TEXT, version TEXT, model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER);
+               CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+               INSERT INTO session_v2 VALUES ('ses1', '/w/app', NULL, 'T', '2.0.0', NULL, NULL, 1000, 5000);
+               INSERT INTO session_message VALUES ('v2m-dup', 'ses1', 'user', 1, 1000, 1000, '{"text":"never exported"}');
+               INSERT INTO session_v2 VALUES ('ses_v2only', '/w/new', NULL, 'T', '2.0.0', '{"id":"kimi-k3","providerID":"p"}', NULL, 1000, 6000);"#,
+        )
+        .unwrap();
+        let tool = json!({"type": "tool", "id": "call-9", "name": "bash",
+            "state": {"status": "completed", "input": {"command": "seq 3"},
+                "content": [{"type": "text", "text": "line 1\n...truncated"}],
+                "metadata": {"truncated": true, "outputPath": spill.display().to_string()}},
+            "time": {"created": 2001}});
+        let rows = [
+            ("m1", "user", 1, 1000, json!({"text": "count to three"})),
+            ("m2", "system", 2, 1500, json!({"text": "env changed"})),
+            (
+                "m3",
+                "assistant",
+                3,
+                2000,
+                json!({"agent": "build", "model": {"id": "kimi-k3", "providerID": "p"},
+                    "content": [{"type": "reasoning", "text": "think"}, {"type": "text", "text": "running"}, tool]}),
+            ),
+            ("m4", "idle", 4, 3000, json!({"outcome": "succeeded"})),
+            (
+                "m5",
+                "compaction",
+                5,
+                4000,
+                json!({"status": "completed", "reason": "auto", "summary": "so far"}),
+            ),
+            (
+                "m6",
+                "model-switched",
+                6,
+                5000,
+                json!({"model": {"id": "x"}}),
+            ),
+            ("m7", "future-type", 7, 5500, json!({})),
+        ];
+        for (id, kind, seq, at, data) in rows {
+            conn.execute(
+                "INSERT INTO session_message VALUES (?1, 'ses_v2only', ?2, ?3, ?4, ?4, ?5)",
+                rusqlite::params![id, kind, seq, at, data.to_string()],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_session_only_opencode_2_holds_is_archived_once_beside_those_in_v1() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        let db = opencode_data(
+            &data,
+            &[("ses1", "/w/app", "tool_0a1b2c3d4e5fSyntheticDdd4")],
+        );
+        let spill_path = data.join(SPILL_DIR).join("tool_0a1b2c3d4e5fSyntheticCcc3");
+        add_v2(&db, &spill_path);
+        std::fs::write(&spill_path, "line 1\nline 2\nline 3\n").unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let config = opencode_config(&db);
+
+        // A session in both sets of tables is one candidate.
+        let origins: Vec<_> = list_sessions(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.origin())
+            .collect();
+        assert_eq!(origins.len(), 2, "{origins:?}");
+        let r = crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!((r.new, r.errors.len()), (3, 0), "{r:?}"); // two sessions and the spill
+        let archive = Archive::open(&home).unwrap();
+        for origin in &origins {
+            assert!(Harness::OpenCode.is_primary(origin));
+            assert!(archive.latest().contains_key(origin));
+        }
+        let dup = export_session(&db, "ses1").unwrap();
+        assert!(!String::from_utf8_lossy(&dup.bytes).contains("never exported"));
+        let n = crate::normalize::normalize(&home, false).unwrap();
+        assert_eq!((n.sessions, n.sidecars), (2, 1), "{n:?}");
+        let meta = crate::normalize::find(&home, Harness::OpenCode, "ses_v2only")
+            .unwrap()
+            .unwrap();
+        assert_eq!(tool_result(&home, "ses_v2only"), "line 1\nline 2\nline 3\n");
+        assert!(!meta.raw.attached.is_empty());
+
+        // Nothing changed, nothing is written again.
+        let r = crate::sweep::sweep(&home, &config, None).unwrap();
+        assert_eq!(
+            (r.new, r.appended, r.rewritten, r.errors.len()),
+            (0, 0, 0, 0),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn a_v2_session_parses_into_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("opencode.db");
+        Connection::open(&db).unwrap();
+        add_v2(
+            &db,
+            &dir.path()
+                .join("tool-output/tool_0a1b2c3d4e5fSyntheticEee5"),
+        );
+        let p = parse(&export_session(&db, "ses_v2only").unwrap().bytes).unwrap();
+        assert_eq!(p.session_id.as_deref(), Some("ses_v2only"));
+        assert_eq!(p.cwd.as_deref(), Some("/w/new"));
+        assert_eq!(p.models, vec!["kimi-k3"]);
+        let got: Vec<_> = p
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (EventKind::User, Some("count to three")),
+                (EventKind::System, Some("env changed")),
+                (EventKind::Reasoning, Some("think")),
+                (EventKind::Assistant, Some("running")),
+                (EventKind::ToolCall, None),
+                // The spilled output is not in the archive here: the preview stays.
+                (EventKind::ToolResult, Some("line 1\n...truncated")),
+                (EventKind::System, Some("so far")),
+            ]
+        );
+        assert_eq!(p.events[4].tool.as_deref(), Some("bash"));
+        assert_eq!(p.events[4].call_id.as_deref(), Some("call-9"));
+        assert_eq!(p.events[5].is_error, Some(false));
+    }
+
+    #[test]
+    fn a_v2_assistant_message_may_keep_its_content_in_part_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("opencode.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT, title TEXT, version TEXT, model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER);
+               CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+               CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, type TEXT, call_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+               INSERT INTO session_v2 VALUES ('s', '/w', NULL, NULL, '2', NULL, NULL, 1, 2);
+               INSERT INTO session_message VALUES ('m', 's', 'assistant', 1, 1, 1, '{"model":{"id":"k"},"content":[]}');
+               INSERT INTO session_part VALUES ('m', 's', 1, 'text', NULL, 1, 1, '{"text":"second"}');
+               INSERT INTO session_part VALUES ('m', 's', 0, 'tool', 'c', 1, 1, '{"id":"c","name":"read","state":{"status":"error","input":{},"error":{"type":"x","message":"nope"}}}');"#,
+        )
+        .unwrap();
+        drop(conn);
+        let p = parse(&export_session(&db, "s").unwrap().bytes).unwrap();
+        let got: Vec<_> = p
+            .events
+            .iter()
+            .map(|e| (e.kind, e.text.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (EventKind::ToolCall, None),
+                (EventKind::ToolResult, Some("nope")),
+                (EventKind::Assistant, Some("second")),
+            ]
+        );
+        assert_eq!(p.events[1].is_error, Some(true));
+    }
+
+    #[test]
+    fn a_database_without_v2_tables_still_sweeps() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        let db = opencode_data(
+            &data,
+            &[("ses1", "/w/app", "tool_0a1b2c3d4e5fSyntheticFff6")],
+        );
+        assert_eq!(list_sessions(&db).unwrap().len(), 1);
+        let home = Home::new(dir.path().join("home"));
+        let r = crate::sweep::sweep(&home, &opencode_config(&db), None).unwrap();
+        assert_eq!((r.new, r.errors.len()), (1, 0), "{r:?}");
     }
 }
