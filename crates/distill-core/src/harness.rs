@@ -130,7 +130,8 @@ impl Harness {
         match self {
             Harness::ClaudeCode | Harness::Droid | Harness::Pi => name.ends_with(".jsonl"),
             Harness::Codex => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
-            Harness::OpenCode => true,
+            // Sessions are exported from the database; its spilled tool outputs are sidecars.
+            Harness::OpenCode => origin.contains("#session="),
             // A thread's native references are archived beside it but aren't a session.
             Harness::T3Code => !origin.ends_with(crate::normalize::t3code::NATIVE_SUFFIX),
             Harness::Grok => name == "chat_history.jsonl",
@@ -175,6 +176,14 @@ pub enum Candidate {
         session_id: String,
         updated: i64,
     },
+    /// A tool output OpenCode spilled to `tool-output/` beside its database `db`, copied byte for
+    /// byte before OpenCode deletes it.
+    OpenCodeSpill {
+        db: PathBuf,
+        path: PathBuf,
+        size: u64,
+        mtime_ns: i128,
+    },
     /// One T3 Code thread exported from its database as JSONL rows.
     T3Thread {
         db: PathBuf,
@@ -195,7 +204,9 @@ impl Candidate {
     pub fn kind(&self) -> Harness {
         match self {
             Candidate::File { kind, .. } | Candidate::Sqlite { kind, .. } => *kind,
-            Candidate::OpenCodeSession { .. } => Harness::OpenCode,
+            Candidate::OpenCodeSession { .. } | Candidate::OpenCodeSpill { .. } => {
+                Harness::OpenCode
+            }
             Candidate::T3Thread { .. } => Harness::T3Code,
             Candidate::DbSession { kind, .. } => *kind,
         }
@@ -204,9 +215,9 @@ impl Candidate {
     /// Stable key identifying where this capture came from.
     pub fn origin(&self) -> String {
         match self {
-            Candidate::File { path, .. } | Candidate::Sqlite { path, .. } => {
-                path.to_string_lossy().into_owned()
-            }
+            Candidate::File { path, .. }
+            | Candidate::Sqlite { path, .. }
+            | Candidate::OpenCodeSpill { path, .. } => path.to_string_lossy().into_owned(),
             Candidate::OpenCodeSession { db, session_id, .. } => {
                 format!("{}#session={}", db.to_string_lossy(), session_id)
             }
@@ -223,9 +234,9 @@ impl Candidate {
     /// manifest stores it as `fingerprint`; it is not a hash.
     pub fn change_signal(&self) -> String {
         match self {
-            Candidate::File { size, mtime_ns, .. } | Candidate::Sqlite { size, mtime_ns, .. } => {
-                format!("{size}:{mtime_ns}")
-            }
+            Candidate::File { size, mtime_ns, .. }
+            | Candidate::Sqlite { size, mtime_ns, .. }
+            | Candidate::OpenCodeSpill { size, mtime_ns, .. } => format!("{size}:{mtime_ns}"),
             Candidate::OpenCodeSession { updated, .. } => format!("updated:{updated}"),
             Candidate::T3Thread { updated, .. } | Candidate::DbSession { updated, .. } => {
                 format!("updated:{updated}")
@@ -288,13 +299,10 @@ pub fn discover(kind: Harness, roots: &[PathBuf]) -> anyhow::Result<Vec<Candidat
         }
         match kind {
             Harness::OpenCode => {
-                let db = if root.is_dir() {
-                    root.join("opencode.db")
-                } else {
-                    root.clone()
-                };
+                let db = crate::normalize::opencode::database(root);
                 if db.exists() {
                     out.extend(crate::normalize::opencode::list_sessions(&db)?);
+                    out.extend(crate::normalize::opencode::list_spills(&db)?);
                 }
             }
             Harness::T3Code => {

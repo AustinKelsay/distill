@@ -33,7 +33,8 @@ pub fn parser_version(kind: Harness) -> Option<u32> {
     match kind {
         Harness::ClaudeCode => Some(1),
         Harness::Codex => Some(1),
-        Harness::OpenCode => Some(1),
+        // 2: a spilled tool output's tool result holds the full output.
+        Harness::OpenCode => Some(2),
         Harness::Droid => Some(1),
         Harness::Pi => Some(1),
         Harness::Grok => Some(1),
@@ -110,6 +111,10 @@ pub struct NormalizeState {
     /// For a T3 thread, the native references capture it was parsed with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs: Option<String>,
+    /// For an OpenCode session, the spilled tool outputs it names that the archive did not hold
+    /// when it was parsed (file names only), so it is parsed again once one is captured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_spills: Vec<String>,
 }
 
 fn first_meta_version() -> u32 {
@@ -256,6 +261,10 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && let Some(s) = state.get(origin)
             && s.capture_hash == rec.capture_hash
             && s.refs == refs
+            && !s.missing_spills.iter().any(|name| {
+                opencode::spill_origin(origin, name)
+                    .is_some_and(|o| archive.latest().contains_key(&o))
+            })
             && s.version == version
             && s.meta_version == META_VERSION
             // An empty result recorded before drift was checked gets the check now.
@@ -275,7 +284,8 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             continue;
         }
         let previous = state.get(origin).and_then(|s| s.session.clone());
-        let result = normalize_one(home, &archive, rec, version);
+        let mut missing_spills = Vec::new();
+        let result = normalize_one(home, &archive, rec, version, &mut missing_spills);
         let mut entry = NormalizeState {
             harness: rec.harness,
             capture_hash: rec.capture_hash.clone(),
@@ -286,6 +296,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             drift: false,
             empty: false,
             refs,
+            missing_spills,
         };
         match result {
             Ok(Some(meta)) => {
@@ -340,14 +351,29 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     Ok(report)
 }
 
+/// Parse one capture into its session. For an OpenCode session, `missing_spills` gets the spilled
+/// tool outputs it names that the archive doesn't hold.
 fn normalize_one(
     home: &Home,
     archive: &Archive,
     rec: &CaptureRecord,
     version: u32,
+    missing_spills: &mut Vec<String>,
 ) -> Result<Option<SessionMeta>> {
     let bytes = archive.read_blob(&rec.capture_hash)?;
-    let mut parsed = parse(rec.harness, &rec.origin, &bytes)?;
+    let mut parsed = if rec.harness == Harness::OpenCode {
+        // Spilled tool outputs are captures of their own, at their own origins.
+        let (parsed, missing) = opencode::parse_with_spills(&bytes, |name| {
+            match opencode::spill_origin(&rec.origin, name).and_then(|o| archive.latest().get(&o)) {
+                Some(r) => archive.read_blob(&r.capture_hash).map(Some),
+                None => Ok(None),
+            }
+        })?;
+        *missing_spills = missing;
+        parsed
+    } else {
+        parse(rec.harness, &rec.origin, &bytes)?
+    };
     // A T3 mirror's originals are named in a capture beside it. Runs that name none (and
     // threads captured before references were kept) fall back to their harnesses.
     if rec.harness == Harness::T3Code && parsed.is_mirror() {
@@ -647,6 +673,7 @@ mod tests {
                     drift: false,
                     empty: true,
                     refs: None,
+                    missing_spills: Vec::new(),
                 },
             );
         }

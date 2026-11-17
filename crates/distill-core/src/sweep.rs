@@ -138,6 +138,24 @@ fn db_session_excluded(config: &Config, cwd: Option<&str>) -> bool {
     cwd.is_none_or(|c| config.is_excluded(c))
 }
 
+/// Whether exclusions keep a spilled OpenCode tool output out. The file doesn't say where it ran,
+/// so it is placed by the sessions whose tool parts name it: kept out when any of them is
+/// excluded, or while none names it (yet; a later sweep tries again).
+fn spill_excluded(config: &Config, db: &std::path::Path, path: &std::path::Path) -> Result<bool> {
+    if config.privacy.exclude_paths.is_empty() {
+        return Ok(false);
+    }
+    let Some(name) = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(opencode::spill_name)
+    else {
+        return Ok(true);
+    };
+    let projects = opencode::spill_projects(db, name)?;
+    Ok(projects.is_empty() || projects.iter().any(|p| config.is_excluded(p)))
+}
+
 /// For an archived T3 Code thread, the native sessions behind its runs, kept beside it so
 /// the parse step can tell which originals a mirror copies. Written whenever they change, which can
 /// happen without the thread changing (a native id filled in later).
@@ -209,6 +227,18 @@ fn capture_one(
             }
             let _ = home;
             archive.put(*kind, &origin, &change_signal, fs::File::open(path)?)?
+        }
+        Candidate::OpenCodeSpill { db, path, .. } => {
+            if spill_excluded(config, db, path)? {
+                report.excluded += 1;
+                return Ok(());
+            }
+            archive.put(
+                Harness::OpenCode,
+                &origin,
+                &change_signal,
+                fs::File::open(path)?,
+            )?
         }
         Candidate::Sqlite { kind, path, .. } => {
             // Databases (Cursor chats, conversation stores, T3 Code's threads) don't say which

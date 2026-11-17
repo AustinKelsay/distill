@@ -23,6 +23,9 @@ pub struct Retention {
     pub setting: String,
     /// The harness hard-codes the period: no setting changes it.
     pub fixed: bool,
+    /// What it deletes, as a warning names it: `sessions`, or the files of a session it is
+    /// limited to.
+    pub deletes: String,
 }
 
 /// What the harness's own setting says, where it has one that deletes sessions. `None` when it
@@ -36,12 +39,16 @@ pub fn retention(kind: Harness, roots: &[PathBuf]) -> Option<Retention> {
             minutes: 7 * 24 * 60,
             setting: "orphaned /btw side questions, a fixed 7 days".into(),
             fixed: true,
+            deletes: "sessions".into(),
         }),
         Harness::Grok => grok(roots),
         Harness::Hermes => hermes(roots),
+        // OpenCode keeps its sessions, but deletes the full tool outputs it spilled beside its
+        // database once they are a week old, checking every hour. Not configurable. The sweep
+        // captures them, so it must run before they go.
+        Harness::OpenCode => Some(opencode(roots)),
         // These keep their sessions until the owner deletes them.
         Harness::Codex
-        | Harness::OpenCode
         | Harness::Pi
         | Harness::Cursor
         | Harness::Antigravity
@@ -64,6 +71,27 @@ fn days(days: f64, setting: String) -> Retention {
         minutes: (days.max(0.0) * 24.0 * 60.0) as u64,
         setting,
         fixed: false,
+        deletes: "sessions".into(),
+    }
+}
+
+/// OpenCode's spilled tool outputs, in `tool-output/` beside each database Distill reads.
+fn opencode(roots: &[PathBuf]) -> Retention {
+    use crate::normalize::opencode::{SPILL_DIR, SPILL_RETENTION_DAYS, database, spill_dir};
+    let dirs: Vec<String> = roots
+        .iter()
+        .map(|r| spill_dir(&database(r)).display().to_string())
+        .collect();
+    let at = if dirs.is_empty() {
+        format!("{SPILL_DIR}/ beside opencode.db")
+    } else {
+        dirs.join(", ")
+    };
+    Retention {
+        minutes: SPILL_RETENTION_DAYS * 24 * 60,
+        setting: format!("{at}, a fixed {SPILL_RETENTION_DAYS} days"),
+        fixed: true,
+        deletes: "spilled tool outputs".into(),
     }
 }
 
@@ -313,11 +341,30 @@ mod tests {
     }
 
     #[test]
+    fn opencode_deletes_spilled_tool_outputs_after_a_fixed_week() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("opencode");
+        std::fs::create_dir_all(&data).unwrap();
+        // The root is the database, or the folder holding it.
+        for root in [data.join("opencode.db"), data.clone()] {
+            let r = retention(Harness::OpenCode, std::slice::from_ref(&root)).unwrap();
+            assert_eq!(r.minutes, 7 * DAY);
+            assert!(r.fixed);
+            assert_eq!(r.deletes, "spilled tool outputs");
+            assert!(
+                r.setting
+                    .contains(&data.join("tool-output").display().to_string()),
+                "{}",
+                r.setting
+            );
+        }
+    }
+
+    #[test]
     fn harnesses_that_keep_their_sessions_have_no_retention() {
         let dir = tempfile::tempdir().unwrap();
         for kind in [
             Harness::Codex,
-            Harness::OpenCode,
             Harness::Pi,
             Harness::Cursor,
             Harness::Antigravity,
