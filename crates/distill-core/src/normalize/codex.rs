@@ -219,11 +219,12 @@ fn push_item(out: &mut Parsed, p: &Value, at: Option<String>, model: Option<&str
     }
 }
 
-/// How a call and its result are paired: the `call_id`, else the item's own id.
+/// How a call and its result are paired: the `call_id`, else the item's own id. Codex writes a
+/// null `call_id` for a tool search the server ran, which counts as none.
 fn item_call_id(p: &Value) -> Option<String> {
     p.get("call_id")
-        .or_else(|| p.get("id"))
         .and_then(Value::as_str)
+        .or_else(|| p.get("id").and_then(Value::as_str))
         .map(str::to_string)
 }
 
@@ -296,6 +297,24 @@ mod tests {
         assert_eq!(p.events[1].input.as_ref().unwrap()["cmd"][0], "ls");
         assert_eq!(p.events[2].text.as_deref(), Some("a.txt\n"));
         assert_eq!(p.events[3].model.as_deref(), Some("gpt-6"));
+    }
+
+    #[test]
+    fn a_null_call_id_falls_back_to_the_items_id() {
+        let id = |v: serde_json::Value| item_call_id(&v);
+        assert_eq!(
+            id(serde_json::json!({"call_id": null, "id": "tsc_1"})).as_deref(),
+            Some("tsc_1")
+        );
+        assert_eq!(
+            id(serde_json::json!({"id": "tsc_2"})).as_deref(),
+            Some("tsc_2")
+        );
+        assert_eq!(
+            id(serde_json::json!({"call_id": "c1", "id": "tsc_3"})).as_deref(),
+            Some("c1")
+        );
+        assert_eq!(id(serde_json::json!({"call_id": null})), None);
     }
 
     #[test]
