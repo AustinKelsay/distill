@@ -15,9 +15,16 @@
 //! - **Currency.** A card records the events and the secret findings it was built from
 //!   ([`BuiltFrom`]). When either changes it is out of date: no reader is shown it, and the tick
 //!   writes it again. A card of another shape (the previous build's) counts as absent.
+//! - **Staleness.** A current card written with another [`PROMPT_VERSION`] or `card_model` than
+//!   the config's is stale ([`Card::stale`]). It still describes its session, so it is shown as
+//!   any current card is, but the tick writes it again once no session is waiting for a card.
 //! - **Which sessions.** Every session but mirrors and the sessions the previous build's steward
-//!   produced, newest first, up to `sessions_per_run` each tick. Sessions that failed before go
-//!   after those never tried, so one bad session never holds up the rest.
+//!   produced, newest first, up to `sessions_per_run` each tick: first those with no current
+//!   card, then those whose card is stale, so a new prompt or model never delays a session's
+//!   first card. Within each, sessions that failed before go after those never tried, so one bad
+//!   session never holds up the rest.
+
+use std::collections::BTreeSet;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -136,6 +143,14 @@ impl Card {
             out.push((format!("tags/{i}"), t.as_str()));
         }
         out
+    }
+
+    /// Whether the card was written with another [`PROMPT_VERSION`] or another model than
+    /// `card_model`, the config's: the card step writes it again after every session with no
+    /// current card. Whether it is current with its session is [`current`]'s question, so a
+    /// stale card is still shown.
+    pub fn stale(&self, card_model: &str) -> bool {
+        self.prompt_version != PROMPT_VERSION || self.model != card_model
     }
 
     /// Whether the card has `tag`, ignoring case.
@@ -282,11 +297,20 @@ pub struct CardReport {
     pub skipped: Option<String>,
     /// Sessions that get a card.
     pub sessions: u64,
-    /// Of those, sessions whose card was already current.
+    /// Of those, sessions whose card was already current, and written with this prompt and
+    /// model.
     pub current: u64,
     /// Sessions waiting for a card before this run.
     pub pending: u64,
+    /// Sessions whose card was current but stale before this run: written with another prompt
+    /// version or model, so written again after every pending session.
+    #[serde(default)]
+    pub stale: u64,
+    /// Cards written, stale ones written again included.
     pub written: u64,
+    /// Of those, stale cards written again.
+    #[serde(default)]
+    pub rewritten: u64,
     /// Sessions that got no card this run: the read was refused, the model failed or answered
     /// with no usable card, or the card held a secret.
     pub failed: u64,
@@ -306,11 +330,16 @@ impl CardReport {
             return format!("cards skipped: {why}");
         }
         let mut s = format!(
-            "wrote {} ({} already current, {} waiting)",
+            "wrote {} ({} already current, {} waiting",
             count(self.written, "card"),
             self.current,
-            self.pending.saturating_sub(self.written)
+            self.pending
+                .saturating_sub(self.written.saturating_sub(self.rewritten))
         );
+        if self.stale > 0 {
+            s += &format!(", {} stale", self.stale.saturating_sub(self.rewritten));
+        }
+        s += ")";
         if self.failed > 0 {
             s += &format!(", {} failed", self.failed);
         }
@@ -336,9 +365,10 @@ fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<St
     Ok(model)
 }
 
-/// Write cards for the sessions whose card is missing or out of date, newest first, up to
-/// `sessions_per_run`, taking none once `deadline` has passed. Skipped, with the reason in the
-/// report, when `card_model` is not set or no local runtime can run it. One writer at a time.
+/// Write cards for the sessions whose card is missing or out of date, then for those whose card
+/// is stale, newest first within each, up to `sessions_per_run`, taking none once `deadline` has
+/// passed. Skipped, with the reason in the report, when `card_model` is not set or no local
+/// runtime can run it. One writer at a time.
 pub fn write(
     home: &Home,
     config: &Config,
@@ -364,20 +394,24 @@ pub fn write(
         ..Default::default()
     };
     let mut pending: Vec<&SessionMeta> = Vec::new();
+    let mut stale: Vec<&SessionMeta> = Vec::new();
     for facts in all.iter().filter(|f| wanted(f, &originals)) {
         r.sessions += 1;
-        if stored_current(home, config, key.as_ref(), facts).is_some() {
-            r.current += 1;
-        } else {
-            pending.push(facts);
+        match stored_current(home, config, key.as_ref(), facts) {
+            Some((card, _)) if card.stale(&model) => stale.push(facts),
+            Some(_) => r.current += 1,
+            None => pending.push(facts),
         }
     }
     r.pending = pending.len() as u64;
+    r.stale = stale.len() as u64;
+    let stale_keys: BTreeSet<String> = stale.iter().map(|f| f.key()).collect();
     let reader = Reader::model(Some(runtime.provider()), Some(&model));
     let ran = model_step::run(
         &home.card_failures_path(),
         &all,
         pending,
+        stale,
         config.steward.sessions_per_run,
         deadline,
         |facts| write_one(home, config, runtime, &reader, &model, facts),
@@ -385,7 +419,10 @@ pub fn write(
     r.stopped_at_deadline = ran.stopped_at_deadline;
     for (session, result) in ran.results {
         match result {
-            Ok(()) => r.written += 1,
+            Ok(()) => {
+                r.written += 1;
+                r.rewritten += u64::from(stale_keys.contains(&session));
+            }
             Err(failed) => {
                 r.failed += 1;
                 r.discarded += u64::from(failed.discarded);
@@ -510,11 +547,15 @@ pub struct CardProgress {
     pub skipped: Option<String>,
     /// Sessions that get a card.
     pub sessions: u64,
-    /// Sessions whose card is current.
+    /// Sessions whose card is current, and written with this prompt and `card_model`.
     pub current: u64,
+    /// Sessions whose card is current but stale: written with another prompt version or
+    /// `card_model`. It is shown, and written again after every pending session.
+    #[serde(default)]
+    pub stale: u64,
     /// Sessions whose card is missing or out of date.
     pub pending: u64,
-    /// Of those, sessions whose last attempt failed.
+    /// Of the pending and stale, sessions whose last attempt failed.
     pub failing: u64,
     /// How many sessions the last run did, when it stopped at the tick's deadline with sessions
     /// left.
@@ -534,13 +575,18 @@ pub fn progress(home: &Home) -> Result<CardProgress> {
         model: config.steward.card_model.clone(),
         ..Default::default()
     };
+    let card_model = config.steward.card_model.as_deref();
     for facts in all.iter().filter(|f| wanted(f, &originals)) {
         p.sessions += 1;
-        if stored_current(home, &config, key.as_ref(), facts).is_some() {
-            p.current += 1;
-        } else {
-            p.pending += 1;
-            p.failing += u64::from(failures.contains_key(&facts.key()));
+        match stored_current(home, &config, key.as_ref(), facts) {
+            Some((card, _)) if !card_model.is_some_and(|m| card.stale(m)) => p.current += 1,
+            shown => {
+                match shown {
+                    Some(_) => p.stale += 1,
+                    None => p.pending += 1,
+                }
+                p.failing += u64::from(failures.contains_key(&facts.key()));
+            }
         }
     }
     let last = crate::runlog::recent(home, 500)?

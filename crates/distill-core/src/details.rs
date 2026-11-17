@@ -303,6 +303,7 @@ pub fn find(
         &home.detail_failures_path(),
         &all,
         pending,
+        Vec::new(),
         config.steward.sessions_per_run,
         deadline,
         |facts| find_one(home, config, runtime, &reader, &model, facts, deadline),
