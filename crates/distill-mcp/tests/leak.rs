@@ -87,7 +87,13 @@ fn no_tool_serves_a_planted_secret() {
             assert!(!held(prompt), "{prompt}");
             card_reply(&format!("Deploy with {echo}"), "Deployed.")
         });
-    let r = distill_core::cards::write(&home, &config, &leaky.runtime()).unwrap();
+    let r = distill_core::cards::write(
+        &home,
+        &config,
+        &leaky.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!((r.written, r.discarded), (0, 1), "{r:?}");
     assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
     let careful = FakeRuntime::running()
@@ -100,7 +106,13 @@ fn no_tool_serves_a_planted_secret() {
                 &format!("The owner asked to deploy with {placeholder} and it was done."),
             )
         });
-    let r = distill_core::cards::write(&home, &config, &careful.runtime()).unwrap();
+    let r = distill_core::cards::write(
+        &home,
+        &config,
+        &careful.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
 
     // Personal details: the model is never served a value, and an answer that names one (it
@@ -122,7 +134,13 @@ fn no_tool_serves_a_planted_secret() {
             ]})
             .to_string()
         });
-    let r = distill_core::details::find(&home, &config, &finder.runtime()).unwrap();
+    let r = distill_core::details::find(
+        &home,
+        &config,
+        &finder.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!((r.written, r.found), (1, 1), "{r:?}");
 
     distill_core::index::build(&home).unwrap();
@@ -140,7 +158,13 @@ fn no_tool_serves_a_planted_secret() {
             assert!(!held(text), "embedded: {text}");
             vec![1.0, text.len() as f32]
         });
-    let r = distill_core::index::vectors::build(&home, &config, &embedder.runtime()).unwrap();
+    let r = distill_core::index::vectors::build(
+        &home,
+        &config,
+        &embedder.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.embedded, 1, "{r:?}");
 
     let mut last_read = String::new();

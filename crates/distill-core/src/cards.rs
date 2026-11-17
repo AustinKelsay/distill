@@ -31,6 +31,7 @@ use crate::model_step::{self, Failed};
 use crate::normalize;
 use crate::read::{self, Range};
 use crate::runtime::LocalRuntime;
+use crate::tick::Deadline;
 use crate::trust::{OLLAMA, Reader};
 use crate::util::{clip, count, now_rfc3339, sha256_hex, write_json_pretty};
 
@@ -291,6 +292,9 @@ pub struct CardReport {
     pub failed: u64,
     /// Of the failures, cards discarded because they held a secret.
     pub discarded: u64,
+    /// The tick's deadline passed with sessions left, which wait for the next tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_at_deadline: bool,
     /// Each failure: the session and what went wrong. Never session or card text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
@@ -313,6 +317,9 @@ impl CardReport {
         if self.discarded > 0 {
             s += &format!(" ({} discarded for holding a secret)", self.discarded);
         }
+        if self.stopped_at_deadline {
+            s += ", stopped at the tick's time limit";
+        }
         s
     }
 }
@@ -330,9 +337,14 @@ fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<St
 }
 
 /// Write cards for the sessions whose card is missing or out of date, newest first, up to
-/// `sessions_per_run`. Skipped, with the reason in the report, when `card_model` is not set or no
-/// local runtime can run it. One writer at a time.
-pub fn write(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<CardReport> {
+/// `sessions_per_run`, taking none once `deadline` has passed. Skipped, with the reason in the
+/// report, when `card_model` is not set or no local runtime can run it. One writer at a time.
+pub fn write(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<CardReport> {
     let model = match cannot_run(config, runtime) {
         Ok(m) => m,
         Err(why) => {
@@ -367,9 +379,11 @@ pub fn write(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Car
         &all,
         pending,
         config.steward.sessions_per_run,
+        deadline,
         |facts| write_one(home, config, runtime, &reader, &model, facts),
     )?;
-    for (session, result) in ran {
+    r.stopped_at_deadline = ran.stopped_at_deadline;
+    for (session, result) in ran.results {
         match result {
             Ok(()) => r.written += 1,
             Err(failed) => {
@@ -502,6 +516,10 @@ pub struct CardProgress {
     pub pending: u64,
     /// Of those, sessions whose last attempt failed.
     pub failing: u64,
+    /// How many sessions the last run did, when it stopped at the tick's deadline with sessions
+    /// left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_after: Option<u64>,
 }
 
 /// Card progress over the session list. Changes nothing and contacts no runtime: whether the
@@ -525,14 +543,17 @@ pub fn progress(home: &Home) -> Result<CardProgress> {
             p.failing += u64::from(failures.contains_key(&facts.key()));
         }
     }
+    let last = crate::runlog::recent(home, 500)?
+        .into_iter()
+        .find_map(|e| e.outcome("cards"))
+        .and_then(|o| serde_json::from_value::<CardReport>(o.report).ok());
     p.skipped = match &config.steward.card_model {
         None => Some("no card_model is set".into()),
-        Some(_) => crate::runlog::recent(home, 500)?
-            .into_iter()
-            .find_map(|e| e.outcome("cards"))
-            .and_then(|o| serde_json::from_value::<CardReport>(o.report).ok())
-            .and_then(|r| r.skipped),
+        Some(_) => last.as_ref().and_then(|r| r.skipped.clone()),
     };
+    p.stopped_after = last
+        .filter(|r| r.stopped_at_deadline)
+        .map(|r| r.written + r.failed);
     Ok(p)
 }
 

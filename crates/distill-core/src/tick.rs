@@ -2,6 +2,14 @@
 //! tick writes one entry to the run log. Today the steps are sweep, parse, scan, the word index,
 //! cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
 //! model gets the local runtime, and the steps before it never wait on one.
+//!
+//! The model steps share one time budget per tick, [`model_budget`], counted from the tick's
+//! start, so a slow or stuck model never delays the next tick's sweep (issue #100). Each model
+//! step gets an even share of what is left of it when the step starts, so time a step does not use
+//! passes to the ones after it, and stops taking sessions at its [`Deadline`]. The sessions it did
+//! not reach stay pending for the next tick and are not failures.
+
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -15,48 +23,89 @@ use crate::index;
 use crate::normalize;
 use crate::runlog::{self, RunEntry, StepOutcome};
 use crate::runtime::LocalRuntime;
+use crate::schedule;
 use crate::sweep;
+
+/// When a model step stops taking sessions. The session under way then is finished: cutting it
+/// off would start it over next tick, and one longer than a step's share would never be done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Deadline(Option<Instant>);
+
+impl Deadline {
+    /// No deadline: the step takes up to `sessions_per_run` sessions however long they take.
+    pub const NONE: Deadline = Deadline(None);
+
+    /// `budget` from now.
+    pub fn after(budget: Duration) -> Self {
+        Deadline(Instant::now().checked_add(budget))
+    }
+
+    pub fn passed(&self) -> bool {
+        self.0.is_some_and(|at| Instant::now() >= at)
+    }
+}
+
+/// How long the model steps of one tick may run, counted from the tick's start: half the timer's
+/// interval, so a tick ends well before the timer's next one is due even with a session still
+/// under way at the deadline.
+pub fn model_budget(config: &Config) -> Duration {
+    Duration::from_secs(u64::from(schedule::interval_minutes(config)) * 60 / 2)
+}
 
 /// One step of a tick.
 pub struct Step {
     pub name: &'static str,
-    pub run: fn(&Home, &Config, &LocalRuntime) -> Result<StepOutcome>,
+    /// The step calls a model, so it gets a share of the tick's [`model_budget`].
+    pub model: bool,
+    pub run: fn(&Home, &Config, &LocalRuntime, Deadline) -> Result<StepOutcome>,
 }
 
 /// The tick's steps, in order. Capture comes first and never waits on a model.
 pub const STEPS: &[Step] = &[
     Step {
         name: "sweep",
+        model: false,
         run: sweep_step,
     },
     Step {
         name: "parse",
+        model: false,
         run: parse_step,
     },
     Step {
         name: "scan",
+        model: false,
         run: scan_step,
     },
     Step {
         name: "index",
+        model: false,
         run: index_step,
     },
     Step {
         name: "cards",
+        model: true,
         run: cards_step,
     },
     Step {
         name: "vectors",
+        model: true,
         run: vectors_step,
     },
     Step {
         name: "details",
+        model: true,
         run: details_step,
     },
 ];
 
 /// Copy new and changed harness files into the raw archive.
-pub fn sweep_step(home: &Home, config: &Config, _: &LocalRuntime) -> Result<StepOutcome> {
+pub fn sweep_step(
+    home: &Home,
+    config: &Config,
+    _: &LocalRuntime,
+    _: Deadline,
+) -> Result<StepOutcome> {
     let r = sweep::sweep(home, config, None)?;
     Ok(StepOutcome {
         name: "sweep".into(),
@@ -68,7 +117,12 @@ pub fn sweep_step(home: &Home, config: &Config, _: &LocalRuntime) -> Result<Step
 }
 
 /// Turn captures into events and session facts.
-pub fn parse_step(home: &Home, _config: &Config, _: &LocalRuntime) -> Result<StepOutcome> {
+pub fn parse_step(
+    home: &Home,
+    _config: &Config,
+    _: &LocalRuntime,
+    _: Deadline,
+) -> Result<StepOutcome> {
     parse_outcome(&normalize::normalize(home, false)?)
 }
 
@@ -83,7 +137,12 @@ pub fn parse_outcome(r: &normalize::NormalizeReport) -> Result<StepOutcome> {
 }
 
 /// Scan every session whose findings are missing or out of date, with no limit per tick.
-pub fn scan_step(home: &Home, config: &Config, _: &LocalRuntime) -> Result<StepOutcome> {
+pub fn scan_step(
+    home: &Home,
+    config: &Config,
+    _: &LocalRuntime,
+    _: Deadline,
+) -> Result<StepOutcome> {
     scan_outcome(&findings::scan_all(home, config)?)
 }
 
@@ -98,7 +157,12 @@ pub fn scan_outcome(r: &findings::ScanReport) -> Result<StepOutcome> {
 }
 
 /// Bring the word index up to date, reading through the read path as Distill itself.
-pub fn index_step(home: &Home, _config: &Config, _: &LocalRuntime) -> Result<StepOutcome> {
+pub fn index_step(
+    home: &Home,
+    _config: &Config,
+    _: &LocalRuntime,
+    _: Deadline,
+) -> Result<StepOutcome> {
     let r = index::build(home)?;
     Ok(StepOutcome {
         name: "index".into(),
@@ -111,8 +175,13 @@ pub fn index_step(home: &Home, _config: &Config, _: &LocalRuntime) -> Result<Ste
 
 /// Write cards for the sessions whose card is missing or out of date, newest first, up to
 /// `sessions_per_run`; skipped when `card_model` is not set or no local runtime can run it.
-pub fn cards_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<StepOutcome> {
-    let r = cards::write(home, config, runtime)?;
+pub fn cards_step(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<StepOutcome> {
+    let r = cards::write(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "cards".into(),
         ok: r.failed == 0,
@@ -124,8 +193,13 @@ pub fn cards_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Resul
 
 /// Embed the sessions whose vectors are missing or out of date, newest first, up to
 /// `sessions_per_run`; skipped when `embedding_model` is not set or no local runtime can run it.
-pub fn vectors_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<StepOutcome> {
-    let r = index::vectors::build(home, config, runtime)?;
+pub fn vectors_step(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<StepOutcome> {
+    let r = index::vectors::build(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "vectors".into(),
         ok: r.failed == 0,
@@ -138,8 +212,13 @@ pub fn vectors_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Res
 /// Find personal details with the local model in the sessions whose model findings are missing
 /// or out of date, newest first, up to `sessions_per_run`; skipped when no model is set or no
 /// local runtime can run it.
-pub fn details_step(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<StepOutcome> {
-    let r = details::find(home, config, runtime)?;
+pub fn details_step(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<StepOutcome> {
+    let r = details::find(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "details".into(),
         ok: r.failed == 0,
@@ -160,14 +239,37 @@ pub fn tick(home: &Home, config: &Config) -> Result<TickReport> {
     tick_with(home, config, &LocalRuntime::ollama())
 }
 
-/// Run every step in order with `runtime` and record the tick. A step that fails is recorded and
-/// the next one still runs.
+/// Run every step in order with `runtime`, within the config's [`model_budget`], and record the
+/// tick.
 pub fn tick_with(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<TickReport> {
+    tick_within(home, config, runtime, model_budget(config))
+}
+
+/// Run every step in order with `runtime`, the model steps within `budget` of the tick's start,
+/// and record the tick. A step that fails is recorded and the next one still runs.
+pub fn tick_within(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    budget: Duration,
+) -> Result<TickReport> {
+    // A budget too long to be an instant is none.
+    let end = Instant::now().checked_add(budget);
     home.ensure()?;
-    let steps: Vec<StepOutcome> = STEPS
-        .iter()
-        .map(|s| (s.run)(home, config, runtime).unwrap_or_else(|e| StepOutcome::failed(s.name, &e)))
-        .collect();
+    let mut steps = Vec::with_capacity(STEPS.len());
+    for (i, s) in STEPS.iter().enumerate() {
+        let deadline = match end {
+            Some(end) if s.model => {
+                let sharing = STEPS[i..].iter().filter(|s| s.model).count() as u32;
+                Deadline::after(end.saturating_duration_since(Instant::now()) / sharing)
+            }
+            _ => Deadline::NONE,
+        };
+        steps.push(
+            (s.run)(home, config, runtime, deadline)
+                .unwrap_or_else(|e| StepOutcome::failed(s.name, &e)),
+        );
+    }
     runlog::record(home, &RunEntry::of("tick", steps.clone()))?;
     Ok(TickReport { steps })
 }
@@ -323,5 +425,141 @@ mod tests {
         assert_eq!(r.steps[6].name, "details");
         let runs = runlog::recent(&home, 10).unwrap();
         assert_eq!(runs[0].steps, r.steps);
+    }
+
+    /// A Pi session `id` saying `said`, at `at` milliseconds.
+    fn pi_session(dir: &std::path::Path, id: &str, said: &str, at: u64) {
+        std::fs::write(
+            dir.join(format!("2026-11-01_{id}.jsonl")),
+            format!(
+                r#"{{"type":"session","id":"{id}","cwd":"/r","version":3}}
+{{"type":"message","message":{{"role":"user","content":[{{"type":"text","text":"{said}"}}],"timestamp":{at}}}}}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_slow_model_stops_at_the_time_limit_and_the_next_tick_sweeps_and_catches_up() {
+        use crate::runtime::{FakeRuntime, Stored};
+        const SESSIONS: u64 = 12;
+        let dir = tempfile::tempdir().unwrap();
+        let pi = dir.path().join("pi");
+        std::fs::create_dir_all(&pi).unwrap();
+        for i in 0..SESSIONS {
+            pi_session(
+                &pi,
+                &format!("p{i}"),
+                "rename the widget",
+                1794436930000 + i,
+            );
+        }
+        let home = Home::new(dir.path().join("home"));
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let h = config.harness_mut(Harness::Pi);
+        h.enabled = true;
+        h.roots = vec![pi.clone()];
+        config.steward.card_model = Some("small:8b".into());
+        config.save(&home.config_path()).unwrap();
+        // A card takes the model a quarter of a second; the model detection pass is quick.
+        let answer = |slow: bool| {
+            move |_: &str, prompt: &str| {
+                if prompt.starts_with(details::PROMPT) {
+                    return r#"{"details":[]}"#.to_string();
+                }
+                if slow {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                r#"{"title":"Rename the widget","summary":"Renamed it.","tags":["pi"],"outcome":"done"}"#.to_string()
+            }
+        };
+        let slow = FakeRuntime::running()
+            .with_model("small:8b", Stored::Here)
+            .replying(answer(true));
+
+        // Twelve cards take three seconds; the tick's budget is under one.
+        let r = tick_within(&home, &config, &slow.runtime(), Duration::from_millis(900)).unwrap();
+        assert!(
+            r.steps[..4].iter().all(|s| s.ok),
+            "capture ran first: {r:?}"
+        );
+        let cards = &r.steps[4];
+        let written = cards.report["written"].as_u64().unwrap();
+        assert!(written < SESSIONS, "{cards:?}");
+        assert_eq!(cards.report["stopped_at_deadline"], true, "{cards:?}");
+        assert_eq!(cards.report["failed"], 0, "{cards:?}");
+        assert!(
+            cards.ok,
+            "stopping at the time limit is not a failure: {cards:?}"
+        );
+        assert!(
+            cards
+                .summary
+                .ends_with(", stopped at the tick's time limit"),
+            "{cards:?}"
+        );
+        // The run log has the tick's one entry, which says so.
+        let runs = runlog::recent(&home, 10).unwrap();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert_eq!(runs[0].steps, r.steps);
+        assert!(runs[0].summary.contains("stopped at the tick's time limit"));
+        // The sessions it did not reach wait, none of them as a failure, and status says where
+        // the step stopped.
+        assert!(crate::model_step::load_failures(&home.card_failures_path()).is_empty());
+        let s = crate::status::status(&home).unwrap();
+        assert_eq!(
+            (s.cards.current, s.cards.pending, s.cards.failing),
+            (written, SESSIONS - written, 0)
+        );
+        assert_eq!(s.cards.stopped_after, Some(written));
+
+        // The next tick sweeps the session that came in meanwhile, then takes every session
+        // still waiting.
+        pi_session(&pi, "late", "fix the gadget", 1794436990000);
+        let fast = FakeRuntime::running()
+            .with_model("small:8b", Stored::Here)
+            .replying(answer(false));
+        let r = tick_with(&home, &config, &fast.runtime()).unwrap();
+        assert_eq!(r.steps[0].report["new"], 1, "{r:?}");
+        let cards = &r.steps[4];
+        assert_eq!(
+            cards.report["written"].as_u64().unwrap(),
+            SESSIONS - written + 1,
+            "{cards:?}"
+        );
+        assert!(
+            cards.report.get("stopped_at_deadline").is_none(),
+            "{cards:?}"
+        );
+        let s = crate::status::status(&home).unwrap();
+        assert_eq!((s.cards.current, s.cards.pending), (SESSIONS + 1, 0));
+        assert_eq!(s.cards.stopped_after, None);
+    }
+
+    #[test]
+    fn the_model_steps_share_what_is_left_of_the_budget_and_capture_has_none() {
+        let budget = model_budget(&Config::default());
+        assert_eq!(
+            budget,
+            Duration::from_secs(30 * 60),
+            "half the hourly timer"
+        );
+        let mut config = Config::default();
+        config.schedule.sweep_every_minutes = 1;
+        assert_eq!(
+            model_budget(&config),
+            Duration::from_secs(150),
+            "half of five minutes"
+        );
+        let model: Vec<_> = STEPS.iter().filter(|s| s.model).map(|s| s.name).collect();
+        assert_eq!(model, ["cards", "vectors", "details"]);
+        assert!(!Deadline::NONE.passed());
+        assert!(Deadline::after(Duration::ZERO).passed());
+        assert!(!Deadline::after(Duration::from_secs(60)).passed());
+        assert_eq!(Deadline::after(Duration::MAX), Deadline::NONE);
     }
 }

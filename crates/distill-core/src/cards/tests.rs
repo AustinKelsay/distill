@@ -3,6 +3,7 @@ use crate::archive::Archive;
 use crate::harness::Harness;
 use crate::read::NOTICE_START;
 use crate::runtime::{Call, FakeRuntime, Stored};
+use crate::tick::Deadline;
 
 const MODEL: &str = "small:8b";
 
@@ -73,7 +74,7 @@ fn the_steward_writes_a_card_from_the_session_as_a_local_model_reads_it() {
         home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
     let fake = model(|_, _| reply("Rename the widget module"));
 
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!(
         (r.written, r.failed, r.skipped.as_deref()),
         (1, 0, None),
@@ -150,15 +151,15 @@ fn cards_are_written_newest_first_up_to_sessions_per_run_and_never_for_mirrors_o
     let fake = model(|_, _| reply("A session"));
     let all = ["old", "mid", "new", "mirror", "steward"];
 
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.sessions, r.pending, r.written), (3, 3, 2), "{r:?}");
     assert_eq!(carded(&home, &all), ["mid", "new"]);
 
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.current, r.pending, r.written), (2, 1, 1), "{r:?}");
     assert_eq!(carded(&home, &all), ["old", "mid", "new"]);
 
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.current, r.pending, r.written), (3, 0, 0), "{r:?}");
     assert_eq!(fake.calls().len(), 3, "a current card is not written again");
 }
@@ -177,7 +178,7 @@ fn an_answer_that_is_not_a_usable_card_is_a_failure_for_that_session_and_is_retr
             reply("First")
         }
     });
-    let r = write(&home, &config, &bad.runtime()).unwrap();
+    let r = write(&home, &config, &bad.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.failed), (1, 1), "{r:?}");
     assert!(
         r.errors[0].starts_with("claude-code/b: the model's answer is not a usable card"),
@@ -192,7 +193,7 @@ fn an_answer_that_is_not_a_usable_card_is_a_failure_for_that_session_and_is_retr
 
     // Retried at the next run, after sessions never tried.
     let good = model(|_, _| reply("Second"));
-    let r = write(&home, &config, &good.runtime()).unwrap();
+    let r = write(&home, &config, &good.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
     assert_eq!(load(&home, &facts(&home, "b")).unwrap().title, "Second");
     assert_eq!(progress(&home).unwrap().failing, 0);
@@ -231,7 +232,7 @@ fn a_card_goes_out_of_date_when_its_events_or_secret_findings_change_and_is_writ
     let (_d, home, config) =
         home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
     let fake = model(|_, _| reply("Rename"));
-    write(&home, &config, &fake.runtime()).unwrap();
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     let f = facts(&home, "s1");
     let scan = crate::findings::load(&home, &f).unwrap();
     assert!(current(&home, &f, &scan).is_some());
@@ -256,7 +257,7 @@ fn a_card_goes_out_of_date_when_its_events_or_secret_findings_change_and_is_writ
     assert!(load(&home, &f).is_some(), "the old card is still on disk");
     assert!(current(&home, &f, &scan).is_none(), "but it is not current");
     assert_eq!(progress(&home).unwrap().pending, 1);
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!(r.written, 1, "{r:?}");
     let scan = crate::findings::load(&home, &f).unwrap();
     assert!(current(&home, &f, &scan).is_some());
@@ -286,7 +287,13 @@ fn a_card_from_the_previous_build_counts_as_absent() {
     .unwrap();
     let f = facts(&home, "s1");
     assert_eq!(load(&home, &f), None);
-    let r = write(&home, &config, &model(|_, _| reply("New")).runtime()).unwrap();
+    let r = write(
+        &home,
+        &config,
+        &model(|_, _| reply("New")).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!((r.pending, r.written), (1, 1), "{r:?}");
     assert_eq!(load(&home, &f).unwrap().title, "New");
 }
@@ -328,7 +335,7 @@ fn a_card_whose_text_holds_a_secret_is_discarded_and_written_again() {
         assert!(!prompt.contains(&echoed), "the model was served the value");
         reply(&format!("Deploy with {echoed}"))
     });
-    let r = write(&home, &config, &leaky.runtime()).unwrap();
+    let r = write(&home, &config, &leaky.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.written, r.failed, r.discarded), (0, 1, 1), "{r:?}");
     assert!(r.errors[0].contains("held a secret"), "{r:?}");
     assert!(!format!("{r:?}").contains(&key));
@@ -349,7 +356,13 @@ fn a_card_whose_text_holds_a_secret_is_discarded_and_written_again() {
     );
 
     // Rewritten at the next run.
-    let r = write(&home, &config, &model(|_, _| reply("Deploy")).runtime()).unwrap();
+    let r = write(
+        &home,
+        &config,
+        &model(|_, _| reply("Deploy")).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
 }
 
@@ -365,7 +378,7 @@ fn card_findings_are_stored_with_the_cards_field_names_as_their_place() {
         })
         .to_string()
     });
-    write(&home, &config, &fake.runtime()).unwrap();
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     let f = facts(&home, "s1");
     let scan = crate::findings::load(&home, &f).unwrap();
     let card = current(&home, &f, &scan).expect("a card with personal details is kept");
@@ -394,7 +407,13 @@ fn card_findings_are_stored_with_the_cards_field_names_as_their_place() {
 fn a_stored_card_found_to_hold_a_secret_at_a_later_scan_is_discarded_and_written_again() {
     let (_d, home, config) =
         home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
-    write(&home, &config, &model(|_, _| reply("Rename")).runtime()).unwrap();
+    write(
+        &home,
+        &config,
+        &model(|_, _| reply("Rename")).runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     let f = facts(&home, "s1");
     // A card written before the detector knew this kind of secret.
     let path = home.card_path(Harness::ClaudeCode, "s1");
@@ -417,6 +436,7 @@ fn a_stored_card_found_to_hold_a_secret_at_a_later_scan_is_discarded_and_written
         &home,
         &config,
         &model(|_, _| reply("Rename again")).runtime(),
+        Deadline::NONE,
     )
     .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
@@ -441,14 +461,14 @@ fn with_no_card_model_or_no_local_runtime_that_can_run_it_the_step_is_skipped() 
         ),
     ];
     for (fake, why) in cases {
-        let r = write(&home, &config, &fake.runtime()).unwrap();
+        let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
         assert_eq!(r.skipped.as_deref(), Some(why), "{r:?}");
         assert_eq!(r.summary(), format!("cards skipped: {why}"));
         assert_eq!(fake.calls(), []);
     }
     config.steward.card_model = None;
     let fake = model(|_, _| reply("never"));
-    let r = write(&home, &config, &fake.runtime()).unwrap();
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     assert_eq!(r.skipped.as_deref(), Some("no card_model is set"));
     assert_eq!(fake.calls(), []);
     assert!(
@@ -520,7 +540,7 @@ fn carded_home() -> (tempfile::TempDir, Home, Config) {
             )
         }
     });
-    write(&home, &config, &fake.runtime()).unwrap();
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     crate::index::build(&home).unwrap();
     (d, home, config)
 }
@@ -644,7 +664,7 @@ fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
     assert!(crate::index::progress(&home).unwrap().pending >= 1);
     let fake =
         model(|_, _| reply_with("Ship it again", "Retried the rollout.", &["deploy"], "done"));
-    write(&home, &config, &fake.runtime()).unwrap();
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     crate::index::build(&home).unwrap();
     assert!(
         owner_hits(&home, "staging", &none).is_empty(),
@@ -667,7 +687,7 @@ fn a_long_session_is_cut_in_the_middle_keeping_its_start_and_its_closing_notice(
     let long = format!("start here {} end there", "word ".repeat(10_000));
     let (_d, home, config) = home_with(&[("s1", "2026-11-10T10:00:00Z", &long)]);
     let fake = model(|_, _| reply("Long"));
-    write(&home, &config, &fake.runtime()).unwrap();
+    write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
     let Call::Generate { prompt, .. } = &fake.calls()[0] else {
         panic!()
     };

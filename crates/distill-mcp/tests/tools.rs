@@ -488,7 +488,13 @@ fn sessions_list_and_search_with_their_cards_filtered_by_tag_and_outcome() {
                    "tags": ["refactor"], "outcome": "done"})
             .to_string()
         });
-    let r = distill_core::cards::write(&s.home, &config, &model.runtime()).unwrap();
+    let r = distill_core::cards::write(
+        &s.home,
+        &config,
+        &model.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(r.written, 1, "{r:?}");
     distill_core::index::build(&s.home).unwrap();
 

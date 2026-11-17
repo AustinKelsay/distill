@@ -31,6 +31,7 @@ use crate::model_step::{self, Failed};
 use crate::normalize;
 use crate::read::{self, NOTICE_END, NOTICE_START};
 use crate::runtime::LocalRuntime;
+use crate::tick::Deadline;
 use crate::trust::{OLLAMA, Reader};
 use crate::util::count;
 
@@ -209,6 +210,9 @@ pub struct DetailReport {
     pub found: u64,
     /// Answers dropped because their text is written nowhere in the session.
     pub unplaced: u64,
+    /// The tick's deadline passed with sessions left, which wait for the next tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_at_deadline: bool,
     /// Each failure: the session and what went wrong. Never session text or an answer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
@@ -232,6 +236,9 @@ impl DetailReport {
         if self.failed > 0 {
             s += &format!(", {} failed", self.failed);
         }
+        if self.stopped_at_deadline {
+            s += ", stopped at the tick's time limit";
+        }
         s
     }
 }
@@ -249,9 +256,15 @@ fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<St
 }
 
 /// Find personal details in the sessions whose model findings are missing or out of date,
-/// newest first, up to `sessions_per_run`. Skipped, with the reason in the report, when no
-/// model is set or no local runtime can run it. One writer at a time.
-pub fn find(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<DetailReport> {
+/// newest first, up to `sessions_per_run`, taking none once `deadline` has passed. Skipped, with
+/// the reason in the report, when no model is set or no local runtime can run it. One writer at
+/// a time.
+pub fn find(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<DetailReport> {
     let model = match cannot_run(config, runtime) {
         Ok(m) => m,
         Err(why) => {
@@ -286,9 +299,11 @@ pub fn find(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Deta
         &all,
         pending,
         config.steward.sessions_per_run,
+        deadline,
         |facts| find_one(home, config, runtime, &reader, &model, facts),
     )?;
-    for (session, result) in ran {
+    r.stopped_at_deadline = ran.stopped_at_deadline;
+    for (session, result) in ran.results {
         match result {
             Ok(placed) => {
                 r.written += 1;
@@ -379,6 +394,10 @@ pub struct DetailProgress {
     /// Personal details the model found in the sessions whose model findings are current.
     #[serde(default)]
     pub found: u64,
+    /// How many sessions the last run did, when it stopped at the tick's deadline with sessions
+    /// left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_after: Option<u64>,
 }
 
 /// The pass's progress over the session list. Changes nothing and contacts no runtime: whether
@@ -410,14 +429,17 @@ pub fn progress(home: &Home) -> Result<DetailProgress> {
             p.failing += u64::from(failures.contains_key(&facts.key()));
         }
     }
+    let last = crate::runlog::recent(home, 500)?
+        .into_iter()
+        .find_map(|e| e.outcome("details"))
+        .and_then(|o| serde_json::from_value::<DetailReport>(o.report).ok());
     p.skipped = match &model {
         None => Some("no detail_model or card_model is set".into()),
-        Some(_) => crate::runlog::recent(home, 500)?
-            .into_iter()
-            .find_map(|e| e.outcome("details"))
-            .and_then(|o| serde_json::from_value::<DetailReport>(o.report).ok())
-            .and_then(|r| r.skipped),
+        Some(_) => last.as_ref().and_then(|r| r.skipped.clone()),
     };
+    p.stopped_after = last
+        .filter(|r| r.stopped_at_deadline)
+        .map(|r| r.written + r.failed);
     Ok(p)
 }
 

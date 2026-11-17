@@ -1,5 +1,7 @@
 //! The read path: the one way session text leaves Distill (issue #72, "The read path"; ADR 0002).
 
+use std::ops::ControlFlow;
+
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
@@ -244,21 +246,25 @@ pub(crate) type ForIndex<'a> =
 pub(crate) fn for_index(
     home: &Home,
     sessions: &[SessionMeta],
-    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
 ) -> Result<()> {
     // Distill itself is always allowed (`Trust::check`); what it gets is decided here.
-    masked_for(home, Reader::Distill, sessions, visit)
+    masked_for(home, Reader::Distill, sessions, |facts, served| {
+        visit(facts, served).map(|()| ControlFlow::Continue(()))
+    })
 }
 
 /// Read `sessions` for the embedding model `model` at the local provider, for the vectors
 /// (`crate::index::vectors`): the same events with placeholders and current card as
 /// [`for_index`], logged as one line with counts under that model's name, because the text goes
 /// to it. The caller has checked that `model` is stored on this machine, so it is trusted.
+/// `visit` breaks to stop the read: the session it breaks at and those after it are not counted,
+/// and those after it are not read.
 pub(crate) fn for_embedding(
     home: &Home,
     model: &str,
     sessions: &[SessionMeta],
-    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+    visit: impl FnMut(&SessionMeta, ForIndex) -> Result<ControlFlow<()>>,
 ) -> Result<()> {
     masked_for(
         home,
@@ -272,7 +278,7 @@ fn masked_for(
     home: &Home,
     reader: Reader,
     sessions: &[SessionMeta],
-    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
+    mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<ControlFlow<()>>,
 ) -> Result<()> {
     if sessions.is_empty() {
         return Ok(());
@@ -294,12 +300,20 @@ fn masked_for(
             };
             match got {
                 Ok((evs, scan)) => {
-                    served += 1;
-                    events += evs.len() as u64;
+                    let n = evs.len() as u64;
                     let card = crate::cards::current(home, facts, &scan);
-                    visit(facts, Ok((evs, &scan, card)))?;
+                    // A session the visitor stopped at was not used, so it is not counted.
+                    if visit(facts, Ok((evs, &scan, card)))?.is_break() {
+                        break;
+                    }
+                    served += 1;
+                    events += n;
                 }
-                Err(why) => visit(facts, Err(why))?,
+                Err(why) => {
+                    if visit(facts, Err(why))?.is_break() {
+                        break;
+                    }
+                }
             }
         }
         Ok(())

@@ -8,6 +8,7 @@ use crate::harness::Harness;
 use crate::index::tests::{S, home_with, put, s};
 use crate::read::{Filter, Hit, Meaning, Page, Searched, Source};
 use crate::runtime::{Call, FakeRuntime, Stored};
+use crate::tick::Deadline;
 use crate::trust::Reader;
 
 const EMBED: &str = "embed:small";
@@ -57,7 +58,7 @@ fn home(sessions: &[S]) -> (tempfile::TempDir, Home, Config) {
 fn built(sessions: &[S]) -> (tempfile::TempDir, Home, Config) {
     let (d, home, config) = home(sessions);
     crate::index::build(&home).unwrap();
-    build(&home, &config, &fake().runtime()).unwrap();
+    build(&home, &config, &fake().runtime(), Deadline::NONE).unwrap();
     (d, home, config)
 }
 
@@ -111,9 +112,9 @@ fn the_steward_embeds_what_the_owner_wrote_with_placeholders_and_the_card_summar
     a.result = "billing invoice".into();
     let (_d, home, config) = home(&[a]);
     let f = fake().replying(|_, _| card_reply("Looked at why the vehicle stalls."));
-    cards::write(&home, &config, &f.runtime()).unwrap();
+    cards::write(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
 
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!(
         (r.sessions, r.embedded, r.current, r.failed, r.vectors),
         (1, 1, 0, 0, 2),
@@ -149,7 +150,7 @@ fn the_steward_embeds_what_the_owner_wrote_with_placeholders_and_the_card_summar
     );
 
     // Built again, nothing has changed, so nothing is embedded.
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.embedded, r.current), (0, 1), "{r:?}");
     assert_eq!(embedded(&f).len(), 1);
 }
@@ -304,7 +305,7 @@ fn vectors_are_rebuilt_when_their_events_secret_findings_or_card_change() {
     let (_d, home, config) = home(std::slice::from_ref(&a));
     let f = fake();
     let embeds = || embedded(&f).len();
-    build(&home, &config, &f.runtime()).unwrap();
+    build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!(embeds(), 1);
 
     // New events: the session is captured again.
@@ -312,14 +313,14 @@ fn vectors_are_rebuilt_when_their_events_secret_findings_or_card_change() {
     changed.said = "my kitten needs a vet".into();
     put(&home, &changed);
     findings::scan_all(&home, &config).unwrap();
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.embedded, r.pending), (1, 1), "{r:?}");
     assert_eq!(embedded(&f)[1], ["my kitten needs a vet"]);
 
     // A card is written: its summary joins the vectors.
     let cf = fake().replying(|_, _| card_reply("Took the kitten to the vet."));
-    cards::write(&home, &config, &cf.runtime()).unwrap();
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    cards::write(&home, &config, &cf.runtime(), Deadline::NONE).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!(r.embedded, 1, "{r:?}");
     assert_eq!(
         embedded(&f)[2],
@@ -332,14 +333,14 @@ fn vectors_are_rebuilt_when_their_events_secret_findings_or_card_change() {
     c.save(&home.config_path()).unwrap();
     findings::scan_all(&home, &c).unwrap();
     let before = embeds();
-    build(&home, &c, &f.runtime()).unwrap();
+    build(&home, &c, &f.runtime(), Deadline::NONE).unwrap();
     // A personal detail changes no placeholder, so the vectors stay current.
     assert_eq!(embeds(), before);
     let mut secret = changed.clone();
     secret.said = format!("my kitten needs a vet, key {}", fake_key());
     put(&home, &secret);
     findings::scan_all(&home, &c).unwrap();
-    let r = build(&home, &c, &f.runtime()).unwrap();
+    let r = build(&home, &c, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!(r.embedded, 1, "{r:?}");
     let last = embedded(&f).pop().unwrap();
     assert!(
@@ -392,7 +393,7 @@ fn vectors_of_another_model_are_rebuilt_whole() {
         .embedding(topics);
     let p = progress(&home).unwrap();
     assert_eq!((p.current, p.pending), (0, 1), "{p:?}");
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.embedded, r.current), (1, 0), "{r:?}");
 }
 
@@ -414,7 +415,7 @@ fn sessions_are_embedded_newest_first_up_to_sessions_per_run_and_never_mirrors_o
     crate::normalize::rebuild_session_list(&home).unwrap();
     config.steward.sessions_per_run = 2;
     let f = fake();
-    let r = build(&home, &config, &f.runtime()).unwrap();
+    let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!((r.sessions, r.pending, r.embedded), (3, 3, 2), "{r:?}");
     assert_eq!(embedded(&f), [vec!["the invoice"], vec!["the kitten"]]);
     let p = progress(&home).unwrap();
@@ -423,7 +424,7 @@ fn sessions_are_embedded_newest_first_up_to_sessions_per_run_and_never_mirrors_o
         (3, 2, 1, 2),
         "{p:?}"
     );
-    build(&home, &config, &f.runtime()).unwrap();
+    build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     assert_eq!(embedded(&f).last().unwrap(), &["the car"]);
 }
 
@@ -435,7 +436,7 @@ fn a_long_session_is_embedded_in_pieces_spread_over_it() {
         .join("\n");
     let (_d, home, config) = home(&[s("a", "2026-11-01T09:00:00Z", &said)]);
     let f = fake();
-    build(&home, &config, &f.runtime()).unwrap();
+    build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
     let texts = &embedded(&f)[0];
     assert_eq!(texts.len(), MAX_CHUNKS, "{}", texts.len());
     assert!(texts.iter().all(|t| t.len() <= CHUNK && !t.is_empty()));
@@ -470,9 +471,15 @@ fn with_no_embedding_model_or_no_runtime_the_step_is_skipped_and_status_says_why
     let (_d, home, config) = home(&[s("a", "2026-11-01T09:00:00Z", "the car")]);
     let mut unset = config.clone();
     unset.steward.embedding_model = None;
-    let r = build(&home, &unset, &fake().runtime()).unwrap();
+    let r = build(&home, &unset, &fake().runtime(), Deadline::NONE).unwrap();
     assert_eq!(r.skipped.as_deref(), Some("no embedding_model is set"));
-    let r = build(&home, &config, &FakeRuntime::stopped().runtime()).unwrap();
+    let r = build(
+        &home,
+        &config,
+        &FakeRuntime::stopped().runtime(),
+        Deadline::NONE,
+    )
+    .unwrap();
     assert_eq!(
         r.skipped.as_deref(),
         Some("the local runtime is not running")
@@ -500,4 +507,32 @@ fn with_no_embedding_model_or_no_runtime_the_step_is_skipped_and_status_says_why
     assert_eq!((p.current, p.pending, p.vectors), (1, 0, 1), "{p:?}");
     assert!(p.bytes > 0);
     assert_eq!(p.model.as_deref(), Some(EMBED));
+}
+
+#[test]
+fn a_passed_deadline_embeds_nothing_and_logs_no_session_as_sent() {
+    let (_d, home, config) = home(&[s("a", "2026-11-01T10:00:00Z", "rename the widget")]);
+    let f = fake();
+    let r = build(
+        &home,
+        &config,
+        &f.runtime(),
+        Deadline::after(std::time::Duration::ZERO),
+    )
+    .unwrap();
+    assert_eq!((r.pending, r.embedded, r.failed), (1, 0, 0), "{r:?}");
+    assert!(r.stopped_at_deadline, "{r:?}");
+    assert!(r.summary().ends_with(", stopped at the tick's time limit"));
+    assert_eq!(f.calls(), []);
+    let embedder = Reader::model(Some(crate::trust::OLLAMA), Some(EMBED));
+    let sent: u64 = crate::readlog::list(&home, None, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.reader == embedder)
+        .map(|e| match e.result {
+            crate::readlog::ReadResult::Indexed { sessions, .. } => sessions,
+            other => panic!("{other:?}"),
+        })
+        .sum();
+    assert_eq!(sent, 0);
 }

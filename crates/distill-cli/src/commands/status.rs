@@ -40,12 +40,13 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.cards.current, s.cards.sessions
             ),
             None => println!(
-                "cards: {} of {} sessions current, {} waiting, {} failing · model {}",
+                "cards: {} of {} sessions current, {} waiting, {} failing · model {}{}",
                 s.cards.current,
                 s.cards.sessions,
                 s.cards.pending,
                 s.cards.failing,
-                s.cards.model.as_deref().unwrap_or("none")
+                s.cards.model.as_deref().unwrap_or("none"),
+                stopped(s.cards.stopped_after)
             ),
         }
         match &s.vectors.skipped {
@@ -54,12 +55,13 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.vectors.current, s.vectors.sessions
             ),
             None => println!(
-                "vectors: {} of {} sessions current, {} waiting · {} · model {}",
+                "vectors: {} of {} sessions current, {} waiting · {} · model {}{}",
                 s.vectors.current,
                 s.vectors.sessions,
                 s.vectors.pending,
                 human_bytes(s.vectors.bytes),
-                s.vectors.model.as_deref().unwrap_or("none")
+                s.vectors.model.as_deref().unwrap_or("none"),
+                stopped(s.vectors.stopped_after)
             ),
         }
         match &s.details.skipped {
@@ -68,13 +70,14 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.details.current, s.details.sessions
             ),
             None => println!(
-                "model detection: {} of {} sessions current, {} waiting, {} failing · {} found · model {}",
+                "model detection: {} of {} sessions current, {} waiting, {} failing · {} found · model {}{}",
                 s.details.current,
                 s.details.sessions,
                 s.details.pending,
                 s.details.failing,
                 distill_core::util::count(s.details.found, "personal detail"),
-                s.details.model.as_deref().unwrap_or("none")
+                s.details.model.as_deref().unwrap_or("none"),
+                stopped(s.details.stopped_after)
             ),
         }
         println!(
@@ -95,5 +98,15 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
         for w in &s.warnings {
             println!("warning: {}", w.message);
         }
+    })
+}
+
+/// What a model step's line adds when the last tick stopped it at its time limit.
+fn stopped(after: Option<u64>) -> String {
+    after.map_or_else(String::new, |n| {
+        format!(
+            " · the last tick stopped it at its time limit after {}",
+            distill_core::util::count(n, "session")
+        )
     })
 }

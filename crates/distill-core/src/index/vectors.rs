@@ -21,6 +21,7 @@
 //! unit length.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,7 @@ use crate::model::{Event, EventKind, Originals, SessionMeta};
 use crate::normalize;
 use crate::read;
 use crate::runtime::{LocalRuntime, RuntimeError, RuntimeState};
+use crate::tick::Deadline;
 use crate::util::{count, write_atomic};
 
 /// The version of the file's format and of what is embedded. A file of another version is
@@ -267,6 +269,9 @@ pub struct VectorReport {
     pub removed: u64,
     /// Vectors in the file after the run.
     pub vectors: u64,
+    /// The tick's deadline passed with sessions left, which wait for the next tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_at_deadline: bool,
     /// Each failure: the session and what went wrong. Never session text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
@@ -289,6 +294,9 @@ impl VectorReport {
         }
         if self.failed > 0 {
             s += &format!(", {} failed", self.failed);
+        }
+        if self.stopped_at_deadline {
+            s += ", stopped at the tick's time limit";
         }
         s
     }
@@ -313,8 +321,13 @@ fn usable_model(config: &Config, runtime: &LocalRuntime) -> std::result::Result<
 /// Embed the sessions whose vectors are missing or out of date, newest first, up to
 /// `sessions_per_run`, reading each through the read path for the embedding model. Skipped, with
 /// the reason in the report, when `embedding_model` is not set or no local runtime can run it.
-/// One writer at a time.
-pub fn build(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<VectorReport> {
+/// Takes no session once `deadline` has passed. One writer at a time.
+pub fn build(
+    home: &Home,
+    config: &Config,
+    runtime: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<VectorReport> {
     let model = match usable_model(config, runtime) {
         Ok(m) => m,
         Err(why) => {
@@ -368,10 +381,10 @@ pub fn build(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Vec
     pending.truncate(config.steward.sessions_per_run);
     let pending: Vec<SessionMeta> = pending.into_iter().cloned().collect();
 
-    let mut stopped = false;
     read::for_embedding(home, &model, &pending, |facts, served| {
-        if stopped {
-            return Ok(());
+        if deadline.passed() {
+            r.stopped_at_deadline = true;
+            return Ok(ControlFlow::Break(()));
         }
         let (events, found, card) = match served {
             Ok(s) => s,
@@ -379,7 +392,7 @@ pub fn build(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Vec
                 changed |= store.sessions.remove(&facts.key()).is_some();
                 r.failed += 1;
                 r.errors.push(why);
-                return Ok(());
+                return Ok(ControlFlow::Continue(()));
             }
         };
         let texts = texts_of(&events, card.as_ref());
@@ -399,16 +412,23 @@ pub fn build(home: &Home, config: &Config, runtime: &LocalRuntime) -> Result<Vec
                 );
                 changed = true;
                 r.embedded += 1;
+                Ok(ControlFlow::Continue(()))
+            }
+            // With the runtime gone, every other session would fail the same way, and none was
+            // sent.
+            Err(e @ (RuntimeError::NotRunning | RuntimeError::NotStoredHere(_))) => {
+                r.failed += 1;
+                r.errors
+                    .push(format!("{}: the model failed: {e}", facts.key()));
+                Ok(ControlFlow::Break(()))
             }
             Err(e) => {
                 r.failed += 1;
                 r.errors
                     .push(format!("{}: the model failed: {e}", facts.key()));
-                // With the runtime gone, every other session would fail the same way.
-                stopped = matches!(e, RuntimeError::NotRunning | RuntimeError::NotStoredHere(_));
+                Ok(ControlFlow::Continue(()))
             }
         }
-        Ok(())
     })?;
     if changed {
         write_atomic(&home.vectors_path(), &encode(&store)?)?;
@@ -586,6 +606,10 @@ pub struct VectorProgress {
     pub vectors: u64,
     /// Bytes the file takes on disk.
     pub bytes: u64,
+    /// How many sessions the last run did, when it stopped at the tick's deadline with sessions
+    /// left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_after: Option<u64>,
 }
 
 /// Vector progress over the session list. Changes nothing and contacts no runtime: whether the
@@ -620,14 +644,17 @@ pub fn progress(home: &Home) -> Result<VectorProgress> {
             p.pending += 1;
         }
     }
+    let last = crate::runlog::recent(home, 500)?
+        .into_iter()
+        .find_map(|e| e.outcome("vectors"))
+        .and_then(|o| serde_json::from_value::<VectorReport>(o.report).ok());
     p.skipped = match &config.steward.embedding_model {
         None => Some("no embedding_model is set".into()),
-        Some(_) => crate::runlog::recent(home, 500)?
-            .into_iter()
-            .find_map(|e| e.outcome("vectors"))
-            .and_then(|o| serde_json::from_value::<VectorReport>(o.report).ok())
-            .and_then(|r| r.skipped),
+        Some(_) => last.as_ref().and_then(|r| r.skipped.clone()),
     };
+    p.stopped_after = last
+        .filter(|r| r.stopped_at_deadline)
+        .map(|r| r.embedded + r.failed);
     Ok(p)
 }
 
