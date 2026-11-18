@@ -1,7 +1,7 @@
 //! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
 //! tick writes one entry to the run log. Today the steps are sweep, parse, scan, the word index,
 //! cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
-//! model gets the local runtime, and the steps before it never wait on one.
+//! model gets the runtime for that step, and the steps before it never wait on one.
 //!
 //! The model steps share one time budget per tick for starting work, [`model_budget`], counted
 //! from the tick's start, so a slow or stuck model holds a tick past it by at most one model call
@@ -12,11 +12,11 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::cards;
-use crate::config::Config;
+use crate::config::{Config, GenerationConfig, ProviderKind};
 use crate::details;
 use crate::findings;
 use crate::home::Home;
@@ -26,6 +26,7 @@ use crate::runlog::{self, RunEntry, StepOutcome};
 use crate::runtime::LocalRuntime;
 use crate::schedule;
 use crate::sweep;
+use crate::trust::Trust;
 
 /// When a model step stops taking sessions, and when the tick's time is over. The session under
 /// way when the step's share passes is finished, since cutting it off would start it over next
@@ -81,6 +82,7 @@ pub struct Step {
     pub name: &'static str,
     /// The step calls a model, so it gets a share of the tick's [`model_budget`].
     pub model: bool,
+    generation: bool,
     pub run: fn(&Home, &Config, &LocalRuntime, Deadline) -> Result<StepOutcome>,
 }
 
@@ -89,36 +91,43 @@ pub const STEPS: &[Step] = &[
     Step {
         name: "sweep",
         model: false,
+        generation: false,
         run: sweep_step,
     },
     Step {
         name: "parse",
         model: false,
+        generation: false,
         run: parse_step,
     },
     Step {
         name: "scan",
         model: false,
+        generation: false,
         run: scan_step,
     },
     Step {
         name: "index",
         model: false,
+        generation: false,
         run: index_step,
     },
     Step {
         name: "cards",
         model: true,
+        generation: true,
         run: cards_step,
     },
     Step {
         name: "vectors",
         model: true,
+        generation: false,
         run: vectors_step,
     },
     Step {
         name: "details",
         model: true,
+        generation: true,
         run: details_step,
     },
 ];
@@ -257,10 +266,27 @@ pub struct TickReport {
     pub steps: Vec<StepOutcome>,
 }
 
-/// Run every step in order with the Ollama server on this machine as the local runtime, and
-/// record the tick. Nothing contacts the runtime unless a model step has a model set.
+/// Run the scheduled steps with local embeddings and the configured generation provider.
 pub fn tick(home: &Home, config: &Config) -> Result<TickReport> {
-    tick_with(home, config, &LocalRuntime::ollama())
+    let local = LocalRuntime::ollama();
+    let generation = match &config.steward.generation {
+        Some(provider) => generation_runtime(config, provider),
+        None => Ok(local.clone()),
+    };
+    tick_with_runtimes(home, config, &generation, &local, model_budget(config))
+}
+
+fn generation_runtime(config: &Config, generation: &GenerationConfig) -> Result<LocalRuntime> {
+    if !Trust::new(config)
+        .provider(&generation.provider)
+        .is_some_and(|p| p.kind == ProviderKind::Remote && p.trusted)
+    {
+        bail!(
+            "generation provider {:?} must be a trusted remote provider",
+            generation.provider
+        );
+    }
+    LocalRuntime::remote_generation(generation)
 }
 
 /// Run every step in order with `runtime`, within the config's [`model_budget`], and record the
@@ -277,6 +303,16 @@ pub fn tick_within(
     runtime: &LocalRuntime,
     budget: Duration,
 ) -> Result<TickReport> {
+    tick_with_runtimes(home, config, &Ok(runtime.clone()), runtime, budget)
+}
+
+fn tick_with_runtimes(
+    home: &Home,
+    config: &Config,
+    generation: &Result<LocalRuntime>,
+    local: &LocalRuntime,
+    budget: Duration,
+) -> Result<TickReport> {
     // A budget too long to be an instant is none.
     let end = Instant::now().checked_add(budget);
     home.ensure()?;
@@ -290,10 +326,17 @@ pub fn tick_within(
             }
             _ => Deadline::NONE,
         };
-        steps.push(
-            (s.run)(home, config, runtime, deadline)
+        let runtime = if s.generation {
+            generation.as_ref()
+        } else {
+            Ok(local)
+        };
+        let outcome = match runtime {
+            Ok(runtime) => (s.run)(home, config, runtime, deadline)
                 .unwrap_or_else(|e| StepOutcome::failed(s.name, &e)),
-        );
+            Err(e) => StepOutcome::failed(s.name, e),
+        };
+        steps.push(outcome);
     }
     runlog::record(home, &RunEntry::of("tick", steps.clone()))?;
     Ok(TickReport { steps })
@@ -313,6 +356,30 @@ mod tests {
                 "sweep", "parse", "scan", "index", "cards", "vectors", "details"
             ]
         );
+    }
+
+    #[test]
+    fn an_untrusted_generation_provider_does_not_stop_the_vector_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        config.steward.generation = Some(GenerationConfig {
+            provider: "remote".into(),
+            base_url: "https://example.com/v1".into(),
+            api_key_file: dir.path().join("key"),
+        });
+        let report = tick(&home, &config).unwrap();
+        for name in ["cards", "details"] {
+            let step = report.steps.iter().find(|s| s.name == name).unwrap();
+            assert!(!step.ok);
+            assert!(step.summary.contains("must be a trusted remote provider"));
+        }
+        let vectors = report.steps.iter().find(|s| s.name == "vectors").unwrap();
+        assert!(vectors.ok);
+        assert_eq!(vectors.report["skipped"], "no embedding_model is set");
     }
 
     #[test]

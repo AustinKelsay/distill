@@ -1,13 +1,15 @@
-//! A remote provider's OpenAI-compatible server reached on this machine, such as a provider's local
-//! proxy, standing in for the local runtime while the model steps are evaluated (`distill-eval`).
-//! Built only with the `eval` feature.
+//! OpenAI-compatible generation over HTTPS, and loopback generation and embeddings for evaluation.
 
+#[cfg(feature = "eval")]
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
+
+use crate::config::GenerationConfig;
 
 use super::{Backend, RuntimeError};
 
@@ -16,29 +18,106 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub(crate) struct OpenAiCompatible {
     provider: String,
-    addr: SocketAddr,
+    endpoint: Endpoint,
     models: OnceLock<Option<Vec<String>>>,
 }
 
+enum Endpoint {
+    #[cfg(feature = "eval")]
+    Loopback(SocketAddr),
+    Https {
+        base_url: String,
+        key_file: PathBuf,
+        agent: ureq::Agent,
+    },
+}
+
 impl OpenAiCompatible {
-    pub(crate) fn new(provider: &str, addr: SocketAddr) -> Result<Self> {
-        let provider = provider.trim().to_ascii_lowercase();
-        if provider.is_empty() || provider == crate::trust::OLLAMA {
-            bail!("name the remote provider the server belongs to, other than \"ollama\"");
+    pub(crate) fn remote(config: &GenerationConfig) -> Result<Self> {
+        let provider = provider_name(&config.provider)?;
+        let base_url = config.base_url.trim_end_matches('/');
+        if !base_url.starts_with("https://") {
+            bail!("the generation provider needs an HTTPS base URL");
         }
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(LIST_TIMEOUT)
+            .https_only(true)
+            .redirects(0)
+            .build();
+        Ok(Self {
+            provider,
+            endpoint: Endpoint::Https {
+                base_url: base_url.into(),
+                key_file: config.api_key_file.clone(),
+                agent,
+            },
+            models: OnceLock::new(),
+        })
+    }
+
+    #[cfg(feature = "eval")]
+    pub(crate) fn new(provider: &str, addr: SocketAddr) -> Result<Self> {
+        let provider = provider_name(provider)?;
         if !addr.ip().is_loopback() {
             bail!("{addr} is not on this machine");
         }
         Ok(Self {
             provider,
-            addr,
+            endpoint: Endpoint::Loopback(addr),
             models: OnceLock::new(),
         })
     }
 
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<(String, Value), RuntimeError> {
+        match &self.endpoint {
+            #[cfg(feature = "eval")]
+            Endpoint::Loopback(addr) => {
+                super::http::request(addr, method, &format!("/v1{path}"), body, timeout)
+            }
+            Endpoint::Https {
+                base_url,
+                key_file,
+                agent,
+            } => {
+                let key = std::fs::read_to_string(key_file).map_err(|_| {
+                    RuntimeError::Failed("cannot read the generation API key file".into())
+                })?;
+                let key = key.lines().next().unwrap_or("").trim();
+                if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
+                    return Err(RuntimeError::Failed("invalid generation API key".into()));
+                }
+                let request = agent
+                    .request(method, &format!("{base_url}{path}"))
+                    .set("Authorization", &format!("Bearer {key}"))
+                    .timeout(timeout);
+                let result = match body {
+                    Some(body) => request.send_json(body),
+                    None => request.call(),
+                };
+                let response = match result {
+                    Ok(response) => response,
+                    Err(ureq::Error::Status(status, _)) => {
+                        return Err(RuntimeError::Failed(format!("{path}: HTTP {status}")));
+                    }
+                    Err(ureq::Error::Transport(_)) => return Err(RuntimeError::NotRunning),
+                };
+                let status = response.status().to_string();
+                let value = response
+                    .into_json()
+                    .map_err(|_| RuntimeError::Failed(format!("{path}: invalid JSON response")))?;
+                Ok((status, value))
+            }
+        }
+    }
+
     fn call(&self, path: &str, body: &Value) -> Result<Value, RuntimeError> {
-        let (status, value) =
-            super::http::request(&self.addr, "POST", path, Some(body), CALL_TIMEOUT)?;
+        let (status, value) = self.request("POST", path, Some(body), CALL_TIMEOUT)?;
         if status != "200" {
             let why = value["error"]["message"]
                 .as_str()
@@ -50,6 +129,14 @@ impl OpenAiCompatible {
     }
 }
 
+fn provider_name(provider: &str) -> Result<String> {
+    let provider = provider.trim().to_ascii_lowercase();
+    if provider.is_empty() || provider == crate::trust::OLLAMA {
+        bail!("name the remote provider the server belongs to, other than \"ollama\"");
+    }
+    Ok(provider)
+}
+
 impl Backend for OpenAiCompatible {
     fn provider(&self) -> &str {
         &self.provider
@@ -59,13 +146,11 @@ impl Backend for OpenAiCompatible {
         true
     }
 
-    /// Listed once: the server's list does not change while an evaluation runs.
+    /// Listed once per tick or evaluation.
     fn models(&self) -> Option<Vec<String>> {
         self.models
             .get_or_init(|| {
-                let (status, list) =
-                    super::http::request(&self.addr, "GET", "/v1/models", None, LIST_TIMEOUT)
-                        .ok()?;
+                let (status, list) = self.request("GET", "/models", None, LIST_TIMEOUT).ok()?;
                 (status == "200").then_some(())?;
                 Some(
                     list["data"]
@@ -91,7 +176,7 @@ impl Backend for OpenAiCompatible {
             "response_format": {"type": "json_object"},
             "stream": false,
         });
-        let answer = self.call("/v1/chat/completions", &body)?;
+        let answer = self.call("/chat/completions", &body)?;
         answer["choices"][0]["message"]["content"]
             .as_str()
             .map(str::to_string)
@@ -99,7 +184,21 @@ impl Backend for OpenAiCompatible {
     }
 
     fn embed(&self, model: &str, texts: &[&str]) -> Result<Vec<Vec<f32>>, RuntimeError> {
-        let answer = self.call("/v1/embeddings", &json!({"model": model, "input": texts}))?;
+        #[cfg(feature = "eval")]
+        if matches!(self.endpoint, Endpoint::Loopback(_)) {
+            return self.eval_embed(model, texts);
+        }
+        let _ = (model, texts);
+        Err(RuntimeError::Failed(
+            "the generation provider does not handle embeddings".into(),
+        ))
+    }
+}
+
+#[cfg(feature = "eval")]
+impl OpenAiCompatible {
+    fn eval_embed(&self, model: &str, texts: &[&str]) -> Result<Vec<Vec<f32>>, RuntimeError> {
+        let answer = self.call("/embeddings", &json!({"model": model, "input": texts}))?;
         let mut data: Vec<(u64, Vec<f32>)> = answer["data"]
             .as_array()
             .ok_or_else(|| RuntimeError::Failed("no data in its answer".into()))?

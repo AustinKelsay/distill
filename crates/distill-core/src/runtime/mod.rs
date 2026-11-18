@@ -1,14 +1,9 @@
-//! The one client that reaches the local runtime on this machine, for generating text and for
-//! embedding (issue #72, "Trust"). It refuses any model the runtime serves from a cloud. In this
-//! version the runtime is Ollama ([`LocalRuntime::ollama`]); tests use [`FakeRuntime`]. With the
-//! `eval` feature, which only `distill-eval` turns on, a trusted provider's OpenAI-compatible
-//! server on this machine can stand in for it ([`LocalRuntime::openai_compatible`]), so the model
-//! steps can be judged with real models without running one here.
+//! Ollama on this machine, or an explicitly configured remote generation provider. Model steps
+//! use the runtime's provider identity when reading sessions through the trust-checked read path.
 
 mod fake;
 mod http;
 mod ollama;
-#[cfg(feature = "eval")]
 mod openai;
 
 pub use fake::{Call, FakeRuntime};
@@ -115,7 +110,14 @@ impl LocalRuntime {
         Ok(Self::new(openai::OpenAiCompatible::new(provider, addr)?))
     }
 
-    /// The provider the runtime's models run at: `ollama` but for an evaluation's stand-in.
+    /// An HTTPS provider for the scheduled generation steps.
+    pub(crate) fn remote_generation(
+        config: &crate::config::GenerationConfig,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::new(openai::OpenAiCompatible::remote(config)?))
+    }
+
+    /// The provider the runtime's models run at.
     pub fn provider(&self) -> &str {
         self.backend.provider()
     }

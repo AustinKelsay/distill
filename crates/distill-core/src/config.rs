@@ -72,9 +72,21 @@ pub struct StewardConfig {
     /// Defaults to `card_model`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail_model: Option<String>,
+    /// Route cards and model detection through a trusted OpenAI-compatible provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationConfig>,
     /// How many sessions each model step takes per tick, newest first.
     #[serde(default = "default_sessions_per_run", alias = "max_sessions_per_run")]
     pub sessions_per_run: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GenerationConfig {
+    pub provider: String,
+    /// HTTPS API base URL, including the version path.
+    pub base_url: String,
+    /// File whose first line is the bearer credential.
+    pub api_key_file: PathBuf,
 }
 
 impl StewardConfig {
@@ -90,6 +102,7 @@ impl Default for StewardConfig {
             card_model: None,
             embedding_model: None,
             detail_model: None,
+            generation: None,
             sessions_per_run: default_sessions_per_run(),
         }
     }
