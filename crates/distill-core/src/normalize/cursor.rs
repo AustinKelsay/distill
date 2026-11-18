@@ -638,6 +638,7 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
     let mut body = Vec::new();
     let mut fence = None;
     while let Some(line) = lines.next() {
+        update_export_fence(line, &mut fence);
         if fence.is_none() && (role.is_none() || line == "---") {
             let mut rest = lines.clone();
             let label = if role.is_none() {
@@ -666,10 +667,12 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
             }
         }
         anyhow::ensure!(role.is_some(), "unknown speaker in Cursor export");
-        update_export_fence(line, &mut fence);
         body.push(line);
     }
-    anyhow::ensure!(fence.is_none(), "unclosed code fence in Cursor export");
+    anyhow::ensure!(
+        !matches!(fence, Some((_, _, 0))),
+        "unclosed code fence in Cursor export"
+    );
     if let Some(last) = role {
         out.push(Event::text(last, body.join("\n").trim_end_matches('\n')));
     }
@@ -681,6 +684,10 @@ fn update_export_fence(line: &str, fence: &mut Option<(char, usize, usize)>) {
     static LIST_MARKER: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"^(?:[-*+]|[0-9]{1,9}[.)])").unwrap());
     let (column, mut code) = after_indent(line, 0);
+    // A nonblank dedent ends the containing list item and its code block.
+    if fence.is_some_and(|(_, _, container)| column < container) && !code.is_empty() {
+        *fence = None;
+    }
     let mut indent = 0;
     if let Some((_, _, container)) = *fence {
         if !(container..=container + 3).contains(&column) {
@@ -769,4 +776,16 @@ fn list_item_code_fences_keep_the_following_turn_searchable() {
         assert_eq!(parsed.events[1].kind, EventKind::User);
         assert_eq!(parsed.events[1].text.as_deref(), Some("Thanks"));
     }
+}
+
+#[test]
+fn list_fence_ends_with_its_item() {
+    let turn = "# Example\n_Exported on Monday at noon from Cursor (1)_\n\n---\n\n**Cursor**\n\n- ```rs\n  example";
+    let next = format!("{turn}\n\n---\n\n**User**\n\nThanks");
+    let parsed = parse_export(next.as_bytes()).unwrap();
+    assert_eq!(parsed.events.len(), 2);
+    assert_eq!(parsed.events[0].text.as_deref(), Some("- ```rs\n  example"));
+    assert_eq!(parsed.events[1].kind, EventKind::User);
+    assert_eq!(parsed.events[1].text.as_deref(), Some("Thanks"));
+    assert_eq!(parse_export(turn.as_bytes()).unwrap().events.len(), 1);
 }

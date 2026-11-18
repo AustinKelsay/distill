@@ -45,7 +45,7 @@ pub fn parser_version(kind: Harness) -> Option<u32> {
         Harness::Hermes => Some(4),
         // 8: answers, requests and plans are events.
         Harness::T3Code => Some(8),
-        Harness::Cursor => Some(8),
+        Harness::Cursor => Some(9),
         Harness::Goose => Some(2),
     }
 }
