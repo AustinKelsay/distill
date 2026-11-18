@@ -10,6 +10,8 @@ use super::{Backend, LocalRuntime, RuntimeError, Stored};
 #[derive(Clone)]
 pub struct FakeRuntime {
     state: Arc<Mutex<State>>,
+    #[cfg(test)]
+    provider: &'static str,
 }
 
 /// A call the client passed on to the fake.
@@ -34,6 +36,8 @@ struct State {
 impl FakeRuntime {
     fn with_state(installed: bool, running: bool) -> Self {
         Self {
+            #[cfg(test)]
+            provider: crate::trust::OLLAMA,
             state: Arc::new(Mutex::new(State {
                 installed,
                 running,
@@ -57,6 +61,12 @@ impl FakeRuntime {
 
     pub fn not_installed() -> Self {
         Self::with_state(false, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_provider(mut self, provider: &'static str) -> Self {
+        self.provider = provider;
+        self
     }
 
     /// Install `name`, stored on this machine or served from a cloud.
@@ -95,6 +105,11 @@ impl FakeRuntime {
 }
 
 impl Backend for FakeRuntime {
+    #[cfg(test)]
+    fn provider(&self) -> &str {
+        self.provider
+    }
+
     fn installed(&self) -> bool {
         self.lock().installed
     }

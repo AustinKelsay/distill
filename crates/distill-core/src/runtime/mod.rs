@@ -53,6 +53,9 @@ pub(crate) trait Backend: Send + Sync {
     fn installed(&self) -> bool;
     /// The installed models' names, or `None` when nothing answers.
     fn models(&self) -> Option<Vec<String>>;
+    fn model_list_error(&self) -> Option<&RuntimeError> {
+        None
+    }
     /// Whether `model`'s weights are on this machine. Needs no running runtime.
     fn stored_here(&self, model: &str) -> bool;
     fn generate(&self, model: &str, prompt: &str) -> Result<String, RuntimeError>;
@@ -66,6 +69,8 @@ pub enum RuntimeError {
     NotStoredHere(String),
     /// Nothing answers on this machine.
     NotRunning,
+    /// The configured remote provider could not be reached.
+    ProviderUnavailable(String),
     /// The runtime answered with an error, or with something Distill can't read.
     Failed(String),
 }
@@ -82,7 +87,8 @@ impl std::fmt::Display for RuntimeError {
                 f,
                 "the local runtime is not running (start the Ollama app or `ollama serve`)"
             ),
-            Self::Failed(e) => write!(f, "the local runtime failed: {e}"),
+            Self::ProviderUnavailable(e) => write!(f, "could not reach generation provider {e}"),
+            Self::Failed(e) => write!(f, "the model runtime failed: {e}"),
         }
     }
 }
@@ -140,6 +146,10 @@ impl LocalRuntime {
             None if self.backend.installed() => RuntimeState::NotRunning,
             None => RuntimeState::NotInstalled,
         }
+    }
+
+    pub(crate) fn model_list_error(&self) -> Option<&RuntimeError> {
+        self.backend.model_list_error()
     }
 
     /// Whether `model` is stored on this machine. A model that can't be verified, including one

@@ -383,6 +383,110 @@ mod tests {
     }
 
     #[test]
+    fn a_tick_sends_generation_and_embeddings_to_their_own_runtimes() {
+        use crate::runtime::{Call, FakeRuntime, Stored};
+        use crate::trust::Reader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pi = dir.path().join("pi");
+        std::fs::create_dir(&pi).unwrap();
+        pi_session(&pi, "p1", "rename the widget", 1794436930000);
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        let harness = config.harness_mut(Harness::Pi);
+        harness.enabled = true;
+        harness.roots = vec![pi];
+        crate::trust::add(&mut config, "remote", true).unwrap();
+        config.steward.card_model = Some("card".into());
+        config.steward.detail_model = Some("detail".into());
+        config.steward.embedding_model = Some("embedding".into());
+        config.save(&home.config_path()).unwrap();
+
+        let generation = FakeRuntime::running()
+            .with_provider("remote")
+            .with_model("card", Stored::Here)
+            .with_model("detail", Stored::Here)
+            .replying(|model, _| match model {
+                "card" => r#"{"title":"Rename the widget","summary":"Renamed it.","tags":["ui"],"outcome":"done"}"#.into(),
+                "detail" => r#"{"details":[]}"#.into(),
+                _ => panic!("unexpected model {model}"),
+            });
+        let local = FakeRuntime::running().with_model("embedding", Stored::Here);
+        let report = tick_with_runtimes(
+            &home,
+            &config,
+            &Ok(generation.runtime()),
+            &local.runtime(),
+            model_budget(&config),
+        )
+        .unwrap();
+        assert!(report.steps.iter().all(|s| s.ok), "{report:?}");
+        assert!(matches!(
+            generation.calls().as_slice(),
+            [Call::Generate { model: card, .. }, Call::Generate { model: detail, .. }]
+                if card == "card" && detail == "detail"
+        ));
+        assert!(matches!(
+            local.calls().as_slice(),
+            [Call::Embed { model, .. }] if model == "embedding"
+        ));
+        let readers: Vec<_> = crate::readlog::list(&home, None, 20)
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| match e.reader {
+                Reader::Model { .. } => Some(e.reader.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            readers,
+            ["remote/detail", "ollama/embedding", "remote/card"]
+        );
+    }
+
+    #[test]
+    fn a_missing_or_empty_generation_credential_is_reported_by_the_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let key = dir.path().join("key");
+        let mut config = Config {
+            harnesses: vec![],
+            ..Default::default()
+        };
+        crate::trust::add(&mut config, "remote", true).unwrap();
+        config.steward.generation = Some(GenerationConfig {
+            provider: "remote".into(),
+            base_url: "https://example.com/v1".into(),
+            api_key_file: key.clone(),
+        });
+
+        for error in [
+            "cannot read the generation API key file",
+            "invalid generation API key",
+        ] {
+            let report = tick(&home, &config).unwrap();
+            for name in ["cards", "details"] {
+                let step = report.steps.iter().find(|s| s.name == name).unwrap();
+                assert!(!step.ok);
+                assert!(step.summary.contains(error), "{step:?}");
+            }
+            assert!(
+                report
+                    .steps
+                    .iter()
+                    .find(|s| s.name == "vectors")
+                    .unwrap()
+                    .ok
+            );
+            std::fs::write(&key, "\n").unwrap();
+        }
+    }
+
+    #[test]
     fn a_tick_sweeps_parses_scans_and_indexes_and_writes_one_run_log_entry() {
         let dir = tempfile::tempdir().unwrap();
         let pi = dir.path().join("pi");

@@ -19,7 +19,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub(crate) struct OpenAiCompatible {
     provider: String,
     endpoint: Endpoint,
-    models: OnceLock<Option<Vec<String>>>,
+    models: OnceLock<Result<Vec<String>, RuntimeError>>,
 }
 
 enum Endpoint {
@@ -39,6 +39,7 @@ impl OpenAiCompatible {
         if !base_url.starts_with("https://") {
             bail!("the generation provider needs an HTTPS base URL");
         }
+        load_api_key(&config.api_key_file)?;
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(LIST_TIMEOUT)
             .https_only(true)
@@ -85,13 +86,7 @@ impl OpenAiCompatible {
                 key_file,
                 agent,
             } => {
-                let key = std::fs::read_to_string(key_file).map_err(|_| {
-                    RuntimeError::Failed("cannot read the generation API key file".into())
-                })?;
-                let key = key.lines().next().unwrap_or("").trim();
-                if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
-                    return Err(RuntimeError::Failed("invalid generation API key".into()));
-                }
+                let key = load_api_key(key_file)?;
                 let request = agent
                     .request(method, &format!("{base_url}{path}"))
                     .set("Authorization", &format!("Bearer {key}"))
@@ -105,7 +100,9 @@ impl OpenAiCompatible {
                     Err(ureq::Error::Status(status, _)) => {
                         return Err(RuntimeError::Failed(format!("{path}: HTTP {status}")));
                     }
-                    Err(ureq::Error::Transport(_)) => return Err(RuntimeError::NotRunning),
+                    Err(ureq::Error::Transport(_)) => {
+                        return Err(RuntimeError::ProviderUnavailable(self.provider.clone()));
+                    }
                 };
                 let status = response.status().to_string();
                 let value = response
@@ -129,6 +126,16 @@ impl OpenAiCompatible {
     }
 }
 
+fn load_api_key(path: &std::path::Path) -> Result<String, RuntimeError> {
+    let file = std::fs::read_to_string(path)
+        .map_err(|_| RuntimeError::Failed("cannot read the generation API key file".into()))?;
+    let key = file.lines().next().unwrap_or("").trim();
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(RuntimeError::Failed("invalid generation API key".into()));
+    }
+    Ok(key.to_owned())
+}
+
 fn provider_name(provider: &str) -> Result<String> {
     let provider = provider.trim().to_ascii_lowercase();
     if provider.is_empty() || provider == crate::trust::OLLAMA {
@@ -150,17 +157,25 @@ impl Backend for OpenAiCompatible {
     fn models(&self) -> Option<Vec<String>> {
         self.models
             .get_or_init(|| {
-                let (status, list) = self.request("GET", "/models", None, LIST_TIMEOUT).ok()?;
-                (status == "200").then_some(())?;
-                Some(
-                    list["data"]
-                        .as_array()?
-                        .iter()
-                        .filter_map(|m| m["id"].as_str().map(str::to_string))
-                        .collect(),
-                )
+                let (status, list) = self.request("GET", "/models", None, LIST_TIMEOUT)?;
+                if status != "200" {
+                    return Err(RuntimeError::Failed(format!("/models: HTTP {status}")));
+                }
+                let data = list["data"]
+                    .as_array()
+                    .ok_or_else(|| RuntimeError::Failed("/models: invalid model list".into()))?;
+                Ok(data
+                    .iter()
+                    .filter_map(|m| m["id"].as_str().map(str::to_string))
+                    .collect())
             })
-            .clone()
+            .as_ref()
+            .ok()
+            .cloned()
+    }
+
+    fn model_list_error(&self) -> Option<&RuntimeError> {
+        self.models.get()?.as_ref().err()
     }
 
     /// The provider serves it.
@@ -218,5 +233,32 @@ impl OpenAiCompatible {
             )));
         }
         Ok(data.into_iter().map(|(_, v)| v).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::LocalRuntime;
+
+    #[test]
+    fn model_availability_reports_a_credential_removed_after_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("key");
+        std::fs::write(&key, "fake-token").unwrap();
+        let config = GenerationConfig {
+            provider: "remote".into(),
+            base_url: "https://example.com/v1".into(),
+            api_key_file: key.clone(),
+        };
+        let runtime = LocalRuntime::remote_generation(&config).unwrap();
+        std::fs::remove_file(key).unwrap();
+
+        let error = crate::model_step::runnable(&runtime, "card_model", "chat").unwrap_err();
+        assert!(error.starts_with("remote:"), "{error}");
+        assert!(
+            error.contains("cannot read the generation API key file"),
+            "{error}"
+        );
     }
 }

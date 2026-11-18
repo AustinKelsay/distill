@@ -41,7 +41,10 @@ pub(crate) fn runnable(
 ) -> std::result::Result<(), String> {
     match runtime.state() {
         RuntimeState::NotInstalled => Err("no local runtime is installed".into()),
-        RuntimeState::NotRunning => Err("the local runtime is not running".into()),
+        RuntimeState::NotRunning => Err(runtime.model_list_error().map_or_else(
+            || "the local runtime is not running".into(),
+            |error| format!("{}: {error}", runtime.provider()),
+        )),
         RuntimeState::Running(_) if !runtime.stored_here(model) => Err(format!(
             "{setting} \"{model}\" is not stored on this machine"
         )),
@@ -90,7 +93,12 @@ pub(crate) fn served_text(read: Result<Read>) -> std::result::Result<String, Fai
 /// A failed call to the model. When the runtime is gone, the run stops.
 pub(crate) fn model_failed(e: RuntimeError) -> Failed {
     Failed {
-        stop: matches!(e, RuntimeError::NotRunning | RuntimeError::NotStoredHere(_)),
+        stop: matches!(
+            e,
+            RuntimeError::NotRunning
+                | RuntimeError::NotStoredHere(_)
+                | RuntimeError::ProviderUnavailable(_)
+        ),
         ..Failed::new(format!("the model failed: {e}"))
     }
 }
