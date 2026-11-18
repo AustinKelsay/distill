@@ -1364,7 +1364,27 @@ fn r8_code_is_tested_by_its_ending_not_its_middle() {
         // A human password ends with `!` or `?` as often as not.
         s(&["Passw0", "rd2024!"]),
         s(&["Wh0Kn0w", "s4ure?"]),
+        // Prose writes a password as a code span, then closes its own punctuation.
+        s(&["`blue", "berry9`)"]),
+        s(&["`blue", "berry9`,"]),
+        s(&["`blue", "berry9`:"]),
     ]);
+    // Code inside a code span is still code, and a span too short to be a secret is refused.
+    all_refused(&[
+        s(&["`self.", "api_key`)"]),
+        s(&["`mykey", "123;`"]),
+        s(&["`ab`", ")cdefgh"]),
+    ]);
+}
+
+#[test]
+fn a_password_written_as_a_code_span_in_prose_is_found() {
+    let word = s(&["blue", "berry9"]);
+    let text = format!("log in at the site (password: `{word}`) and then go on");
+    let hits = found(&text);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].0, Kind::AssignedSecret);
+    assert!(hits[0].1.contains(&word));
 }
 
 #[test]

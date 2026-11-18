@@ -185,6 +185,11 @@ fn close_of_brace(v: &str) -> Option<usize> {
 /// (base64 has `/` and `=`, passwords hold parentheses, test-mode vendor keys are keys). `number`
 /// is set for a JSON number, which the digit rules (R15 and R13's run of a digit) leave alone.
 fn refused_shape(value: &str, number: bool) -> bool {
+    let value = match code_span(value) {
+        Some(inner) if inner.chars().nth(MIN_SECRET_CHARS - 1).is_none() => return true,
+        Some(inner) => inner,
+        None => value,
+    };
     let t = unquoted(value);
     let s = unquoted_start(value);
     let lower = s.to_ascii_lowercase();
@@ -203,6 +208,17 @@ fn refused_shape(value: &str, number: bool) -> bool {
         || is_path(t)
         || (!number && is_number(t))
         || is_fixture_key(t)
+}
+
+/// The inside of a value written as a markdown code span, as prose writes a password
+/// (``(password: `abc`)``): the punctuation after the span closes the prose, so the rules judge
+/// the span alone. Only on one line, and never for a shell's `` `cmd args` ``, which has a space
+/// and so ends the bare value before its closing backtick.
+fn code_span(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix('`')?;
+    rest.find(['`', '\n'])
+        .filter(|&i| rest[i..].starts_with('`'))
+        .map(|i| &rest[..i])
 }
 
 /// R1: `$NAME`, `${NAME}` or `${NAME:-default}`, the whole value. An unbraced name is all
