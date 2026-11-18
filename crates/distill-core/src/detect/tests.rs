@@ -1347,8 +1347,6 @@ fn r8_code_is_tested_by_its_ending_not_its_middle() {
         "mykey123(".into(),
         "mykey123]".into(),
         "mykey123:".into(),
-        "mykey123!".into(),
-        "mykey123?".into(),
         "&mykey123".into(),
         s(&["self.", "api_key"]),
         s(&["config", ".db.", "password"]),
@@ -1363,6 +1361,9 @@ fn r8_code_is_tested_by_its_ending_not_its_middle() {
         s(&["Xk9fQ2mL7p", ".aB3cD4eF5g"]),
         s(&["Ab3dE6gH9k", ".Lm4nO7pQ2r", ".St5uV8wX1y"]),
         s(&["Xk9&", "fQ2mL7pZ"]),
+        // A human password ends with `!` or `?` as often as not.
+        s(&["Passw0", "rd2024!"]),
+        s(&["Wh0Kn0w", "s4ure?"]),
     ]);
 }
 
@@ -1566,10 +1567,17 @@ fn c2_to_c4_pass_suffix_keys_pagination_keys_and_shell_commands() {
     assert!(field_found(&json!({ "page_token_secret": v })));
     // C4: a shell command.
     assert!(!field_found(
-        &json!({ "password": s(&["!pass-show", "-key-9"]) })
+        &json!({ "password": s(&["!cat ", "~/.config/app/key"]) })
     ));
     assert!(field_found(
         &json!({ "password": s(&["Xk9fQ2!", "mL7pZaB3"]) })
+    ));
+    // A password that starts with `!` is kept.
+    assert!(field_found(
+        &json!({ "password": s(&["!Qaz2", "wsx9Plm"]) })
+    ));
+    assert!(field_found(
+        &json!({ "password": s(&["!pass-show", "-key-9"]) })
     ));
 }
 

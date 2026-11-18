@@ -87,7 +87,16 @@ pub(super) fn can_be_bare_secret(name: &str, value: &str, json_key: bool) -> boo
 /// [`can_be_secret`] for a value under a JSON credential key, which also refuses prose and a
 /// shell command (C1 and C4, issue #120).
 pub(super) fn can_be_field_secret(name: &str, value: &str) -> bool {
-    can_be_secret(name, value) && !is_prose(value) && !value.starts_with('!')
+    can_be_secret(name, value) && !is_prose(value) && !is_bang_command(value)
+}
+
+/// C4: an editor's `!command args`, which reads the value from elsewhere: `!`, a lowercase
+/// command word, then a space. Not any leading `!`, which human passwords have.
+fn is_bang_command(value: &str) -> bool {
+    value.strip_prefix('!').is_some_and(|rest| {
+        let word = rest.split(' ').next().unwrap_or("");
+        rest.len() > word.len() && !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase())
+    })
 }
 
 fn gate(name: &str, value: &str, number: bool) -> bool {
@@ -283,7 +292,8 @@ fn is_regex_text(t: &str) -> bool {
 /// in the middle.
 fn is_code_shape(t: &str) -> bool {
     static DOTTED: OnceLock<Regex> = OnceLock::new();
-    t.ends_with([';', ',', ')', '(', ']', ':', '!', '?'])
+    // Not `!` or `?`: human passwords end with them.
+    t.ends_with([';', ',', ')', '(', ']', ':'])
         || t.starts_with('&')
         || t.contains("::")
         || t.contains("=>")
