@@ -678,25 +678,30 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
 
 /// Store the marker, fence width and list-item content indentation.
 fn update_export_fence(line: &str, fence: &mut Option<(char, usize, usize)>) {
-    static LIST_PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"^ {0,3}(?:[-*+]|[0-9]{1,9}[.)]) {1,4}").unwrap()
-    });
-    let indent = match *fence {
-        Some((_, _, indent)) => indent,
-        None => LIST_PREFIX.find(line).map_or(0, |prefix| prefix.end()),
-    };
-    let Some(content) = line.get(indent..) else {
+    static LIST_MARKER: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^(?:[-*+]|[0-9]{1,9}[.)])").unwrap());
+    let (column, mut code) = after_indent(line, 0);
+    let mut indent = 0;
+    if let Some((_, _, container)) = *fence {
+        if !(container..=container + 3).contains(&column) {
+            return;
+        }
+    } else if column > 3 {
         return;
-    };
-    if fence.is_some() && !line.as_bytes()[..indent].iter().all(|b| *b == b' ') {
-        return;
+    } else if let Some(marker) = LIST_MARKER.find(code) {
+        let end = column + marker.end();
+        let (body, rest) = after_indent(&code[marker.end()..], end);
+        if !(1..=4).contains(&(body - end)) {
+            return;
+        }
+        indent = body;
+        code = rest;
     }
-    let code = content.trim_start_matches(' ');
     let Some(marker @ ('`' | '~')) = code.chars().next() else {
         return;
     };
     let width = code.chars().take_while(|c| *c == marker).count();
-    if width < 3 || content.len() - code.len() > 3 {
+    if width < 3 {
         return;
     }
     let info = &code[width..];
@@ -705,6 +710,19 @@ fn update_export_fence(line: &str, fence: &mut Option<(char, usize, usize)>) {
         Some((m, n, _)) if m == marker && width >= n && info.trim().is_empty() => *fence = None,
         _ => {}
     }
+}
+
+/// Markdown advances a tab to the next four-column stop. Slice only the
+/// structural prefix so archived message text retains its original whitespace.
+fn after_indent(text: &str, mut column: usize) -> (usize, &str) {
+    for (i, byte) in text.bytes().enumerate() {
+        match byte {
+            b' ' => column += 1,
+            b'\t' => column += 4 - column % 4,
+            _ => return (column, &text[i..]),
+        }
+    }
+    (column, "")
 }
 
 #[test]
@@ -728,13 +746,26 @@ fn compact_separators_and_incomplete_code_in_exports() {
 
 #[test]
 fn list_item_code_fences_keep_the_following_turn_searchable() {
-    for marker in ["-", "*", "+", "1.", "12)"] {
-        let indent = " ".repeat(marker.len() + 1);
+    for (marker, indent) in [
+        ("-", "  "),
+        ("*", "  "),
+        ("+", "  "),
+        ("1.", "   "),
+        ("12)", "    "),
+        ("-", "\t"),
+    ] {
         let text = format!(
             "# Example\n_Exported on Monday at noon from Cursor (1)_\n\n---\n\n**Cursor**\n\n{marker} ```rs\n{indent}example\n{indent}```\n\n---\n\n**User**\n\nThanks"
         );
         let parsed = parse_export(text.as_bytes()).unwrap();
         assert_eq!(parsed.events.len(), 2);
+        assert!(
+            parsed.events[0]
+                .text
+                .as_ref()
+                .unwrap()
+                .ends_with(&format!("{indent}```"))
+        );
         assert_eq!(parsed.events[1].kind, EventKind::User);
         assert_eq!(parsed.events[1].text.as_deref(), Some("Thanks"));
     }
