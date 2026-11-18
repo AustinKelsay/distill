@@ -81,7 +81,15 @@ pub(super) fn assignments(text: &str) -> Vec<Range<usize>> {
             && e <= text.len()
             && text.is_char_boundary(s)
             && text.is_char_boundary(e)
-            && super::weak::can_be_bare_secret(name.as_str(), &text[s..e], ctx.json_key)
+            // The gate reads the value again, also when it came from the memo (a YAML block or
+            // an unclosed quote shared by many candidates), so that read counts too.
+            && { memo.work += e - s; true }
+            // Only an unquoted value after a quoted JSON key can be a JSON number.
+            && super::weak::can_be_bare_secret(
+                name.as_str(),
+                &text[s..e],
+                ctx.json_key && quote.is_none(),
+            )
             && !placeholders.iter().any(|p| p.start <= s && e <= p.end)
         {
             ranges.push((s, e));

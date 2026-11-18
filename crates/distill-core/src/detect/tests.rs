@@ -1275,7 +1275,10 @@ fn r4_distills_own_text_is_not_a_secret_on_either_path() {
         s(&["[secret:", "anthropic_key#a1b2c3d4]"]),
         "assigned_secret".to_string(),
         "credential_field".to_string(),
+        s(&["[synthetic", "-value]"]),
     ]);
+    // `synthetic` inside a word is a password's, not Distill's.
+    all_found(&[s(&["mySynth", "eticHorse42!"]), s(&["Xk9synth", "etic7pZ"])]);
     // The placeholder as the whole value under a credential key, a space inside: the JSON path
     // had no placeholder exclusion before.
     let ph = placeholder(Kind::AnthropicKey, "a1b2c3d4");
@@ -1507,6 +1510,13 @@ fn r15_a_number_is_not_a_secret_in_text_or_a_string_but_json_numbers_stay() {
         assert!(!found(cut(text)).is_empty(), "cut {text}");
         assert!(!places(&v).is_empty(), "{text} as a value");
     }
+    // A string of digits is refused on every path, also cut short, where the quoted key alone
+    // must not make it a JSON number.
+    let text = r#"{"password":"12345678"}"#;
+    let v: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(found(text), []);
+    assert_eq!(found(cut(text)), [], "cut {text}");
+    assert!(places(&v).is_empty());
 }
 
 #[test]

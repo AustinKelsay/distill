@@ -266,10 +266,13 @@ fn is_env_read(lower: &str) -> bool {
     .any(|p| lower.starts_with(p))
 }
 
-/// R4: Distill's own text: a placeholder, a synthetic test value, a finding kind's name.
+/// R4: Distill's own text: a placeholder, a synthetic test value (`synthetic` as a whole part,
+/// `[synthetic-value]`, `SYNTHETIC_KEY`; not inside a word, as in a password like
+/// `mySyntheticHorse42`), a finding kind's name.
 fn is_distill_text(t: &str) -> bool {
     t.starts_with("[secret:")
-        || t.to_ascii_lowercase().contains("synthetic")
+        || t.split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|part| part.eq_ignore_ascii_case("synthetic"))
         || Kind::ALL.iter().any(|k| k.name() == t)
 }
 
