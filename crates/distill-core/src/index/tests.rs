@@ -335,3 +335,124 @@ fn words_are_letters_digits_and_underscores_and_a_part_finds_the_whole() {
     let long = "x".repeat(MAX_WORD + 1);
     assert!(query_words(&long).is_empty());
 }
+
+/// Sessions of mixed sizes: shared words, `_` words, repeats, and some that are long.
+fn mixed() -> Vec<S> {
+    (0..14)
+        .map(|i| {
+            let mut x = s(
+                &format!("m{i:02}"),
+                &format!("2026-11-{:02}T09:00:00Z", i + 1),
+                &format!("fix the parse_step_{} widget, then gadget {i}", i % 3),
+            );
+            x.result = (0..(i * i * 40))
+                .map(|n| format!("id{:x} widget_{} ünï ", n * 7 + i, n % 5))
+                .collect();
+            x
+        })
+        .collect()
+}
+
+type Matches = Vec<(String, Vec<(String, f64, Vec<u64>)>)>;
+
+/// Every query's matches in an index: the sessions, their scores and their events.
+fn lookups(home: &Home) -> Matches {
+    [
+        "widget",
+        "gadget",
+        "parse",
+        "step_1",
+        "ünï",
+        "id1f",
+        "widget_3 gadget",
+        "m",
+    ]
+    .iter()
+    .map(|q| {
+        let mut got: Vec<_> = lookup(home, &query_words(q))
+            .unwrap()
+            .matches
+            .into_iter()
+            .map(|w| (w.key, w.score, w.events))
+            .collect();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        (q.to_string(), got)
+    })
+    .collect()
+}
+
+#[test]
+fn a_batch_is_written_once_it_passes_its_byte_budget_not_only_its_session_count() {
+    let (_d, home) = home_with(&mixed());
+    let facts = normalize::read_session_list(&home).unwrap();
+    crate::util::create_dir_private(&home.words_dir()).unwrap();
+    let mut batch = Batch::default();
+    let mut m = Manifest::default();
+    assert!(!batch.is_full(1));
+    let (mut rounds, mut by_bytes) = (0, 0);
+    read::for_index(&home, &facts, |f, served| {
+        let (events, findings, card) = served.unwrap();
+        let before = batch.bytes;
+        batch.add(
+            f,
+            &events,
+            card.as_ref(),
+            MadeFrom::of(f, findings, card.as_ref()),
+        );
+        assert!(batch.bytes > before, "a session with words adds bytes");
+        if batch.is_full(20_000) {
+            // Written for its bytes, with fewer sessions than a batch holds at most.
+            by_bytes += usize::from(batch.sessions.len() < BATCH);
+            batch.flush(&home, &mut m)?;
+            assert_eq!((batch.bytes, batch.sessions.len()), (0, 0));
+            rounds += 1;
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(rounds >= 2 && by_bytes >= 1, "{rounds} {by_bytes}");
+}
+
+#[test]
+fn a_build_split_by_bytes_or_in_passes_gives_the_same_matches_as_one_batch() {
+    let sessions = mixed();
+    let (_a, one) = home_with(&sessions);
+    let (_b, by_bytes) = home_with(&sessions);
+    let (_c, passes) = home_with(&sessions);
+    let roomy = Limits {
+        budget: usize::MAX,
+        giant: usize::MAX,
+        pass: u64::MAX,
+    };
+    build_within(&one, roomy).unwrap();
+    build_within(&by_bytes, Limits { budget: 1, ..roomy }).unwrap();
+    // Every session is a giant here, in passes of a few hundred words.
+    build_within(
+        &passes,
+        Limits {
+            giant: 0,
+            pass: 300,
+            ..roomy
+        },
+    )
+    .unwrap();
+    let want = lookups(&one);
+    assert!(want.iter().any(|(_, m)| m.len() > 3), "{want:?}");
+    assert_eq!(lookups(&by_bytes), want);
+    assert_eq!(lookups(&passes), want);
+    let counts = |h: &Home| -> Vec<(String, u64)> {
+        load(h)
+            .entries
+            .into_iter()
+            .map(|(k, e)| (k, e.words))
+            .collect()
+    };
+    assert_eq!(counts(&by_bytes), counts(&one));
+    assert_eq!(counts(&passes), counts(&one));
+    // The owner's search ranks them the same too.
+    for q in ["widget", "gadget 3", "parse_step_1"] {
+        let w = found(&one, q, &Filter::default());
+        assert_eq!(found(&by_bytes, q, &Filter::default()), w, "{q}");
+        assert_eq!(found(&passes, q, &Filter::default()), w, "{q}");
+    }
+}
