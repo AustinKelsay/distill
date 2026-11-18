@@ -37,8 +37,9 @@ use crate::util::count;
 
 /// The version of the model detection pass: its [`PROMPT`], how its answers are read and how
 /// they are placed. Bump it whenever any of them changes; every session's model findings are
-/// then out of date and found again.
-pub const MODEL_DETECTOR_VERSION: u32 = 1;
+/// then out of date and found again. 2: account handles, repository names and made-up test names
+/// are not details; companies the owner uses for a service are.
+pub const MODEL_DETECTOR_VERSION: u32 = 2;
 
 /// The kinds the model finds.
 pub const MODEL_KINDS: [Kind; 4] = [
@@ -54,10 +55,12 @@ that its owner knows where they are. Find:
 - \"person_name\": the name of a real person, such as a client, a colleague or a friend.
 - \"postal_address\": a street or postal address.
 - \"phone_number\": a phone number.
-- \"organization\": the name of a client, a company or another organization.
+- \"organization\": the name of a client, a company or another organization, including \
+companies the owner uses for a service, such as a host, a bank, a registrar or an email provider.
 
 Do not list names of software, programming languages, file names, the agent itself or its \
-maker. Text such as [secret: <kind> #<fingerprint>] stands for a secret that was removed; never \
+maker. Do not list account handles or usernames (such as the owner in \"owner/repo\" or an \
+@handle), repository or project names, or names that are plainly made up for test data. Text such as [secret: <kind> #<fingerprint>] stands for a secret that was removed; never \
 list it or guess what it was.
 
 Reply with exactly one JSON object and nothing else, no prose and no code fence: \
