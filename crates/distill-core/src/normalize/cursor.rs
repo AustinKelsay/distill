@@ -671,7 +671,9 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
             let width = code.chars().take_while(|c| *c == marker).count();
             if width >= 3 && line.len() - code.len() <= 3 {
                 match fence {
-                    None => fence = Some((marker, width)),
+                    None if marker != '`' || !code[width..].contains('`') => {
+                        fence = Some((marker, width))
+                    }
                     Some((m, n))
                         if m == marker && width >= n && code[width..].trim().is_empty() =>
                     {
@@ -704,5 +706,7 @@ fn parses_an_export_without_splitting_speaker_examples_inside_code() {
 fn compact_separators_and_incomplete_code_in_exports() {
     let export = "# Example\n_Exported on Monday at noon from Cursor (1)_\n\n---\n**User**\n\nOne\n\n---\n**Cursor**\n\nTwo";
     assert_eq!(parse_export(export.as_bytes()).unwrap().events.len(), 2);
+    let inline = parse_export(format!("{export}\n ```foo```").as_bytes()).unwrap();
+    assert_eq!(inline.events[1].text.as_deref(), Some("Two\n ```foo```"));
     assert!(parse_export(format!("{export}\n```rs\n---\n**User**\n\nThree").as_bytes()).is_err());
 }
