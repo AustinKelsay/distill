@@ -620,7 +620,7 @@ mod tests {
 fn parse_export(bytes: &[u8]) -> Result<Parsed> {
     let text = std::str::from_utf8(bytes)?.replace("\r\n", "\n");
     let (header, turns) = text
-        .split_once("\n\n---\n\n")
+        .split_once("\n\n---\n")
         .context("missing Cursor export header")?;
     let (title, byline) = header
         .rsplit_once('\n')
@@ -632,7 +632,7 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
             && byline.ends_with(")_"),
         "invalid Cursor export header"
     );
-    let mut lines = turns.lines().peekable();
+    let mut lines = turns.trim_start_matches('\n').lines().peekable();
     let mut out = Parsed::default();
     let mut role = None;
     let mut body = Vec::new();
@@ -642,10 +642,9 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
             let mut rest = lines.clone();
             let label = if role.is_none() {
                 Some(line)
-            } else if rest.next() == Some("") {
-                rest.next()
             } else {
-                None
+                rest.next_if_eq(&"");
+                rest.next()
             };
             let next = match label {
                 Some("**User**") => Some(EventKind::User),
@@ -684,6 +683,7 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
         }
         body.push(line);
     }
+    anyhow::ensure!(fence.is_none(), "unclosed code fence in Cursor export");
     if let Some(last) = role {
         out.push(Event::text(last, body.join("\n").trim_end_matches('\n')));
     }
@@ -698,4 +698,11 @@ fn parses_an_export_without_splitting_speaker_examples_inside_code() {
     assert_eq!(parsed.events[1].kind, EventKind::Assistant);
     assert!(parsed.events[1].text.as_ref().unwrap().contains("**User**"));
     assert!(parse_export(b"# Ordinary markdown").is_err());
+}
+
+#[test]
+fn compact_separators_and_incomplete_code_in_exports() {
+    let export = "# Example\n_Exported on Monday at noon from Cursor (1)_\n\n---\n**User**\n\nOne\n\n---\n**Cursor**\n\nTwo";
+    assert_eq!(parse_export(export.as_bytes()).unwrap().events.len(), 2);
+    assert!(parse_export(format!("{export}\n```rs\n---\n**User**\n\nThree").as_bytes()).is_err());
 }

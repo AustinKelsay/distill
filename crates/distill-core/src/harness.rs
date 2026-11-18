@@ -268,11 +268,9 @@ pub fn detect(kind: Harness, roots: &[PathBuf]) -> Detection {
             continue;
         }
         found = true;
-        for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
-            if entry.file_type().is_file() {
-                files += 1;
-                bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
-            }
+        for entry in harness_files(kind, root) {
+            files += 1;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
         }
     }
     Detection {
@@ -283,6 +281,18 @@ pub fn detect(kind: Harness, roots: &[PathBuf]) -> Detection {
         files,
         has_parser: kind.has_parser(),
     }
+}
+
+fn harness_files(kind: Harness, root: &Path) -> impl Iterator<Item = walkdir::DirEntry> {
+    let exports = kind == Harness::Cursor && root.ends_with(".cursor/chat-exports");
+    let walk = WalkDir::new(root).follow_root_links(!exports);
+    let walk = if exports { walk.max_depth(1) } else { walk };
+    walk.into_iter()
+        .filter_map(Result::ok)
+        .filter(move |entry| {
+            entry.file_type().is_file()
+                && (!exports || cursor_export(&entry.path().to_string_lossy()))
+        })
 }
 
 fn mtime_ns(meta: &fs::Metadata) -> i128 {
@@ -329,17 +339,8 @@ pub fn discover(kind: Harness, roots: &[PathBuf]) -> anyhow::Result<Vec<Candidat
                 out.extend(crate::normalize::hermes::list_sessions(root)?);
             }
             _ => {
-                let exports = kind == Harness::Cursor && root.ends_with(".cursor/chat-exports");
-                let walk = WalkDir::new(root).follow_root_links(!exports);
-                let walk = if exports { walk.max_depth(1) } else { walk };
-                for entry in walk.into_iter().filter_map(Result::ok) {
-                    if !entry.file_type().is_file() {
-                        continue;
-                    }
+                for entry in harness_files(kind, root) {
                     let path = entry.path();
-                    if exports && !cursor_export(&path.to_string_lossy()) {
-                        continue;
-                    }
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let Ok(meta) = entry.metadata() else { continue };
                     let (size, mtime_ns) = (meta.len(), mtime_ns(&meta));

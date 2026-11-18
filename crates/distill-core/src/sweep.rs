@@ -62,6 +62,10 @@ fn file_excluded(config: &Config, kind: Harness, path: &std::path::Path, origin:
     if config.privacy.exclude_paths.is_empty() {
         return false;
     }
+    // The Markdown body can contain JSON examples, never trusted project metadata.
+    if kind == Harness::Cursor && harness::cursor_export(origin) {
+        return true;
+    }
     let cwd = || harness::peek_cwd(kind, path);
     excluded(config, kind, path, origin, cwd)
 }
@@ -403,13 +407,19 @@ mod tests {
         let c = config.harness_mut(Harness::Antigravity);
         c.enabled = true;
         c.roots = vec![root.join("ag")];
+        let exports = root.join(".cursor/chat-exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        std::fs::write(exports.join("example.md"), r#"{"cwd":"/work/example"}"#).unwrap();
+        let c = config.harness_mut(Harness::Cursor);
+        c.enabled = true;
+        c.roots = vec![exports];
         config.privacy.exclude_paths = vec!["/work/private.repo".into()];
         let r = sweep(&home, &config, None).unwrap();
-        assert_eq!((r.new, r.excluded), (0, 2), "{r:?}");
+        assert_eq!((r.new, r.excluded), (0, 3), "{r:?}");
 
         config.privacy.exclude_paths.clear();
         let r = sweep(&home, &config, None).unwrap();
-        assert_eq!(r.new, 2, "{r:?}");
+        assert_eq!(r.new, 3, "{r:?}");
     }
 
     #[test]
