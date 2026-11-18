@@ -666,23 +666,7 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
             }
         }
         anyhow::ensure!(role.is_some(), "unknown speaker in Cursor export");
-        let code = line.trim_start_matches(' ');
-        if let Some(marker) = code.chars().next().filter(|m| *m == '`' || *m == '~') {
-            let width = code.chars().take_while(|c| *c == marker).count();
-            if width >= 3 && line.len() - code.len() <= 3 {
-                match fence {
-                    None if marker != '`' || !code[width..].contains('`') => {
-                        fence = Some((marker, width))
-                    }
-                    Some((m, n))
-                        if m == marker && width >= n && code[width..].trim().is_empty() =>
-                    {
-                        fence = None
-                    }
-                    _ => {}
-                }
-            }
-        }
+        update_export_fence(line, &mut fence);
         body.push(line);
     }
     anyhow::ensure!(fence.is_none(), "unclosed code fence in Cursor export");
@@ -690,6 +674,37 @@ fn parse_export(bytes: &[u8]) -> Result<Parsed> {
         out.push(Event::text(last, body.join("\n").trim_end_matches('\n')));
     }
     Ok(out)
+}
+
+/// Store the marker, fence width and list-item content indentation.
+fn update_export_fence(line: &str, fence: &mut Option<(char, usize, usize)>) {
+    static LIST_PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^ {0,3}(?:[-*+]|[0-9]{1,9}[.)]) {1,4}").unwrap()
+    });
+    let indent = match *fence {
+        Some((_, _, indent)) => indent,
+        None => LIST_PREFIX.find(line).map_or(0, |prefix| prefix.end()),
+    };
+    let Some(content) = line.get(indent..) else {
+        return;
+    };
+    if fence.is_some() && !line.as_bytes()[..indent].iter().all(|b| *b == b' ') {
+        return;
+    }
+    let code = content.trim_start_matches(' ');
+    let Some(marker @ ('`' | '~')) = code.chars().next() else {
+        return;
+    };
+    let width = code.chars().take_while(|c| *c == marker).count();
+    if width < 3 || content.len() - code.len() > 3 {
+        return;
+    }
+    let info = &code[width..];
+    match *fence {
+        None if marker != '`' || !info.contains('`') => *fence = Some((marker, width, indent)),
+        Some((m, n, _)) if m == marker && width >= n && info.trim().is_empty() => *fence = None,
+        _ => {}
+    }
 }
 
 #[test]
@@ -709,4 +724,18 @@ fn compact_separators_and_incomplete_code_in_exports() {
     let inline = parse_export(format!("{export}\n ```foo```").as_bytes()).unwrap();
     assert_eq!(inline.events[1].text.as_deref(), Some("Two\n ```foo```"));
     assert!(parse_export(format!("{export}\n```rs\n---\n**User**\n\nThree").as_bytes()).is_err());
+}
+
+#[test]
+fn list_item_code_fences_keep_the_following_turn_searchable() {
+    for marker in ["-", "*", "+", "1.", "12)"] {
+        let indent = " ".repeat(marker.len() + 1);
+        let text = format!(
+            "# Example\n_Exported on Monday at noon from Cursor (1)_\n\n---\n\n**Cursor**\n\n{marker} ```rs\n{indent}example\n{indent}```\n\n---\n\n**User**\n\nThanks"
+        );
+        let parsed = parse_export(text.as_bytes()).unwrap();
+        assert_eq!(parsed.events.len(), 2);
+        assert_eq!(parsed.events[1].kind, EventKind::User);
+        assert_eq!(parsed.events[1].text.as_deref(), Some("Thanks"));
+    }
 }
