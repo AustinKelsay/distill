@@ -129,7 +129,7 @@ fn catches_truncated_private_keys() {
 
 #[test]
 fn catches_credential_fields_and_quoted_json() {
-    let v = json!({"input": {"user": "me", "password": "synthetic-pass-1"}});
+    let v = json!({"input": {"user": "me", "password": "plaintext-pass-1"}});
     assert_eq!(
         detect_value(&v),
         [ValueHit {
@@ -138,16 +138,16 @@ fn catches_credential_fields_and_quoted_json() {
             hit: Hit {
                 kind: Kind::CredentialField,
                 range: 0..16,
-                value: "synthetic-pass-1".into(),
+                value: "plaintext-pass-1".into(),
             },
         }]
     );
-    let args = r#"{"password":"synthetic-pass-12345","token":"synthetic-token-12345","n":1}"#;
+    let args = r#"{"password":"plaintext-pass-12345","token":"plaintext-token-12345","n":1}"#;
     assert_eq!(
         found(args),
         hits(
             Kind::CredentialField,
-            &["synthetic-pass-12345", "synthetic-token-12345"]
+            &["plaintext-pass-12345", "plaintext-token-12345"]
         )
     );
 }
@@ -164,19 +164,19 @@ fn places(v: &Value) -> Vec<(Vec<usize>, bool, Kind, String)> {
 
 #[test]
 fn catches_prefixed_secret_names() {
-    let text = "TINFOIL_API_KEY=synthetic-value-0001 DB_PASSWORD: synthetic-value-0002 \
-                \"GH_TOKEN\": \"synthetic-value-0003\" SSH_PRIVATE_KEY=synthetic-value-0004 \
-                MAX_TOKENS=4096 csrf_token=short {\\\"LLM_API_KEY\\\": \\\"synthetic-value-0005\\\"}";
+    let text = "TINFOIL_API_KEY=plaintext-value-0001 DB_PASSWORD: plaintext-value-0002 \
+                \"GH_TOKEN\": \"plaintext-value-0003\" SSH_PRIVATE_KEY=plaintext-value-0004 \
+                MAX_TOKENS=4096 csrf_token=short {\\\"LLM_API_KEY\\\": \\\"plaintext-value-0005\\\"}";
     assert_eq!(
         found(text),
         hits(
             Kind::AssignedSecret,
             &[
-                "synthetic-value-0001",
-                "synthetic-value-0002",
-                "synthetic-value-0003",
-                "synthetic-value-0004",
-                "synthetic-value-0005",
+                "plaintext-value-0001",
+                "plaintext-value-0002",
+                "plaintext-value-0003",
+                "plaintext-value-0004",
+                "plaintext-value-0005",
             ]
         )
     );
@@ -187,10 +187,10 @@ fn catches_prefixed_secret_names() {
         [(Kind::TinfoilKey, key)]
     );
 
-    let v = json!({"TINFOIL_API_KEY": "synthetic", "max_tokens": 10});
+    let v = json!({"TINFOIL_API_KEY": "plaintext", "max_tokens": 10});
     assert_eq!(
         places(&v),
-        [(vec![0], false, Kind::CredentialField, "synthetic".into())]
+        [(vec![0], false, Kind::CredentialField, "plaintext".into())]
     );
 }
 
@@ -202,22 +202,22 @@ fn assignment_values_are_found_whole_in_json() {
     let cases: [(&str, Kind, &str, &str); 17] = [
         // Escapes inside a quoted value do not end it.
         (
-            r#"{"password":"abc\\synthetic-value-1234"}"#,
+            r#"{"password":"abc\\plaintext-value-1234"}"#,
             Kind::CredentialField,
-            r"abc\\synthetic-value-1234",
-            "synthetic",
+            r"abc\\plaintext-value-1234",
+            "plaintext",
         ),
         (
-            r#"{"password":"abcdefghij\\synthetic-tail"}"#,
+            r#"{"password":"abcdefghij\\plaintext-tail"}"#,
             Kind::CredentialField,
-            r"abcdefghij\\synthetic-tail",
-            "synthetic",
+            r"abcdefghij\\plaintext-tail",
+            "plaintext",
         ),
         (
-            r#"{"password":"ab\"c synthetic-value"}"#,
+            r#"{"password":"ab\"c plaintext-value"}"#,
             Kind::CredentialField,
-            r#"ab\"c synthetic-value"#,
-            "synthetic",
+            r#"ab\"c plaintext-value"#,
+            "plaintext",
         ),
         // A value ending in an escaped backslash still ends at its quote, at any depth.
         (
@@ -234,16 +234,16 @@ fn assignment_values_are_found_whole_in_json() {
         ),
         // A more deeply escaped quote is part of the value.
         (
-            r#"{"a":"{\"password\":\"abc\\\"synthetic\"}"}"#,
+            r#"{"a":"{\"password\":\"abc\\\"plaintext\"}"}"#,
             Kind::CredentialField,
-            r#"abc\\\"synthetic"#,
-            "synthetic",
+            r#"abc\\\"plaintext"#,
+            "plaintext",
         ),
         // A bare value that starts with an escape is found with it.
         (
-            r#"{"command":"password=\u0073ynthetic-value-1234 next"}"#,
+            r#"{"command":"password=\u0070laintext-value-1234 next"}"#,
             Kind::AssignedSecret,
-            r"\u0073ynthetic-value-1234",
+            r"\u0070laintext-value-1234",
             "ynthetic-value",
         ),
         // A bare JSON number under a quoted name.
@@ -255,10 +255,10 @@ fn assignment_values_are_found_whole_in_json() {
         ),
         // JSON inside a string, with escaped whitespace around the colon.
         (
-            r#"{"arguments":"{\"DB_PASSWORD\":\n\t \"synthetic-value-1234\", \"n\": \"x\\\\plain\"}"}"#,
+            r#"{"arguments":"{\"DB_PASSWORD\":\n\t \"plaintext-value-1234\", \"n\": \"x\\\\plain\"}"}"#,
             Kind::CredentialField,
-            "synthetic-value-1234",
-            "synthetic",
+            "plaintext-value-1234",
+            "plaintext",
         ),
         (
             r#"{"a":"{\"DB_PASSWORD\":12345678901}"}"#,
@@ -268,31 +268,31 @@ fn assignment_values_are_found_whole_in_json() {
         ),
         // Escaped whitespace two levels down.
         (
-            r#"{"a":"{\"b\":\"{\\\"DB_PASSWORD\\\":\\n\\t\\\"synthetic-value\\\"}\"}"}"#,
+            r#"{"a":"{\"b\":\"{\\\"DB_PASSWORD\\\":\\n\\t\\\"plaintext-value\\\"}\"}"}"#,
             Kind::CredentialField,
-            "synthetic-value",
-            "synthetic",
+            "plaintext-value",
+            "plaintext",
         ),
         // A value ending in a literal backslash.
         (
-            r#"{"password":"synthetic-value\\","ok":true}"#,
+            r#"{"password":"plaintext-value\\","ok":true}"#,
             Kind::CredentialField,
-            r"synthetic-value\\",
-            "synthetic",
+            r"plaintext-value\\",
+            "plaintext",
         ),
         // A quoted secret spanning lines, in a shell inside JSON.
         (
-            r#"{"command":"DB_PASSWORD=\"synthetic-first\nsynthetic-second\" x"}"#,
+            r#"{"command":"DB_PASSWORD=\"plaintext-first\nplaintext-second\" x"}"#,
             Kind::AssignedSecret,
-            r"synthetic-first\nsynthetic-second",
-            "synthetic",
+            r"plaintext-first\nplaintext-second",
+            "plaintext",
         ),
         // A single quote inside a nested JSON string stops at that string's closing quote.
         (
-            r#"{"a":"{\"cmd\":\"DB_PASSWORD='synthetic-value\",\"ok\":true}"}"#,
+            r#"{"a":"{\"cmd\":\"DB_PASSWORD='plaintext-value\",\"ok\":true}"}"#,
             Kind::AssignedSecret,
-            "synthetic-value",
-            "synthetic",
+            "plaintext-value",
+            "plaintext",
         ),
         // A number in an array under a secret name; one elsewhere is not a secret. (Cut short,
         // the text scanner leaves a JSON array alone.)
@@ -304,17 +304,17 @@ fn assignment_values_are_found_whole_in_json() {
         ),
         // Every occurrence of a duplicate key.
         (
-            r#"{"password":"synthetic-secret","password":null}"#,
+            r#"{"password":"plaintext-sesame","password":null}"#,
             Kind::CredentialField,
-            "synthetic-secret",
-            "synthetic",
+            "plaintext-sesame",
+            "plaintext",
         ),
         // Classified by the key as written.
         (
-            r#"{"tab0c0ffe-password":"synthetic-secret"}"#,
+            r#"{"tab0c0ffe-password":"plaintext-sesame"}"#,
             Kind::CredentialField,
-            "synthetic-secret",
-            "synthetic",
+            "plaintext-sesame",
+            "plaintext",
         ),
     ];
     for (text, kind, span, needle) in cases {
@@ -328,12 +328,12 @@ fn assignment_values_are_found_whole_in_json() {
     // The value is decoded, so the same secret has the same fingerprint wherever it was written.
     let text = r#"{"a":"{\"password\":\"abcdefgh\\\\\",\"n\":1}"}"#;
     assert_eq!(detect(text)[0].value, r"abcdefgh\");
-    let text = r#"{"command":"password=\u0073ynthetic-value-1234 next"}"#;
-    assert_eq!(detect(text)[0].value, "synthetic-value-1234");
+    let text = r#"{"command":"password=\u0070laintext-value-1234 next"}"#;
+    assert_eq!(detect(text)[0].value, "plaintext-value-1234");
 
-    let long = json!({"private_key": format!("{}synthetic-tail", "a".repeat(9000))}).to_string();
+    let long = json!({"private_key": format!("{}plaintext-tail", "a".repeat(9000))}).to_string();
     assert_eq!(found(&long).len(), 1);
-    assert!(covered(&long, "synthetic-tail") && covered(cut(&long), "synthetic-tail"));
+    assert!(covered(&long, "plaintext-tail") && covered(cut(&long), "plaintext-tail"));
 
     // Escapes right before a match.
     let key = tinfoil();
@@ -352,27 +352,27 @@ fn assignment_values_are_found_whole_in_text() {
     let key = tinfoil();
     let cases: Vec<(String, Vec<(Kind, String)>)> = vec![
         (
-            "export _DB_PASSWORD=synthetic-value-1".into(),
-            hits(Kind::AssignedSecret, &["synthetic-value-1"]),
+            "export _DB_PASSWORD=plaintext-value-1".into(),
+            hits(Kind::AssignedSecret, &["plaintext-value-1"]),
         ),
         (
-            "APP__DB_PASSWORD=synthetic-value-2 x".into(),
-            hits(Kind::AssignedSecret, &["synthetic-value-2"]),
+            "APP__DB_PASSWORD=plaintext-value-2 x".into(),
+            hits(Kind::AssignedSecret, &["plaintext-value-2"]),
         ),
         (
-            "DB_PASSWORD='abc synthetic-value-3' x".into(),
-            hits(Kind::AssignedSecret, &["abc synthetic-value-3"]),
+            "DB_PASSWORD='abc plaintext-value-3' x".into(),
+            hits(Kind::AssignedSecret, &["abc plaintext-value-3"]),
         ),
         (
-            "DB_PASSWORD: |\n  synthetic-value-4\n  more-synthetic\nnext: 1".into(),
+            "DB_PASSWORD: |\n  plaintext-value-4\n  more-plaintext\nnext: 1".into(),
             hits(
                 Kind::AssignedSecret,
-                &["synthetic-value-4\n  more-synthetic"],
+                &["plaintext-value-4\n  more-plaintext"],
             ),
         ),
         (
-            "--api-key=synthetic-value-5".into(),
-            hits(Kind::AssignedSecret, &["synthetic-value-5"]),
+            "--api-key=plaintext-value-5".into(),
+            hits(Kind::AssignedSecret, &["plaintext-value-5"]),
         ),
         // The old rule skipped a value an earlier rule had replaced. On the original text: an
         // assignment whose value is a key is that key's finding, not a second one.
@@ -382,97 +382,98 @@ fn assignment_values_are_found_whole_in_text() {
         ),
         // A value that only starts with another finding is the assignment's whole.
         (
-            format!("DB_PASSWORD='{key}synthetic-secret' x"),
-            vec![(Kind::AssignedSecret, format!("{key}synthetic-secret"))],
+            format!("DB_PASSWORD='{key}plaintext-sesame' x"),
+            vec![(Kind::AssignedSecret, format!("{key}plaintext-sesame"))],
         ),
         (
-            "DB_PASSWORD='alice@example.com synthetic-secret' x".into(),
+            "DB_PASSWORD='alice@example.com plaintext-sesame' x".into(),
             hits(
                 Kind::AssignedSecret,
-                &["alice@example.com synthetic-secret"],
+                &["alice@example.com plaintext-sesame"],
             ),
         ),
         (
-            "DB_PASSWORD='synthetic-first\nsynthetic-second' x".into(),
-            hits(Kind::AssignedSecret, &["synthetic-first\nsynthetic-second"]),
+            "DB_PASSWORD='plaintext-first\nplaintext-second' x".into(),
+            hits(Kind::AssignedSecret, &["plaintext-first\nplaintext-second"]),
         ),
         (
-            "DB_PASSWORD: | # note\n  synthetic-secret\nnext: 1".into(),
-            hits(Kind::AssignedSecret, &["synthetic-secret"]),
+            "DB_PASSWORD: | # note\n  plaintext-sesame\nnext: 1".into(),
+            hits(Kind::AssignedSecret, &["plaintext-sesame"]),
         ),
         (
-            "DB_PASSWORD: |\n  synthetic-first\n\n  synthetic-second\nnext: 1".into(),
+            "DB_PASSWORD: |\n  plaintext-first\n\n  plaintext-second\nnext: 1".into(),
             hits(
                 Kind::AssignedSecret,
-                &["synthetic-first\n\n  synthetic-second"],
+                &["plaintext-first\n\n  plaintext-second"],
             ),
         ),
         (
-            "DB_PASSWORD='abc\"synthetic-secret-tail' x".into(),
-            hits(Kind::AssignedSecret, &["abc\"synthetic-secret-tail"]),
+            "DB_PASSWORD='abc\"plaintext-sesame-tail' x".into(),
+            hits(Kind::AssignedSecret, &["abc\"plaintext-sesame-tail"]),
         ),
         (
-            "config:\n  password: |\n    synthetic-secret\n  user: alice".into(),
-            hits(Kind::AssignedSecret, &["synthetic-secret"]),
+            "config:\n  password: |\n    plaintext-sesame\n  user: alice".into(),
+            hits(Kind::AssignedSecret, &["plaintext-sesame"]),
         ),
         (
-            "DB_PASSWORD='abc\",synthetic-secret-tail' x".into(),
-            hits(Kind::AssignedSecret, &["abc\",synthetic-secret-tail"]),
+            "DB_PASSWORD='abc\",plaintext-sesame-tail' x".into(),
+            hits(Kind::AssignedSecret, &["abc\",plaintext-sesame-tail"]),
         ),
         ("password: |\nuser: alice".into(), vec![]),
         ("  password: |\n  user: alice".into(), vec![]),
         (
-            "password: |2\n    more-indented\n  synthetic-secret\nnext: 1".into(),
-            hits(Kind::AssignedSecret, &["more-indented\n  synthetic-secret"]),
+            "password: |2\n    more-indented\n  plaintext-sesame\nnext: 1".into(),
+            hits(Kind::AssignedSecret, &["more-indented\n  plaintext-sesame"]),
         ),
         (
-            "DB_PASSWORD='abc\\\",synthetic-secret-tail' x".into(),
-            hits(Kind::AssignedSecret, &["abc\\\",synthetic-secret-tail"]),
+            "DB_PASSWORD='abc\\\",plaintext-sesame-tail' x".into(),
+            hits(Kind::AssignedSecret, &["abc\\\",plaintext-sesame-tail"]),
         ),
         (
-            "- password: |\n    synthetic-secret\n  user: alice".into(),
-            hits(Kind::AssignedSecret, &["synthetic-secret"]),
+            "- password: |\n    plaintext-sesame\n  user: alice".into(),
+            hits(Kind::AssignedSecret, &["plaintext-sesame"]),
         ),
         (
-            "password = 'unclosed synthetic\nnext line".into(),
-            hits(Kind::AssignedSecret, &["unclosed synthetic"]),
+            "password = 'unclosed plaintext\nnext line".into(),
+            hits(Kind::AssignedSecret, &["unclosed plaintext"]),
         ),
-        // Brackets and braces are part of a bare value outside JSON.
+        // Brackets and braces are part of a bare value outside JSON. A value that ends in `]`
+        // is code since #120 (R8), so this one opens with a bracket and ends elsewhere.
         (
-            "DB_PASSWORD=[synthetic-value] x".into(),
-            hits(Kind::AssignedSecret, &["[synthetic-value]"]),
-        ),
-        (
-            "DB_PASSWORD=synthetic[value] x".into(),
-            hits(Kind::AssignedSecret, &["synthetic[value]"]),
+            "DB_PASSWORD=[plaintext-value}x x".into(),
+            hits(Kind::AssignedSecret, &["[plaintext-value}x"]),
         ),
         (
-            format!("DB_PASSWORD={key}-synthetic-tail x"),
-            vec![(Kind::AssignedSecret, format!("{key}-synthetic-tail"))],
+            "DB_PASSWORD=plaintext[value]z x".into(),
+            hits(Kind::AssignedSecret, &["plaintext[value]z"]),
         ),
         (
-            "DB_PASSWORD=abc}synthetic-secret-tail x".into(),
-            hits(Kind::AssignedSecret, &["abc}synthetic-secret-tail"]),
+            format!("DB_PASSWORD={key}-plaintext-tail x"),
+            vec![(Kind::AssignedSecret, format!("{key}-plaintext-tail"))],
+        ),
+        (
+            "DB_PASSWORD=abc}plaintext-sesame-tail x".into(),
+            hits(Kind::AssignedSecret, &["abc}plaintext-sesame-tail"]),
         ),
         // Quotes inside one shell word keep the value together; a quote that ends a quoted
         // phrase in prose stays out.
         (
-            "DB_PASSWORD=abc\"synthetic-secret-tail\" x".into(),
-            hits(Kind::AssignedSecret, &["abc\"synthetic-secret-tail\""]),
+            "DB_PASSWORD=abc\"plaintext-sesame-tail\" x".into(),
+            hits(Kind::AssignedSecret, &["abc\"plaintext-sesame-tail\""]),
         ),
         (
-            "DB_PASSWORD=\"abc\"synthetic-secret-tail x".into(),
-            hits(Kind::AssignedSecret, &["\"abc\"synthetic-secret-tail"]),
+            "DB_PASSWORD=\"abc\"plaintext-sesame-tail x".into(),
+            hits(Kind::AssignedSecret, &["\"abc\"plaintext-sesame-tail"]),
         ),
         (
-            "DB_PASSWORD='abc'\"synthetic-tail\" x".into(),
-            hits(Kind::AssignedSecret, &["'abc'\"synthetic-tail\""]),
+            "DB_PASSWORD='abc'\"plaintext-tail\" x".into(),
+            hits(Kind::AssignedSecret, &["'abc'\"plaintext-tail\""]),
         ),
         (
-            "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x".into(),
+            "DB_PASSWORD=abc\"def\\\" plaintext-sesame-tail\" x".into(),
             hits(
                 Kind::AssignedSecret,
-                &["abc\"def\\\" synthetic-secret-tail\""],
+                &["abc\"def\\\" plaintext-sesame-tail\""],
             ),
         ),
         (
@@ -485,49 +486,49 @@ fn assignment_values_are_found_whole_in_text() {
         ),
         // YAML doubled apostrophes; a backslash before them is a plain character.
         (
-            "DB_PASSWORD: 'abc''synthetic-secret' x".into(),
-            hits(Kind::AssignedSecret, &["abc''synthetic-secret"]),
+            "DB_PASSWORD: 'abc''plaintext-sesame' x".into(),
+            hits(Kind::AssignedSecret, &["abc''plaintext-sesame"]),
         ),
         (
-            r"password: 'synthetic-head''synthetic-tail' x".into(),
-            hits(Kind::AssignedSecret, &["synthetic-head''synthetic-tail"]),
+            r"password: 'plaintext-head''plaintext-tail' x".into(),
+            hits(Kind::AssignedSecret, &["plaintext-head''plaintext-tail"]),
         ),
         // After an escaped opening quote, doubled apostrophes go on; `\''` closes it, and the
         // next assignment is its own.
         (
-            r"password=\'synthetic-head''synthetic-tail\' x".into(),
-            hits(Kind::AssignedSecret, &["synthetic-head''synthetic-tail"]),
+            r"password=\'plaintext-head''plaintext-tail\' x".into(),
+            hits(Kind::AssignedSecret, &["plaintext-head''plaintext-tail"]),
         ),
         (
-            r"password=\'synthetic-first\'' token=\'synthetic-tail\' x".into(),
-            hits(Kind::AssignedSecret, &["synthetic-first", "synthetic-tail"]),
+            r"password=\'plaintext-first\'' token=\'plaintext-tail\' x".into(),
+            hits(Kind::AssignedSecret, &["plaintext-first", "plaintext-tail"]),
         ),
         // An assignment inside a quoted value hides neither value.
         (
-            "password='abc token=synthetic-secret' x".into(),
-            hits(Kind::AssignedSecret, &["abc token=synthetic-secret"]),
+            "password='abc token=plaintext-sesame' x".into(),
+            hits(Kind::AssignedSecret, &["abc token=plaintext-sesame"]),
         ),
         (
-            "password='token=x synthetic-secret' x".into(),
-            hits(Kind::AssignedSecret, &["token=x synthetic-secret"]),
+            "password='token=x plaintext-sesame' x".into(),
+            hits(Kind::AssignedSecret, &["token=x plaintext-sesame"]),
         ),
         (
-            "password=\"token=x synthetic-secret\" x".into(),
-            hits(Kind::AssignedSecret, &["token=x synthetic-secret"]),
+            "password=\"token=x plaintext-sesame\" x".into(),
+            hits(Kind::AssignedSecret, &["token=x plaintext-sesame"]),
         ),
         (
-            "password: | # token=x\n  synthetic-secret\nnext: 1".into(),
-            hits(Kind::AssignedSecret, &["synthetic-secret"]),
+            "password: | # token=x\n  plaintext-sesame\nnext: 1".into(),
+            hits(Kind::AssignedSecret, &["plaintext-sesame"]),
         ),
         // (The second `token=`'s value, `password:`, is id-shaped and short: not a token.)
         (
-            "token=token=\\npassword: synthetic-secret".into(),
-            hits(Kind::AssignedSecret, &["synthetic-secret"]),
+            "token=token=\\npassword: plaintext-sesame".into(),
+            hits(Kind::AssignedSecret, &["plaintext-sesame"]),
         ),
         // An escaped form feed ends a bare value, like `\n`, `\r` and `\t`.
         (
-            r"cut a\fpassword=synthetic-value\fuser=alice".into(),
-            hits(Kind::AssignedSecret, &["synthetic-value"]),
+            r"cut a\fpassword=plaintext-value\fuser=alice".into(),
+            hits(Kind::AssignedSecret, &["plaintext-value"]),
         ),
         // A placeholder from Distill's own output is not a secret.
         ("token = [secret: openai_key #0123abcd] x".into(), vec![]),
@@ -536,7 +537,7 @@ fn assignment_values_are_found_whole_in_text() {
     for (text, want) in cases {
         assert_eq!(found(&text), want, "{text:?}");
     }
-    let v = json!({"APP__DB_PASSWORD": "synthetic", "_token": "synthetic-x"});
+    let v = json!({"APP__DB_PASSWORD": "plaintext", "_token": "plaintext-x"});
     let p: Vec<_> = places(&v).into_iter().map(|p| p.0).collect();
     assert_eq!(p, [[0], [1]]);
 }
@@ -544,7 +545,7 @@ fn assignment_values_are_found_whole_in_text() {
 #[test]
 fn json_text_is_read_field_by_field_at_any_depth() {
     // A command three JSON levels deep.
-    let mut s = json!({"cmd": "DB_PASSWORD=synthetic-value", "ok": true}).to_string();
+    let mut s = json!({"cmd": "DB_PASSWORD=plaintext-value", "ok": true}).to_string();
     for _ in 0..2 {
         s = json!({ "a": s }).to_string();
     }
@@ -552,33 +553,33 @@ fn json_text_is_read_field_by_field_at_any_depth() {
     assert_eq!(h.len(), 1, "{h:?}");
     assert_eq!(
         (h[0].kind, h[0].value.as_str()),
-        (Kind::AssignedSecret, "synthetic-value")
+        (Kind::AssignedSecret, "plaintext-value")
     );
-    assert_eq!(&s[h[0].range.clone()], "synthetic-value");
+    assert_eq!(&s[h[0].range.clone()], "plaintext-value");
 
     // YAML and escaped newlines inside a JSON string are read decoded.
     let yaml =
-        r#"{"content":"DB_PASSWORD: | # note\n  synthetic-first\n\n  synthetic-second\nnext: 1"}"#;
+        r#"{"content":"DB_PASSWORD: | # note\n  plaintext-first\n\n  plaintext-second\nnext: 1"}"#;
     assert_eq!(
         found(yaml),
         hits(
             Kind::AssignedSecret,
-            &[r"synthetic-first\n\n  synthetic-second"]
+            &[r"plaintext-first\n\n  plaintext-second"]
         )
     );
     assert_eq!(
         detect(yaml)[0].value,
-        "synthetic-first\n\n  synthetic-second"
+        "plaintext-first\n\n  plaintext-second"
     );
-    let line = r#"{"cmd":"echo x\npassword=synthetic-value"}"#;
+    let line = r#"{"cmd":"echo x\npassword=plaintext-value"}"#;
     assert_eq!(
         found(line),
-        hits(Kind::AssignedSecret, &["synthetic-value"])
+        hits(Kind::AssignedSecret, &["plaintext-value"])
     );
     // A name right after an escaped newline, in text that is not valid JSON.
     assert_eq!(
-        found(r#"cut off: {"cmd":"echo x\npassword=synthetic-value"#),
-        hits(Kind::AssignedSecret, &["synthetic-value"])
+        found(r#"cut off: {"cmd":"echo x\npassword=plaintext-value"#),
+        hits(Kind::AssignedSecret, &["plaintext-value"])
     );
 
     // Odd escape counts, multibyte text included, must not panic on either path.
@@ -593,17 +594,17 @@ fn json_text_is_read_field_by_field_at_any_depth() {
 
     // Plain JSON holds nothing; pretty JSON is read like compact.
     assert_eq!(found("{ \"b\": 1,  \"a\": [1, 2] }"), []);
-    let pretty = "{\n  \"z\": 1,\n  \"token\": \"synthetic-value\"\n}";
+    let pretty = "{\n  \"z\": 1,\n  \"token\": \"plaintext-value\"\n}";
     assert_eq!(
         found(pretty),
-        hits(Kind::CredentialField, &["synthetic-value"])
+        hits(Kind::CredentialField, &["plaintext-value"])
     );
 }
 
 #[test]
 fn json_is_read_token_by_token() {
-    let nested = json!({"a": r#"{"password":"synthetic-secret","password":null}"#}).to_string();
-    assert!(covered(&nested, "synthetic"));
+    let nested = json!({"a": r#"{"password":"plaintext-sesame","password":null}"#}).to_string();
+    assert!(covered(&nested, "plaintext"));
     // Numbers: any one of eight characters or more under a credential key is found, whatever
     // its notation; others not.
     assert_eq!(
@@ -620,29 +621,29 @@ fn json_is_read_token_by_token() {
     );
     assert_eq!(
         found(
-            r#"{ "password": "synthetic-secret", "id": 18446744073709551617, "f": 1.0000000000000001 }"#
+            r#"{ "password": "plaintext-sesame", "id": 18446744073709551617, "f": 1.0000000000000001 }"#
         ),
-        hits(Kind::CredentialField, &["synthetic-secret"])
+        hits(Kind::CredentialField, &["plaintext-sesame"])
     );
     // A top-level JSON string is decoded too.
     assert_eq!(
-        found(r#""password='synthetic-secret""#),
-        hits(Kind::AssignedSecret, &["synthetic-secret"])
+        found(r#""password='plaintext-sesame""#),
+        hits(Kind::AssignedSecret, &["plaintext-sesame"])
     );
     assert_eq!(
-        found(r#""DB_PASSWORD: |\n  synthetic-secret""#),
-        hits(Kind::AssignedSecret, &["synthetic-secret"])
+        found(r#""DB_PASSWORD: |\n  plaintext-sesame""#),
+        hits(Kind::AssignedSecret, &["plaintext-sesame"])
     );
     // Nesting deeper than serde_json's recursion limit; the key is decoded before it is read.
     let deep = format!(
         "{}{}{}",
         "[".repeat(1000),
-        r#"{"p\u0061ssword":"synthetic-secret"}"#,
+        r#"{"p\u0061ssword":"plaintext-sesame"}"#,
         "]".repeat(1000)
     );
     assert_eq!(
         found(&deep),
-        hits(Kind::CredentialField, &["synthetic-secret"])
+        hits(Kind::CredentialField, &["plaintext-sesame"])
     );
     // Not JSON: left to the text scanner.
     for s in [r#"{"a":1,}"#, "[01]", r#"{"a":"\x"}"#, "nul"] {
@@ -650,8 +651,8 @@ fn json_is_read_token_by_token() {
     }
     // A lone surrogate elsewhere does not send the document to the text scanner.
     assert_eq!(
-        found(r#"{"\u0070assword":"synthetic-secret","x":"\ud800","t":"\/work"}"#),
-        hits(Kind::CredentialField, &["synthetic-secret"])
+        found(r#"{"\u0070assword":"plaintext-sesame","x":"\ud800","t":"\/work"}"#),
+        hits(Kind::CredentialField, &["plaintext-sesame"])
     );
     assert_eq!(
         found(r#"{"token":1.5e+210,"x":"\ud800"}"#),
@@ -660,25 +661,25 @@ fn json_is_read_token_by_token() {
     // Arrays under a credential key hold secrets too; objects are read as usual, so a tool
     // schema holds none.
     assert_eq!(
-        found(r#"{"password":["synthetic-secret",[12345678901]],"n":[1]}"#),
-        hits(Kind::CredentialField, &["synthetic-secret", "12345678901"])
+        found(r#"{"password":["plaintext-sesame",[12345678901]],"n":[1]}"#),
+        hits(Kind::CredentialField, &["plaintext-sesame", "12345678901"])
     );
     assert_eq!(
         found(r#"{"password":{"type":"string","description":"Account password"}}"#),
         []
     );
     assert!(covered(
-        r#"{"content":"DB_PASSWORD: 'abc''synthetic-secret'"}"#,
-        "synthetic"
+        r#"{"content":"DB_PASSWORD: 'abc''plaintext-sesame'"}"#,
+        "plaintext"
     ));
     assert_eq!(
-        found(r#"{"cmd":"DB_PASSWORD=abc},synthetic-secret-tail"}"#),
-        hits(Kind::AssignedSecret, &["abc},synthetic-secret-tail"])
+        found(r#"{"cmd":"DB_PASSWORD=abc},plaintext-sesame-tail"}"#),
+        hits(Kind::AssignedSecret, &["abc},plaintext-sesame-tail"])
     );
 
     // A JSON value is read by the key as written, and long numbers in any form are found.
-    let v = json!({"tab0c0ffe-password": "synthetic-secret", "token": 1.5e210, "n": 12,
-        "secret": ["synthetic-a"], "api_key": {"type": "string"}});
+    let v = json!({"tab0c0ffe-password": "plaintext-sesame", "token": 1.5e210, "n": 12,
+        "secret": ["plaintext-a"], "api_key": {"type": "string"}});
     assert_eq!(
         places(&v),
         [
@@ -686,13 +687,13 @@ fn json_is_read_token_by_token() {
                 vec![2, 0],
                 false,
                 Kind::CredentialField,
-                "synthetic-a".into()
+                "plaintext-a".into()
             ),
             (
                 vec![3],
                 false,
                 Kind::CredentialField,
-                "synthetic-secret".into()
+                "plaintext-sesame".into()
             ),
             (vec![4], false, Kind::CredentialField, "1.5e+210".into()),
         ]
@@ -702,7 +703,7 @@ fn json_is_read_token_by_token() {
 #[test]
 fn json_values_are_found_by_position_in_strings_and_keys() {
     let key = tinfoil();
-    let v = json!({"cmd": format!("run {key} now"), "a/b": [{"x~y": "password=synthetic-value"}],
+    let v = json!({"cmd": format!("run {key} now"), "a/b": [{"x~y": "password=plaintext-value"}],
         key.clone(): "ok"});
     let found = places(&v);
     assert_eq!(
@@ -712,7 +713,7 @@ fn json_values_are_found_by_position_in_strings_and_keys() {
                 vec![0, 0, 0],
                 false,
                 Kind::AssignedSecret,
-                "synthetic-value".into()
+                "plaintext-value".into()
             ),
             (vec![1], false, Kind::TinfoilKey, key.clone()),
             (vec![2], true, Kind::TinfoilKey, key.clone()),
@@ -725,7 +726,7 @@ fn json_values_are_found_by_position_in_strings_and_keys() {
     let k = hits.iter().find(|h| h.key).unwrap();
     assert_eq!(k.hit.range, 0..key.len());
     // A place is positions only: what is under a secret key is placed without naming the key.
-    let under = json!({ key.clone(): {"password": "synthetic-value"} });
+    let under = json!({ key.clone(): {"password": "plaintext-value"} });
     assert_eq!(
         places(&under),
         [
@@ -734,7 +735,7 @@ fn json_values_are_found_by_position_in_strings_and_keys() {
                 vec![0, 0],
                 false,
                 Kind::CredentialField,
-                "synthetic-value".into()
+                "plaintext-value".into()
             ),
         ]
     );
@@ -743,41 +744,41 @@ fn json_values_are_found_by_position_in_strings_and_keys() {
 #[test]
 fn text_that_looks_like_another_assignment_never_hides_a_secret() {
     for input in [
-        "token=x,password='synthetic-secret'",
-        "token=x,password=\"synthetic-secret\"",
-        r"password=\'a\\\''' token='synthetic-secret'",
-        "password=abc\"x token=synthetic-secret\" y",
-        "password=token=token=synthetic",
-        r#"DB_PASSWORD=abc"synthetic-secret\n" x"#,
-        "password=x\"a\\\"synthetic-secret",
-        "password=a\"token=x\"\",synthetic-secret\"",
-        "password='x token: |\n  a'\n  token=\nsynthetic-secret",
-        "DB_PASSWORD=abc\"def\\\" synthetic-secret-tail\" x",
-        "password==synthetic-token=x",
-        r"password=\nsynthetic-token=x",
-        "password: |\n  token='x\nsynthetic-secret'",
-        "password='x token: |\n  a'\n  token='x\nsynthetic-secret'",
+        "token=x,password='plaintext-sesame'",
+        "token=x,password=\"plaintext-sesame\"",
+        r"password=\'a\\\''' token='plaintext-sesame'",
+        "password=abc\"x token=plaintext-sesame\" y",
+        "password=token=token=plaintext",
+        r#"DB_PASSWORD=abc"plaintext-sesame\n" x"#,
+        "password=x\"a\\\"plaintext-sesame",
+        "password=a\"token=x\"\",plaintext-sesame\"",
+        "password='x token: |\n  a'\n  token=\nplaintext-sesame",
+        "DB_PASSWORD=abc\"def\\\" plaintext-sesame-tail\" x",
+        "password==plaintext-token=x",
+        r"password=\nplaintext-token=x",
+        "password: |\n  token='x\nplaintext-sesame'",
+        "password='x token: |\n  a'\n  token='x\nplaintext-sesame'",
         // A name in a YAML block's header comment is still read.
-        "x token=\n  |# token=synthetic-secret p\n  body-line\nnext",
+        "x token=\n  |# token=plaintext-sesame p\n  body-line\nnext",
         // A value that starts like a name is still the value.
-        "password=synthetic-token=x",
-        "password=synthetic_api_key=y z",
-        "password=\\'synthetic-head\nsynthetic-tail\\'' x",
+        "password=plaintext-token=x",
+        "password=plaintext_api_key=y z",
+        "password=\\'plaintext-head\nplaintext-tail\\'' x",
     ] {
-        assert!(covered(input, "synthetic"), "{input}");
+        assert!(covered(input, "plaintext"), "{input}");
         let json = json!({ "cmd": input }).to_string();
-        assert!(covered(&json, "synthetic"), "{json}");
+        assert!(covered(&json, "plaintext"), "{json}");
     }
     for input in [
-        r#"{"cmd":"password=synthetic-token=x"}"#,
-        r#"{"cmd":"password='token=x synthetic-secret'"}"#,
-        r#"{"cmd":"token=x,password='synthetic-secret'"}"#,
+        r#"{"cmd":"password=plaintext-token=x"}"#,
+        r#"{"cmd":"password='token=x plaintext-sesame'"}"#,
+        r#"{"cmd":"token=x,password='plaintext-sesame'"}"#,
     ] {
-        assert!(covered(input, "synthetic"), "{input}");
+        assert!(covered(input, "plaintext"), "{input}");
     }
     // In escaped text (`\"`, `\n`), a quoted piece of a value ends at the escaped line break: it
     // does not swallow the code after it.
-    let text = r#"let api_key = abcdefgh"read key\")?;\n    let other = keep-this-text;"#;
+    let text = r#"let api_key = abcdefgh"read key\"ok\n    let other = keep-this-text;"#;
     assert!(!detect(text).is_empty());
     assert!(!covered(text, "keep-this-text"), "{:?}", found(text));
     // A key right after any JSON whitespace-like escape, in text that is not JSON.
@@ -788,33 +789,33 @@ fn text_that_looks_like_another_assignment_never_hides_a_secret() {
     }
     // Credential names after those escapes too, and around the separator.
     for text in [
-        r#"cut {"x":"a\bpassword=synthetic-value b"#,
-        r#"cut {"x":"a\fpassword=synthetic-value b"#,
-        r"cut a\fpassword=\f synthetic-value",
+        r#"cut {"x":"a\bpassword=plaintext-value b"#,
+        r#"cut {"x":"a\fpassword=plaintext-value b"#,
+        r"cut a\fpassword=\f plaintext-value",
     ] {
-        assert!(covered(text, "synthetic"), "{text}");
+        assert!(covered(text, "plaintext"), "{text}");
     }
     assert!(!covered(
-        r"cut a\fpassword=synthetic-value\fuser=alice",
+        r"cut a\fpassword=plaintext-value\fuser=alice",
         "alice"
     ));
     // A long header comment.
     let long = format!(
-        "password: | #{}\n  synthetic-secret\nnext: 1",
+        "password: | #{}\n  plaintext-sesame\nnext: 1",
         "x".repeat(300)
     );
-    assert!(covered(&long, "synthetic"));
+    assert!(covered(&long, "plaintext"));
 }
 
 #[test]
 fn adversarial_text_is_found_whole_past_the_budget() {
     // Thousands of chained or nested candidates: past the scan budget the rest of the text is
     // one finding, so time stays linear and nothing is missed.
-    let chain = format!("{}synthetic-secret", "token=x,token\"=x,".repeat(20_000));
+    let chain = format!("{}plaintext-sesame", "token=x,token\"=x,".repeat(20_000));
     let mut nested: String = (0..800).map(|i| " ".repeat(i) + "token: |\n").collect();
-    nested += &(" ".repeat(800) + "synthetic-secret\n");
+    nested += &(" ".repeat(800) + "plaintext-sesame\n");
     for text in [chain, nested] {
-        assert!(covered(&text, "synthetic"));
+        assert!(covered(&text, "plaintext"));
     }
 }
 
@@ -826,8 +827,8 @@ fn leaves_ordinary_text_alone() {
 
 #[test]
 fn a_hit_never_prints_its_value() {
-    let h = &detect("password=synthetic-value")[0];
-    assert!(!format!("{h:?}").contains("synthetic"), "{h:?}");
+    let h = &detect("password=plaintext-value")[0];
+    assert!(!format!("{h:?}").contains("plaintext"), "{h:?}");
 }
 
 // Personal details (#77). The previous build's cases, with made-up addresses and tailnets.
@@ -1121,8 +1122,8 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
         format!("DB_PASSWORD={}{} x", "change", "me123"),
         format!("token={stand_in} x"),
         // A JSON fragment after a bare separator.
-        format!(r#"token: {{"a": "synthetic-{}"}}"#, "value"),
-        format!(r#"cmd \"token\":[\"synthetic-{}\"]"#, "value"),
+        format!(r#"token: {{"a": "plaintext-{}"}}"#, "value"),
+        format!(r#"cmd \"token\":[\"plaintext-{}\"]"#, "value"),
     ];
     for text in none {
         assert_eq!(found(&text), [], "{text}");
@@ -1166,13 +1167,432 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
     );
     assert_eq!(
         found(&format!(
-            r#"{{"element_token":"{id}","api_key":"synthetic-{}"}}"#,
+            r#"{{"element_token":"{id}","api_key":"plaintext-{}"}}"#,
             "key-1"
         )),
-        hits(Kind::CredentialField, &["synthetic-key-1"])
+        hits(Kind::CredentialField, &["plaintext-key-1"])
     );
     assert_eq!(
-        places(&json!({"element_token": id, "password": format!("synthetic-{}", "pw")})),
-        [(vec![1], false, Kind::CredentialField, "synthetic-pw".into())]
+        places(&json!({"element_token": id, "password": format!("plaintext-{}", "pw")})),
+        [(vec![1], false, Kind::CredentialField, "plaintext-pw".into())]
+    );
+}
+
+// Issue #120: value shapes under credential names that are code, references, Distill's own text
+// or stand-ins. Every value that looks like a secret is built from pieces at run time.
+
+/// Whether `value` under `name` is a finding of the assignment rule in text, of the JSON
+/// credential field read as JSON text, and of the same field in a parsed value. The shared rules
+/// make these agree, so a disagreement fails here.
+fn found_under(name: &str, value: &str) -> bool {
+    let text = found(&format!("{name}={value} x"))
+        .iter()
+        .any(|(k, v)| *k == Kind::AssignedSecret && v == value);
+    let obj = json!({ name: value });
+    let json_text = found(&obj.to_string())
+        .iter()
+        .any(|(k, v)| *k == Kind::CredentialField && v == value);
+    let parsed = places(&obj)
+        .iter()
+        .any(|(_, _, k, v)| *k == Kind::CredentialField && v == value);
+    assert_eq!(
+        text, json_text,
+        "{name}={value}: text and JSON text disagree"
+    );
+    assert_eq!(
+        json_text, parsed,
+        "{name}={value}: JSON text and value disagree"
+    );
+    text
+}
+
+fn all_refused(values: &[String]) {
+    for v in values {
+        for name in ["api_key", "DB_PASSWORD", "token"] {
+            assert!(!found_under(name, v), "{name}={v} should not be found");
+        }
+    }
+}
+
+fn all_found(values: &[String]) {
+    for v in values {
+        for name in ["api_key", "DB_PASSWORD", "token"] {
+            assert!(found_under(name, v), "{name}={v} should be found");
+        }
+    }
+}
+
+fn s(parts: &[&str]) -> String {
+    parts.concat()
+}
+
+#[test]
+fn r1_to_r3_references_to_a_secret_are_not_secrets() {
+    all_refused(&[
+        s(&["$", "DB_PASS_VALUE"]),
+        s(&["$", "db_pass_value"]),
+        s(&["${", "API_TOKEN_X}"]),
+        s(&["${", "API_TOKEN:-fallback}"]),
+        s(&["${", "API_TOKEN-fallback}"]),
+        // R2.
+        s(&["$(", "vault-read-key)x"]),
+        s(&["$(", "cat-the-file"]),
+        // R3.
+        s(&["process", ".env.", "API_TOKEN_X"]),
+        s(&["os.", "environ", "[X_API_TOKEN"]),
+        s(&["os.", "getenv(", "TOKEN_ENV)x"]),
+        s(&["getenv(", "MYKEY)||dflt1"]),
+        s(&["std::", "env::", "var(X)ab"]),
+        s(&["dotenv", "_values_get_x"]),
+    ]);
+    // Quoted in the text, the quotes come off first.
+    assert_eq!(found(&s(&["api_key=\"$", "DB_PASS_VALUE\" x"])), []);
+    // Real-shaped neighbours: a password that starts with `$` or holds `$(`, and a mixed-case
+    // name is not an environment variable's.
+    all_found(&[
+        s(&["$", "Xk9fQ2mL7pZaB3"]),
+        s(&["Xk9", "$(", "fQ2mL7pZ"]),
+        s(&["${", "A_B}Xk9fQ2mL7pZ"]),
+        s(&["getenv", "Xk9fQ2mL7p"]),
+        s(&["Xk9fQ2", "process.env.", "mL7p"]),
+    ]);
+    // A vendor key inside a refused value is still found, whichever way it is written.
+    let ant = ["sk-", "ant-", "api03-", &"Zz9".repeat(9)].concat();
+    let text = format!("api_key=getenv(X)||{ant} x");
+    assert_eq!(found(&text), [(Kind::AnthropicKey, ant.clone())]);
+    let obj = json!({ "api_key": format!("$(echo {ant})") });
+    assert_eq!(
+        places(&obj).iter().map(|p| p.2).collect::<Vec<_>>(),
+        [Kind::AnthropicKey]
+    );
+}
+
+#[test]
+fn r4_distills_own_text_is_not_a_secret_on_either_path() {
+    all_refused(&[
+        s(&["plain-", "synthetic", "-key9"]),
+        s(&["SYNTHETIC", "_value_Xk9"]),
+        s(&["[secret:", "anthropic_key#a1b2c3d4]"]),
+        "assigned_secret".to_string(),
+        "credential_field".to_string(),
+    ]);
+    // The placeholder as the whole value under a credential key, a space inside: the JSON path
+    // had no placeholder exclusion before.
+    let ph = placeholder(Kind::AnthropicKey, "a1b2c3d4");
+    assert_eq!(found(&json!({"password": ph}).to_string()), []);
+    assert!(places(&json!({"password": ph})).is_empty());
+    assert_eq!(found(&format!("password={ph} x")), []);
+    // A kind's name inside a longer value is not Distill's text.
+    all_found(&[
+        s(&["Credential_field_", "Xk9fQ2mL"]),
+        s(&["Xk9assigned_secret", "Q2mL7p"]),
+    ]);
+}
+
+#[test]
+fn r5_a_masking_run_is_not_a_secret() {
+    all_refused(&[
+        "•".repeat(10),
+        "*".repeat(12),
+        "#".repeat(10),
+        "x".repeat(10),
+        "X".repeat(10),
+    ]);
+    all_found(&[
+        s(&["#####", "Xk9fQ2m"]),
+        s(&["•••", "Xk9fQ2mL7p"]),
+        s(&["XXX", "k9fQ2mL7p"]),
+    ]);
+}
+
+#[test]
+fn r6_the_next_key_is_not_a_secret_but_base64_padding_is_kept() {
+    all_refused(&[
+        s(&["NEXT_API_", "KEY="]),
+        s(&["OTHER_SETTING", "_X:"]),
+        s(&["ABCDEFGH", "="]),
+        s(&["DB_HOST", ":"]),
+    ]);
+    // A trailing `=` alone is padding, also uppercase-and-digit padding.
+    all_found(&[
+        s(&["AB12CD34", "EF="]),
+        s(&["dGhpcyBpcyBhIHNlY3JldA", "=="]),
+        s(&["Xk9fQ2mL7pZaB3", "="]),
+        s(&["lowercase_name", "="]),
+    ]);
+}
+
+#[test]
+fn r7_regex_text_is_not_a_secret() {
+    all_refused(&[
+        s(&["a.*b|c", ".*dd"]),
+        s(&["[^a-z0-9", "]+xyz"]),
+        s(&["[a-z0-9_", "]+foo"]),
+        s(&["[\\w", "]+@x"]),
+    ]);
+    all_found(&[
+        s(&["ab.*", "cdefgh"]),
+        s(&["a|b|c", "Xk9fQ2mL"]),
+        s(&["[Xk9fQ2", "mL7pZ"]),
+        s(&["[7", "Xk9fQ2mL"]),
+    ]);
+}
+
+#[test]
+fn r8_code_is_tested_by_its_ending_not_its_middle() {
+    all_refused(&[
+        "mykey123;".into(),
+        "mykey123,".into(),
+        "mykey123)".into(),
+        "mykey123(".into(),
+        "mykey123]".into(),
+        "mykey123:".into(),
+        "mykey123!".into(),
+        "mykey123?".into(),
+        "&mykey123".into(),
+        s(&["self.", "api_key"]),
+        s(&["config", ".db.", "password"]),
+        s(&["Foo::", "bar_baz1"]),
+        s(&["a=>", "bcdefgh"]),
+    ]);
+    // Real passwords: punctuation in the middle, dots between parts with digits.
+    all_found(&[
+        s(&["Xk9(", "fQ2)mL7pZ"]),
+        s(&["Xk9[", "fQ2]mL7pZ"]),
+        s(&["Xk9;", "fQ2,mL7pZ"]),
+        s(&["Xk9fQ2mL7p", ".aB3cD4eF5g"]),
+        s(&["Ab3dE6gH9k", ".Lm4nO7pQ2r", ".St5uV8wX1y"]),
+        s(&["Xk9&", "fQ2mL7pZ"]),
+    ]);
+}
+
+#[test]
+fn r10_and_r11_placeholders_and_templates_are_not_secrets() {
+    all_refused(&[
+        s(&["<value_", "goes_here>"]),
+        s(&["<<<", "value_goes_here>>>"]),
+        s(&["sk-", "..."]),
+        s(&["ghp_", "...xyz1"]),
+        s(&["AKIA", "...."]),
+        s(&["sk-ant-", "...abcd"]),
+        // R11.
+        s(&["{{", "secrets.NAME}}"]),
+        s(&["${{", "secrets.NAME}}"]),
+        s(&["{", "TOKEN_VALUE}"]),
+    ]);
+    all_found(&[
+        s(&["<", "Xk9fQ2mL7pZ"]),
+        s(&["Xk9fQ2mL", "...7pZaB3"]),
+        s(&["{", "Xk9fQ2mL}7pZ"]),
+        s(&["Xk9fQ2mL7pZ", "{x}"]),
+        s(&["{{", "Xk9f}Q2mL7pZ"]),
+    ]);
+}
+
+#[test]
+fn r12_a_word_stand_in_is_narrow() {
+    all_refused(&[
+        s(&["prod", "-password"]),
+        s(&["db_", "secret_token"]),
+        s(&["my-api", "-token"]),
+        "password".into(),
+        "credentials".into(),
+    ]);
+    // No broad rule on short lowercase words: weak but real passwords stay found.
+    all_found(&[
+        s(&["correct-horse-", "battery-staple"]),
+        s(&["prod", "-Password"]),
+        s(&["prod", "-password9"]),
+        s(&["Letmein", "letmein"]),
+        s(&["Dragon", "monkey"]),
+        s(&["sunshine", "-forever"]),
+    ]);
+}
+
+#[test]
+fn r13_test_markers_are_refused_but_a_vendor_key_is_still_found() {
+    all_refused(&[
+        s(&["my-te", "st-key-1234"]),
+        s(&["fixt", "ure_key_value"]),
+        s(&["fa", "ke-api-key-xyz"]),
+        s(&["smo", "ke_run_ab12"]),
+        s(&["key-", "1111119abc"]),
+        s(&["Xk9f", "000000", "Q2mL"]),
+    ]);
+    all_found(&[
+        s(&["latest-key-", "Xk9fQ2"]),
+        s(&["contestant", "-Xk9fQ2"]),
+        s(&["Xk9fQ2", "mtestL7pZ"]),
+        s(&["Xk9f", "11111", "Q2mL7p"]),
+        s(&["Xk9fQ2", "mL7pZ"]),
+    ]);
+    // A test-mode vendor key is a key; so is a vendor key under a variable named test.
+    let stripe = ["sk", "_test_", &"Ab1".repeat(8)].concat();
+    let ant = ["sk-", "ant-", "api03-", &"Zz9".repeat(9)].concat();
+    for (name, key, kind) in [
+        ("api_key", &stripe, Kind::StripeKey),
+        ("TEST_API_KEY", &ant, Kind::AnthropicKey),
+        ("fixture_token", &ant, Kind::AnthropicKey),
+    ] {
+        let text = format!("{name}={key} x");
+        assert!(covered(&text, key), "{text}");
+        let obj = json!({ name: key }).to_string();
+        assert!(covered(&obj, key), "{obj}");
+        // The test-mode key is refused as a credential, so its own pattern finds it.
+        if kind == Kind::StripeKey {
+            assert_eq!(found(&text), [(kind, key.clone())]);
+            assert_eq!(found(&obj), [(kind, key.clone())]);
+        }
+    }
+}
+
+#[test]
+fn r14_a_path_needs_a_path_shape_not_just_a_slash() {
+    all_refused(&[
+        s(&["~/", ".config/key"]),
+        s(&["/Users/", "dev/.ssh/id_rsa"]),
+        s(&["/home/", "dev/key"]),
+        s(&["./", "secrets/key"]),
+        s(&["../", "key"]),
+        s(&["config/keys/", "id_rsa.pub"]),
+        s(&["/etc/ssl/private/", "key.pem"]),
+    ]);
+    // Base64 holds slashes, and a 64-hex session secret holds none.
+    all_found(&[
+        s(&["Xk9f/Q2mL7pZ+aB3cD4eF5gH6iJ7kL8mN9oP0qR", "=="]),
+        s(&["abc/def/", "ghi123xyz"]),
+        s(&["Xk9fQ2/mL7pZaB3/cD4eF"]),
+        "9f2c6a1be07d4538".repeat(4),
+    ]);
+}
+
+#[test]
+fn r15_a_number_is_not_a_secret_in_text_or_a_string_but_json_numbers_stay() {
+    all_refused(&[
+        "1234567890".into(),
+        "3.14159265".into(),
+        "20260101000".into(),
+    ]);
+    all_found(&[
+        s(&["1234567", "Ab"]),
+        s(&["1234.5678", ".9"]),
+        s(&["12345:", "Xk9fQ2mL"]),
+    ]);
+    // A JSON number under a credential key is a deliberate typed value: found, in text, cut
+    // text and a parsed value alike.
+    for text in [r#"{"api_secret":12345678}"#, r#"{"api_secret":12345678.5}"#] {
+        let v: Value = serde_json::from_str(text).unwrap();
+        assert!(!found(text).is_empty(), "{text}");
+        assert!(!found(cut(text)).is_empty(), "cut {text}");
+        assert!(!places(&v).is_empty(), "{text} as a value");
+    }
+}
+
+#[test]
+fn r16_a_generated_fixture_key_is_not_a_secret() {
+    all_refused(&[
+        s(&["abc-", "AB12-CD34-EF56"]),
+        s(&["key-", "ABCD-EFGH"]),
+        s(&["Tfk-", "A1B2C3-D4E5F6"]),
+    ]);
+    all_found(&[
+        s(&["abc-", "Ab12-CD34-EF56"]),
+        s(&["abc-", "AB12-CD34-EF56-ghij"]),
+        s(&["abc-Xk9fQ2mL7pZ", "-AB12"]),
+        s(&["abc-", "A-B-C-D-E-F-G"]),
+    ]);
+}
+
+/// Whether the credential field finds the JSON, as text and as a parsed value alike.
+fn field_found(obj: &Value) -> bool {
+    let text = !found(&obj.to_string()).is_empty();
+    assert_eq!(text, !places(obj).is_empty(), "{obj}");
+    text
+}
+
+#[test]
+fn c1_prose_under_a_credential_key_is_not_a_secret_but_multiline_keys_are() {
+    for prose in [
+        "please enter your key to continue",
+        "the value is read from the user",
+        "Bearer token or other string",
+    ] {
+        assert!(!field_found(&json!({ "authorization": prose })), "{prose}");
+        assert!(!field_found(&json!({ "password": prose })), "{prose}");
+    }
+    // Two words, or three with a chunk of 64 characters or more (a key's lines), are kept.
+    let line = "Ab1".repeat(21) + "A";
+    let body = [line.as_str(); 3].join("\n");
+    for v in [
+        s(&["correct-horse ", "battery-staple9"]),
+        body.clone(),
+        format!("a b {line}"),
+        s(&[
+            "-----BEGIN ",
+            "PRIVATE KEY-----\nQUJD\n-----END PRIVATE KEY-----",
+        ]),
+    ] {
+        assert!(field_found(&json!({ "private_key": v })), "{v}");
+    }
+}
+
+#[test]
+fn c2_to_c4_pass_suffix_keys_pagination_keys_and_shell_commands() {
+    let v = s(&["Xk9fQ2", "mL7pZaB3"]);
+    for key in ["db_pass", "tests-pass", "user_pass", "ssh_pass"] {
+        assert!(!field_found(&json!({ key: v })), "{key}");
+    }
+    // A bare `pass`, a leading separator, or a longer name that ends like a credential's.
+    for key in [
+        "pass",
+        "_pass",
+        "db_password",
+        "pass_secret",
+        "passphrase_token",
+    ] {
+        assert!(field_found(&json!({ key: v })), "{key}");
+    }
+    // C3: pagination keys are identifiers, in JSON and in text.
+    for key in [
+        "next_page_token",
+        "nextPageToken",
+        "page_token",
+        "pageToken",
+        "next_token",
+    ] {
+        assert!(!field_found(&json!({ key: v })), "{key}");
+        assert_eq!(found(&format!("{key}={v} x")), [], "{key}");
+    }
+    assert!(field_found(&json!({ "page_token_secret": v })));
+    // C4: a shell command.
+    assert!(!field_found(
+        &json!({ "password": s(&["!pass-show", "-key-9"]) })
+    ));
+    assert!(field_found(
+        &json!({ "password": s(&["Xk9fQ2!", "mL7pZaB3"]) })
+    ));
+}
+
+#[test]
+fn a_url_query_value_ends_at_the_next_parameter() {
+    let tok = s(&["Xk9fQ2", "mL7pZaB3"]);
+    let tok2 = s(&["Yy8gR3", "nM6qAb4C"]);
+    assert_eq!(
+        found(&format!(
+            "GET https://x.test/cb?token={tok}&page=2&sig=a%2Fb HTTP"
+        )),
+        hits(Kind::AssignedSecret, &[&tok])
+    );
+    assert_eq!(
+        found(&format!(
+            "https://x.test/?api_key={tok}&password={tok2}&x=1"
+        )),
+        hits(Kind::AssignedSecret, &[&tok, &tok2])
+    );
+    // An `&` inside a password, not followed by `name=`, is part of it.
+    let pw = s(&["Xk9f&", "Q2mL7pZ"]);
+    assert_eq!(
+        found(&format!("DB_PASSWORD={pw} x")),
+        hits(Kind::AssignedSecret, &[&pw])
     );
 }

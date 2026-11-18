@@ -34,14 +34,14 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
                 let key = &last_key.as_ref().expect("just set").1;
                 if string {
                     let value = decode(raw).0;
-                    weak::can_be_secret(key, &value).then_some(value)
+                    weak::can_be_field_secret(key, &value).then_some(value)
                 } else {
                     // Gated on the number's one form, as `detect_value` gates it; the hit is
                     // still the number as written. One serde cannot hold (`1e400`, hundreds of
                     // digits) is gated as written: no `Value` holds it, so nothing disagrees.
                     let can_be = match serde_json::from_str::<serde_json::Number>(raw) {
                         Ok(n) => weak::can_be_secret_number(key, &n),
-                        Err(_) => weak::can_be_secret(key, raw),
+                        Err(_) => weak::can_be_bare_secret(key, raw, true),
                     };
                     can_be.then(|| raw.to_string())
                 }
@@ -78,7 +78,7 @@ pub(super) fn detect_json(det: &Detector, text: &str, depth: u32) -> Option<Vec<
 
 /// Whether a key names a credential, so that its value is a secret whole.
 pub(super) fn is_credential_key(key: &str) -> bool {
-    if weak::is_identifier_name(key) {
+    if weak::is_identifier_name(key) || weak::is_pass_suffixed(key) {
         return false;
     }
     static RE: OnceLock<Regex> = OnceLock::new();

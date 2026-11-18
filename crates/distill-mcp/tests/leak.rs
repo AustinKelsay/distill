@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 #[test]
 fn no_tool_serves_a_planted_secret() {
     let key = ["sk-", "ant-", "api03-", &"Mq4".repeat(9)].concat();
-    let password = ["synthetic", "-mcp-", "pass-2208"].concat();
+    let password = ["plaintext", "-mcp-", "pass-2208"].concat();
     // A token written as a JSON object key, and a number under a credential-named key (eight
     // digits: a shorter one is a counter, not a secret).
     let key_token = ["ghp_", &"Wd3".repeat(12)].concat();

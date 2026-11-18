@@ -81,7 +81,7 @@ pub(super) fn assignments(text: &str) -> Vec<Range<usize>> {
             && e <= text.len()
             && text.is_char_boundary(s)
             && text.is_char_boundary(e)
-            && super::weak::can_be_secret(name.as_str(), &text[s..e])
+            && super::weak::can_be_bare_secret(name.as_str(), &text[s..e], ctx.json_key)
             && !placeholders.iter().any(|p| p.start <= s && e <= p.end)
         {
             ranges.push((s, e));
@@ -403,6 +403,9 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
                 }
             }
             b'"' | b'\'' => break,
+            // A token in a URL query ends at the next parameter (`token=abc&page=2`). Only then:
+            // an `&` inside a password (`pw&x9`) is part of it.
+            b'&' if next_query_param(&b[i + 1..]) => break,
             // JSON punctuation ends a value only after a quoted JSON key; in a shell or config
             // line it is part of the value (`DB_PASSWORD=abc}def`).
             b',' | b'}' | b']' if ctx.json_key => break,
@@ -414,4 +417,13 @@ fn bare_end(b: &[u8], ctx: &Context) -> usize {
         }
     }
     i.min(b.len())
+}
+
+/// Whether `b`, after an `&`, starts another query parameter: a name and `=`.
+fn next_query_param(b: &[u8]) -> bool {
+    let name = b
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
+        .count();
+    name > 0 && b.get(name) == Some(&b'=')
 }
