@@ -108,6 +108,7 @@ impl Harness {
                 home.join(".cursor/chats"),
                 home.join(".cursor/acp-sessions"),
                 home.join(".cursor/projects"),
+                home.join(".cursor/chat-exports"),
             ],
             Harness::Grok => vec![home.join(".grok/sessions")],
             Harness::Antigravity => vec![
@@ -141,7 +142,9 @@ impl Harness {
                     || (name.starts_with("session_") && name.ends_with(".json"))
                     || origin.contains("#session=")
             }
-            Harness::Cursor => name == "store.db" || cursor_transcript(origin),
+            Harness::Cursor => {
+                name == "store.db" || cursor_transcript(origin) || cursor_export(origin)
+            }
             Harness::Goose => true,
         }
     }
@@ -326,11 +329,17 @@ pub fn discover(kind: Harness, roots: &[PathBuf]) -> anyhow::Result<Vec<Candidat
                 out.extend(crate::normalize::hermes::list_sessions(root)?);
             }
             _ => {
-                for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+                let exports = kind == Harness::Cursor && root.ends_with(".cursor/chat-exports");
+                let walk = WalkDir::new(root).follow_root_links(!exports);
+                let walk = if exports { walk.max_depth(1) } else { walk };
+                for entry in walk.into_iter().filter_map(Result::ok) {
                     if !entry.file_type().is_file() {
                         continue;
                     }
                     let path = entry.path();
+                    if exports && !cursor_export(&path.to_string_lossy()) {
+                        continue;
+                    }
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let Ok(meta) = entry.metadata() else { continue };
                     let (size, mtime_ns) = (meta.len(), mtime_ns(&meta));
@@ -423,6 +432,15 @@ pub fn records_no_cwd(kind: Harness) -> bool {
 /// A Cursor agent transcript: `projects/<project>/agent-transcripts/[…/]<agent id>.jsonl`.
 pub fn cursor_transcript(origin: &str) -> bool {
     origin.contains("/agent-transcripts/") && origin.ends_with(".jsonl")
+}
+
+/// One Markdown transcript explicitly saved in the Cursor export inbox.
+pub fn cursor_export(origin: &str) -> bool {
+    let path = Path::new(origin);
+    path.extension().is_some_and(|ext| ext == "md")
+        && path
+            .parent()
+            .is_some_and(|dir| dir.ends_with(".cursor/chat-exports"))
 }
 
 pub fn percent_decode(s: &str) -> String {

@@ -26,6 +26,9 @@ use crate::model::{Event, EventKind, Parsed};
 pub const IGNORED: &[&str] = &["assistant:redacted-reasoning"];
 
 pub fn parse(origin: &str, bytes: &[u8]) -> Result<Parsed> {
+    if crate::harness::cursor_export(origin) {
+        return parse_export(bytes);
+    }
     if crate::harness::cursor_transcript(origin) {
         return Ok(parse_transcript(origin, bytes));
     }
@@ -610,4 +613,89 @@ mod tests {
         let p = parse("/c/h/x/store.db", &std::fs::read(&db).unwrap()).unwrap();
         assert!(p.events.is_empty());
     }
+}
+
+/// Cursor's Export Transcript writes a Markdown title and byline, followed by
+/// speaker blocks. A horizontal rule alone is also ordinary message content.
+fn parse_export(bytes: &[u8]) -> Result<Parsed> {
+    let text = std::str::from_utf8(bytes)?.replace("\r\n", "\n");
+    let (header, turns) = text
+        .split_once("\n\n---\n\n")
+        .context("missing Cursor export header")?;
+    let (title, byline) = header
+        .rsplit_once('\n')
+        .context("missing Cursor export byline")?;
+    anyhow::ensure!(
+        title.starts_with("# ")
+            && byline.starts_with("_Exported on ")
+            && byline.contains(" from Cursor (")
+            && byline.ends_with(")_"),
+        "invalid Cursor export header"
+    );
+    let mut lines = turns.lines().peekable();
+    let mut out = Parsed::default();
+    let mut role = None;
+    let mut body = Vec::new();
+    let mut fence = None;
+    while let Some(line) = lines.next() {
+        if fence.is_none() && (role.is_none() || line == "---") {
+            let mut rest = lines.clone();
+            let label = if role.is_none() {
+                Some(line)
+            } else if rest.next() == Some("") {
+                rest.next()
+            } else {
+                None
+            };
+            let next = match label {
+                Some("**User**") => Some(EventKind::User),
+                Some("**Cursor**") => Some(EventKind::Assistant),
+                _ => None,
+            };
+            if let Some(next) = next
+                && rest.next() == Some("")
+            {
+                if let Some(previous) = role.replace(next) {
+                    out.push(Event::text(
+                        previous,
+                        body.join("\n").trim_end_matches('\n'),
+                    ));
+                    body.clear();
+                }
+                lines = rest;
+                continue;
+            }
+        }
+        anyhow::ensure!(role.is_some(), "unknown speaker in Cursor export");
+        let code = line.trim_start_matches(' ');
+        if let Some(marker) = code.chars().next().filter(|m| *m == '`' || *m == '~') {
+            let width = code.chars().take_while(|c| *c == marker).count();
+            if width >= 3 && line.len() - code.len() <= 3 {
+                match fence {
+                    None => fence = Some((marker, width)),
+                    Some((m, n))
+                        if m == marker && width >= n && code[width..].trim().is_empty() =>
+                    {
+                        fence = None
+                    }
+                    _ => {}
+                }
+            }
+        }
+        body.push(line);
+    }
+    if let Some(last) = role {
+        out.push(Event::text(last, body.join("\n").trim_end_matches('\n')));
+    }
+    Ok(out)
+}
+
+#[test]
+fn parses_an_export_without_splitting_speaker_examples_inside_code() {
+    let parsed = parse_export(b"# Example\r\n_Exported on Monday at noon from Cursor (1)_\r\n\r\n---\r\n\r\n**User**\r\n\r\nShow me.\n\n---\n\n**Cursor**\n\n```md\n---\n\n**User**\n\nexample\n```\n").unwrap();
+    assert_eq!(parsed.events.len(), 2);
+    assert_eq!(parsed.events[0].kind, EventKind::User);
+    assert_eq!(parsed.events[1].kind, EventKind::Assistant);
+    assert!(parsed.events[1].text.as_ref().unwrap().contains("**User**"));
+    assert!(parse_export(b"# Ordinary markdown").is_err());
 }
