@@ -19,7 +19,7 @@ pub fn fake_key() -> String {
 }
 
 pub fn fake_password() -> String {
-    ["synthetic", "-gui-", "pass-87"].concat()
+    ["plaintext", "-gui-", "pass-87"].concat()
 }
 
 pub fn fake_email() -> String {

@@ -684,7 +684,7 @@ mod tests {
     fn home_with_secrets() -> (tempfile::TempDir, Home, String) {
         let key = fake_key();
         let input = serde_json::json!({
-            "command": "export DB_PASSWORD=synthetic-pass-9 && deploy",
+            "command": "export DB_PASSWORD=plaintext-pass-9 && deploy",
             "api_key": 12345678901_u64,
             "env": {key.clone(): "set"},
         });
@@ -776,7 +776,7 @@ mod tests {
         assert!(!home.findings_path(Harness::ClaudeCode, "s1").exists());
         let reader = Reader::model(Some("ollama"), Some("small:8b"));
         let t = text(read(&home, &local(), &reader, "claude-code/s1", Range::default()).unwrap());
-        for value in [key.as_str(), "synthetic-pass-9", "12345678901"] {
+        for value in [key.as_str(), "plaintext-pass-9", "12345678901"] {
             assert!(!t.contains(value), "{value:?} served: {t}");
         }
         // The session was scanned on read, and its findings stored.
@@ -827,7 +827,7 @@ mod tests {
         ] {
             let t = text(read(&home, &rt, &reader, "claude-code/s1", Range::default()).unwrap());
             assert!(t.starts_with(NOTICE_START), "{t}");
-            assert!(!t.contains(&key) && !t.contains("synthetic-pass-9"), "{t}");
+            assert!(!t.contains(&key) && !t.contains("plaintext-pass-9"), "{t}");
             assert_eq!(placeholders(&t).len(), 4, "{reader:?}: {t}");
         }
     }
@@ -884,7 +884,7 @@ mod tests {
         assert!(x.findings.is_empty());
         let all = serde_json::to_string(&x.events).unwrap();
         assert!(
-            !all.contains(&key) && !all.contains("synthetic-pass-9"),
+            !all.contains(&key) && !all.contains("plaintext-pass-9"),
             "{all}"
         );
         assert_eq!(placeholders(&all).len(), 4, "{all}");
@@ -1024,12 +1024,12 @@ mod tests {
         let key = fake_key();
         // The key is a secret, it holds one, and a sibling would sort between them once renamed.
         let input = serde_json::json!({
-            "env": {key.clone(): {"token": "synthetic-tok-1"}, "[secret: x": 1, "zz": "kept"},
+            "env": {key.clone(): {"token": "plaintext-tok-1"}, "[secret: x": 1, "zz": "kept"},
         });
         let (_d, home) = home_with("deploy", &input);
         let reader = Reader::model(Some("ollama"), None);
         let t = text(read(&home, &local(), &reader, "s1", Range::default()).unwrap());
-        assert!(!t.contains(&key) && !t.contains("synthetic-tok-1"), "{t}");
+        assert!(!t.contains(&key) && !t.contains("plaintext-tok-1"), "{t}");
         assert!(
             t.contains(r#""zz":"kept""#) && t.contains(r#""[secret: x":1"#),
             "{t}"
@@ -1039,7 +1039,7 @@ mod tests {
         let path = home.findings_path(Harness::ClaudeCode, "s1");
         let file = std::fs::read_to_string(&path).unwrap();
         assert!(
-            !file.contains(&key) && !file.contains("synthetic-tok"),
+            !file.contains(&key) && !file.contains("plaintext-tok"),
             "{file}"
         );
 

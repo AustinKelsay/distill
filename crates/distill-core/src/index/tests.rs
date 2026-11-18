@@ -198,7 +198,7 @@ fn an_entry_is_rebuilt_when_its_secret_findings_change() {
 #[test]
 fn no_secret_value_reaches_the_index() {
     let key = ["sk-", "ant-", "api03-", &"Wv5".repeat(9)].concat();
-    let password = ["synthetic", "-index-", "pass-7781"].concat();
+    let password = ["plaintext", "-index-", "pass-7781"].concat();
     let mut x = s("a", "2026-11-01T09:00:00Z", &format!("use {key} please"));
     x.command = format!("export DB_PASSWORD={password} && deploy");
     let (_d, home) = home_with(&[x]);

@@ -8,7 +8,7 @@ fn fake_key() -> String {
     ["sk-", "ant-", "api03-", &"Rv8".repeat(9)].concat()
 }
 fn fake_password() -> String {
-    ["synthetic", "-reveal-", "pass-31"].concat()
+    ["plaintext", "-reveal-", "pass-31"].concat()
 }
 
 /// A synthetic Claude Code session with a key in what the owner said and a password in a tool

@@ -74,7 +74,7 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn a_planted_secret_is_only_in_the_raw_archive_and_its_sessions_events() {
     let key = ["sk-", "ant-", "api03-", &"Lk7".repeat(9)].concat();
-    let password = ["synthetic", "-leak-", "pass-4417"].concat();
+    let password = ["plaintext", "-leak-", "pass-4417"].concat();
     // A token written as a JSON object key, and a number under a credential-named key (eight
     // digits: a shorter one is a counter, not a secret).
     let key_token = ["ghp_", &"Zq9".repeat(12)].concat();

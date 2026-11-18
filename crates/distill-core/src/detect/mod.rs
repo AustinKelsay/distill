@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The detector's version. Findings made by another version are out of date.
-pub const DETECTOR_VERSION: u32 = 4;
+pub const DETECTOR_VERSION: u32 = 5;
 
 /// How many levels of JSON inside JSON strings are read token by token; deeper text goes to the
 /// text scanner rather than risk the stack.
@@ -305,7 +305,7 @@ impl Detector {
             range: 0..written.len(),
             value: written,
         };
-        let can_be = |value: &str| secret.is_some_and(|key| weak::can_be_secret(key, value));
+        let can_be = |value: &str| secret.is_some_and(|key| weak::can_be_field_secret(key, value));
         match v {
             Value::String(s) if can_be(s) => out.push(ValueHit {
                 path: path.clone(),

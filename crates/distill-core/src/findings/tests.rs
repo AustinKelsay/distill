@@ -17,7 +17,7 @@ fn home_with_sessions(said: &[&str]) -> (tempfile::TempDir, Home) {
     for (n, said) in said.iter().enumerate() {
         let said = serde_json::to_string(said).unwrap();
         let body = r#"{"type":"user","cwd":"/work/app","timestamp":"2026-11-10T10:00:00Z","message":{"role":"user","content":SAID}}
-{"type":"assistant","timestamp":"2026-11-10T10:00:05Z","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"export DB_PASSWORD=synthetic-value-1","password":"synthetic-pass-2"}}]}}
+{"type":"assistant","timestamp":"2026-11-10T10:00:05Z","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"export DB_PASSWORD=plaintext-value-1","password":"plaintext-pass-2"}}]}}
 {"type":"user","timestamp":"2026-11-10T10:00:09Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
 "#
         .replace("SAID", &said);
@@ -80,7 +80,7 @@ fn findings_place_each_secret_and_never_hold_its_value() {
                     path: vec![0],
                     key: false
                 },
-                "synthetic-value-1".into()
+                "plaintext-value-1".into()
             ),
             // Under a credential-named key the whole value is one finding.
             (
@@ -89,13 +89,13 @@ fn findings_place_each_secret_and_never_hold_its_value() {
                     path: vec![1],
                     key: false
                 },
-                "synthetic-pass-2".into()
+                "plaintext-pass-2".into()
             ),
         ]
     );
 
     let file = fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s0")).unwrap();
-    for value in [key.as_str(), "synthetic-value-1", "synthetic-pass-2"] {
+    for value in [key.as_str(), "plaintext-value-1", "plaintext-pass-2"] {
         assert!(!file.contains(value), "{file}");
     }
     let stored: serde_json::Value = serde_json::from_str(&file).unwrap();
@@ -150,7 +150,7 @@ fn the_key_is_made_on_first_use_owner_only_and_the_same_value_has_one_fingerprin
     assert_eq!(fp("s0"), fp("s1"));
     let k = FingerprintKey::open(&home).unwrap();
     assert_eq!(k.fingerprint(&key), fp("s0"));
-    assert_ne!(k.fingerprint("synthetic-other"), fp("s0"));
+    assert_ne!(k.fingerprint("plaintext-other"), fp("s0"));
     assert_eq!(
         fs::read_to_string(home.fingerprint_key_path()).unwrap(),
         stored

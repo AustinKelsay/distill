@@ -446,7 +446,7 @@ fn a_long_session_is_embedded_in_pieces_spread_over_it() {
 
 #[test]
 fn a_query_that_holds_a_secret_is_never_embedded() {
-    let password = ["synthetic", "-vec-", "pass-5531"].concat();
+    let password = ["plaintext", "-vec-", "pass-5531"].concat();
     let mut a = s("a", "2026-11-01T09:00:00Z", "the car");
     a.command = format!("export DB_PASSWORD={password}");
     let (_d, home, _) = built(&[a]);
