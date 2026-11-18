@@ -58,7 +58,7 @@ const BATCH: usize = if cfg!(test) { 4 } else { 256 };
 const BUDGET: usize = if cfg!(test) {
     64 * 1024
 } else {
-    96 * 1024 * 1024
+    192 * 1024 * 1024
 };
 /// A session with more bytes of text than this is indexed alone, in passes, so that its words
 /// are never all in memory at once.
@@ -69,7 +69,7 @@ const GIANT: usize = if cfg!(test) {
 };
 /// How many occurrences of words one pass over a giant session holds at most. A distinct word
 /// takes about 300 bytes while it is counted.
-const PASS: u64 = if cfg!(test) { 20_000 } else { 1_500_000 };
+const PASS: u64 = if cfg!(test) { 20_000 } else { 4_000_000 };
 /// How many segments the index keeps before it merges the smallest.
 const MAX_SEGMENTS: usize = 8;
 /// How many events of a session each word records, for finding its passage.
