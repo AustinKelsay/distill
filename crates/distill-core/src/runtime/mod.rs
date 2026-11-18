@@ -1,14 +1,9 @@
-//! The one client that reaches the local runtime on this machine, for generating text and for
-//! embedding (issue #72, "Trust"). It refuses any model the runtime serves from a cloud. In this
-//! version the runtime is Ollama ([`LocalRuntime::ollama`]); tests use [`FakeRuntime`]. With the
-//! `eval` feature, which only `distill-eval` turns on, a trusted provider's OpenAI-compatible
-//! server on this machine can stand in for it ([`LocalRuntime::openai_compatible`]), so the model
-//! steps can be judged with real models without running one here.
+//! Ollama on this machine, or an explicitly configured remote generation provider. Model steps
+//! use the runtime's provider identity when reading sessions through the trust-checked read path.
 
 mod fake;
 mod http;
 mod ollama;
-#[cfg(feature = "eval")]
 mod openai;
 
 pub use fake::{Call, FakeRuntime};
@@ -58,6 +53,9 @@ pub(crate) trait Backend: Send + Sync {
     fn installed(&self) -> bool;
     /// The installed models' names, or `None` when nothing answers.
     fn models(&self) -> Option<Vec<String>>;
+    fn model_list_error(&self) -> Option<&RuntimeError> {
+        None
+    }
     /// Whether `model`'s weights are on this machine. Needs no running runtime.
     fn stored_here(&self, model: &str) -> bool;
     fn generate(&self, model: &str, prompt: &str) -> Result<String, RuntimeError>;
@@ -71,6 +69,8 @@ pub enum RuntimeError {
     NotStoredHere(String),
     /// Nothing answers on this machine.
     NotRunning,
+    /// The configured remote provider could not be reached.
+    ProviderUnavailable(String),
     /// The runtime answered with an error, or with something Distill can't read.
     Failed(String),
 }
@@ -87,7 +87,8 @@ impl std::fmt::Display for RuntimeError {
                 f,
                 "the local runtime is not running (start the Ollama app or `ollama serve`)"
             ),
-            Self::Failed(e) => write!(f, "the local runtime failed: {e}"),
+            Self::ProviderUnavailable(e) => write!(f, "could not reach generation provider {e}"),
+            Self::Failed(e) => write!(f, "the model runtime failed: {e}"),
         }
     }
 }
@@ -115,7 +116,14 @@ impl LocalRuntime {
         Ok(Self::new(openai::OpenAiCompatible::new(provider, addr)?))
     }
 
-    /// The provider the runtime's models run at: `ollama` but for an evaluation's stand-in.
+    /// An HTTPS provider for the scheduled generation steps.
+    pub(crate) fn remote_generation(
+        config: &crate::config::GenerationConfig,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::new(openai::OpenAiCompatible::remote(config)?))
+    }
+
+    /// The provider the runtime's models run at.
     pub fn provider(&self) -> &str {
         self.backend.provider()
     }
@@ -138,6 +146,10 @@ impl LocalRuntime {
             None if self.backend.installed() => RuntimeState::NotRunning,
             None => RuntimeState::NotInstalled,
         }
+    }
+
+    pub(crate) fn model_list_error(&self) -> Option<&RuntimeError> {
+        self.backend.model_list_error()
     }
 
     /// Whether `model` is stored on this machine. A model that can't be verified, including one
