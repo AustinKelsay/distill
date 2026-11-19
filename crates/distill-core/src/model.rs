@@ -275,17 +275,23 @@ impl Roots {
         for m in metas {
             by_id.entry(m.session_id.as_str()).or_default().push(m);
         }
+        let keys: std::collections::HashSet<String> = metas.iter().map(|m| m.key()).collect();
         // A parent is named by its key, or by its id: one of the same harness wins. Hermes keeps
-        // its database's sessions as `db-<id>`, while their parents name the bare id.
+        // its database's sessions as `db-<id>`, while their parents name the bare id; the
+        // database's record wins over a file's.
         let resolve = |named: &str, harness: Harness| -> Option<String> {
-            let id = named.split_once('/').map_or(named, |(_, id)| id);
-            let found = by_id
-                .get(id)
-                .or_else(|| by_id.get(format!("db-{id}").as_str()))?;
+            if named.contains('/') {
+                return keys.contains(named).then(|| named.to_string());
+            }
+            let db = format!("db-{named}");
+            let found = (harness == Harness::Hermes)
+                .then(|| by_id.get(db.as_str()))
+                .flatten()
+                .or_else(|| by_id.get(named))
+                .or_else(|| by_id.get(db.as_str()))?;
             found
                 .iter()
-                .find(|m| m.key() == named)
-                .or_else(|| found.iter().find(|m| m.harness == harness))
+                .find(|m| m.harness == harness)
                 .or(found.first())
                 .map(|m| m.key())
         };
@@ -309,6 +315,12 @@ impl Roots {
                 }
             }
         }
+        // A session naming a parent that isn't archived: the top of its chain is unknown.
+        let unknown: std::collections::HashSet<String> = metas
+            .iter()
+            .filter(|m| m.parent_session.is_some() && !parent.contains_key(&m.key()))
+            .map(|m| m.key())
+            .collect();
         let mut roots = HashMap::new();
         for k in parent.keys() {
             let (mut at, mut seen) = (k, std::collections::HashSet::new());
@@ -318,7 +330,7 @@ impl Roots {
                 }
                 at = p;
             }
-            if at != k {
+            if at != k && !unknown.contains(at) && !parent.contains_key(at) {
                 roots.insert(k.clone(), at.clone());
             }
         }
@@ -500,6 +512,13 @@ mod tests {
         let orphan = session("claude-code", "agent-a2", r#","parent_session":"gone""#);
         let hermes = session("hermes", "db-h1", "");
         let hermes_child = session("hermes", "db-h2", r#","parent_session":"h1""#);
+        // Hermes's file of h1 (a copy) names no parent; the database's record wins.
+        let hermes_file = session("hermes", "h1", "");
+        // A chain whose top names a parent that isn't archived, and a key that isn't archived.
+        let lost = session("codex", "c-3", r#","parent_session":"gone""#);
+        let under_lost = session("codex", "c-4", r#","parent_session":"c-3""#);
+        let wrong_harness = session("droid", "s-1", "");
+        let qualified = session("droid", "d-1", r#","parent_session":"claude-code/missing""#);
         let roots = Roots::of(&[
             owner,
             task,
@@ -510,7 +529,15 @@ mod tests {
             orphan,
             hermes,
             hermes_child,
+            hermes_file,
+            lost,
+            under_lost,
+            wrong_harness,
+            qualified,
         ]);
+        for k in ["codex/c-4", "droid/d-1"] {
+            assert_eq!(roots.of_session(k), None, "{k}");
+        }
         assert_eq!(roots.of_session("hermes/db-h2"), Some("hermes/db-h1"));
         assert_eq!(
             roots.of_session("t3code/t1-delegated-task-1"),

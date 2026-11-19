@@ -344,11 +344,15 @@ fn result_row(s: &State, r: &ResultRow, i: usize, p: &Paint) -> El {
     );
     if let Some(from) = &r.started_from {
         card = card.child(
-            text(format!("Started from {}", facts_line(s, from)))
-                .key("started-from")
-                .font(p.caption())
-                .color(p.faint())
-                .truncate(),
+            text(format!(
+                "Started from {} · {}",
+                from.key(),
+                facts_line(s, from)
+            ))
+            .key("started-from")
+            .font(p.caption())
+            .color(p.faint())
+            .truncate(),
         );
     }
     if let Some(c) = &r.card {
