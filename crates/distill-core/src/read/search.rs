@@ -299,6 +299,8 @@ fn serve(
             h.started_from = roots
                 .of_session(&h.facts.key())
                 .and_then(|r| all.iter().find(|m| m.key() == r))
+                // The previous steward's sessions stay out of search unless asked for.
+                .filter(|r| !r.steward || filter.steward)
                 .cloned();
             h
         })

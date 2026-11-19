@@ -275,13 +275,17 @@ impl Roots {
         for m in metas {
             by_id.entry(m.session_id.as_str()).or_default().push(m);
         }
-        // A parent is named by its id, or by its key; one of the same harness wins.
+        // A parent is named by its key, or by its id: one of the same harness wins. Hermes keeps
+        // its database's sessions as `db-<id>`, while their parents name the bare id.
         let resolve = |named: &str, harness: Harness| -> Option<String> {
             let id = named.split_once('/').map_or(named, |(_, id)| id);
-            let found = by_id.get(id)?;
+            let found = by_id
+                .get(id)
+                .or_else(|| by_id.get(format!("db-{id}").as_str()))?;
             found
                 .iter()
-                .find(|m| m.harness == harness || m.key() == named)
+                .find(|m| m.key() == named)
+                .or_else(|| found.iter().find(|m| m.harness == harness))
                 .or(found.first())
                 .map(|m| m.key())
         };
@@ -494,7 +498,20 @@ mod tests {
         let claude = session("claude-code", "s-1", "");
         let agent = session("claude-code", "agent-a1", r#","parent_session":"s-1""#);
         let orphan = session("claude-code", "agent-a2", r#","parent_session":"gone""#);
-        let roots = Roots::of(&[owner, task, native, sub, claude, agent, orphan]);
+        let hermes = session("hermes", "db-h1", "");
+        let hermes_child = session("hermes", "db-h2", r#","parent_session":"h1""#);
+        let roots = Roots::of(&[
+            owner,
+            task,
+            native,
+            sub,
+            claude,
+            agent,
+            orphan,
+            hermes,
+            hermes_child,
+        ]);
+        assert_eq!(roots.of_session("hermes/db-h2"), Some("hermes/db-h1"));
         assert_eq!(
             roots.of_session("t3code/t1-delegated-task-1"),
             Some("t3code/t1")
