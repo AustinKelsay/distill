@@ -162,6 +162,7 @@ fn rows() -> Vec<ResultRow> {
             opening: Opening::Text("deploy the staging app".into()),
             opening_findings: Vec::new(),
             passage: None,
+            started_from: None,
         },
         ResultRow {
             facts: facts(
@@ -176,6 +177,7 @@ fn rows() -> Vec<ResultRow> {
             opening: Opening::Text(opening),
             opening_findings,
             passage: None,
+            started_from: None,
         },
         ResultRow {
             facts: facts(
@@ -193,6 +195,7 @@ fn rows() -> Vec<ResultRow> {
             opening: Opening::Text("tidy the notes".into()),
             opening_findings: Vec::new(),
             passage: None,
+            started_from: None,
         },
     ]
 }
@@ -221,6 +224,15 @@ pub fn sessions_searched() -> State {
     let mut s = on_sessions();
     s.sessions.query.replace_text("deploy");
     let mut row = rows().remove(0);
+    // A sub-agent's session, started from the owner's own session.
+    row.started_from = Some(facts(
+        Harness::ClaudeCode,
+        "s-release",
+        "/work/app",
+        "claude-opus-5-5",
+        90,
+        24,
+    ));
     let text = format!(
         "ok: deploy finished on {}, notes sent to {}",
         fake_host(),

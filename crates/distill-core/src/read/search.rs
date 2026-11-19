@@ -24,7 +24,7 @@ use crate::findings::{Field, Finding, Findings};
 use crate::home::Home;
 use crate::index;
 use crate::index::vectors::{self, Nearest};
-use crate::model::{Event, EventKind, Originals, SessionMeta};
+use crate::model::{Event, EventKind, Originals, Roots, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
@@ -85,6 +85,9 @@ pub struct Hit {
     pub passage: Option<Passage>,
     /// What found it.
     pub found_by: Vec<Source>,
+    /// When an agent started the session (a sub-agent, a delegated task): the session the owner
+    /// started it from.
+    pub started_from: Option<SessionMeta>,
 }
 
 /// A source of search results.
@@ -273,6 +276,7 @@ fn serve(
     }
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
+    let roots = Roots::of(&all);
     let key = crate::findings::FingerprintKey::existing(home)
         .ok()
         .flatten();
@@ -290,7 +294,14 @@ fn serve(
         .into_iter()
         .skip(page.offset)
         .take(limit)
-        .map(|m| hit(home, &config, reader, candidates[&m.key], m, &words))
+        .map(|m| {
+            let mut h = hit(home, &config, reader, candidates[&m.key], m, &words);
+            h.started_from = roots
+                .of_session(&h.facts.key())
+                .and_then(|r| all.iter().find(|m| m.key() == r))
+                .cloned();
+            h
+        })
         .collect();
     *served = hits.len() as u64;
     let end = page.offset + hits.len();
@@ -323,6 +334,7 @@ fn hit(
         opening_findings: Vec::new(),
         passage: None,
         found_by: m.found_by.clone(),
+        started_from: None,
     };
     let (events, scan) = match scanned(home, config, facts) {
         Ok(Ok(scanned)) => scanned,
@@ -350,6 +362,7 @@ fn hit(
         opening_findings,
         passage: passage(&events, owner_findings, words, &m.events),
         found_by: m.found_by,
+        started_from: None,
     }
 }
 
@@ -573,8 +586,12 @@ fn render(hits: &Hits, offset: usize) -> String {
     let mut body = String::new();
     for h in &hits.hits {
         body += &format!(
-            "\n{}\n{}",
+            "\n{}{}\n{}",
             facts_line(&h.facts),
+            h.started_from
+                .as_ref()
+                .map(|r| format!(" · started from {}", r.key()))
+                .unwrap_or_default(),
             card_or_opening(h.card.as_ref(), &h.opening)
         );
         if let Some(p) = &h.passage {

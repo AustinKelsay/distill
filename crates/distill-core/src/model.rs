@@ -262,6 +262,71 @@ impl Originals {
     }
 }
 
+/// Each session an agent started, with the session it was started from: the one at the top of
+/// its chain of parents, which the owner started. A delegated task's mirror passes its parent on
+/// to the native sessions it names. Sessions with no parent are not in it.
+#[derive(Debug, Default)]
+pub struct Roots(std::collections::HashMap<String, String>);
+
+impl Roots {
+    pub fn of(metas: &[SessionMeta]) -> Self {
+        use std::collections::HashMap;
+        let mut by_id: HashMap<&str, Vec<&SessionMeta>> = HashMap::new();
+        for m in metas {
+            by_id.entry(m.session_id.as_str()).or_default().push(m);
+        }
+        // A parent is named by its id, or by its key; one of the same harness wins.
+        let resolve = |named: &str, harness: Harness| -> Option<String> {
+            let id = named.split_once('/').map_or(named, |(_, id)| id);
+            let found = by_id.get(id)?;
+            found
+                .iter()
+                .find(|m| m.harness == harness || m.key() == named)
+                .or(found.first())
+                .map(|m| m.key())
+        };
+        let mut parent: HashMap<String, String> = HashMap::new();
+        for m in metas {
+            if let Some(p) = m
+                .parent_session
+                .as_deref()
+                .and_then(|p| resolve(p, m.harness))
+            {
+                parent.insert(m.key(), p);
+            }
+        }
+        for m in metas.iter().filter(|m| m.mirror) {
+            let Some(p) = parent.get(&m.key()).cloned() else {
+                continue;
+            };
+            for r in &m.mirror_refs {
+                if r != &p {
+                    parent.entry(r.clone()).or_insert_with(|| p.clone());
+                }
+            }
+        }
+        let mut roots = HashMap::new();
+        for k in parent.keys() {
+            let (mut at, mut seen) = (k, std::collections::HashSet::new());
+            while let Some(p) = parent.get(at) {
+                if !seen.insert(at) {
+                    break;
+                }
+                at = p;
+            }
+            if at != k {
+                roots.insert(k.clone(), at.clone());
+            }
+        }
+        Roots(roots)
+    }
+
+    /// The key of the session `key` was started from, when an agent started it.
+    pub fn of_session(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+}
+
 /// What a parser returns before Distill adds raw references and ids.
 #[derive(Debug, Clone, Default)]
 pub struct Parsed {
@@ -411,6 +476,39 @@ mod tests {
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
         assert!(later.copied_in(&codex));
+    }
+
+    #[test]
+    fn an_agents_session_is_started_from_the_top_of_its_chain() {
+        // The owner's T3 thread delegates a task (its mirror names the Codex session that ran
+        // it); that session's sub-agent has a parent of its own; a Claude sub-agent names its
+        // parent by id.
+        let owner = session("t3code", "t1", "");
+        let task = session(
+            "t3code",
+            "t1-delegated-task-1",
+            r#","parent_session":"t1","mirror":true,"mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#,
+        );
+        let native = session("codex", "c-1", "");
+        let sub = session("codex", "c-2", r#","parent_session":"c-1""#);
+        let claude = session("claude-code", "s-1", "");
+        let agent = session("claude-code", "agent-a1", r#","parent_session":"s-1""#);
+        let orphan = session("claude-code", "agent-a2", r#","parent_session":"gone""#);
+        let roots = Roots::of(&[owner, task, native, sub, claude, agent, orphan]);
+        assert_eq!(
+            roots.of_session("t3code/t1-delegated-task-1"),
+            Some("t3code/t1")
+        );
+        assert_eq!(roots.of_session("codex/c-1"), Some("t3code/t1"));
+        assert_eq!(roots.of_session("codex/c-2"), Some("t3code/t1"));
+        assert_eq!(
+            roots.of_session("claude-code/agent-a1"),
+            Some("claude-code/s-1")
+        );
+        // Sessions the owner started, and a parent that isn't archived, have none.
+        for k in ["t3code/t1", "claude-code/s-1", "claude-code/agent-a2"] {
+            assert_eq!(roots.of_session(k), None, "{k}");
+        }
     }
 
     #[test]
