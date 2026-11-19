@@ -44,14 +44,23 @@ No messages are kept here. The older `workbench.panel.aichat.view.aichat.chatdat
 
 ## Decision
 
-Distill does not read `state.vscdb` for now. Everything with content in it is already archived through Cursor's agent transcripts, which the IDE writes for its chat panel too. Reading the store would only add mirrors of those sessions.
+Distill does not read `state.vscdb` for now. The 4 chats with messages are archived through Cursor's agent transcripts, which the IDE writes for its chat panel too, but not completely.
+
+- **Archived:** the owner's messages, the agent's replies and its tool calls.
+- **Not archived:** a transcript holds no tool results, reasoning or models.
+- **Elsewhere:** no other archived store holds those chats, since none of the 4 is in `~/.cursor/chats`.
+
+What the store alone holds is the tool results and reasoning of 4 chats (36 tool records and 31 reasoning records in all). That is too little to justify a parser now.
 
 Archiving it as a capture has two more costs:
 
 - the file is rewritten whenever Cursor runs, so the append-only raw archive would keep copy after copy;
 - it is a SQLite file, which fails closed while a privacy exclusion is set.
 
-**Revisit when** a chat with messages turns up that has no agent transcript (for example a `chat`-mode chat once the owner uses that mode). Then parse it as a database export, one composer at a time (`…#composer=<id>`):
+**Revisit when** either of these is true:
+
+- a chat with messages turns up that has no agent transcript (for example a `chat`-mode chat once the owner uses that mode);
+- the IDE's chats hold enough tool results or reasoning that the transcripts' gap matters. Then parse it as a database export, one composer at a time (`…#composer=<id>`):
 
 - events from its `bubbleId` records in `fullConversationHeadersOnly` order;
 - the working directory from `composerHeaders.workspaceId` through `workspace.json`.
