@@ -59,6 +59,16 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
                 .and_then(Value::as_str)
                 .map(str::to_string);
         }
+        // A sub-agent's own file (`<session>/subagents/agent-*.jsonl`) marks its records as a
+        // side chain of the session that started it, and names that session.
+        if out.parent_session.is_none()
+            && v.get("isSidechain").and_then(Value::as_bool) == Some(true)
+        {
+            out.parent_session = v
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
         if let Some(ver) = v.get("version").and_then(Value::as_str) {
             out.harness_version = Some(ver.to_string());
         }
@@ -104,6 +114,18 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sub_agent_names_the_session_that_started_it() {
+        let src = r#"{"type":"user","isSidechain":true,"sessionId":"parent-1","agentId":"a1","message":{"role":"user","content":"look into it"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-1","agentId":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}"#;
+        assert_eq!(
+            parse(src.as_bytes()).unwrap().parent_session.as_deref(),
+            Some("parent-1")
+        );
+        let main = r#"{"type":"user","isSidechain":false,"sessionId":"s","message":{"role":"user","content":"hi"}}"#;
+        assert_eq!(parse(main.as_bytes()).unwrap().parent_session, None);
+    }
 
     #[test]
     fn keeps_tool_calls_results_and_reasoning() {
