@@ -315,12 +315,23 @@ impl Roots {
                 }
             }
         }
-        // A session naming a parent that isn't archived: the top of its chain is unknown.
-        let unknown: std::collections::HashSet<String> = metas
+        // A session naming a parent that isn't archived: the top of its chain is unknown, and
+        // so is that of the native sessions a mirror of it names.
+        let mut unknown: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for m in metas
             .iter()
             .filter(|m| m.parent_session.is_some() && !parent.contains_key(&m.key()))
-            .map(|m| m.key())
-            .collect();
+        {
+            unknown.insert(m.key());
+            if m.mirror {
+                unknown.extend(
+                    m.mirror_refs
+                        .iter()
+                        .filter(|r| !parent.contains_key(*r))
+                        .cloned(),
+                );
+            }
+        }
         let mut roots = HashMap::new();
         for k in parent.keys() {
             let (mut at, mut seen) = (k, std::collections::HashSet::new());
@@ -517,8 +528,16 @@ mod tests {
         // A chain whose top names a parent that isn't archived, and a key that isn't archived.
         let lost = session("codex", "c-3", r#","parent_session":"gone""#);
         let under_lost = session("codex", "c-4", r#","parent_session":"c-3""#);
-        let wrong_harness = session("droid", "s-1", "");
+        let wrong_harness = session("droid", "missing", "");
         let qualified = session("droid", "d-1", r#","parent_session":"claude-code/missing""#);
+        // A delegated task whose parent isn't archived: its worker's sub-agent has no known top.
+        let lost_task = session(
+            "t3code",
+            "t9-delegated-task-1",
+            r#","parent_session":"t9","mirror":true,"mirror_of":["codex"],"mirror_refs":["codex/w-1"]"#,
+        );
+        let worker = session("codex", "w-1", "");
+        let worker_sub = session("codex", "w-2", r#","parent_session":"w-1""#);
         let roots = Roots::of(&[
             owner,
             task,
@@ -534,8 +553,11 @@ mod tests {
             under_lost,
             wrong_harness,
             qualified,
+            lost_task,
+            worker,
+            worker_sub,
         ]);
-        for k in ["codex/c-4", "droid/d-1"] {
+        for k in ["codex/c-4", "droid/d-1", "codex/w-2"] {
             assert_eq!(roots.of_session(k), None, "{k}");
         }
         assert_eq!(roots.of_session("hermes/db-h2"), Some("hermes/db-h1"));
