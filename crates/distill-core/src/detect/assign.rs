@@ -1,6 +1,6 @@
 //! Secret assignments: a credential-named key and a separator, then its value
 //! (`DB_PASSWORD=…`, `"api_key": "…"`, `token: |` and a YAML block). Ported from the previous
-//! build's redactor (`agent-driven-final`), which rewrote the value; here only its range is found.
+//! build's redactor (commit `a6e4be0`), which rewrote the value; here only its range is found.
 
 use std::ops::Range;
 use std::sync::OnceLock;

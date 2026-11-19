@@ -2,7 +2,7 @@
 
 Sessions hold secrets and personal details. The earlier build rewrote text at export. That protected only exports, destroyed the original in that copy, and made every rule error permanent in the output.
 
-We record findings beside each session instead, and apply them when a reader asks for text: blurred for the owner, placeholders for models. Stored text never changes, detection can be rerun as it improves, a wrong finding only hides too much, and old secrets stay findable so they can be rotated.
+We record findings beside each session instead, and apply them when a reader asks for text: covered for the owner, and placeholders for secrets when a model reads. Personal details are left in place for a trusted reader; they mark what the owner sees covered. Stored text never changes, detection can be rerun as it improves, a wrong finding only hides too much, and old secrets stay findable so they can be rotated.
 
 ## Consequences
 

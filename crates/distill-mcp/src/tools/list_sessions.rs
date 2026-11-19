@@ -21,7 +21,7 @@ impl Tool for ListSessions {
         format!(
             "List archived sessions, newest first, with each one's facts (harness, project, \
              branch, models, times, counts) and its card (a title, a summary, tags and an \
-             outcome, written by a local model), or the opening of what the owner first wrote \
+             outcome, written by a model), or the opening of what the owner first wrote \
              when it has no card yet. Filter by harness, project (a folder; sessions in it and \
              below), model (part of its name), start date, and the card's tag and outcome. At \
              most {PAGE_MAX} rows per call; the first line says how \

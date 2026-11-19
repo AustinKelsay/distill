@@ -1,5 +1,5 @@
 //! The detector as text in, findings out. The secret cases come from the previous build's
-//! redactor suite (`agent-driven-final`, `redact.rs`): where it asserted what replaced a secret,
+//! redactor suite (commit `a6e4be0`, `redact.rs`): where it asserted what replaced a secret,
 //! these assert the span and kind found in the original text, for secrets and personal details
 //! alike. Its assertions that only checked the rewriting (JSON still valid, untouched bytes, key
 //! collisions) are dropped.

@@ -43,7 +43,7 @@ enum Cmd {
     Verify(verify::Args),
     /// Turn captures into events and session facts
     Parse(parse::Args),
-    /// Scan every session whose findings are missing or out of date for secrets
+    /// Scan every session whose findings are missing or out of date for secrets and personal details
     Scan(scan::Args),
     /// Findings by fingerprint: the rotation list, or where one fingerprint appears
     Findings(findings::Args),
@@ -59,7 +59,7 @@ enum Cmd {
     Read(read::Args),
     /// The read log: who read which session, and what they got
     Reads(reads::Args),
-    /// Search sessions by exact words as a model at a named provider
+    /// Search sessions by words and by meaning as a model at a named provider
     Search(search::Args),
     /// Ask for a secret's value as a model, and collect it once the owner approves in the GUI
     Reveal(reveal::Args),
