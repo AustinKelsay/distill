@@ -110,6 +110,8 @@ pub struct ResultRow {
     pub opening: Opening,
     pub opening_findings: Vec<Finding>,
     pub passage: Option<Passage>,
+    /// For a search hit an agent started: the session the owner started it from.
+    pub started_from: Option<SessionMeta>,
 }
 
 /// The open session.
@@ -242,6 +244,7 @@ fn fetch(
                         opening: r.opening,
                         opening_findings: r.opening_findings,
                         passage: None,
+                        started_from: None,
                     })
                     .collect(),
             }),
@@ -279,6 +282,7 @@ fn fetch(
                             opening: h.opening,
                             opening_findings: h.opening_findings,
                             passage: h.passage,
+                            started_from: h.started_from,
                         })
                         .collect(),
                 })
@@ -373,6 +377,7 @@ pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, S
                     opening: Opening::None,
                     opening_findings: Vec::new(),
                     passage: None,
+                    started_from: None,
                 };
                 Ok((row, loaded(Ok(Read::Events(x)))))
             }

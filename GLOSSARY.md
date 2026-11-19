@@ -42,6 +42,10 @@ _Avoid_: Repo, workspace, cwd
 A session that repeats another session already in the archive, because one harness ran another.
 _Avoid_: Duplicate, copy
 
+**Started from**:
+For a session an agent started (a sub-agent, a delegated task), the session the owner started that led to it: the top of its chain of parents.
+_Avoid_: Root, thread, origin
+
 **Format drift**:
 A harness changing how it records sessions, so that its captures, or some of their records, no longer become events. Seen as a sizable capture that parses to nothing, or as records of a type the parser doesn't know.
 

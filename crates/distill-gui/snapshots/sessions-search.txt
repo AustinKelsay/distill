@@ -36,6 +36,7 @@
               outcome: Done
               text: Done
               facts: Claude Code · /work/app · claude-opus-5-5 · 40 min ago · 6 events
+              started-from: Started from claude-code/s-release · Claude Code · /work/app · claude-opus-5-5 · 1 h ago · 24 events
               card-summary: Rotated the staging deploy token, redeployed, and mailed  ‹email›  the release notes.
               text: #deploy
               text: #staging

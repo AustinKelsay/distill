@@ -262,6 +262,109 @@ impl Originals {
     }
 }
 
+/// Each session an agent started, with the session it was started from: the one at the top of
+/// its chain of parents, which the owner started. A delegated task's mirror passes its parent on
+/// to the native sessions it names. Sessions with no parent are not in it.
+#[derive(Debug, Default)]
+pub struct Roots(std::collections::HashMap<String, String>);
+
+impl Roots {
+    pub fn of(metas: &[SessionMeta]) -> Self {
+        use std::collections::HashMap;
+        let mut by_id: HashMap<&str, Vec<&SessionMeta>> = HashMap::new();
+        for m in metas {
+            by_id.entry(m.session_id.as_str()).or_default().push(m);
+        }
+        let keys: std::collections::HashSet<String> = metas.iter().map(|m| m.key()).collect();
+        // A parent is named by its key, or by its id: one of the same harness wins. Hermes keeps
+        // its database's sessions as `db-<id>`, while their parents name the bare id; the
+        // database's record wins over a file's.
+        let resolve = |named: &str, harness: Harness| -> Option<String> {
+            if named.contains('/') {
+                return keys.contains(named).then(|| named.to_string());
+            }
+            let db = format!("db-{named}");
+            let found = (harness == Harness::Hermes)
+                .then(|| by_id.get(db.as_str()))
+                .flatten()
+                .or_else(|| by_id.get(named))
+                .or_else(|| by_id.get(db.as_str()))?;
+            found
+                .iter()
+                .find(|m| m.harness == harness)
+                .or(found.first())
+                .map(|m| m.key())
+        };
+        let mut parent: HashMap<String, String> = HashMap::new();
+        for m in metas {
+            if let Some(p) = m
+                .parent_session
+                .as_deref()
+                .and_then(|p| resolve(p, m.harness))
+            {
+                parent.insert(m.key(), p);
+            }
+        }
+        for m in metas.iter().filter(|m| m.mirror) {
+            let Some(p) = parent.get(&m.key()).cloned() else {
+                continue;
+            };
+            for r in &m.mirror_refs {
+                if r != &p {
+                    parent.entry(r.clone()).or_insert_with(|| p.clone());
+                }
+            }
+        }
+        // And a copy that names no parent of its own takes the parent of the session it copies
+        // (a Hermes file of a database session).
+        for m in metas
+            .iter()
+            .filter(|m| m.mirror && m.parent_session.is_none())
+        {
+            let found = m.mirror_refs.iter().find_map(|r| parent.get(r)).cloned();
+            if let Some(p) = found.filter(|p| *p != m.key()) {
+                parent.entry(m.key()).or_insert(p);
+            }
+        }
+        // A session naming a parent that isn't archived: the top of its chain is unknown, and
+        // so is that of the native sessions a mirror of it names.
+        let mut unknown: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for m in metas
+            .iter()
+            .filter(|m| m.parent_session.is_some() && !parent.contains_key(&m.key()))
+        {
+            unknown.insert(m.key());
+            if m.mirror {
+                unknown.extend(
+                    m.mirror_refs
+                        .iter()
+                        .filter(|r| !parent.contains_key(*r))
+                        .cloned(),
+                );
+            }
+        }
+        let mut roots = HashMap::new();
+        for k in parent.keys() {
+            let (mut at, mut seen) = (k, std::collections::HashSet::new());
+            while let Some(p) = parent.get(at) {
+                if !seen.insert(at) {
+                    break;
+                }
+                at = p;
+            }
+            if at != k && !unknown.contains(at) && !parent.contains_key(at) {
+                roots.insert(k.clone(), at.clone());
+            }
+        }
+        Roots(roots)
+    }
+
+    /// The key of the session `key` was started from, when an agent started it.
+    pub fn of_session(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+}
+
 /// What a parser returns before Distill adds raw references and ids.
 #[derive(Debug, Clone, Default)]
 pub struct Parsed {
@@ -411,6 +514,86 @@ mod tests {
             .keys
             .insert("codex/c-1".into(), Some("2026-11-01T11:59:30Z".into()));
         assert!(later.copied_in(&codex));
+    }
+
+    #[test]
+    fn an_agents_session_is_started_from_the_top_of_its_chain() {
+        // The owner's T3 thread delegates a task (its mirror names the Codex session that ran
+        // it); that session's sub-agent has a parent of its own; a Claude sub-agent names its
+        // parent by id.
+        let owner = session("t3code", "t1", "");
+        let task = session(
+            "t3code",
+            "t1-delegated-task-1",
+            r#","parent_session":"t1","mirror":true,"mirror_of":["codex"],"mirror_refs":["codex/c-1"]"#,
+        );
+        let native = session("codex", "c-1", "");
+        let sub = session("codex", "c-2", r#","parent_session":"c-1""#);
+        let claude = session("claude-code", "s-1", "");
+        let agent = session("claude-code", "agent-a1", r#","parent_session":"s-1""#);
+        let orphan = session("claude-code", "agent-a2", r#","parent_session":"gone""#);
+        let hermes = session("hermes", "db-h1", "");
+        let hermes_child = session("hermes", "db-h2", r#","parent_session":"h1""#);
+        // Hermes's file of h1 (a copy) names no parent; the database's record wins.
+        let hermes_file = session("hermes", "h1", "");
+        // A Hermes file of h2 that went on past the database's copy.
+        let hermes_file_2 = session(
+            "hermes",
+            "h2",
+            r#","mirror":true,"mirror_of":["hermes"],"mirror_refs":["hermes/db-h2"]"#,
+        );
+        // A chain whose top names a parent that isn't archived, and a key that isn't archived.
+        let lost = session("codex", "c-3", r#","parent_session":"gone""#);
+        let under_lost = session("codex", "c-4", r#","parent_session":"c-3""#);
+        let wrong_harness = session("droid", "missing", "");
+        let qualified = session("droid", "d-1", r#","parent_session":"claude-code/missing""#);
+        // A delegated task whose parent isn't archived: its worker's sub-agent has no known top.
+        let lost_task = session(
+            "t3code",
+            "t9-delegated-task-1",
+            r#","parent_session":"t9","mirror":true,"mirror_of":["codex"],"mirror_refs":["codex/w-1"]"#,
+        );
+        let worker = session("codex", "w-1", "");
+        let worker_sub = session("codex", "w-2", r#","parent_session":"w-1""#);
+        let roots = Roots::of(&[
+            owner,
+            task,
+            native,
+            sub,
+            claude,
+            agent,
+            orphan,
+            hermes,
+            hermes_child,
+            hermes_file,
+            hermes_file_2,
+            lost,
+            under_lost,
+            wrong_harness,
+            qualified,
+            lost_task,
+            worker,
+            worker_sub,
+        ]);
+        for k in ["codex/c-4", "droid/d-1", "codex/w-2"] {
+            assert_eq!(roots.of_session(k), None, "{k}");
+        }
+        assert_eq!(roots.of_session("hermes/db-h2"), Some("hermes/db-h1"));
+        assert_eq!(roots.of_session("hermes/h2"), Some("hermes/db-h1"));
+        assert_eq!(
+            roots.of_session("t3code/t1-delegated-task-1"),
+            Some("t3code/t1")
+        );
+        assert_eq!(roots.of_session("codex/c-1"), Some("t3code/t1"));
+        assert_eq!(roots.of_session("codex/c-2"), Some("t3code/t1"));
+        assert_eq!(
+            roots.of_session("claude-code/agent-a1"),
+            Some("claude-code/s-1")
+        );
+        // Sessions the owner started, and a parent that isn't archived, have none.
+        for k in ["t3code/t1", "claude-code/s-1", "claude-code/agent-a2"] {
+            assert_eq!(roots.of_session(k), None, "{k}");
+        }
     }
 
     #[test]

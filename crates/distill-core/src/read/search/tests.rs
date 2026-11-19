@@ -311,3 +311,46 @@ fn the_owners_hit_carries_the_findings_in_its_opening() {
     let f = &hit.opening_findings[0];
     assert_eq!(&t[f.start..f.end], fake_key());
 }
+
+#[test]
+fn a_hit_an_agent_started_names_the_session_it_was_started_from() {
+    let (_d, home) = indexed(&[s("p", "2026-11-01T09:00:00Z", "plan the release")]);
+    // Claude Code's sub-agent file: its records are a side chain naming the session above.
+    let body = r#"{"type":"user","isSidechain":true,"sessionId":"p","cwd":"/work/app","timestamp":"2026-11-01T09:05:00Z","message":{"role":"user","content":"chase the flaky linker"}}
+"#;
+    crate::archive::Archive::open(&home)
+        .unwrap()
+        .put(
+            crate::harness::Harness::ClaudeCode,
+            "/s/proj/p/subagents/agent-a1.jsonl",
+            &crate::util::sha256_hex(body.as_bytes()),
+            body.as_bytes(),
+        )
+        .unwrap();
+    normalize::normalize(&home, false).unwrap();
+    index::build(&home).unwrap();
+    let t = as_model(&home, "linker", &Filter::default());
+    assert!(
+        t.contains("claude-code/agent-a1 · Claude Code")
+            && t.contains(" · started from claude-code/p"),
+        "{t}"
+    );
+    let page = Page {
+        offset: 0,
+        limit: 10,
+    };
+    let Searched::Hits(h) = search(
+        &home,
+        &local(),
+        &Reader::Owner,
+        "release",
+        &Filter::default(),
+        page,
+    )
+    .unwrap() else {
+        panic!("the owner gets hits");
+    };
+    // The owner's own session was started by no one.
+    assert_eq!(h.hits[0].facts.key(), "claude-code/p");
+    assert!(h.hits[0].started_from.is_none());
+}

@@ -342,6 +342,19 @@ fn result_row(s: &State, r: &ResultRow, i: usize, p: &Paint) -> El {
             .color(p.muted())
             .truncate(),
     );
+    if let Some(from) = &r.started_from {
+        card = card.child(
+            text(format!(
+                "Started from {} · {}",
+                from.key(),
+                facts_line(s, from)
+            ))
+            .key("started-from")
+            .font(p.caption())
+            .color(p.faint())
+            .truncate(),
+        );
+    }
     if let Some(c) = &r.card {
         card = card.child(
             cover::text(p, &c.card.summary, &card_marks(c, "summary"), never, false)
