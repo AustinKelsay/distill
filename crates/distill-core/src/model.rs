@@ -315,6 +315,17 @@ impl Roots {
                 }
             }
         }
+        // And a copy that names no parent of its own takes the parent of the session it copies
+        // (a Hermes file of a database session).
+        for m in metas
+            .iter()
+            .filter(|m| m.mirror && m.parent_session.is_none())
+        {
+            let found = m.mirror_refs.iter().find_map(|r| parent.get(r)).cloned();
+            if let Some(p) = found.filter(|p| *p != m.key()) {
+                parent.entry(m.key()).or_insert(p);
+            }
+        }
         // A session naming a parent that isn't archived: the top of its chain is unknown, and
         // so is that of the native sessions a mirror of it names.
         let mut unknown: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -525,6 +536,12 @@ mod tests {
         let hermes_child = session("hermes", "db-h2", r#","parent_session":"h1""#);
         // Hermes's file of h1 (a copy) names no parent; the database's record wins.
         let hermes_file = session("hermes", "h1", "");
+        // A Hermes file of h2 that went on past the database's copy.
+        let hermes_file_2 = session(
+            "hermes",
+            "h2",
+            r#","mirror":true,"mirror_of":["hermes"],"mirror_refs":["hermes/db-h2"]"#,
+        );
         // A chain whose top names a parent that isn't archived, and a key that isn't archived.
         let lost = session("codex", "c-3", r#","parent_session":"gone""#);
         let under_lost = session("codex", "c-4", r#","parent_session":"c-3""#);
@@ -549,6 +566,7 @@ mod tests {
             hermes,
             hermes_child,
             hermes_file,
+            hermes_file_2,
             lost,
             under_lost,
             wrong_harness,
@@ -561,6 +579,7 @@ mod tests {
             assert_eq!(roots.of_session(k), None, "{k}");
         }
         assert_eq!(roots.of_session("hermes/db-h2"), Some("hermes/db-h1"));
+        assert_eq!(roots.of_session("hermes/h2"), Some("hermes/db-h1"));
         assert_eq!(
             roots.of_session("t3code/t1-delegated-task-1"),
             Some("t3code/t1")
