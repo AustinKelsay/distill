@@ -206,6 +206,13 @@ pub fn index_step(
     })
 }
 
+/// Whether a model step did its work: nothing failed, or some sessions succeeded. A session that
+/// failed waits for a later run, so a step fails only when every session it tried failed (the
+/// provider is down, or every answer is unusable).
+fn did_its_work(done: u64, failed: u64) -> bool {
+    failed == 0 || done > 0
+}
+
 /// Write cards for the sessions whose card is missing or out of date, newest first, up to
 /// `sessions_per_run`; skipped when `card_model` is not set or no runtime can run it.
 pub fn cards_step(
@@ -217,7 +224,7 @@ pub fn cards_step(
     let r = cards::write(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "cards".into(),
-        ok: r.failed == 0,
+        ok: did_its_work(r.written, r.failed),
         summary: r.summary(),
         errors: r.errors.clone(),
         report: serde_json::to_value(&r)?,
@@ -235,7 +242,7 @@ pub fn vectors_step(
     let r = index::vectors::build(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "vectors".into(),
-        ok: r.failed == 0,
+        ok: did_its_work(r.embedded, r.failed),
         summary: r.summary(),
         errors: r.errors.clone(),
         report: serde_json::to_value(&r)?,
@@ -254,7 +261,7 @@ pub fn details_step(
     let r = details::find(home, config, runtime, deadline)?;
     Ok(StepOutcome {
         name: "details".into(),
-        ok: r.failed == 0,
+        ok: did_its_work(r.written, r.failed),
         summary: r.summary(),
         errors: r.errors.clone(),
         report: serde_json::to_value(&r)?,
@@ -396,6 +403,13 @@ mod tests {
         let vectors = report.steps.iter().find(|s| s.name == "vectors").unwrap();
         assert!(vectors.ok);
         assert_eq!(vectors.report["skipped"], "no embedding_model is set");
+    }
+
+    #[test]
+    fn a_model_step_fails_only_when_every_session_it_tried_failed() {
+        assert!(did_its_work(0, 0), "nothing to do");
+        assert!(did_its_work(49, 1), "one to retry");
+        assert!(!did_its_work(0, 3), "every session failed");
     }
 
     #[test]
@@ -642,7 +656,8 @@ mod tests {
         let r = tick_with(&home, &config, &fake.runtime()).unwrap();
         let cards = &r.steps[4];
         assert_eq!(cards.name, "cards");
-        assert!(!cards.ok, "{cards:?}");
+        // One card written and one to retry: the step did its work.
+        assert!(cards.ok, "{cards:?}");
         assert_eq!(cards.report["written"], 1, "{cards:?}");
         assert_eq!(cards.report["failed"], 1, "{cards:?}");
         assert!(

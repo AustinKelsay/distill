@@ -45,6 +45,9 @@ pub const SERVICES: [(&str, &str); 6] = [
     (OLLAMA_CLOUD, "Ollama cloud"),
 ];
 
+/// How many sessions each model step may take per run.
+pub const PER_RUN: [usize; 4] = [25, 50, 100, 200];
+
 pub const SWEEPS: [(u32, &str); 4] = [
     (15, "15 min"),
     (30, "30 min"),
@@ -1081,15 +1084,40 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
         }
         None => "Asking Ollama for its models…".to_string(),
     };
+    let per_run = d.draft.steward.sessions_per_run;
+    let labels: Vec<String> = PER_RUN.iter().map(|n| n.to_string()).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let pace = SegmentedControl::new(&labels, PER_RUN.iter().position(|n| *n == per_run))
+        .label("Sessions per run")
+        .width(Some(280.0))
+        .on_pick(|s: &mut State, i, _: &mut Tx| s.setup.draft.steward.sessions_per_run = PER_RUN[i])
+        .build(&p.k);
+    let budget = schedule::interval_minutes(&d.draft) / 2;
+    let mut help = format!(
+        "How many sessions each model step takes per run, newest first. More catches up \
+         sooner and sends more to the models; either way the model steps stop after \
+         {budget} minutes, half the timer's interval."
+    );
+    if !PER_RUN.contains(&per_run) {
+        help += &format!(" Now {per_run}.");
+    }
+    let pace_card = p.card().key("pace").gap(0.0).py(4.0).child(setting(
+        p,
+        "per-run",
+        "Sessions per run",
+        &help,
+        pace,
+    ));
     col()
         .gap(12.0)
         .child(runner(d, p, layer))
         .child(card)
+        .child(pace_card)
         .child(p.note(note).key("models-note"))
         .child(p.note(
             "A model that is not set means its step is skipped; the detection pass falls back to \
-             the card model. Each takes the newest sessions first, a few per run. Embeddings \
-             always run in Ollama on this machine.",
+             the card model. Embeddings always run \
+             in Ollama on this machine.",
         ))
 }
 

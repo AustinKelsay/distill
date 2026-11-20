@@ -341,7 +341,7 @@ impl CardReport {
         }
         s += ")";
         if self.failed > 0 {
-            s += &format!(", {} failed", self.failed);
+            s += &format!(", {} to retry", self.failed);
         }
         if self.discarded > 0 {
             s += &format!(" ({} discarded for holding a secret)", self.discarded);

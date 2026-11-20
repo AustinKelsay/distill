@@ -352,7 +352,7 @@ fn steps(st: &Status) -> Vec<Step> {
             detail: [
                 waiting(cards.pending),
                 (cards.stale > 0).then(|| format!("{} stale", thousands(cards.stale))),
-                (cards.failing > 0).then(|| format!("{} failing", thousands(cards.failing))),
+                (cards.failing > 0).then(|| format!("{} to retry", thousands(cards.failing))),
                 cards.model.clone(),
                 cards.skipped.as_ref().map(|why| format!("Skipped: {why}")),
             ]
@@ -395,7 +395,7 @@ fn steps(st: &Status) -> Vec<Step> {
             }),
             detail: [
                 waiting(details.pending),
-                (details.failing > 0).then(|| format!("{} failing", thousands(details.failing))),
+                (details.failing > 0).then(|| format!("{} to retry", thousands(details.failing))),
                 (details.sessions > 0)
                     .then(|| format!("{} found", count(details.found, "personal detail"))),
                 details.model.clone(),

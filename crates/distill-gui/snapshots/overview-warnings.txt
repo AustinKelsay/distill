@@ -48,13 +48,13 @@
             detail: 39 waiting · 212 MB
           text: Cards
             value: 1,212 of 5,300 with a card
-            detail: 4,088 waiting · 6 failing · qwen-small:4b · Skipped: the local runtime is not running
+            detail: 4,088 waiting · 6 to retry · qwen-small:4b · Skipped: the local runtime is not running
           text: Search by meaning
             value: 900 of 5,300 with vectors
             detail: 4,400 waiting · 5.5 MB · embed-text:v1
           text: Model detection pass
             value: 640 of 5,529 checked by the model
-            detail: 4,889 waiting · 2 failing · 88 personal details found · qwen-small:4b
+            detail: 4,889 waiting · 2 to retry · 88 personal details found · qwen-small:4b
         reveals: Reveal requests
             title: Reveal requests
             message: 2 reveal requests wait for you

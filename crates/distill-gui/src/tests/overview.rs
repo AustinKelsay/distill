@@ -60,7 +60,7 @@ fn the_overview_shows_the_last_sweep_and_each_steps_progress() {
         text_of(&rt, "step-cards/value"),
         "1,212 of 5,300 with a card"
     );
-    assert!(shows(&rt, "6 failing"));
+    assert!(shows(&rt, "6 to retry"));
     assert!(shows(&rt, "qwen-small:4b"));
     assert_eq!(
         text_of(&rt, "step-vectors/value"),

@@ -47,8 +47,19 @@
             text: Finds names, addresses, phone numbers and client names that no pattern can.
               detail-model-trigger: Detection pass
                 text: Same as the card model
+            text: Sessions per run
+            text: How many sessions each model step takes per run, newest first. More catches up sooner and sends more to the models; either way the model steps stop after 30 minutes, half the timer's interval.
+            radiogroup: Sessions per run
+              segment0: 25
+                label: 25
+              segment1: 50
+                label: 50
+              segment2: 100
+                label: 100
+              segment3: 200
+                label: 200
           models-note: Stored on this machine: qwen-small:4b, embed-text:v1. Models Ollama serves from a cloud are not offered.
-        text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Each takes the newest sessions first, a few per run. Embeddings always run in Ollama on this machine.
+        text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Embeddings always run in Ollama on this machine.
         back: Back
           label: Back
         next: Next
