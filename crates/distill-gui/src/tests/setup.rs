@@ -414,3 +414,88 @@ fn privacy_says_what_is_found_automatically() {
     settle(&mut rt);
     assert!(shows(&rt, "Patterns and qwen-small:4b"), "{:?}", texts(&rt));
 }
+
+#[test]
+fn models_can_run_at_a_trusted_service_which_setup_writes_as_generation() {
+    let t = temp(false);
+    let mut rt = runtime_sized(fresh_window(&t).state, (1080.0, 1200.0));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Trusted AI");
+    press(&mut rt, "service-openrouter/switch");
+    step(&mut rt, "Models");
+    press(&mut rt, "card-model-trigger");
+    choose(&mut rt, "qwen-small:4b");
+    assert!(!on(&rt, "base-url"), "on this machine there is no address");
+
+    // Only trusted services are offered; choosing one clears models the old runtime served.
+    press(&mut rt, "runs-at-trigger");
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| e.label.as_deref() == Some("anthropic"))
+    );
+    choose(&mut rt, "openrouter");
+    assert_eq!(rt.state.setup.runs_at(), Some("openrouter"));
+    assert_eq!(rt.state.setup.draft.steward.card_model, None);
+    assert!(on(&rt, "base-url") && on(&rt, "key-file"));
+
+    // Finish needs the address and key file.
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    assert!(
+        shows(&rt, "give openrouter's address and key file"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(!t.core.home.config_path().exists());
+
+    // Check asks the service; a key file that can't be read says so, without any request.
+    step(&mut rt, "Models");
+    type_into(&mut rt, |s| &mut s.setup.base_url, "https://example.com/v1");
+    let key = t.roots.join("no-such-key");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.key_file,
+        &key.display().to_string(),
+    );
+    press(&mut rt, "check");
+    assert_eq!(run_jobs(&mut rt, &t.core), ["service models"]);
+    assert!(shows(&rt, "API key file"), "{:?}", texts(&rt));
+
+    // What the service lists is offered for cards; embeddings stay with Ollama's models.
+    rt.update(|s, _| s.setup.remote_models = Some(Ok(vec!["big-remote".into()])));
+    settle(&mut rt);
+    assert!(shows(&rt, "openrouter serves 1 model"));
+    press(&mut rt, "card-model-trigger");
+    choose(&mut rt, "big-remote");
+    press(&mut rt, "embedding-model-trigger");
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| e.role == "option" && e.label.as_deref() == Some("big-remote"))
+    );
+    choose(&mut rt, "embed-text:v1");
+
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    let saved = Config::load(&t.core.home.config_path()).unwrap();
+    let g = saved
+        .steward
+        .generation
+        .as_ref()
+        .expect("generation written");
+    assert_eq!(
+        (
+            g.provider.as_str(),
+            g.base_url.as_str(),
+            g.api_key_file.clone()
+        ),
+        ("openrouter", "https://example.com/v1", key)
+    );
+    assert_eq!(saved.steward.card_model.as_deref(), Some("big-remote"));
+    assert_eq!(
+        saved.steward.embedding_model.as_deref(),
+        Some("embed-text:v1")
+    );
+}

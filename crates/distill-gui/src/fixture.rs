@@ -27,6 +27,7 @@ pub const SCENES: &[Scene] = &[
     ("setup-home", |s| setup_step(s, 1)),
     ("setup-providers", |s| setup_step(s, 2)),
     ("setup-models", |s| setup_step(s, 3)),
+    ("setup-models-service", models_at_a_service),
     ("setup-privacy", |s| setup_step(s, 4)),
     ("setup-schedule", |s| setup_step(s, 5)),
     ("overview", |s| *s = running()),
@@ -97,6 +98,21 @@ fn setup_step(s: &mut State, step: usize) {
         s.setup.draft.privacy.personal_terms = vec!["Northwind".into(), "Jo Example".into()];
         s.setup.draft.privacy.exclude_paths = vec!["~/work/client-x".into()];
     }
+}
+
+/// The models step with cards and detection run at a trusted service that listed its models.
+fn models_at_a_service(s: &mut State) {
+    setup_step(s, 3);
+    distill_core::trust::add(&mut s.setup.draft, "example-cloud", true).expect("valid name");
+    s.setup.draft.steward.generation = Some(distill_core::config::GenerationConfig {
+        provider: "example-cloud".into(),
+        base_url: "https://api.example.com/v1".into(),
+        api_key_file: "/keys/example-cloud".into(),
+    });
+    s.setup.base_url.replace_text("https://api.example.com/v1");
+    s.setup.key_file.replace_text("/keys/example-cloud");
+    s.setup.remote_models = Some(Ok(vec!["large-model".into(), "small-model".into()]));
+    s.setup.draft.steward.card_model = Some("large-model".into());
 }
 
 pub fn detections() -> Vec<Detection> {

@@ -276,6 +276,22 @@ pub fn tick(home: &Home, config: &Config) -> Result<TickReport> {
     tick_with_runtimes(home, config, &generation, &local, model_budget(config))
 }
 
+/// The models `generation`'s provider serves, as the tick would list them: refused unless the
+/// provider is a trusted remote one, the base URL HTTPS and the key file readable. Setup offers
+/// these as the card and detail models.
+pub fn generation_models(config: &Config, generation: &GenerationConfig) -> Result<Vec<String>> {
+    let runtime = generation_runtime(config, generation)?;
+    match runtime.state() {
+        crate::runtime::RuntimeState::Running(models) => {
+            Ok(models.into_iter().map(|m| m.name).collect())
+        }
+        _ => match runtime.model_list_error() {
+            Some(e) => bail!("{e}"),
+            None => bail!("{} listed no models", generation.provider),
+        },
+    }
+}
+
 fn generation_runtime(config: &Config, generation: &GenerationConfig) -> Result<LocalRuntime> {
     if !Trust::new(config)
         .provider(&generation.provider)
@@ -380,6 +396,25 @@ mod tests {
         let vectors = report.steps.iter().find(|s| s.name == "vectors").unwrap();
         assert!(vectors.ok);
         assert_eq!(vectors.report["skipped"], "no embedding_model is set");
+    }
+
+    #[test]
+    fn generation_models_are_listed_only_for_a_trusted_https_provider_with_a_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        let mut generation = GenerationConfig {
+            provider: "remote".into(),
+            base_url: "https://example.com/v1".into(),
+            api_key_file: dir.path().join("key"),
+        };
+        let why =
+            |c: &Config, g: &GenerationConfig| generation_models(c, g).unwrap_err().to_string();
+        assert!(why(&config, &generation).contains("must be a trusted remote provider"));
+        crate::trust::add(&mut config, "remote", true).unwrap();
+        assert!(why(&config, &generation).contains("API key file"));
+        std::fs::write(&generation.api_key_file, "k\n").unwrap();
+        generation.base_url = "http://example.com/v1".into();
+        assert!(why(&config, &generation).contains("HTTPS"));
     }
 
     #[test]

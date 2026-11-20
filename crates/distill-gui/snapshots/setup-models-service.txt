@@ -1,0 +1,64 @@
+      title: DISTILL
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Trusted AI
+          text: 3 Trusted AI
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Schedule
+          text: 6 Schedule
+        text: Step 4 of 6
+          step-title: Models
+        text: The models that organize the archive
+            text: Run models on
+            text: Where the card and detection models run. A service must be trusted (the Trusted AI step) and OpenAI-compatible.
+              runs-at-trigger: Run models on
+                text: example-cloud
+            text: Address
+            text: The service's HTTPS API address, with its version path.
+                input: https://api.example.com/v1
+            text: API key file
+            text: A file holding the key on its first line, readable by you alone.
+                input: /keys/example-cloud
+              check: Check
+                label: Check
+            text: example-cloud serves 2 models
+            text: Cards
+            text: Writes each session's title, summary, tags and outcome.
+              card-model-trigger: Cards
+                text: large-model
+            text: Embeddings
+            text: Turns what you wrote and each card into vectors for search by meaning.
+              embedding-model-trigger: Embeddings
+                text: embed-text:v1
+            text: Detection pass
+            text: Finds names, addresses, phone numbers and client names that no pattern can.
+              detail-model-trigger: Detection pass
+                text: Same as the card model
+          models-note: Stored on this machine: qwen-small:4b, embed-text:v1. Models Ollama serves from a cloud are not offered.
+        text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Each takes the newest sessions first, a few per run. Embeddings always run in Ollama on this machine.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

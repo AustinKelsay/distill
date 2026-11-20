@@ -31,6 +31,10 @@
         text: Step 4 of 6
           step-title: Models
         text: The models that organize the archive
+            text: Run models on
+            text: Where the card and detection models run. A service must be trusted (the Trusted AI step) and OpenAI-compatible.
+              runs-at-trigger: Run models on
+                text: This machine (Ollama)
             text: Cards
             text: Writes each session's title, summary, tags and outcome.
               card-model-trigger: Cards
@@ -44,7 +48,7 @@
               detail-model-trigger: Detection pass
                 text: Same as the card model
           models-note: Stored on this machine: qwen-small:4b, embed-text:v1. Models Ollama serves from a cloud are not offered.
-        text: A model that is not set means its step is skipped; the detail model falls back to the card model. Each takes the newest sessions first, a few per run. Embeddings run in Ollama on this machine.
+        text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Each takes the newest sessions first, a few per run. Embeddings always run in Ollama on this machine.
         back: Back
           label: Back
         next: Next
