@@ -233,7 +233,14 @@ fn tiles(st: &Status, p: &Paint) -> El {
             .key(key)
             .grow(1.0)
             .gap(4.0)
-            .child(text(label).font(p.caption()).color(p.muted()))
+            .gradient(p.t.card, p.t.card.mix(p.brand, 0.035))
+            .child(
+                row()
+                    .gap(6.0)
+                    .center_y()
+                    .child(dot(p.brand, 6.0))
+                    .child(text(label).font(p.caption()).color(p.muted())),
+            )
             .child(text(value).key("value").font(p.stat()).color(p.ink()))
     };
     let capturing = st.harnesses.iter().filter(|h| h.enabled).count() as u64;
@@ -291,7 +298,18 @@ struct Step {
     name: &'static str,
     /// None: nothing to report yet.
     value: Option<String>,
+    /// How much of the step is done, as (done, of), for its meter.
+    done: (u64, u64),
     detail: Vec<String>,
+}
+
+/// `part` of `whole`, 0 to 1 (0 when there is nothing to do).
+fn share(part: u64, whole: u64) -> f32 {
+    if whole == 0 {
+        0.0
+    } else {
+        (part as f64 / whole as f64).min(1.0) as f32
+    }
 }
 
 /// The tick's steps that report progress, in the order they run.
@@ -313,6 +331,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(scan.sessions)
                 )
             }),
+            done: (scan.current, scan.sessions),
             detail: [
                 waiting(scan.pending),
                 (scan.sessions > 0).then(|| format!("{} found", count(scan.secrets, "secret"))),
@@ -331,6 +350,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(index.sessions)
                 )
             }),
+            done: (index.current, index.sessions),
             detail: [
                 waiting(index.pending),
                 (index.bytes > 0).then(|| human_bytes(index.bytes)),
@@ -349,6 +369,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(cards.sessions)
                 )
             }),
+            done: (cards.current + cards.stale, cards.sessions),
             detail: [
                 waiting(cards.pending),
                 (cards.stale > 0).then(|| format!("{} stale", thousands(cards.stale))),
@@ -370,6 +391,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(vectors.sessions)
                 )
             }),
+            done: (vectors.current, vectors.sessions),
             detail: [
                 waiting(vectors.pending),
                 (vectors.bytes > 0).then(|| human_bytes(vectors.bytes)),
@@ -393,6 +415,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(details.sessions)
                 )
             }),
+            done: (details.current, details.sessions),
             detail: [
                 waiting(details.pending),
                 (details.failing > 0).then(|| format!("{} to retry", thousands(details.failing))),
@@ -417,14 +440,42 @@ fn progress(st: &Status, p: &Paint) -> El {
         if i > 0 {
             card = card.child(p.separator());
         }
-        let (value, color) = match step.value {
-            Some(v) => (v, p.ink()),
-            None => ("Not yet available".to_string(), p.faint()),
-        };
+        let mut value = col().key("progress").w(270.0).gap(6.0);
+        let (part, whole) = step.done;
+        let pct = percent(part, whole);
+        match step.value {
+            Some(v) => {
+                value = value
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(8.0)
+                            .center_y()
+                            .justify_between()
+                            .child(text(v).key("value").font(p.num()).color(p.ink()))
+                            .child(
+                                text(format!("{pct}%"))
+                                    .key("percent")
+                                    .font(p.k.ty.small_medium.features("'tnum' 1"))
+                                    .color(if pct == 100 { p.brand } else { p.muted() }),
+                            ),
+                    )
+                    .child(p.meter(share(part, whole)));
+            }
+            None => {
+                value = value.child(
+                    text("Not yet available")
+                        .key("value")
+                        .font(p.num())
+                        .color(p.faint()),
+                );
+            }
+        }
         card = card.child(
             row()
                 .key(format!("step-{}", step.id))
                 .w_full()
+                .py(2.0)
                 .gap(16.0)
                 .center_y()
                 .child(
@@ -433,7 +484,7 @@ fn progress(st: &Status, p: &Paint) -> El {
                         .color(p.ink())
                         .w(150.0),
                 )
-                .child(text(value).key("value").font(p.num()).color(color).w(220.0))
+                .child(value)
                 .child(
                     text(step.detail.join(" · "))
                         .key("detail")
@@ -446,6 +497,16 @@ fn progress(st: &Status, p: &Paint) -> El {
         );
     }
     card
+}
+
+/// `part` of `whole` as a whole percent, rounded down so a step reads 100% only when it is
+/// done. Counted in integers: through a float, 53 of 100 can come out as 52.
+fn percent(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        0
+    } else {
+        (u128::from(part.min(whole)) * 100 / u128::from(whole)) as u64
+    }
 }
 
 fn reveals(st: &Status, p: &Paint) -> El {
@@ -721,4 +782,19 @@ fn exposure_section(s: &State, e: &Exposure, p: &Paint) -> El {
         card = card.child(list);
     }
     card
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent;
+
+    #[test]
+    fn a_percent_is_counted_exactly_and_reads_100_only_when_done() {
+        assert_eq!(percent(53, 100), 53);
+        assert_eq!(percent(59, 100), 59);
+        assert_eq!(percent(999, 1000), 99);
+        assert_eq!(percent(1000, 1000), 100);
+        assert_eq!(percent(5, 0), 0);
+        assert_eq!(percent(u64::MAX, u64::MAX), 100);
+    }
 }

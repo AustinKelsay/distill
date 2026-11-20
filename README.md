@@ -2,6 +2,8 @@
 
 # DISTILL
 
+**D**ata **I**nfrastructure for **S**toring, **T**agging, **I**ndexing & **L**ogging, **L**ocally.
+
 A private, searchable archive of the sessions your local coding agents record.
 
 DISTILL copies every session your agent harnesses keep into one archive you own, in one shape. You, or an agent you trust, can then search it by words or by meaning and read what happened. Secrets are found and replaced with placeholders in what models read. Personal details are found and covered for the owner; a trusted model reads them as written.

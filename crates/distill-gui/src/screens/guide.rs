@@ -8,6 +8,18 @@ use crate::State;
 use crate::nav::{self, Screen};
 use crate::ui::Paint;
 
+/// What DISTILL stands for, word by word; a word that gives a letter starts with it.
+pub const ACRONYM: [(&str, bool); 8] = [
+    ("Data", true),
+    ("Infrastructure", true),
+    ("for", false),
+    ("Storing,", true),
+    ("Tagging,", true),
+    ("Indexing", true),
+    ("& Logging,", true),
+    ("Locally", true),
+];
+
 /// How DISTILL works, as (step, what happens).
 pub const HOW: [(&str, &str); 4] = [
     (
@@ -22,14 +34,16 @@ pub const HOW: [(&str, &str); 4] = [
          addresses, hosts) in every session.",
     ),
     (
-        "Organize",
-        "Models you choose write a card for each session and make the archive searchable by \
-         meaning. This is optional: without models, search by words still works.",
+        "Organize (optional)",
+        "A card model you choose, here or at an AI service you trust, writes your sessions' \
+         cards: a title, summary, tags and outcome. An embedding model, always run here in Ollama, adds search \
+         by meaning. Without either, search by words still works.",
     ),
     (
         "Search",
-        "You search and read here. Agents running at an AI service you trust can search and \
-         read too, through the distill command or the MCP server.",
+        "Search finds sessions by words, and by meaning once embeddings are set up. You search \
+         and read here; agents at an AI service you trust can too, through the distill command \
+         or the MCP server.",
     ),
 ];
 
@@ -117,7 +131,7 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
         .gap(4.0)
         .child(text("Guide").key("title").font(p.title()).color(p.ink()))
         .child(
-            text("A private, searchable archive of your coding agents' sessions")
+            text("How DISTILL works, and who reads what")
                 .font(p.text())
                 .color(p.muted()),
         );
@@ -136,6 +150,7 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
                 .child(intro)
                 .child(start),
         )
+        .child(hero(p))
         .child(how)
         .child(who)
         .child(usage)
@@ -143,6 +158,64 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
             stick_bottom: false,
         })
         .h_full()
+}
+
+/// The brand: the logo, DISTILL, what it stands for with each letter's word starting in green,
+/// and what it is.
+fn hero(p: &Paint) -> El {
+    let mut words = row().key("acronym").w_full().gap(6.0).flex_wrap();
+    for (word, gives_letter) in ACRONYM {
+        words = words.child(if gives_letter {
+            // "& Logging," gives its L: split before the letter, not at the first character.
+            let at = word.find(|c: char| c.is_ascii_uppercase()).unwrap_or(0);
+            let (before, rest) = word.split_at(at);
+            let (letter, after) = rest.split_at(1);
+            let mut w = row().gap(0.0);
+            if !before.is_empty() {
+                w = w.child(text(before).font(p.text()).color(p.muted()));
+            }
+            w.child(text(letter).font(p.k.ty.ui_medium).color(p.brand))
+                .child(text(after).font(p.text()).color(p.ink()))
+        } else {
+            row().child(text(word).font(p.text()).color(p.muted()))
+        });
+    }
+    p.card()
+        .key("hero")
+        .role("group")
+        .label("DISTILL: Data Infrastructure for Storing, Tagging, Indexing & Logging, Locally")
+        .padding(24.0)
+        .radial_gradient(
+            [0.0, 0.0],
+            [420.0, 260.0],
+            [(0.0, p.brand.alpha(0.16)), (1.0, p.brand.alpha(0.0))],
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(18.0)
+                .center_y()
+                .child(p.logo(64.0))
+                .child(
+                    col()
+                        .gap(6.0)
+                        .grow(1.0)
+                        .shrink()
+                        .child(
+                            text("DISTILL")
+                                .key("wordmark")
+                                .font(p.wordmark(30.0))
+                                .color(p.ink())
+                                .a11y_hidden(),
+                        )
+                        .child(words.a11y_hidden())
+                        .child(
+                            text("A private, searchable archive of your coding agents' sessions")
+                                .font(p.caption())
+                                .color(p.muted()),
+                        ),
+                ),
+        )
 }
 
 fn numbered(p: &Paint, n: usize, name: &str, what: &str) -> El {
@@ -157,8 +230,9 @@ fn numbered(p: &Paint, n: usize, name: &str, what: &str) -> El {
                 .h(24.0)
                 .center()
                 .radius(12.0)
-                .fill(p.t.hover)
-                .child(text(n.to_string()).font(p.k.ty.ui_medium).color(p.ink()))
+                .fill(p.brand_soft())
+                .border(p.hair, p.brand.alpha(0.35))
+                .child(text(n.to_string()).font(p.k.ty.ui_medium).color(p.brand))
                 .a11y_hidden(),
         )
         .child(

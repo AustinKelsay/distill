@@ -1,5 +1,5 @@
-      title: DISTILL
-    text: Your session archive
+        title: DISTILL
+      text: Your session archive
       nav: Screens
         nav-setup: Setup
         text: Setup
@@ -29,19 +29,19 @@
         progress: Progress
             title: Progress
           text: Scan for findings
-            value: Not yet available
+              value: Not yet available
             detail: 
           text: Word index
-            value: Not yet available
+              value: Not yet available
             detail: 
           text: Cards
-            value: Not yet available
+              value: Not yet available
             detail: Skipped: no card_model is set
           text: Search by meaning
-            value: Not yet available
+              value: Not yet available
             detail: 
           text: Model detection pass
-            value: Not yet available
+              value: Not yet available
             detail: 
         reveals: Reveal requests
             title: Reveal requests

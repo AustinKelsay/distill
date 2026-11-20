@@ -55,6 +55,10 @@ fn the_overview_shows_the_last_sweep_and_each_steps_progress() {
     assert_eq!(text_of(&rt, "step-scan/value"), "5,529 of 5,529 scanned");
     assert!(shows(&rt, "37 secrets found"));
     assert_eq!(text_of(&rt, "step-index/value"), "5,490 of 5,529 indexed");
+    // Each step's meter says how much is done, and reads 100% only when all of it is.
+    assert_eq!(text_of(&rt, "step-scan/percent"), "100%");
+    assert_eq!(text_of(&rt, "step-index/percent"), "99%");
+    assert_eq!(text_of(&rt, "step-cards/percent"), "22%");
     assert!(shows(&rt, "39 waiting"));
     assert_eq!(
         text_of(&rt, "step-cards/value"),
