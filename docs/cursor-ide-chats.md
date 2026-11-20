@@ -37,7 +37,7 @@ No messages are kept here. The older `workbench.panel.aichat.view.aichat.chatdat
 
 ## Decision
 
-Distill does not read `state.vscdb`. When it was checked (#108), every chat in it with messages had the same id as an agent transcript Distill already archives (`~/.cursor/projects/<project>/agent-transcripts/`), and the rest were empty drafts. The transcripts keep the owner's messages, the agent's replies and its tool calls, but no tool results, reasoning or models, and no other archived store holds those chats. What the store alone adds is that tool output and reasoning, which was too little to justify a parser.
+Distill does not read `state.vscdb`. When it was checked (#108), every chat in it with messages had the same id as an agent transcript Distill already archives (`~/.cursor/projects/<project>/agent-transcripts/`), and the rest were empty drafts. The transcripts keep the owner's messages, the agent's replies and its tool calls, but no tool results, reasoning or models, and no other archived store holds those chats. What the store alone adds is that tool output, reasoning and model names, which was too little to justify a parser.
 
 Archiving the file as a capture has two more costs: Cursor rewrites it whenever it runs, so the append-only raw archive would keep copy after copy; and it is a SQLite file, which fails closed while a privacy exclusion is set.
 
