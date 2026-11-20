@@ -3,7 +3,7 @@
 //! Each screen is a module under `screens/` with an `open` (what to load when the owner moves to
 //! it) and a `view`, and owns its state struct (a field of [`State`]) when it has one.
 
-use rune::{El, col, row, text};
+use rune::{El, col, el, row, text};
 
 use crate::State;
 use crate::screens::{approvals, findings, guide, overview, read_log, sessions, setup};
@@ -116,22 +116,36 @@ pub fn sidebar(s: &State, p: &Paint) -> El {
             .label(label)
             .checked(current)
             .h(32.0)
-            .px(10.0)
+            .pl(4.0)
+            .pr(10.0)
             .gap(8.0)
             .center_y()
-            .justify_between()
             .radius(7.0)
             .fill(if current {
-                p.t.hover
+                p.brand_soft()
             } else {
                 rune::Color::TRANSPARENT
             })
             .focusable(true)
             .on_press(move |s: &mut State| go(s, e.screen))
+            // The current screen's marker: a short green bar at the left edge.
+            .child(
+                el().key("marker")
+                    .w(3.0)
+                    .h(16.0)
+                    .radius(1.5)
+                    .fill(if current {
+                        p.brand
+                    } else {
+                        rune::Color::TRANSPARENT
+                    })
+                    .a11y_hidden(),
+            )
             .child(
                 text(e.label)
                     .font(if current { p.k.ty.ui_medium } else { p.text() })
                     .color(if current { p.ink() } else { p.muted() })
+                    .grow(1.0)
                     .a11y_hidden(),
             );
         if waiting > 0 {
@@ -150,17 +164,30 @@ pub fn sidebar(s: &State, p: &Paint) -> El {
         } else {
             20.0
         })
-        .gap(20.0)
+        .gap(24.0)
         .fill(p.t.card)
+        .gradient(p.t.card, p.t.card.mix(p.brand, 0.025))
         .child(
-            col()
-                .px(10.0)
-                .gap(2.0)
-                .child(text("DISTILL").key("title").font(p.title()).color(p.ink()))
+            row()
+                .key("brand")
+                .px(6.0)
+                .gap(10.0)
+                .center_y()
+                .child(p.logo(34.0))
                 .child(
-                    text("Your session archive")
-                        .font(p.caption())
-                        .color(p.muted()),
+                    col()
+                        .gap(1.0)
+                        .child(
+                            text("DISTILL")
+                                .key("title")
+                                .font(p.wordmark(18.0))
+                                .color(p.ink()),
+                        )
+                        .child(
+                            text("Your session archive")
+                                .font(p.caption())
+                                .color(p.muted()),
+                        ),
                 ),
         )
         .child(list)

@@ -1,9 +1,10 @@
-//! Shared look and formatting: the kit and core theme for the current appearance, cards,
-//! dots, pills, and how counts, sizes and times are written.
+//! Shared look and formatting: the kit and core theme for the current appearance with the
+//! brand's green as its accent, the logo mark, cards, meters, dots, pills, and how counts,
+//! sizes and times are written.
 
 use chrono::{DateTime, NaiveDate, Utc};
 use rune::tok::{self, Theme};
-use rune::{Align, Color, El, TextEdit, TextStyle, col, el, row, text};
+use rune::{Align, Color, El, TextEdit, TextStyle, col, el, oklch, row, text};
 use rune_kit::Kit;
 
 /// Everything a view function needs to paint itself.
@@ -12,19 +13,112 @@ pub struct Paint {
     pub k: Kit,
     pub t: Theme,
     pub hair: f32,
+    /// The green of the icon's drop, light enough to read on this appearance's background.
+    pub brand: Color,
 }
 
 impl Paint {
+    /// The neutral kit with the brand's green as its accent: switches, radios, focus rings and
+    /// the main (Submit) buttons.
     pub fn new(dark: bool, scale: f32) -> Paint {
+        let brand = if dark {
+            oklch(0.78, 0.16, 155.0)
+        } else {
+            oklch(0.55, 0.14, 155.0)
+        };
+        let mut k = Kit::neutral(dark);
+        let on_brand = if dark {
+            oklch(0.2, 0.04, 155.0)
+        } else {
+            Color::WHITE
+        };
+        let c = &mut k.c;
+        c.bg_accent = brand;
+        c.text_accent = brand;
+        c.icon_accent = brand;
+        c.border_focus = brand;
+        c.border_active = brand;
+        c.bg_icon_button_contrast = brand;
+        c.submit_fg = on_brand;
+        c.submit_icon = on_brand;
         Paint {
-            k: Kit::neutral(dark),
+            k,
             t: tok::theme(dark),
             hair: 1.0 / scale.max(1.0),
+            brand,
         }
+    }
+
+    /// The brand's green, faint: a tint behind something chosen or counted.
+    pub fn brand_soft(&self) -> Color {
+        self.brand.alpha(0.14)
+    }
+
+    /// The logo: the app icon's three narrowing lines over a green drop, `size` points square.
+    pub fn logo(&self, size: f32) -> El {
+        let line = |w: f32, a: f32| {
+            el().w(size * w)
+                .h((size * 0.075).max(2.0))
+                .radius(size)
+                .fill(oklch(0.93, 0.004, 265.0).alpha(a))
+        };
+        let drop = size * 0.27;
+        col()
+            .key("logo")
+            .size(size, size)
+            .radius(size * 0.23)
+            .fill(oklch(0.23, 0.006, 265.0))
+            .gradient(oklch(0.3, 0.008, 265.0), oklch(0.18, 0.005, 265.0))
+            .border(self.hair, Color::WHITE.alpha(0.12))
+            .center()
+            .gap(size * 0.065)
+            .child(line(0.52, 0.9))
+            .child(line(0.36, 0.7))
+            .child(line(0.2, 0.5))
+            .child(
+                el().size(drop, drop)
+                    .mt(size * 0.02)
+                    .radius(drop / 2.0)
+                    .fill(oklch(0.75, 0.16, 156.0))
+                    .gradient(oklch(0.87, 0.14, 158.0), oklch(0.67, 0.16, 155.0)),
+            )
+            .a11y_hidden()
+    }
+
+    /// A thin bar filled in the brand's green to `done` (0 to 1) of its width.
+    pub fn meter(&self, done: f32) -> El {
+        let done = if done.is_finite() {
+            done.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let mut bar = row()
+            .key("meter")
+            .w_full()
+            .h(4.0)
+            .radius(2.0)
+            .fill(self.t.control_track)
+            .a11y_hidden();
+        if done > 0.0 {
+            bar = bar.child(
+                el().w_frac(done)
+                    .h_full()
+                    .radius(2.0)
+                    .fill(self.brand)
+                    .gradient(self.brand.mix(Color::WHITE, 0.15), self.brand),
+            );
+        }
+        bar
     }
 
     pub fn title(&self) -> TextStyle {
         TextStyle::new(20.0, 650.0).lh(26.0)
+    }
+    /// DISTILL, written as the brand: heavy and spaced out, as an acronym.
+    pub fn wordmark(&self, size: f32) -> TextStyle {
+        TextStyle::new(size, 760.0)
+            .lh(size * 1.25)
+            .tracking(size * 0.12)
     }
     pub fn heading(&self) -> TextStyle {
         TextStyle::new(13.0, 600.0).lh(18.0)

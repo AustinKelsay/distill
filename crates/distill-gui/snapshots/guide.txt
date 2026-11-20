@@ -1,5 +1,5 @@
-      title: DISTILL
-    text: Your session archive
+        title: DISTILL
+      text: Your session archive
       nav: Screens
         nav-setup: Setup
         text: Setup
@@ -16,9 +16,28 @@
         nav-guide: Guide
         text: Guide
         title: Guide
-      text: A private, searchable archive of your coding agents' sessions
+      text: How DISTILL works, and who reads what
       start: Start setup
         label: Start setup
+      hero: DISTILL: Data Infrastructure for Storing, Tagging, Indexing & Logging, Locally
+        wordmark: DISTILL
+        text: D
+        text: ata
+        text: I
+        text: nfrastructure
+        text: for
+        text: S
+        text: toring,
+        text: T
+        text: agging,
+        text: I
+        text: ndexing
+        text: & 
+        text: L
+        text: ogging,
+        text: L
+        text: ocally
+      text: A private, searchable archive of your coding agents' sessions
       how: How it works
           title: How it works
         text: 1
@@ -28,11 +47,11 @@
         text: Find
         text: It finds secrets (keys, tokens, passwords) and personal details (names, email addresses, hosts) in every session.
         text: 3
-        text: Organize
-        text: Models you choose write a card for each session and make the archive searchable by meaning. This is optional: without models, search by words still works.
+        text: Organize (optional)
+        text: A card model you choose, here or at an AI service you trust, writes a title and summary for each session. An embedding model, always run here in Ollama, adds search by meaning. Without either, search by words still works.
         text: 4
         text: Search
-        text: You search and read here. Agents running at an AI service you trust can search and read too, through the distill command or the MCP server.
+        text: Search finds sessions by words, and by meaning once embeddings are set up. You search and read here; agents at an AI service you trust can too, through the distill command or the MCP server.
       who: Who reads what
           title: Who reads what
         text: You, in this window
