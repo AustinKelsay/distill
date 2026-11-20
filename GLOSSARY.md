@@ -15,7 +15,7 @@ One recorded run of work between the owner and an agent in a harness.
 _Avoid_: Conversation, thread, chat, transcript
 
 **Capture**:
-An exact copy of one harness file as it stood at one moment.
+An exact copy of one harness file as it stood at one moment, or one session exported from a harness's database.
 _Avoid_: Snapshot, blob, backup
 
 **Capture hash**:

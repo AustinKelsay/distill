@@ -75,13 +75,13 @@ pub enum Kind {
     Username,
     /// A term from the config's `personal_terms`.
     PersonalTerm,
-    /// A person's name, found by the local model (`crate::details`).
+    /// A person's name, found by the model pass (`crate::details`).
     PersonName,
-    /// A postal address, found by the local model.
+    /// A postal address, found by the model pass.
     PostalAddress,
-    /// A phone number, found by the local model.
+    /// A phone number, found by the model pass.
     PhoneNumber,
-    /// A client's or a company's name, found by the local model.
+    /// A client's or a company's name, found by the model pass.
     Organization,
 }
 

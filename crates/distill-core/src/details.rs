@@ -1,11 +1,12 @@
-//! The model detection pass (issue #72, "Findings" and "The steward"): a local model finds the
+//! The model detection pass (issue #72, "Findings" and "The steward"): a model finds the
 //! personal details no pattern can, names of people, postal addresses, phone numbers and client
 //! and company names, and they become findings like any other.
 //!
 //! - **Reading.** The steward reads what the owner and the agent wrote, not tool output, through
-//!   the read path as a model at the local provider ([`Reader::model`] at `ollama` with
-//!   `detail_model`, which defaults to `card_model`), so the read is logged and the model sees
-//!   placeholders, never a secret's value. It calls only a model stored on this machine.
+//!   the read path as a model ([`Reader::model`] at the runtime's provider, Ollama on this machine
+//!   or the trusted provider in `[steward.generation]`, with `detail_model`, which defaults to
+//!   `card_model`), so the read is logged and the model sees placeholders for detected
+//!   secrets.
 //! - **Placing.** The model answers with the exact text of each detail ([`parse_reply`], parsed
 //!   strictly). Distill finds that text in the stored messages itself, as a whole word, and an
 //!   answer written nowhere is dropped (`findings::set_model`). A place that touches a pattern
@@ -250,7 +251,7 @@ impl DetailReport {
     }
 }
 
-/// Why the pass can't run now, if it can't: no `detail_model` (nor `card_model`), or no local
+/// Why the pass can't run now, if it can't: no `detail_model` (nor `card_model`), or no
 /// runtime that can run it.
 fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<String, String> {
     let model = config
@@ -266,7 +267,7 @@ fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<St
 /// newest first, up to `sessions_per_run`, taking none once `deadline` has passed. A session
 /// still under way when the tick's budget is over stops between its parts and fails as too long
 /// for one tick, so it is retried after the rest. Skipped, with the reason in the report, when no
-/// model is set or no local runtime can run it. One writer at a time.
+/// model is set or no runtime can run it. One writer at a time.
 pub fn find(
     home: &Home,
     config: &Config,

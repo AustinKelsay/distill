@@ -1,113 +1,102 @@
 # Distill
 
-Distill keeps every session your local agent harnesses record in one private archive you own, in one consistent shape, so that you or an agent can find the right sessions later. Distilling, training and analysis can then start from a search.
+A private, searchable archive of the sessions your local coding agents record.
 
-**Distill was rebuilt** from the spec in [issue #72](https://github.com/AustinKelsay/distill/issues/72); its terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and its decisions are recorded in [`docs/adr/`](docs/adr/). What is built, and its known gaps, are in [`docs/status.md`](docs/status.md). The previous build is tagged `agent-driven-final`; the one before it, `legacy-final`.
+Distill copies every session your agent harnesses keep into one archive you own, in one shape. You, or an agent you trust, can then search it by words or by meaning and read what happened. Secrets are found and replaced with placeholders in what models read. Personal details are found and covered for the owner; a trusted model reads them as written.
 
 ```
-harnesses ──sweep──▶ raw archive ──parse──▶ events and session facts
-(Claude Code,        append-only,           rebuildable from the
- Codex, OpenCode,    hash-verified,         raw archive at any time
- Droid, Pi,          no model
+harnesses ──sweep──▶ raw archive ──parse──▶ events and session facts ──▶ findings, word index,
+(Claude Code,        append-only,           rebuildable from the        cards, vectors
+ Codex, OpenCode,    hash-verified          raw archive at any time
+ Droid, Pi,
  Cursor, Grok,
  Antigravity,
  Hermes, T3 Code,
  Goose)
 ```
 
-## What works today
+Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), decisions in [`docs/adr/`](docs/adr/), and known limits in [`docs/known-gaps.md`](docs/known-gaps.md).
 
-Capture and the parsers, kept from the previous build (ADR 0001), and everything built on them:
+## Set up
+
+```sh
+scripts/install.sh          # builds and installs distill, distill-mcp and distill-gui
+distill gui                 # opens on Setup: harnesses, providers, models, privacy; Finish installs the timer
+```
+
+Without the window: `distill init` writes `~/distill` and a config with every harness found here, and `distill schedule install` installs the timer (launchd on macOS, systemd on Linux). The timer runs `distill tick` every hour by default. The home is `~/distill`, or `DISTILL_HOME`, or `--home`. On Linux the window needs the libraries CI installs (`.github/workflows/ci.yml`); without it, install the CLI and MCP server alone with `cargo install --locked --path crates/distill-cli` and `cargo install --locked --path crates/distill-mcp`.
+
+Models are optional. With none set, Distill captures, parses, scans and finds by words. In `config.toml`:
+
+```toml
+[steward]
+card_model = "…"          # writes a card per session (title, summary, tags, outcome)
+embedding_model = "…"     # search by meaning, run in Ollama on this machine
+detail_model = "…"        # finds names, addresses, phone numbers and companies; defaults to card_model
+sessions_per_run = 25     # sessions each model step takes per tick
+
+[steward.generation]      # optional: run cards and details at a trusted remote provider
+provider = "…"            # must be trusted: distill providers add <name> --trusted
+base_url = "https://…/v1" # OpenAI-compatible: lists models at /models, takes JSON mode at /chat/completions
+api_key_file = "/…/key"   # an absolute path; the first line is the key
+```
+
+With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves.
+
+## Commands
 
 | Command | What it does |
 | --- | --- |
-| `distill init` | Creates the home (`~/distill`, or `DISTILL_HOME` / `--home`) and a config with every harness found on this machine enabled. |
-| `distill harnesses` | Shows each harness and what of it is on this machine. |
-| `distill sweep` | Copies new and changed harness files into `raw/`. A file that only grew replaces its old capture; a rewritten file keeps both. Every file under a harness's roots is kept. SQLite files are read through SQLite's backup API; OpenCode sessions, T3 Code threads and Goose and Hermes sessions are exported one per session; the full tool outputs OpenCode spills to `tool-output/` beside its database are copied as files of their own. Excluded projects are never copied. |
-| `distill verify` | Checks every capture in the raw archive against its hash. |
-| `distill parse` | Turns captures into `sessions/<harness>/<id>/events.jsonl` (prompts, replies, reasoning, tool calls and results) and `meta.json` (session facts, which hold no session text), and rebuilds the session list. Reports format drift. |
-| `distill scan` | Scans every session whose findings are missing or out of date for secrets, and stores `findings.json` beside it: each secret's place, kind and fingerprint (a keyed hash), never its value. Stored text is never changed. Prints counts only. |
-| `distill findings [<fingerprint>]` | The rotation list: each secret by fingerprint (its short form), with its kind, how many sessions it appears in, their harnesses, and when it was first and last seen. `--kind personal`, `all` or one kind (`github_token`) selects other kinds; `--harness`, `--since`, `--until` filter; `--sort spread` (the default) or `recent`. Given a fingerprint or its short form, every session it appears in, for every fingerprint that starts with it. Answers from stored findings, never a value. In the read log. |
-| `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors for search by meaning, then personal details found by the local model. The model steps start no session after half the timer's interval and leave what they don't reach for the next tick, so a slow model holds the tick past that by at most one model call (each capped at 10 minutes). Capture (a full rescan, say) and each step's own reading and disk work have no time limit, and a five-minute interval is shorter than one call, so the next sweep can still start late. Writes one entry to the run log. |
-| `distill status` | Sessions, capture health and format drift per harness, the last sweep, the progress of the scan, word index, cards, vectors and personal details (and why a model step is skipped), pending reveal requests, and the exposure check. |
-| `distill exposure` | The exposure check: whether the home and everything in it, and the fingerprint key, are owner-only, whether the home is in a synced folder, and whether a Distill process listens on a network port, each as pass or fail. Also whether the disk is encrypted, a reminder that backups carry the archive, and the previous build's folders that hold session-derived data, with their modes. Fails when a rule fails. `--fix` takes the group's and others' permissions off an existing home. `distill status` carries the same results. |
-| `distill runs` | The run log. |
-| `distill providers` | Lists each provider, local or remote, and whether it is trusted. `ollama`, the runtime on this machine, is always trusted; its models are shown as stored here or served from a cloud. `providers add <name> [--trusted]`, `trust <name>` and `untrust <name>` manage remote providers. |
-| `distill read <session>` | A session's events as text, for a model at a named provider (`--provider` or `DISTILL_PROVIDER`, `--model` or `DISTILL_MODEL`), in full or `--from`/`--to` an event number, between a fixed notice that it is archived data and not instructions. A model at a trusted provider reads `[secret: <kind> #<fingerprint>]` in place of each secret; a session is scanned first if its findings are missing or out of date. Every other reader is refused, with what the owner can do. |
-| `distill reads` | The read log, newest first: every call to the read path, refusals included, with time, reader, session and result; a call that lists sessions is one line with how many it listed. `--reader` narrows it to `owner`, `distill`, a provider or `provider/model`. |
-| `distill schedule install` | Runs `distill tick` on a timer (launchd on macOS, systemd on Linux). |
-| `distill search <words>...` | Sessions that have every word of the query, or are close to it in meaning, best first in one list, for a model at a named provider (`--provider`, `--model`, as for `distill read`): each one's facts, card (or opening) and matching passage. `--harness`, `--project`, `--used-model`, `--since`, `--until`, `--tag` and `--outcome` narrow it; `--mirrors` and `--steward` include mirrors and the previous steward's sessions, which are left out by default; `--offset` and `--limit` (up to 50) page it. Without an `embedding_model` or a local runtime it finds by words alone and says so. |
-| `distill reveal request <session> <fingerprint>... --reason <why>` | A model at a trusted provider asks the owner for the values of specific secrets; prints a request ID, never a value. `distill reveal collect <id>` gives the values once the owner has approved, once, to the model that asked. Requests expire after 24 hours. Approving and denying happen only in the GUI. |
-| `distill gui` | The window: Setup, Overview, Sessions (search and filters, an open session with each finding covered until clicked), Findings (the rotation list), Approvals (reveal requests to approve or deny) and the Read log. |
-| `distill-mcp` | The stdio MCP server, for an agent in a harness: `list_sessions` (filtered by harness, project, model and date, 50 rows a call), `read_session` (in full or by event range), `search_sessions` (as `distill search`), `list_findings` (the rotation list, or where one fingerprint appears, never a value), and `request_reveal` and `collect_reveal` (as `distill reveal`). See [The MCP server](#the-mcp-server). |
+| `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
+| `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
+| `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
+| `distill read <session>` | A session's events for a model at a named provider, with a placeholder for each secret. |
+| `distill findings` | The rotation list: each secret by fingerprint, where it appears and when; never a value. |
+| `distill reveal` | A model asks for specific secrets; the owner approves in the window; the model collects them once. |
+| `distill exposure` | Whether the home is owner-only, outside known synced folders and unlistened; `--fix` repairs file modes. |
+| `distill providers` | Providers, which are trusted, and the local runtime's models; `add <name> --trusted`, `trust` and `untrust` manage remote ones. |
+| `distill reads`, `distill runs` | The read log (every read, refusal and reveal) and the run log. |
+| `distill init`, `harnesses`, `sweep`, `parse`, `scan`, `verify`, `schedule`, `gui` | Setup, and each step on its own. |
 
-Only `distill read`, `distill search`, the GUI and the MCP server's tools return session text, and only through the read path, the one function in core that returns it.
+`distill <command> --help` lists every flag. `search` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave Distill only through the read path: `read`, `search`, `reveal collect`, the window, the MCP tools, and the tick's model steps.
 
 ## The MCP server
 
-`distill-mcp` speaks MCP over stdio and opens no network listener. Every tool answers as one reader: a model at the provider named where the harness registers the server, with `--provider` (or `DISTILL_PROVIDER`) and, when known, the model with `--model` (or `DISTILL_MODEL`). It gets exactly what the read path gives that provider: text between a notice that it is archived data and not instructions, every call in the read log (a list call as one line with a count), and, for a provider that is unnamed or not trusted, a refusal that says how the owner can trust it, with no session text, facts or counts.
+`distill-mcp` speaks MCP over stdio, opens no network port, and reads the home from `DISTILL_HOME` or `~/distill`. Its tools are `search_sessions`, `list_sessions`, `read_session`, `list_findings`, `request_reveal` and `collect_reveal`.
 
-**Name a provider only if every provider used in that harness is trusted.** Distill cannot check which provider a reader really runs at, so a harness that can switch between providers is registered under one only when all of them are trusted.
-
-A harness whose model runs in Ollama on this machine, such as Goose or OpenCode set up for a local model:
-
-```json
-{
-  "mcpServers": {
-    "distill": {
-      "command": "distill-mcp",
-      "args": ["--provider", "ollama", "--model", "qwen3:8b"]
-    }
-  }
-}
-```
-
-A harness whose model runs at a remote provider, once the owner has trusted that provider (`distill providers add anthropic --trusted`), here Claude Code:
+Every tool answers as a model at the provider named when the harness registers the server (`--provider` or `DISTILL_PROVIDER`, and `--model` or `DISTILL_MODEL` when known). A trusted provider gets text with a placeholder for each secret, between a notice that it is archived data and not instructions; only `collect_reveal` returns values, and only ones the owner approved. Any other provider gets a refusal that says how the owner can trust it. Every read, refusal and reveal is in the read log.
 
 ```sh
-claude mcp add distill -- distill-mcp --provider anthropic
+claude mcp add distill -- distill-mcp --provider <provider>
 ```
 
-The same with the environment instead of flags:
+**Name a provider only if every provider that harness can use is trusted.** Distill cannot check which provider a reader really runs at.
 
-```json
-{
-  "mcpServers": {
-    "distill": {
-      "command": "distill-mcp",
-      "env": { "DISTILL_PROVIDER": "anthropic" }
-    }
-  }
-}
-```
+## Privacy
 
-The server reads the home from `DISTILL_HOME`, else `~/distill`. A model at a trusted provider, local or remote, is served openings and text with a placeholder in place of each secret.
+The archive stores captures without redaction, secrets included: a file as the harness wrote it, a database as a SQLite backup, or one session exported from a database. Findings record where each secret or personal detail is, by kind and fingerprint, never the value. Findings are applied when text is read: the owner sees both covered in the window; a model gets a placeholder for each secret and personal details as written. Detection can miss things, so models at untrusted providers get nothing at all (ADR 0003).
+
+Distill must be no more exposed than the harness folders it copies from (ADR 0005). `distill exposure` checks the first three:
+
+- The home, every file in it, and the fingerprint key are readable by the owner alone.
+- No part of Distill opens a network listener.
+- The home is not in a known synced folder (iCloud Drive, Dropbox, Google Drive, OneDrive).
+- Detected secret values stay out of the index, cards and vectors, and fingerprints cannot be reversed without the key.
+
+Distill makes outbound connections only to the providers you set:
+
+- **Ollama on this machine:** embeddings, and cards and details unless generation is set.
+- **The trusted generation provider,** when `[steward.generation]` is set: cards and details (ADR 0008). It reads sessions with secrets as placeholders, but personal details are not masked for a trusted reader.
+
+What Distill does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), backups (they carry the archive; keep them encrypted), and an administrator on the machine.
+
+Claude Code deletes transcripts after 30 days by default. Distill sweeps hourly, so it keeps them.
 
 ## Building
 
 ```sh
-cargo build --release
-cargo test && cargo test -p distill-gui
+cargo test && cargo test -p distill-gui && cargo test -p distill-eval
+cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check
 ```
 
-Use a temporary home (`--home` or `DISTILL_HOME`) for anything you try out. `scripts/install.sh` installs `distill`, `distill-mcp` and `distill-gui` into Cargo's bin directory. The timer no longer needs Full Disk Access on macOS: it reads only the harnesses' own folders (see `docs/status.md`).
-
-## Privacy
-
-The archive keeps every session exactly as the harness wrote it, secrets included; findings mark where the secrets are without copying them. Claude Code deletes transcripts older than 30 days by default; Distill sweeps hourly, so it keeps them.
-
-### The security bar
-
-Distill must be no more exposed than the harness folders it copies from (ADR 0005). It meets that bar this way, and `distill exposure` checks the first three:
-
-- The home and every file and folder in it are readable by the owner alone, including folders created on the way to a file, and so is the fingerprint key.
-- No part of Distill opens a network listener. Its only connections go to the local runtime on this machine.
-- The home should not sit in a synced folder (iCloud Drive, `~/Library/CloudStorage`, Dropbox, Google Drive, OneDrive), where the archive would be uploaded.
-- Secret values stay out of everything but the raw archive and the sessions' events, fingerprints cannot be reversed without the key, and models read placeholders.
-
-What Distill does not defend against:
-
-- Anything running as the owner. A process with the owner's permissions can read the archive directly, as it can read the harness folders. The archive is not encrypted at rest.
-- Someone holding the disk. That is the disk encryption's job (FileVault on macOS).
-- Backups. They carry the archive, every secret in it included: keep them encrypted.
-- An administrator, or root, on the machine.
+Try things against a temporary home (`--home` or `DISTILL_HOME`). `scripts/install.sh` replaces the binaries your real archive's timer runs; `distill schedule install` and Finish in the window's Setup replace the timer job itself, whatever home you pass.

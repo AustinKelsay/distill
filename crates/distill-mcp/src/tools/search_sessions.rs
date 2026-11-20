@@ -26,8 +26,8 @@ impl Tool for SearchSessions {
              what the owner wrote in it or its card's summary is close in meaning to the query. \
              Both kinds of match are merged into one list; when search by meaning is off, the \
              first line says so and the results are word matches only. Results come best first, each with the session's \
-             facts (harness, project, branch, models, times, counts), its card (a title, a \
-             summary, tags and an outcome, written by a local model) or, with no card yet, the \
+             facts (harness, project, branch, models, times, counts; for a session an agent started, the session it was started from), its card (a title, a \
+             summary, tags and an outcome, written by a model) or, with no card yet, the \
              opening of what the owner first wrote, and the passage that matched. Filter by \
              harness, project (a folder; sessions in it and below), model (part of its name), \
              start date, and the card's tag and outcome. At most {PAGE_MAX} results per call \

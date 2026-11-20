@@ -1,4 +1,4 @@
-//! What the steward's model steps (`crate::cards`, `crate::details`) share: whether the local
+//! What the steward's model steps (`crate::cards`, `crate::details`) share: whether the
 //! runtime can run the step's model, reading one session for it, and the batch it works through
 //! each tick, within the tick's deadline, with the sessions it failed for kept under `state/` so
 //! they are retried after the rest. Each step keeps its own report, since what it counts differs.
@@ -33,7 +33,7 @@ pub(crate) fn load_failures(path: &Path) -> BTreeMap<String, Failure> {
         .unwrap_or_default()
 }
 
-/// Why the local runtime can't run `model`, the config's `setting`, now, if it can't.
+/// Why the runtime can't run `model`, the config's `setting`, now, if it can't.
 pub(crate) fn runnable(
     runtime: &LocalRuntime,
     setting: &str,

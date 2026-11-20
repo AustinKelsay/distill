@@ -1,5 +1,5 @@
-//! `distill read`: a session's events as text, for a model at a named provider. The one command
-//! that prints session text, and only through the read path.
+//! `distill read`: a session's events as text, for a model at a named provider. Through the read
+//! path, like every command that prints session text.
 
 use anyhow::{Result, bail};
 use distill_core::read::{self, Range, Read};

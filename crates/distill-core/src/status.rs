@@ -2,8 +2,7 @@
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
 //! scan's, the word index's, the cards', the vectors' and the model detection pass's progress, the reveal requests waiting for the owner, warnings
 //! when a harness could delete sessions before they are swept or the timer has stopped sweeping,
-//! and the exposure check's results with a warning for each rule that fails. Each later ticket
-//! adds its own fields.
+//! and the exposure check's results with a warning for each rule that fails.
 
 use std::collections::BTreeMap;
 
@@ -51,7 +50,7 @@ pub struct Status {
     /// why the vectors step is skipped when it is.
     #[serde(default)]
     pub vectors: VectorProgress,
-    /// How many sessions have current model findings (personal details found by the local
+    /// How many sessions have current model findings (personal details found by the detail
     /// model), how many wait for the pass, and why it is skipped when it is.
     #[serde(default)]
     pub details: DetailProgress,
