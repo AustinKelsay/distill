@@ -35,8 +35,8 @@ pub const HOW: [(&str, &str); 4] = [
     ),
     (
         "Organize (optional)",
-        "A card model you choose, here or at an AI service you trust, writes a title and \
-         summary for each session. An embedding model, always run here in Ollama, adds search \
+        "A card model you choose, here or at an AI service you trust, writes your sessions' \
+         cards: a title, summary, tags and outcome. An embedding model, always run here in Ollama, adds search \
          by meaning. Without either, search by words still works.",
     ),
     (

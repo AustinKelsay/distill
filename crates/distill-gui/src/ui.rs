@@ -21,10 +21,11 @@ impl Paint {
     /// The neutral kit with the brand's green as its accent: switches, radios, focus rings and
     /// the main (Submit) buttons.
     pub fn new(dark: bool, scale: f32) -> Paint {
+        // Deep enough in light mode for white labels on Submit buttons (over 4.5:1).
         let brand = if dark {
             oklch(0.78, 0.16, 155.0)
         } else {
-            oklch(0.55, 0.14, 155.0)
+            oklch(0.48, 0.13, 155.0)
         };
         let mut k = Kit::neutral(dark);
         let on_brand = if dark {
@@ -41,6 +42,12 @@ impl Paint {
         c.bg_icon_button_contrast = brand;
         c.submit_fg = on_brand;
         c.submit_icon = on_brand;
+        if !dark {
+            // Hover and press darken a green Submit button, keeping its white label legible.
+            c.submit_highlight = Color::WHITE.alpha(0.1);
+            c.submit_hover = Color::BLACK.alpha(0.08);
+            c.contrast_pressed = Color::BLACK.alpha(0.12);
+        }
         Paint {
             k,
             t: tok::theme(dark),
@@ -87,11 +94,7 @@ impl Paint {
 
     /// A thin bar filled in the brand's green to `done` (0 to 1) of its width.
     pub fn meter(&self, done: f32) -> El {
-        let done = if done.is_finite() {
-            done.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let done = done.clamp(0.0, 1.0);
         let mut bar = row()
             .key("meter")
             .w_full()

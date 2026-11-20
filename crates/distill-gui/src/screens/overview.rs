@@ -298,8 +298,8 @@ struct Step {
     name: &'static str,
     /// None: nothing to report yet.
     value: Option<String>,
-    /// How much of the step is done, 0 to 1, for its meter.
-    done: f32,
+    /// How much of the step is done, as (done, of), for its meter.
+    done: (u64, u64),
     detail: Vec<String>,
 }
 
@@ -331,7 +331,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(scan.sessions)
                 )
             }),
-            done: share(scan.current, scan.sessions),
+            done: (scan.current, scan.sessions),
             detail: [
                 waiting(scan.pending),
                 (scan.sessions > 0).then(|| format!("{} found", count(scan.secrets, "secret"))),
@@ -350,7 +350,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(index.sessions)
                 )
             }),
-            done: share(index.current, index.sessions),
+            done: (index.current, index.sessions),
             detail: [
                 waiting(index.pending),
                 (index.bytes > 0).then(|| human_bytes(index.bytes)),
@@ -369,7 +369,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(cards.sessions)
                 )
             }),
-            done: share(cards.current + cards.stale, cards.sessions),
+            done: (cards.current + cards.stale, cards.sessions),
             detail: [
                 waiting(cards.pending),
                 (cards.stale > 0).then(|| format!("{} stale", thousands(cards.stale))),
@@ -391,7 +391,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(vectors.sessions)
                 )
             }),
-            done: share(vectors.current, vectors.sessions),
+            done: (vectors.current, vectors.sessions),
             detail: [
                 waiting(vectors.pending),
                 (vectors.bytes > 0).then(|| human_bytes(vectors.bytes)),
@@ -415,7 +415,7 @@ fn steps(st: &Status) -> Vec<Step> {
                     thousands(details.sessions)
                 )
             }),
-            done: share(details.current, details.sessions),
+            done: (details.current, details.sessions),
             detail: [
                 waiting(details.pending),
                 (details.failing > 0).then(|| format!("{} to retry", thousands(details.failing))),
@@ -441,6 +441,8 @@ fn progress(st: &Status, p: &Paint) -> El {
             card = card.child(p.separator());
         }
         let mut value = col().key("progress").w(270.0).gap(6.0);
+        let (part, whole) = step.done;
+        let pct = percent(part, whole);
         match step.value {
             Some(v) => {
                 value = value
@@ -452,13 +454,13 @@ fn progress(st: &Status, p: &Paint) -> El {
                             .justify_between()
                             .child(text(v).key("value").font(p.num()).color(p.ink()))
                             .child(
-                                text(format!("{}%", percent(step.done)))
+                                text(format!("{pct}%"))
                                     .key("percent")
                                     .font(p.k.ty.small_medium.features("'tnum' 1"))
-                                    .color(if step.done >= 1.0 { p.brand } else { p.muted() }),
+                                    .color(if pct == 100 { p.brand } else { p.muted() }),
                             ),
                     )
-                    .child(p.meter(step.done));
+                    .child(p.meter(share(part, whole)));
             }
             None => {
                 value = value.child(
@@ -497,9 +499,14 @@ fn progress(st: &Status, p: &Paint) -> El {
     card
 }
 
-/// A share as a whole percent, rounded down so a step reads 100% only when it is done.
-fn percent(done: f32) -> u32 {
-    (done * 100.0).floor() as u32
+/// `part` of `whole` as a whole percent, rounded down so a step reads 100% only when it is
+/// done. Counted in integers: through a float, 53 of 100 can come out as 52.
+fn percent(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        0
+    } else {
+        (u128::from(part.min(whole)) * 100 / u128::from(whole)) as u64
+    }
 }
 
 fn reveals(st: &Status, p: &Paint) -> El {
@@ -775,4 +782,19 @@ fn exposure_section(s: &State, e: &Exposure, p: &Paint) -> El {
         card = card.child(list);
     }
     card
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent;
+
+    #[test]
+    fn a_percent_is_counted_exactly_and_reads_100_only_when_done() {
+        assert_eq!(percent(53, 100), 53);
+        assert_eq!(percent(59, 100), 59);
+        assert_eq!(percent(999, 1000), 99);
+        assert_eq!(percent(1000, 1000), 100);
+        assert_eq!(percent(5, 0), 0);
+        assert_eq!(percent(u64::MAX, u64::MAX), 100);
+    }
 }

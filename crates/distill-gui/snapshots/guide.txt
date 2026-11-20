@@ -48,7 +48,7 @@
         text: It finds secrets (keys, tokens, passwords) and personal details (names, email addresses, hosts) in every session.
         text: 3
         text: Organize (optional)
-        text: A card model you choose, here or at an AI service you trust, writes a title and summary for each session. An embedding model, always run here in Ollama, adds search by meaning. Without either, search by words still works.
+        text: A card model you choose, here or at an AI service you trust, writes your sessions' cards: a title, summary, tags and outcome. An embedding model, always run here in Ollama, adds search by meaning. Without either, search by words still works.
         text: 4
         text: Search
         text: Search finds sessions by words, and by meaning once embeddings are set up. You search and read here; agents at an AI service you trust can too, through the distill command or the MCP server.
