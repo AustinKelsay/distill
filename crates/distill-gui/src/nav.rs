@@ -1,14 +1,12 @@
-//! The window's navigation: the spec's six screens, in order, and the sidebar that moves
-//! between them.
+//! The window's navigation: the screens, in order, and the sidebar that moves between them.
 //!
 //! Each screen is a module under `screens/` with an `open` (what to load when the owner moves to
-//! it) and a `view`, and owns its state struct (a field of [`State`]). Building a screen means
-//! filling in its module; this table already lists all six.
+//! it) and a `view`, and owns its state struct (a field of [`State`]) when it has one.
 
 use rune::{El, col, row, text};
 
 use crate::State;
-use crate::screens::{approvals, findings, overview, read_log, sessions, setup};
+use crate::screens::{approvals, findings, guide, overview, read_log, sessions, setup};
 use crate::ui::Paint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +17,7 @@ pub enum Screen {
     Findings,
     Approvals,
     ReadLog,
+    Guide,
 }
 
 /// A screen's entry in the navigation.
@@ -33,7 +32,7 @@ pub struct Entry {
     pub view: fn(&State, &Paint, &mut Vec<El>) -> El,
 }
 
-pub const SCREENS: [Entry; 6] = [
+pub const SCREENS: [Entry; 7] = [
     Entry {
         screen: Screen::Setup,
         id: "setup",
@@ -75,6 +74,13 @@ pub const SCREENS: [Entry; 6] = [
         label: "Read log",
         open: read_log::open,
         view: read_log::view,
+    },
+    Entry {
+        screen: Screen::Guide,
+        id: "guide",
+        label: "Guide",
+        open: guide::open,
+        view: guide::view,
     },
 ];
 

@@ -13,13 +13,15 @@
         text: Approvals
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         steps: Setup steps
           step-0: Harnesses
           text: 1 Harnesses
           step-1: Home folder
           text: 2 Home folder
-          step-2: Providers
-          text: 3 Providers
+          step-2: Trusted AI
+          text: 3 Trusted AI
           step-3: Models
           text: 4 Models
           step-4: Privacy
@@ -28,10 +30,21 @@
           text: 6 Schedule
         text: Step 5 of 6
           step-title: Privacy
-        text: Names and places that always count as personal
-          personal-terms: Personal terms
-              title: Personal terms
-          text: Words and names that always count as personal details, matched as whole words whatever their case.
+        text: What DISTILL finds by itself, and what you add
+          automatic: Found automatically
+              title: Found automatically
+            text: Secrets
+            text: API keys, tokens and passwords, by pattern. Always on.
+            status: Always on
+            text: Always on
+            text: Personal details
+            text: Email addresses, hosts, your username and common name and address shapes, by pattern. The detection pass's model (Models step) also finds names, addresses, phone numbers and companies that no pattern can.
+              detection: Patterns only
+              text: Patterns only
+          text: In this window both are blurred until you click them. A trusted AI gets each secret as a placeholder and personal details as written.
+          personal-terms: Always personal
+              title: Always personal
+          text: Names and words to treat as personal details even when nothing above catches them: clients, people, places. Matched as whole words, whatever their case.
               input: 
             add-term: Add
               label: Add

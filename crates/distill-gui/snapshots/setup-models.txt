@@ -13,13 +13,15 @@
         text: Approvals
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         steps: Setup steps
           step-0: Harnesses
           text: 1 Harnesses
           step-1: Home folder
           text: 2 Home folder
-          step-2: Providers
-          text: 3 Providers
+          step-2: Trusted AI
+          text: 3 Trusted AI
           step-3: Models
           text: 4 Models
           step-4: Privacy

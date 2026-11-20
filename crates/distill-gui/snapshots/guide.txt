@@ -1,0 +1,54 @@
+      title: DISTILL
+    text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        title: Guide
+      text: A private, searchable archive of your coding agents' sessions
+      start: Start setup
+        label: Start setup
+      how: How it works
+          title: How it works
+        text: 1
+        text: Capture
+        text: Every hour DISTILL copies the sessions your coding agents keep (Claude Code, Codex, Cursor and others) into one archive on this machine, so none is lost when an agent deletes old ones.
+        text: 2
+        text: Find
+        text: It finds secrets (keys, tokens, passwords) and personal details (names, email addresses, hosts) in every session.
+        text: 3
+        text: Organize
+        text: Models you choose write a card for each session and make the archive searchable by meaning. This is optional: without models, search by words still works.
+        text: 4
+        text: Search
+        text: You search and read here. Agents running at an AI service you trust can search and read too, through the distill command or the MCP server.
+      who: Who reads what
+          title: Who reads what
+        text: You, in this window
+        text: Everything, with secrets and personal details blurred until you click them.
+        text: Trusted AI
+        text: Session text with each secret replaced by a placeholder and personal details as written. A secret's value only when you approve the request under Approvals.
+        text: Anyone else
+        text: Nothing: every request is refused and logged.
+      text: The Trusted AI step of Setup decides which services count as trusted. Every read, refusal and approval is in the Read log.
+      use: Use it
+          title: Use it
+      text: In this window
+      text: Sessions to search and read, Findings for what was found, Approvals when an agent asks for a secret's value, Read log for every read.
+      text: In a terminal
+      text: Search as a model at a trusted service would see it:
+      text: distill search "<words>" --provider <service>
+      text: For your agents
+      text: Give an agent the MCP server, named with the service it runs at:
+      text: claude mcp add distill -- distill-mcp --provider <service>

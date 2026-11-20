@@ -14,6 +14,8 @@
         text: 2
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
       text: Overview
         sweep: Last sweep 12 min ago
           last-sweep: Last sweep 12 min ago

@@ -23,7 +23,7 @@ Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), decisions in [`docs/adr/`](do
 
 ```sh
 scripts/install.sh          # builds and installs distill, distill-mcp and distill-gui
-distill gui                 # opens on Setup: harnesses, providers, models, privacy; Finish installs the timer
+distill gui                 # opens on the Guide, then Setup: harnesses, trusted AI, models, privacy; Finish installs the timer
 ```
 
 Without the window: `distill init` writes `~/distill` and a config with every harness found here, and `distill schedule install` installs the timer (launchd on macOS, systemd on Linux). The timer runs `distill tick` every hour by default. The home is `~/distill`, or `DISTILL_HOME`, or `--home`. On Linux the window needs the libraries CI installs (`.github/workflows/ci.yml`); without it, install the CLI and MCP server alone with `cargo install --locked --path crates/distill-cli` and `cargo install --locked --path crates/distill-mcp`.

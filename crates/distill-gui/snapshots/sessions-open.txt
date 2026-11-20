@@ -14,6 +14,8 @@
         text: 2
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         back: Back
           label: Back
         session-title: Deploy the staging app to  ‹tailnet host› 

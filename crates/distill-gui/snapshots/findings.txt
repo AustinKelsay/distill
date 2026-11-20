@@ -14,6 +14,8 @@
         text: 2
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         heading: Findings
       text: Every value found in the archive, by fingerprint: what to rotate, and where it appears. Values are never shown here; open a session to see one.
           filter-kind-trigger: Kind

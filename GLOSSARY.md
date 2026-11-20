@@ -82,7 +82,7 @@ The person whose sessions these are, and the only one who approves anything.
 _Avoid_: User, human, admin
 
 **Provider**:
-Whoever runs a model: a runtime on this machine or a remote service.
+Whoever runs a model: a runtime on this machine or a remote service. The window lists them under Trusted AI.
 _Avoid_: Vendor, backend, harness
 
 **Local provider**:

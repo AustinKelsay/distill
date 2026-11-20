@@ -13,6 +13,8 @@
         text: Approvals
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
       text: Overview
         sweep: No sweep yet
           last-sweep: No sweep yet

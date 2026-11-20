@@ -1,4 +1,4 @@
-//! Setup walks through harnesses, the home folder, providers, models, personal terms and the
+//! Setup walks through harnesses, the home folder, trusted AI, models, privacy and the
 //! schedule, and Finish writes the config and installs the timer (a stand-in here: installing
 //! replaces the live `dev.distill.tick` job whatever HOME is).
 
@@ -147,7 +147,7 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
         [
             "Harnesses",
             "Home folder",
-            "Providers",
+            "Trusted AI",
             "Models",
             "Privacy",
             "Schedule"
@@ -168,8 +168,9 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
 
 #[test]
 fn the_providers_shown_match_what_the_providers_command_reports() {
-    let mut rt = runtime(fixture::fresh());
-    step(&mut rt, "Providers");
+    // Tall enough that the field under the services list is on screen.
+    let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1400.0));
+    step(&mut rt, "Trusted AI");
 
     // The local provider is shown as trusted; add a remote one, then trust and untrust it.
     assert_eq!(rt.state.setup.draft.providers, vec![]);
@@ -305,7 +306,7 @@ fn finishing_setup_writes_the_config_and_installs_the_timer_then_shows_the_overv
 
     press(&mut rt, "harness-claude-code/switch");
     press(&mut rt, "harness-claude-code/switch");
-    step(&mut rt, "Providers");
+    step(&mut rt, "Trusted AI");
     type_into(&mut rt, |s| &mut s.setup.provider, "example-cloud");
     press(&mut rt, "add-provider");
     press(&mut rt, "provider-example-cloud/switch");
@@ -372,4 +373,44 @@ fn a_timer_that_fails_to_install_is_reported_on_setup() {
         t.core.home.config_path().exists(),
         "the config is written before the timer"
     );
+}
+
+#[test]
+fn common_services_are_offered_untrusted_and_trusting_one_adds_it() {
+    let mut rt = runtime(fixture::fresh());
+    step(&mut rt, "Trusted AI");
+    assert!(on(&rt, "service-anthropic") && on(&rt, "provider-ollama-cloud"));
+    assert!(
+        !on(&rt, "service-ollama-cloud"),
+        "a built-in service is listed once"
+    );
+
+    press(&mut rt, "service-anthropic/switch");
+    let trust = Trust::new(&rt.state.setup.draft);
+    let p = trust.provider("anthropic").unwrap();
+    assert!(p.trusted && p.kind == ProviderKind::Remote);
+    // Now it is a provider like any other, shown once, and untrusting keeps it listed.
+    assert!(on(&rt, "provider-anthropic") && !on(&rt, "service-anthropic"));
+    assert!(shows(&rt, "Anthropic"));
+    press(&mut rt, "provider-anthropic/switch");
+    assert!(
+        !Trust::new(&rt.state.setup.draft)
+            .provider("anthropic")
+            .unwrap()
+            .trusted
+    );
+}
+
+#[test]
+fn privacy_says_what_is_found_automatically() {
+    let mut rt = runtime(fixture::fresh());
+    rt.update(|s, _| s.setup.draft.steward = Default::default());
+    step(&mut rt, "Privacy");
+    assert!(on(&rt, "secrets") && shows(&rt, "Always on"));
+    assert!(shows(&rt, "Patterns only"), "{:?}", texts(&rt));
+
+    // The detection pass uses the detail model, else the card model.
+    rt.update(|s, _| s.setup.draft.steward.card_model = Some("qwen-small:4b".into()));
+    settle(&mut rt);
+    assert!(shows(&rt, "Patterns and qwen-small:4b"), "{:?}", texts(&rt));
 }

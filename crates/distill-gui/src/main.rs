@@ -1,5 +1,5 @@
 //! DISTILL's window: one window with navigation between Setup, Overview, Sessions, Findings,
-//! Approvals and Read log (`nav.rs`; each screen is a module under `screens/`).
+//! Approvals, Read log and Guide (`nav.rs`; each screen is a module under `screens/`).
 //!
 //! The window holds no logic. It reads and writes only through distill-core, in jobs on a
 //! worker thread (`jobs.rs`), so no file I/O runs in the frame loop. Setup and the overview
@@ -54,12 +54,12 @@ pub struct State {
 }
 
 impl State {
-    /// A window over `home` with `config` (None: setup has not run, so it opens on Setup).
+    /// A window over `home` with `config` (None: setup has not run, so it opens on the Guide).
     pub fn new(home: Home, config: Option<Config>) -> State {
         let screen = if config.is_some() {
             Screen::Overview
         } else {
-            Screen::Setup
+            Screen::Guide
         };
         State {
             screen,
