@@ -1,12 +1,12 @@
 //! Cards (issue #72, "Organization" and "The steward"): a short description of each session
-//! that a model at the local provider writes, with no one asking. A card holds a title, a summary
-//! of a few sentences, tags and an outcome, and records the model and the prompt version that
-//! wrote it and what it was built from.
+//! that a model writes, with no one asking. A card holds a title, a summary of a few sentences,
+//! tags and an outcome, and records the model and the prompt version that wrote it and what it
+//! was built from.
 //!
-//! - **Reading.** The steward reads each session through the read path as a model at the local
-//!   provider ([`Reader::model`] at `ollama` with `card_model`), so the read is logged and the
-//!   model sees placeholders, never a secret's value. It calls only a model stored on this
-//!   machine, through the one local client.
+//! - **Reading.** The steward reads each session through the read path as a model
+//!   ([`Reader::model`] at the runtime's provider with `card_model`: Ollama on this machine, or
+//!   the trusted provider in `[steward.generation]`), so the read is logged and the model sees
+//!   placeholders for detected secrets.
 //! - **Writing.** The model's answer must be one JSON object of the card's fields
 //!   ([`parse_reply`]); anything else is a failure for that session, recorded and retried later,
 //!   never written. The card's text is scanned like session text: its findings go in the
@@ -117,7 +117,7 @@ pub struct Card {
     pub summary: String,
     pub tags: Vec<String>,
     pub outcome: Outcome,
-    /// The model that wrote it, at the local provider.
+    /// The model that wrote it, at the runtime's provider.
     pub model: String,
     /// The [`PROMPT_VERSION`] it was written with.
     pub prompt_version: u32,
@@ -353,8 +353,8 @@ impl CardReport {
     }
 }
 
-/// Why the card step can't run now, if it can't: no `card_model`, or no local runtime that can
-/// run it.
+/// Why the card step can't run now, if it can't: no `card_model`, or no runtime that can run
+/// it.
 fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<String, String> {
     let model = config
         .steward
@@ -367,7 +367,7 @@ fn cannot_run(config: &Config, runtime: &LocalRuntime) -> std::result::Result<St
 
 /// Write cards for the sessions whose card is missing or out of date, then for those whose card
 /// is stale, newest first within each, up to `sessions_per_run`, taking none once `deadline` has
-/// passed. Skipped, with the reason in the report, when `card_model` is not set or no local
+/// passed. Skipped, with the reason in the report, when `card_model` is not set or no
 /// runtime can run it. One writer at a time.
 pub fn write(
     home: &Home,

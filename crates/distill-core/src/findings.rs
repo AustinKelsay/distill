@@ -263,14 +263,14 @@ pub struct Findings {
     /// What the detector found in the session's card, when it has one (`crate::cards`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<CardFindings>,
-    /// What the local model found in what the owner and the agent wrote (`crate::details`),
+    /// What the model found in what the owner and the agent wrote (`crate::details`),
     /// once its pass has run. Kept under its own version, so that it and the pattern scan can
     /// each be rerun alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelFindings>,
 }
 
-/// The personal details a local model found in a session, and what they were made from.
+/// The personal details a model found in a session, and what they were made from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelFindings {
     pub made_from: ModelMadeFrom,
@@ -286,7 +286,7 @@ pub struct ModelFindings {
 pub struct ModelMadeFrom {
     /// [`MODEL_DETECTOR_VERSION`](crate::details::MODEL_DETECTOR_VERSION).
     pub detector: u32,
-    /// The model that found them, at the local provider.
+    /// The model that found them, at the runtime's provider.
     pub model: String,
     pub capture_hash: String,
     pub parser: u32,
@@ -726,7 +726,7 @@ pub struct ScanProgress {
     pub pending: u64,
     /// Secrets in the current findings.
     pub secrets: u64,
-    /// Personal details in the current findings: the patterns' and the local model's.
+    /// Personal details in the current findings: the patterns' and the model's.
     #[serde(default)]
     pub personal_details: u64,
 }

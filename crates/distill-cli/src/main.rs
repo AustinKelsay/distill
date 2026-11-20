@@ -1,6 +1,6 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
-//! logic of its own; the work is in distill-core. Only `read` and `search` print session text, and
-//! only through the read path.
+//! logic of its own; the work is in distill-core. Only `read`, `search` and `reveal collect`
+//! print session text or secret values, and only through the read path.
 
 mod commands;
 mod output;

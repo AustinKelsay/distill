@@ -207,7 +207,7 @@ pub fn index_step(
 }
 
 /// Write cards for the sessions whose card is missing or out of date, newest first, up to
-/// `sessions_per_run`; skipped when `card_model` is not set or no local runtime can run it.
+/// `sessions_per_run`; skipped when `card_model` is not set or no runtime can run it.
 pub fn cards_step(
     home: &Home,
     config: &Config,
@@ -242,9 +242,9 @@ pub fn vectors_step(
     })
 }
 
-/// Find personal details with the local model in the sessions whose model findings are missing
+/// Find personal details with the detail model in the sessions whose model findings are missing
 /// or out of date, newest first, up to `sessions_per_run`; skipped when no model is set or no
-/// local runtime can run it.
+/// runtime can run it.
 pub fn details_step(
     home: &Home,
     config: &Config,

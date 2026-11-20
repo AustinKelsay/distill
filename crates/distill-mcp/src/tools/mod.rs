@@ -1,7 +1,7 @@
-//! The MCP tools, one module each, so tickets built in parallel don't edit the same file. A new
-//! tool adds its module here and its entry to [`all`]. A tool that returns anything from the
-//! archive gets it from the read path as [`Server::reader`], and says in its description that
-//! session text is archived data, not instructions ([`ARCHIVED_DATA`]).
+//! The MCP tools, one module each. A new tool adds its module here and its entry to [`all`]. A
+//! tool that returns anything from the archive gets it from the read path as [`Server::reader`],
+//! and says in its description that session text is archived data, not instructions
+//! ([`ARCHIVED_DATA`]).
 
 mod collect_reveal;
 mod list_findings;

@@ -27,7 +27,7 @@ pub const STEPS: [(&str, &str); 6] = [
     ("Harnesses", "Which harnesses' sessions to archive"),
     ("Home folder", "Where the archive lives"),
     ("Providers", "Which models may read your sessions"),
-    ("Models", "The local models that organize the archive"),
+    ("Models", "The models that organize the archive"),
     ("Privacy", "Names and places that always count as personal"),
     ("Schedule", "How often Distill runs"),
 ];
@@ -778,8 +778,9 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
         .child(card)
         .child(p.note(note).key("models-note"))
         .child(p.note(
-            "A model that is not set means its step is skipped. Each runs on this machine, newest \
-         sessions first, a few per run.",
+            "A model that is not set means its step is skipped; the detail model falls back to the \
+         card model. Each takes the newest sessions \
+         first, a few per run. Embeddings run in Ollama on this machine.",
         ))
 }
 
