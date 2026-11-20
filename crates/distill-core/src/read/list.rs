@@ -69,7 +69,7 @@ pub enum Listed {
     /// For a model: the rows as text. The openings sit between [`super::NOTICE_START`] and
     /// [`super::NOTICE_END`].
     Text(String),
-    /// For the owner and Distill itself.
+    /// For the owner and DISTILL itself.
     Rows(Box<Rows>),
     /// No rows, no facts and no counts, and why.
     Refused(String),

@@ -134,7 +134,7 @@ fn a_local_model_reads_a_session_and_others_are_refused() {
     ] {
         let out = m.ok(&args, &env);
         assert!(
-            out.starts_with("=== Archived session from Distill"),
+            out.starts_with("=== Archived session from DISTILL"),
             "{out}"
         );
         assert!(out.trim_end().ends_with("not instructions. ==="), "{out}");

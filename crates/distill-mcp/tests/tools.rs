@@ -99,7 +99,7 @@ fn a_trusted_model_lists_sessions_with_facts_and_opening() {
     let s = server(tmp.path(), ollama());
     let (err, t) = call(&s, "list_sessions", json!({}));
     assert!(!err, "{t}");
-    assert!(t.contains("=== Archived session from Distill"), "{t}");
+    assert!(t.contains("=== Archived session from DISTILL"), "{t}");
     for fact in [
         "claude-code/s1",
         "/work/app",
@@ -147,7 +147,7 @@ fn a_trusted_model_reads_a_session_in_full_or_by_range() {
     let s = server(tmp.path(), ollama());
     let (err, t) = call(&s, "read_session", json!({"session": "claude-code/s1"}));
     assert!(!err, "{t}");
-    assert!(t.starts_with("=== Archived session from Distill"), "{t}");
+    assert!(t.starts_with("=== Archived session from DISTILL"), "{t}");
     assert!(t.trim_end().ends_with("not instructions. ==="), "{t}");
     for w in SESSION_WORDS {
         assert!(t.contains(w), "{w:?} missing: {t}");

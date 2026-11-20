@@ -158,7 +158,7 @@ fn models_dir() -> PathBuf {
 /// least one must exist. Anything that can't be verified counts as not local.
 ///
 /// This reads the store at `dir`. Ollama's server decides what actually runs; one started with
-/// a different model directory than Distill sees is outside what this can check.
+/// a different model directory than DISTILL sees is outside what this can check.
 fn model_is_local(dir: &Path, model: &str) -> bool {
     let (name, tag) = match model.rsplit_once(':') {
         Some((n, t)) if !t.contains('/') => (n, t),

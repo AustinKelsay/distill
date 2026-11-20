@@ -21,7 +21,7 @@ use crate::commands::*;
     about = "Keep every agent session in one private archive"
 )]
 struct Cli {
-    /// Distill home (default: $DISTILL_HOME or ~/distill)
+    /// DISTILL home (default: $DISTILL_HOME or ~/distill)
     #[arg(long, global = true)]
     home: Option<PathBuf>,
     /// Print machine-readable JSON
@@ -65,10 +65,10 @@ enum Cmd {
     Reveal(reveal::Args),
     /// The timer that runs `distill tick`
     Schedule(schedule::Args),
-    /// Whether Distill is no more exposed than the harness folders: file modes, the fingerprint
+    /// Whether DISTILL is no more exposed than the harness folders: file modes, the fingerprint
     /// key, synced folders and network listeners
     Exposure(exposure::Args),
-    /// Open the Distill window
+    /// Open the DISTILL window
     Gui(gui::Args),
 }
 

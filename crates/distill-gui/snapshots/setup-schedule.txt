@@ -1,4 +1,4 @@
-      title: Distill
+      title: DISTILL
     text: Your session archive
       nav: Screens
         nav-setup: Setup
@@ -28,7 +28,7 @@
           text: 6 Schedule
         text: Step 6 of 6
           step-title: Schedule
-        text: How often Distill runs
+        text: How often DISTILL runs
             text: Sweep every
             text: How often the timer runs a tick: sweep the harnesses, then parse, scan, index and organize what is new.
             radiogroup: Sweep every

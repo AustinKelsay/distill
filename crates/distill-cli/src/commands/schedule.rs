@@ -38,7 +38,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         }
         Cmd::Uninstall => {
             schedule::uninstall()?;
-            println!("Removed the Distill timer");
+            println!("Removed the DISTILL timer");
         }
         Cmd::Status => println!(
             "{}",

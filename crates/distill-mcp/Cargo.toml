@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Distill's stdio MCP server."
+description = "DISTILL's stdio MCP server."
 
 [dependencies]
 anyhow.workspace = true

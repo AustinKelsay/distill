@@ -1,11 +1,11 @@
-//! Distill core: the raw archive, the files rebuilt from it, and the tick that keeps them
+//! DISTILL core: the raw archive, the files rebuilt from it, and the tick that keeps them
 //! current. Every face (the command line, the MCP server, the GUI) goes through this crate.
 //!
 //! Capture (the sweep, the raw archive, `verify`, the timer) and the parsers with their mirror
 //! rules and format-drift detection (ADR 0001); trust and the read path; the detector
 //! (`detect`) and findings (`findings`); the word index and vectors (`index`); cards (`cards`)
 //! and personal details found by a model (`details`); and reveals (`reveal`). Terms are in
-//! `GLOSSARY.md`. The layout of a Distill home is fixed, and
+//! `GLOSSARY.md`. The layout of a DISTILL home is fixed, and
 //! [`Home`] has a path helper for every entry in it.
 
 pub mod archive;

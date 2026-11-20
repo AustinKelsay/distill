@@ -1,5 +1,5 @@
 //! The word index (issue #72, "Organization"): every word of every session's text, as the read
-//! path serves it to Distill itself, so each secret is already a placeholder and no secret's value
+//! path serves it to DISTILL itself, so each secret is already a placeholder and no secret's value
 //! reaches the index. It lives in `index/words/` and is rebuilt from the sessions whenever it is
 //! deleted.
 //!
@@ -212,7 +212,7 @@ impl IndexReport {
 }
 
 /// Bring the index up to date: index every session whose entry is missing or out of date, through
-/// the read path as Distill itself (one read-log line for the whole build), and drop entries whose
+/// the read path as DISTILL itself (one read-log line for the whole build), and drop entries whose
 /// session is gone. One writer at a time.
 pub fn build(home: &Home) -> Result<IndexReport> {
     build_within(home, Limits::DEFAULT)

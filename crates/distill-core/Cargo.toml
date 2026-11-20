@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Distill core: capture, parsers, findings, search and the read path."
+description = "DISTILL core: capture, parsers, findings, search and the read path."
 
 [dependencies]
 anyhow.workspace = true

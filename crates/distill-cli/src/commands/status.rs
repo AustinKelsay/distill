@@ -12,7 +12,7 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
     let s = status::status(&ctx.home)?;
     out(ctx.json, &s, || {
         if !s.configured {
-            println!("Distill is not set up here yet: run `distill init`.");
+            println!("DISTILL is not set up here yet: run `distill init`.");
         }
         println!(
             "{} sessions · {} archived · last sweep: {}",

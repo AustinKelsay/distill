@@ -1,4 +1,4 @@
-# Distill
+# DISTILL
 
 A private, searchable archive of every session the owner's local agent harnesses record. It exists so that distilling, training and analysis can start later from a search, without any session being lost or leaked first.
 
@@ -23,15 +23,15 @@ The content hash that names a capture in the raw archive.
 _Avoid_: Fingerprint (a finding's), checksum
 
 **Raw archive**:
-The append-only store of every capture. Everything Distill knows about a session can be rebuilt from it, and it cannot be rebuilt from anything.
+The append-only store of every capture. Everything DISTILL knows about a session can be rebuilt from it, and it cannot be rebuilt from anything.
 _Avoid_: Raw, store, vault
 
 **Event**:
-One step of a session in Distill's common shape: a message, a tool call, a tool result or reasoning.
+One step of a session in DISTILL's common shape: a message, a tool call, a tool result or reasoning.
 _Avoid_: Record, turn, entry
 
 **Session facts**:
-What Distill records about a session without holding any of its text: harness, models, project, branch, times and counts.
+What DISTILL records about a session without holding any of its text: harness, models, project, branch, times and counts.
 _Avoid_: Metadata, meta
 
 **Project**:
@@ -93,7 +93,7 @@ A provider whose models may read session text. Local providers always are; a rem
 _Avoid_: Private provider, allowed provider, designated provider
 
 **Reader**:
-Whoever asks Distill for session text: the owner, a model at a named provider, or Distill itself for work that uses no model.
+Whoever asks DISTILL for session text: the owner, a model at a named provider, or DISTILL itself for work that uses no model.
 _Avoid_: Client, caller, consumer
 
 **Read log**:
@@ -101,11 +101,11 @@ The record of which reader read which sessions, and when.
 _Avoid_: Audit trail, activity
 
 **Read path**:
-The one way session text leaves Distill. It decides what a given reader gets and records the read.
+The one way session text leaves DISTILL. It decides what a given reader gets and records the read.
 _Avoid_: API, accessor, gate
 
 **Detector**:
-The part of Distill that examines text and produces findings.
+The part of DISTILL that examines text and produces findings.
 _Avoid_: Redactor, scanner, scrubber
 
 **Finding**:

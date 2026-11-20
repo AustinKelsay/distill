@@ -530,7 +530,7 @@ fn assignment_values_are_found_whole_in_text() {
             r"cut a\fpassword=plaintext-value\fuser=alice".into(),
             hits(Kind::AssignedSecret, &["plaintext-value"]),
         ),
-        // A placeholder from Distill's own output is not a secret.
+        // A placeholder from DISTILL's own output is not a secret.
         ("token = [secret: openai_key #0123abcd] x".into(), vec![]),
         ("token='[secret: openai_key #0123abcd]' x".into(), vec![]),
     ];
@@ -1178,7 +1178,7 @@ fn ids_counters_placeholders_and_fragments_are_not_secrets() {
     );
 }
 
-// Issue #120: value shapes under credential names that are code, references, Distill's own text
+// Issue #120: value shapes under credential names that are code, references, DISTILL's own text
 // or stand-ins. Every value that looks like a secret is built from pieces at run time.
 
 /// Whether `value` under `name` is a finding of the assignment rule in text, of the JSON
@@ -1277,7 +1277,7 @@ fn r4_distills_own_text_is_not_a_secret_on_either_path() {
         "credential_field".to_string(),
         s(&["[synthetic", "-value]"]),
     ]);
-    // `synthetic` inside a word is a password's, not Distill's.
+    // `synthetic` inside a word is a password's, not DISTILL's.
     all_found(&[s(&["mySynth", "eticHorse42!"]), s(&["Xk9synth", "etic7pZ"])]);
     // The placeholder as the whole value under a credential key, a space inside: the JSON path
     // had no placeholder exclusion before.
@@ -1285,7 +1285,7 @@ fn r4_distills_own_text_is_not_a_secret_on_either_path() {
     assert_eq!(found(&json!({"password": ph}).to_string()), []);
     assert!(places(&json!({"password": ph})).is_empty());
     assert_eq!(found(&format!("password={ph} x")), []);
-    // A kind's name inside a longer value is not Distill's text.
+    // A kind's name inside a longer value is not DISTILL's text.
     all_found(&[
         s(&["Credential_field_", "Xk9fQ2mL"]),
         s(&["Xk9assigned_secret", "Q2mL7p"]),

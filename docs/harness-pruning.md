@@ -1,6 +1,6 @@
 # Harness pruning
 
-Checked on 2026-11-15 against each harness's own docs and source (#89). A harness that deletes sessions before Distill has captured them is the one way the archive can lose data, so `distill status` reads the settings below and warns when one could delete sessions sooner than the timer sweeps. It also warns when nothing has swept for longer than twice the timer's interval. The reader for each setting is in `crates/distill-core/src/pruning.rs`.
+Checked on 2026-11-15 against each harness's own docs and source (#89). A harness that deletes sessions before DISTILL has captured them is the one way the archive can lose data, so `distill status` reads the settings below and warns when one could delete sessions sooner than the timer sweeps. It also warns when nothing has swept for longer than twice the timer's interval. The reader for each setting is in `crates/distill-core/src/pruning.rs`.
 
 Two other things change a session after it is written. **Compaction** summarises the conversation for the model. **Rewriting** replaces a stored file or rows in place. The sweep keeps a rewritten file beside its earlier capture, so a rewrite loses nothing that a sweep has already captured. Anything written and then rewritten between two sweeps is lost.
 
@@ -19,7 +19,7 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 | Grok | Only when set | Idle longer than the TTL, when a session starts | `[storage] cleanup_ttl_days` in `~/.grok/config.toml` (unset or 0: off) | Yes |
 | Antigravity | No age or count rule; trims by size | When a conversation outgrows its storage limit | None | |
 | Hermes | Only when set | Ended and inactive longer than the retention, at startup, at most once a day | `sessions.auto_prune` (default false) and `sessions.retention_days` (default 90) in `~/.hermes/config.yaml` | Yes |
-| T3 Code | No (threads); its event log, yes | Every 6 hours, events older than about a day | None (hard-coded) | Not needed: Distill reads the thread tables, not the event log |
+| T3 Code | No (threads); its event log, yes | Every 6 hours, events older than about a day | None (hard-coded) | Not needed: DISTILL reads the thread tables, not the event log |
 | Goose | Only empty sessions | When Goose Desktop starts | None | |
 
 ## Claude Code
@@ -34,7 +34,7 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 ## Codex
 
 - **Prunes:** no. Rollouts in `~/.codex/sessions` are deleted only when the owner deletes a thread; archiving moves them to `archived_sessions/`.
-- **Rewrites:** with the feature flag `[features] local_thread_store_compression` (under development, default off), rollouts untouched for 7 days are compressed to `<name>.jsonl.zst` at startup and the plain file is deleted; resuming converts one back. The flag `background_paginated_rollout_migration` (default off) and `codex migrate-rollouts --apply` rewrite a legacy rollout in place. Distill parses both `.jsonl` and `.jsonl.zst`, and the sweep keeps each as its own capture.
+- **Rewrites:** with the feature flag `[features] local_thread_store_compression` (under development, default off), rollouts untouched for 7 days are compressed to `<name>.jsonl.zst` at startup and the plain file is deleted; resuming converts one back. The flag `background_paginated_rollout_migration` (default off) and `codex migrate-rollouts --apply` rewrite a legacy rollout in place. DISTILL parses both `.jsonl` and `.jsonl.zst`, and the sweep keeps each as its own capture.
 - **Compaction:** appends a `compacted` item to the same rollout. `[history] max_bytes` trims `history.jsonl`, which is prompt history, not sessions.
 - **Where:** `CODEX_HOME` (default `~/.codex`) holds `config.toml`; there are also MDM, `/etc/codex/config.toml`, profile and project layers.
 - Sources: [compression.rs](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/compression.rs), [features](https://github.com/openai/codex/blob/main/codex-rs/features/src/lib.rs), [rollout migration](https://github.com/openai/codex/blob/main/codex-rs/thread-store/src/local/rollout_migration.rs), [config loader](https://github.com/openai/codex/blob/main/codex-rs/config/src/loader/mod.rs).
@@ -79,8 +79,8 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 - **Prunes:** only when set. Once per process, when a session starts, Grok deletes a session folder whose newest file is older than the TTL (`chat_history.jsonl`, `updates.jsonl`, `compaction_checkpoints/`, plans), and in every session, the live one too, media, downloads and terminal logs older than the TTL. The live session folder is never deleted.
 - **Setting:** `[storage] cleanup_ttl_days` in `config.toml` in Grok's home (`GROK_HOME`, default `~/.grok`), integer days. Unset or 0 turns it off. Before v1.0.38 an unset value meant 30 days, so an older install deletes sessions after 30 days without the key.
 - **Status reads:** `config.toml` beside `sessions/`.
-- **Rewrites:** `chat_history.jsonl`, the file Distill parses, is replaced whole (temp file then rename) on compaction and on rewind. `updates.jsonl` is the append-only log of everything and is archived as a sidecar.
-- This is xAI's Grok Build (`xai-org/grok-build`). The community `superagent-ai/grok-cli` keeps sessions in `~/.grok/grok.db` and never deletes them; Distill doesn't read that file.
+- **Rewrites:** `chat_history.jsonl`, the file DISTILL parses, is replaced whole (temp file then rename) on compaction and on rewind. `updates.jsonl` is the append-only log of everything and is archived as a sidecar.
+- This is xAI's Grok Build (`xai-org/grok-build`). The community `superagent-ai/grok-cli` keeps sessions in `~/.grok/grok.db` and never deletes them; DISTILL doesn't read that file.
 - Sources: [persistence.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/session/persistence.rs), [config.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/agent/config.rs), [config reference](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md), [settings reference](https://docs.x.ai/build/settings/reference).
 
 ## Antigravity
@@ -103,7 +103,7 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 ## T3 Code
 
 - **Prunes:** threads, no. They go only when the owner deletes a thread or its project.
-- **Event log:** every 6 hours T3 Code prunes `orchestration_events` in `statev2.sqlite` to about a day, hard-coded. Distill reads the thread projection tables (`orchestration_v2_projection_*`), which are kept, so this loses nothing Distill captures. Those rows are updated in place.
+- **Event log:** every 6 hours T3 Code prunes `orchestration_events` in `statev2.sqlite` to about a day, hard-coded. DISTILL reads the thread projection tables (`orchestration_v2_projection_*`), which are kept, so this loses nothing DISTILL captures. Those rows are updated in place.
 - **Setting:** `storageCleanup` in `userdata/settings.json` covers worktrees, browser artifacts and logs, never threads. `T3CODE_HOME` sets the base folder (default `~/.t3`).
 - Sources: [ProjectionMaintenance.ts](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/orchestration-v2/ProjectionMaintenance.ts), [settings.ts](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/settings.ts), [storageCleanup.ts](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/storageCleanup.ts).
 
@@ -118,6 +118,6 @@ Paths are the defaults. Each harness keeps its settings beside the folder its se
 
 - Status reads the owner's own settings files and, for Claude Code, the managed settings files. It does not read project-level settings (a project's `.claude/settings.json` can set a shorter `cleanupPeriodDays`), MDM profiles or server-managed settings.
 - Antigravity's size trimming and every in-place rewrite above have no setting to read, so status can't warn about them.
-- OpenCode 2's tables (`session_v2`, `session_message`, `session_part`) are read since #110, from OpenCode's public source (its message shapes are not confirmed against a real database: a message type or content type Distill does not know is skipped, so such text is archived but not parsed).
-- OpenCode's spilled outputs are looked for only beside the database Distill reads. With `OPENCODE_DB` pointing elsewhere, they stay in OpenCode's data folder and are not captured.
+- OpenCode 2's tables (`session_v2`, `session_message`, `session_part`) are read since #110, from OpenCode's public source (its message shapes are not confirmed against a real database: a message type or content type DISTILL does not know is skipped, so such text is archived but not parsed).
+- OpenCode's spilled outputs are looked for only beside the database DISTILL reads. With `OPENCODE_DB` pointing elsewhere, they stay in OpenCode's data folder and are not captured.
 - These findings are as of the date above. A harness can change its defaults in any release; recheck when one does.

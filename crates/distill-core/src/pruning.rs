@@ -75,7 +75,7 @@ fn days(days: f64, setting: String) -> Retention {
     }
 }
 
-/// OpenCode's spilled tool outputs, in `tool-output/` beside each database Distill reads.
+/// OpenCode's spilled tool outputs, in `tool-output/` beside each database DISTILL reads.
 fn opencode(roots: &[PathBuf]) -> Retention {
     use crate::normalize::opencode::{SPILL_DIR, SPILL_RETENTION_DAYS, database, spill_dir};
     let dirs: Vec<String> = roots
@@ -225,7 +225,7 @@ mod tests {
 
     const DAY: u64 = 24 * 60;
 
-    /// A harness folder at `dir/<name>` holding `file` with `text`, and the roots Distill reads.
+    /// A harness folder at `dir/<name>` holding `file` with `text`, and the roots DISTILL reads.
     fn harness_dir(
         dir: &Path,
         name: &str,

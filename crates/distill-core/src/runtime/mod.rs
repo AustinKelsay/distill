@@ -71,7 +71,7 @@ pub enum RuntimeError {
     NotRunning,
     /// The configured remote provider could not be reached.
     ProviderUnavailable(String),
-    /// The runtime answered with an error, or with something Distill can't read.
+    /// The runtime answered with an error, or with something DISTILL can't read.
     Failed(String),
 }
 
@@ -81,7 +81,7 @@ impl std::fmt::Display for RuntimeError {
             Self::NotStoredHere(m) => write!(
                 f,
                 "\"{m}\" is not stored on this machine (a cloud-served or missing model); \
-                 Distill only calls models whose weights are here"
+                 DISTILL only calls models whose weights are here"
             ),
             Self::NotRunning => write!(
                 f,

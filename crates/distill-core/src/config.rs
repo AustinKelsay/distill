@@ -158,7 +158,7 @@ impl Config {
             .with_context(|| format!("no config at {} (run `distill init`)", path.display()))?;
         let mut config: Config =
             toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-        // A file that lists every harness Distill knew when it was written (setup and `init`
+        // A file that lists every harness DISTILL knew when it was written (setup and `init`
         // write them all) gets the harnesses added since, switched on like the rest. A file
         // that lists only some harnesses means exactly those.
         let earlier = Harness::ALL.iter().filter(|k| !ADDED_LATER.contains(k));
@@ -179,7 +179,7 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<()> {
         let body = toml::to_string_pretty(self)?;
         let text =
-            format!("# Distill configuration. Written by setup; safe to edit by hand.\n\n{body}");
+            format!("# DISTILL configuration. Written by setup; safe to edit by hand.\n\n{body}");
         write_atomic(path, text.as_bytes())
     }
 
@@ -279,7 +279,7 @@ mod tests {
         // The previous build's shape, with every setting it had.
         std::fs::write(
             &path,
-            r#"# Distill configuration. Written by setup; safe to edit by hand.
+            r#"# DISTILL configuration. Written by setup; safe to edit by hand.
 
 [[sources]]
 kind = "claude-code"

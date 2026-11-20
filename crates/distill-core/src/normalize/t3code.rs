@@ -3,7 +3,7 @@
 //! fields that don't change as the thread runs, then its turn items in order, so a thread that
 //! grows appends. Threads touched in the last few minutes wait for the next sweep.
 //!
-//! A thread whose harness Distill also captures natively (Codex, Claude Code, …) is a mirror of
+//! A thread whose harness DISTILL also captures natively (Codex, Claude Code, …) is a mirror of
 //! that session: archived, but it gets no card and is left out of search unless asked for, so
 //! nothing is counted twice. Threads from harnesses with no local store of their own are the
 //! only copy.
@@ -28,7 +28,7 @@ pub const IGNORED: &[&str] = &[
     "item:run_interrupt_result",
 ];
 
-/// The harness Distill reads a T3 Code driver's sessions from directly, if any.
+/// The harness DISTILL reads a T3 Code driver's sessions from directly, if any.
 fn native(driver: &str) -> Option<Harness> {
     Some(match driver {
         "codex" => Harness::Codex,
@@ -38,7 +38,7 @@ fn native(driver: &str) -> Option<Harness> {
         "grok" => Harness::Grok,
         "antigravity" => Harness::Antigravity,
         "droid" => Harness::Droid,
-        // Its agents run through Cursor's SDK, whose stores Distill reads.
+        // Its agents run through Cursor's SDK, whose stores DISTILL reads.
         "cursor" => Harness::Cursor,
         _ => return None,
     })
@@ -118,7 +118,7 @@ pub struct NativeRefs {
     pub unresolved: Vec<Harness>,
 }
 
-/// Read [`export_native_refs`] output for one thread. Runs on harnesses Distill doesn't read
+/// Read [`export_native_refs`] output for one thread. Runs on harnesses DISTILL doesn't read
 /// are skipped: such a thread is not a mirror at all.
 pub fn native_refs(refs: &[u8]) -> NativeRefs {
     let mut out = NativeRefs::default();
@@ -502,7 +502,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             _ => out.skip_in("item", ty, it),
         }
     }
-    // A mirror only when every run went through a harness Distill reads natively; a thread
+    // A mirror only when every run went through a harness DISTILL reads natively; a thread
     // with any other run holds content found nowhere else.
     if drivers.is_empty()
         && let Some(inst) = &thread_instance

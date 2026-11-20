@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::harness::Harness;
 use crate::util::{create_dir_private, private_file, safe_component, set_private};
 
-/// A Distill home directory. `DISTILL_HOME` overrides the default `~/distill`.
+/// A DISTILL home directory. `DISTILL_HOME` overrides the default `~/distill`.
 ///
 /// The layout is fixed by the spec (issue #72, "On disk"):
 ///

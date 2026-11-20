@@ -18,19 +18,19 @@ fn normalize(name: &str) -> String {
     name.trim().to_ascii_lowercase()
 }
 
-/// Whoever asks Distill for session text.
+/// Whoever asks DISTILL for session text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reader", rename_all = "snake_case")]
 pub enum Reader {
     /// The owner, reading in the GUI.
     Owner,
-    /// A model at a named provider, with its model when it knows it. Distill cannot verify
+    /// A model at a named provider, with its model when it knows it. DISTILL cannot verify
     /// either; a reader that names no provider is refused.
     Model {
         provider: Option<String>,
         model: Option<String>,
     },
-    /// Distill itself, for steps that use no model.
+    /// DISTILL itself, for steps that use no model.
     Distill,
 }
 
@@ -84,7 +84,7 @@ pub enum Access {
     Refused(String),
 }
 
-/// A provider as Distill sees it: built in, or listed in the config's `[[providers]]`.
+/// A provider as DISTILL sees it: built in, or listed in the config's `[[providers]]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Provider {
     pub name: String,
@@ -109,7 +109,7 @@ pub struct ListedProvider {
     pub runtime: Option<RuntimeState>,
 }
 
-/// The providers Distill knows, built from the config.
+/// The providers DISTILL knows, built from the config.
 #[derive(Debug, Clone)]
 pub struct Trust {
     providers: Vec<Provider>,
@@ -226,7 +226,7 @@ impl Trust {
     }
 
     /// The listed provider whose rules apply to `reader`: `ollama-cloud` for a model Ollama
-    /// serves from a cloud. `None` for the owner, Distill itself, and a model at a provider that
+    /// serves from a cloud. `None` for the owner, DISTILL itself, and a model at a provider that
     /// is unnamed or not listed.
     pub fn provider_for(&self, reader: &Reader, runtime: &LocalRuntime) -> Option<&Provider> {
         let (name, _) = Self::resolve(reader, runtime)?;

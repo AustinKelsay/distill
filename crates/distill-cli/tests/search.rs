@@ -128,7 +128,7 @@ fn a_model_searches_by_words_and_filters_and_others_are_refused() {
     let out = m.ok(&["search", "overflow", "--provider", "ollama"]);
     // Each says it once; s2 in fewer words, so it scores higher.
     assert_eq!(keys(&out), ["claude-code/s2", "claude-code/s1"], "{out}");
-    assert!(out.contains("=== Archived session from Distill"), "{out}");
+    assert!(out.contains("=== Archived session from DISTILL"), "{out}");
     assert!(
         out.contains("Opened with: fix the failing test")
             && out.contains("Matched in event 2 (tool_result): thread panicked at overflow_check"),
@@ -175,7 +175,7 @@ fn a_model_searches_by_words_and_filters_and_others_are_refused() {
     let (ok, _, err) = m.run(&["search", "x", "--provider", "ollama", "--since", "Nov 2"]);
     assert!(!ok && err.contains("YYYY-MM-DD"), "{err}");
 
-    // Distill's reads for the index were one line, and the search another.
+    // DISTILL's reads for the index were one line, and the search another.
     let reads = m.ok(&["reads"]);
     assert!(reads.contains("indexed 2 sessions, 6 events"), "{reads}");
     assert!(reads.contains("listed 2 sessions"), "{reads}");

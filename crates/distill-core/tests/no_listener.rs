@@ -1,4 +1,4 @@
-//! No part of Distill opens a network listener (spec, "Exposure"; ADR 0005). The exposure check
+//! No part of DISTILL opens a network listener (spec, "Exposure"; ADR 0005). The exposure check
 //! confirms it for the processes running now; this keeps code that could open one out of every
 //! crate. Tests may bind a port, to have one that refuses connections.
 

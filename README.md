@@ -1,8 +1,10 @@
-# Distill
+<img src="crates/distill-gui/assets/icon.png" alt="" width="96">
+
+# DISTILL
 
 A private, searchable archive of the sessions your local coding agents record.
 
-Distill copies every session your agent harnesses keep into one archive you own, in one shape. You, or an agent you trust, can then search it by words or by meaning and read what happened. Secrets are found and replaced with placeholders in what models read. Personal details are found and covered for the owner; a trusted model reads them as written.
+DISTILL copies every session your agent harnesses keep into one archive you own, in one shape. You, or an agent you trust, can then search it by words or by meaning and read what happened. Secrets are found and replaced with placeholders in what models read. Personal details are found and covered for the owner; a trusted model reads them as written.
 
 ```
 harnesses ──sweep──▶ raw archive ──parse──▶ events and session facts ──▶ findings, word index,
@@ -26,7 +28,7 @@ distill gui                 # opens on Setup: harnesses, providers, models, priv
 
 Without the window: `distill init` writes `~/distill` and a config with every harness found here, and `distill schedule install` installs the timer (launchd on macOS, systemd on Linux). The timer runs `distill tick` every hour by default. The home is `~/distill`, or `DISTILL_HOME`, or `--home`. On Linux the window needs the libraries CI installs (`.github/workflows/ci.yml`); without it, install the CLI and MCP server alone with `cargo install --locked --path crates/distill-cli` and `cargo install --locked --path crates/distill-mcp`.
 
-Models are optional. With none set, Distill captures, parses, scans and finds by words. In `config.toml`:
+Models are optional. With none set, DISTILL captures, parses, scans and finds by words. In `config.toml`:
 
 ```toml
 [steward]
@@ -58,7 +60,7 @@ With `[steward.generation]` set, `card_model` and `detail_model` name models tha
 | `distill reads`, `distill runs` | The read log (every read, refusal and reveal) and the run log. |
 | `distill init`, `harnesses`, `sweep`, `parse`, `scan`, `verify`, `schedule`, `gui` | Setup, and each step on its own. |
 
-`distill <command> --help` lists every flag. `search` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave Distill only through the read path: `read`, `search`, `reveal collect`, the window, the MCP tools, and the tick's model steps.
+`distill <command> --help` lists every flag. `search` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave DISTILL only through the read path: `read`, `search`, `reveal collect`, the window, the MCP tools, and the tick's model steps.
 
 ## The MCP server
 
@@ -70,27 +72,27 @@ Every tool answers as a model at the provider named when the harness registers t
 claude mcp add distill -- distill-mcp --provider <provider>
 ```
 
-**Name a provider only if every provider that harness can use is trusted.** Distill cannot check which provider a reader really runs at.
+**Name a provider only if every provider that harness can use is trusted.** DISTILL cannot check which provider a reader really runs at.
 
 ## Privacy
 
 The archive stores captures without redaction, secrets included: a file as the harness wrote it, a database as a SQLite backup, or one session exported from a database. Findings record where each secret or personal detail is, by kind and fingerprint, never the value. Findings are applied when text is read: the owner sees both covered in the window; a model gets a placeholder for each secret and personal details as written. Detection can miss things, so models at untrusted providers get nothing at all (ADR 0003).
 
-Distill must be no more exposed than the harness folders it copies from (ADR 0005). `distill exposure` checks the first three:
+DISTILL must be no more exposed than the harness folders it copies from (ADR 0005). `distill exposure` checks the first three:
 
 - The home, every file in it, and the fingerprint key are readable by the owner alone.
-- No part of Distill opens a network listener.
+- No part of DISTILL opens a network listener.
 - The home is not in a known synced folder (iCloud Drive, Dropbox, Google Drive, OneDrive).
 - Detected secret values stay out of the index, cards and vectors, and fingerprints cannot be reversed without the key.
 
-Distill makes outbound connections only to the providers you set:
+DISTILL makes outbound connections only to the providers you set:
 
 - **Ollama on this machine:** embeddings, and cards and details unless generation is set.
 - **The trusted generation provider,** when `[steward.generation]` is set: cards and details (ADR 0008). It reads sessions with secrets as placeholders, but personal details are not masked for a trusted reader.
 
-What Distill does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), backups (they carry the archive; keep them encrypted), and an administrator on the machine.
+What DISTILL does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), backups (they carry the archive; keep them encrypted), and an administrator on the machine.
 
-Claude Code deletes transcripts after 30 days by default. Distill sweeps hourly, so it keeps them.
+Claude Code deletes transcripts after 30 days by default. DISTILL sweeps hourly, so it keeps them.
 
 ## Building
 

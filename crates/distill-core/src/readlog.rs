@@ -34,7 +34,7 @@ pub enum ReadResult {
     /// A list of sessions, this many of them, each with its facts and the opening of what the
     /// owner first wrote.
     Listed { sessions: u64 },
-    /// Distill itself read this many sessions, and this many of their events, to build the word
+    /// DISTILL itself read this many sessions, and this many of their events, to build the word
     /// index: one line per tick.
     Indexed { sessions: u64, events: u64 },
     /// A reveal request was filed for these secrets, by their short fingerprints (`crate::reveal`).
