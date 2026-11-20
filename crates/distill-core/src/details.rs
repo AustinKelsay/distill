@@ -242,7 +242,7 @@ impl DetailReport {
             s += &format!(", {} answers not in the text dropped", self.unplaced);
         }
         if self.failed > 0 {
-            s += &format!(", {} failed", self.failed);
+            s += &format!(", {} to retry", self.failed);
         }
         if self.stopped_at_deadline {
             s += ", stopped at the tick's time limit";

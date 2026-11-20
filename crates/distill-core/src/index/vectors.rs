@@ -293,7 +293,7 @@ impl VectorReport {
             s += &format!(", {} removed", self.removed);
         }
         if self.failed > 0 {
-            s += &format!(", {} failed", self.failed);
+            s += &format!(", {} to retry", self.failed);
         }
         if self.stopped_at_deadline {
             s += ", stopped at the tick's time limit";

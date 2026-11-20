@@ -57,7 +57,7 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                 s.details.current, s.details.sessions
             ),
             None => println!(
-                "model detection: {} of {} sessions current, {} waiting, {} failing · {} found · model {}{}",
+                "model detection: {} of {} sessions current, {} waiting, {} to retry · {} found · model {}{}",
                 s.details.current,
                 s.details.sessions,
                 s.details.pending,
@@ -98,7 +98,7 @@ fn cards_line(c: &CardProgress) -> String {
             c.sessions
         ),
         None => format!(
-            "cards: {} of {} sessions current, {} waiting, {} stale, {} failing · model {}{}",
+            "cards: {} of {} sessions current, {} waiting, {} stale, {} to retry · model {}{}",
             c.current,
             c.sessions,
             c.pending,
@@ -137,7 +137,7 @@ mod tests {
         };
         assert_eq!(
             cards_line(&c),
-            "cards: 5 of 10 sessions current, 2 waiting, 3 stale, 1 failing · model small:8b"
+            "cards: 5 of 10 sessions current, 2 waiting, 3 stale, 1 to retry · model small:8b"
         );
         c.skipped = Some("the local runtime is not running".into());
         assert_eq!(

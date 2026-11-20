@@ -499,3 +499,24 @@ fn models_can_run_at_a_trusted_service_which_setup_writes_as_generation() {
         Some("embed-text:v1")
     );
 }
+
+#[test]
+fn sessions_per_run_is_chosen_on_the_models_step_and_saved() {
+    let t = temp(false);
+    let mut rt = runtime_sized(fresh_window(&t).state, (1080.0, 1300.0));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Models");
+    assert_eq!(
+        rt.state.setup.draft.steward.sessions_per_run, 25,
+        "the default"
+    );
+    assert!(shows(&rt, "stop after 30 minutes"), "{:?}", texts(&rt));
+    press(&mut rt, "per-run/segment2");
+    assert_eq!(rt.state.setup.draft.steward.sessions_per_run, 100);
+
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    let saved = Config::load(&t.core.home.config_path()).unwrap();
+    assert_eq!(saved.steward.sessions_per_run, 100);
+}

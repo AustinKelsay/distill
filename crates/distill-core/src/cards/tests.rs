@@ -391,7 +391,7 @@ fn a_new_card_model_makes_cards_stale_which_stay_shown_and_are_rewritten_after_e
     );
     assert_eq!(
         r.summary(),
-        "wrote 1 card (0 already current, 1 waiting, 2 stale), 1 failed"
+        "wrote 1 card (0 already current, 1 waiting, 2 stale), 1 to retry"
     );
     assert_eq!(
         cards_by_model(&home, &config, &ids),
