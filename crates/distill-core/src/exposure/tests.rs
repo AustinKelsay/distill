@@ -160,12 +160,15 @@ distill-mcp  102 owner   10u  IPv4 0x2      0t0  TCP 127.0.0.1:7000 (LISTEN)
 distill-gui  103 owner   11u  IPv6 0x3      0t0  UDP *:5353
 distill      104 owner   12u  IPv4 0x4      0t0  UDP 10.0.0.2:5000->10.0.0.1:53
 distillery   105 owner   13u  IPv4 0x5      0t0  TCP *:8080 (LISTEN)
+DISTILL      106 owner   14u  IPv4 0x6      0t0  TCP 127.0.0.1:7001 (LISTEN)
+Distiller    107 owner   15u  IPv4 0x7      0t0  TCP *:8081 (LISTEN)
 ";
     assert_eq!(
         listeners_in(out),
         vec![
             "distill-mcp (pid 102) on 127.0.0.1:7000".to_string(),
             "distill-gui (pid 103) on *:5353".to_string(),
+            "DISTILL (pid 106) on 127.0.0.1:7001".to_string(),
         ]
     );
     assert!(listeners_in("").is_empty());

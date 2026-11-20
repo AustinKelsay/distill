@@ -391,14 +391,14 @@ fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
-/// Network listeners held by DISTILL's processes (`distill`, `distill-mcp`, `distill-gui`), from
-/// `lsof`. None when `lsof` is not on this machine.
+/// Network listeners held by DISTILL's processes (`distill`, `distill-mcp`, `distill-gui`, and
+/// `DISTILL`, the window inside DISTILL.app), from `lsof`. None when `lsof` is not on this machine.
 fn system_listeners() -> Option<Vec<String>> {
     let lsof = ["/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof"]
         .into_iter()
         .find(|p| Path::new(p).exists())?;
     let out = Command::new(lsof)
-        .args(["-nP", "+c", "0", "-a", "-c", "distill", "-i"])
+        .args(["-nP", "+c", "0", "-a", "-c", "/^distill/i", "-i"])
         .output()
         .ok()?;
     Some(listeners_in(&String::from_utf8_lossy(&out.stdout)))
@@ -413,7 +413,7 @@ fn listeners_in(lsof: &str) -> Vec<String> {
         let [command, pid, _, _, _, _, _, node, name @ ..] = cols.as_slice() else {
             continue;
         };
-        if *command != "distill" && !command.starts_with("distill-") {
+        if *command != "distill" && *command != "DISTILL" && !command.starts_with("distill-") {
             continue;
         }
         let name = name.join(" ");
