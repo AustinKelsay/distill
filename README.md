@@ -22,8 +22,9 @@ Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), decisions in [`docs/adr/`](do
 ## Set up
 
 ```sh
-scripts/install.sh          # builds and installs distill, distill-mcp and distill-gui
-distill gui                 # opens on the Guide, then Setup: harnesses, trusted AI, models, privacy; Finish installs the timer
+scripts/install.sh          # installs distill and distill-mcp, and the window: DISTILL.app in ~/Applications on macOS
+distill gui                 # or open DISTILL from Spotlight; starts on the Guide, then Setup (harnesses, trusted AI,
+                            # models, privacy); Finish installs the timer
 ```
 
 Without the window: `distill init` writes `~/distill` and a config with every harness found here, and `distill schedule install` installs the timer (launchd on macOS, systemd on Linux). The timer runs `distill tick` every hour by default. The home is `~/distill`, or `DISTILL_HOME`, or `--home`. On Linux the window needs the libraries CI installs (`.github/workflows/ci.yml`); without it, install the CLI and MCP server alone with `cargo install --locked --path crates/distill-cli` and `cargo install --locked --path crates/distill-mcp`.
@@ -101,4 +102,4 @@ cargo test && cargo test -p distill-gui && cargo test -p distill-eval
 cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check
 ```
 
-Try things against a temporary home (`--home` or `DISTILL_HOME`). `scripts/install.sh` replaces the binaries your real archive's timer runs; `distill schedule install` and Finish in the window's Setup replace the timer job itself, whatever home you pass.
+Try things against a temporary home (`--home` or `DISTILL_HOME`). `scripts/install.sh` replaces the binaries your real archive's timer runs (and DISTILL.app on macOS); `distill schedule install` and Finish in the window's Setup replace the timer job itself, whatever home you pass.

@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Build and install distill, distill-mcp and distill-gui into Cargo's bin directory
-# ($CARGO_INSTALL_ROOT, else $CARGO_HOME, else ~/.cargo, plus /bin).
+# Build and install distill and distill-mcp into Cargo's bin directory ($CARGO_INSTALL_ROOT,
+# else $CARGO_HOME, else ~/.cargo, plus /bin), and the window: on macOS as DISTILL.app in
+# ~/Applications (scripts/mac-app.sh builds it; `distill gui` opens it), elsewhere as
+# distill-gui beside the others.
 #
-# Everything is built in a staging folder first; the installed binaries are replaced only once
-# all three are ready, so a failed build leaves the old ones in place.
+# Everything is built in a staging folder first; the installed files are replaced only once all
+# of them are ready, so a failed build leaves the old ones in place.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ROOT="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
 BINS=(distill distill-mcp distill-gui)
+MAC=$([[ "$(uname)" == Darwin ]] && echo 1 || true)
+APPS="$HOME/Applications"
 
 # Whether a tick is running. `pgrep` exits 1 for no match; anything else is an error, not "no".
 ticking() {
@@ -35,6 +39,10 @@ trap 'rm -rf "$stage"' EXIT
 for crate in distill-cli distill-mcp distill-gui; do
   cargo install --path "crates/$crate" --locked --quiet --root "$stage" --no-track
 done
+if [[ -n "$MAC" ]]; then
+  BINS=(distill distill-mcp)
+  scripts/mac-app.sh "$stage/bin/distill-gui" "$stage" "$ROOT/bin/distill"
+fi
 
 if ticking; then
   echo "A distill tick started during the build; run this again when it has finished." >&2
@@ -43,5 +51,16 @@ fi
 for bin in "${BINS[@]}"; do
   mv -f "$stage/bin/$bin" "$ROOT/bin/$bin"
 done
-
-echo "Installed into $ROOT/bin."
+if [[ -n "$MAC" ]]; then
+  # One copy of the window: the app. `distill gui` opens it.
+  rm -f "$ROOT/bin/distill-gui"
+  mkdir -p "$APPS"
+  # The old app moves into the staging folder (removed on exit); an open window keeps running.
+  if [[ -e "$APPS/DISTILL.app" ]]; then mv "$APPS/DISTILL.app" "$stage/previous.app"; fi
+  mv "$stage/DISTILL.app" "$APPS/DISTILL.app"
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$APPS/DISTILL.app" || true
+  echo "Installed into $ROOT/bin and $APPS/DISTILL.app."
+else
+  echo "Installed into $ROOT/bin."
+fi
