@@ -2,6 +2,7 @@
 
 pub mod approvals;
 pub mod findings;
+pub mod guide;
 pub mod overview;
 pub mod read_log;
 pub mod sessions;

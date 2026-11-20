@@ -1,9 +1,10 @@
 //! Setup: six steps over a draft `Config`, written on Finish together with the timer.
 //!
-//! Harnesses (detected, untick to skip), the home folder, providers (`trust::add` and
-//! `trust::set_trusted`, shown as `distill providers` lists them, with the local runtime's
-//! models), the steward's models (chosen from the models stored on this machine), personal terms
-//! and excluded paths, and the schedule. Finish calls `setup::finish`, which writes
+//! Harnesses (detected, untick to skip), the home folder, trusted AI (the providers, via
+//! `trust::add` and `trust::set_trusted`, shown as `distill providers` lists them, with the local
+//! runtime's models and common services ready to trust), the steward's models (chosen from the
+//! models stored on this machine), privacy (what is found automatically, personal terms and
+//! excluded paths), and the schedule. Finish calls `setup::finish`, which writes
 //! `config.toml` and installs the timer. Nothing reaches disk before Finish.
 
 use distill_core::config::ProviderKind;
@@ -26,10 +27,21 @@ use crate::ui::{Paint, count, dot, human_bytes, pill, tilde};
 pub const STEPS: [(&str, &str); 6] = [
     ("Harnesses", "Which harnesses' sessions to archive"),
     ("Home folder", "Where the archive lives"),
-    ("Providers", "Which models may read your sessions"),
+    ("Trusted AI", "Who may read your sessions"),
     ("Models", "The models that organize the archive"),
-    ("Privacy", "Names and places that always count as personal"),
+    ("Privacy", "What DISTILL finds by itself, and what you add"),
     ("Schedule", "How often DISTILL runs"),
+];
+
+/// Common AI services, as (the provider name an agent passes with `--provider`, how it is shown).
+/// Each is offered ready to trust; trusting one adds it to the config's `[[providers]]`.
+pub const SERVICES: [(&str, &str); 6] = [
+    ("anthropic", "Anthropic"),
+    ("openai", "OpenAI"),
+    ("google", "Google"),
+    ("xai", "xAI"),
+    ("openrouter", "OpenRouter"),
+    (OLLAMA_CLOUD, "Ollama cloud"),
 ];
 
 pub const SWEEPS: [(u32, &str); 4] = [
@@ -160,6 +172,13 @@ impl SetupState {
             }
             Err(e) => self.provider_error = Some(jobs::line(e)),
         }
+    }
+
+    /// Trust a common service the config doesn't list yet.
+    fn trust_service(&mut self, name: &str) {
+        self.provider_error = trust::add(&mut self.draft, name, true)
+            .err()
+            .map(jobs::line);
     }
 
     fn set_trusted(&mut self, name: &str, trusted: bool) {
@@ -606,77 +625,134 @@ fn runtime_lines(state: Option<&RuntimeState>) -> Vec<(String, String)> {
     }
 }
 
+/// How a service is shown: its common name when it has one.
+fn service_name(name: &str) -> &str {
+    SERVICES
+        .iter()
+        .find(|(id, _)| *id == name)
+        .map_or(name, |(_, shown)| shown)
+}
+
+/// A service's trust switch, with its state in words.
+fn trust_switch(p: &Paint, name: &str, trusted: bool, toggle: impl Fn(&mut State) + 'static) -> El {
+    row()
+        .gap(8.0)
+        .center_y()
+        .child(
+            text(if trusted { "Trusted" } else { "Not trusted" })
+                .font(p.text())
+                .color(if trusted { p.ink() } else { p.muted() }),
+        )
+        .child(
+            Switch::new(trusted)
+                .label(format!("Trust {name}"))
+                .hide_label()
+                .control_size(ControlSize::Small)
+                .on_toggle(toggle)
+                .build(&p.k)
+                .key("switch"),
+        )
+}
+
+/// A service's row: its shown name, the provider name agents pass, and `control`.
+fn service_row(p: &Paint, key: String, label: String, name: &str, control: El) -> El {
+    let shown = service_name(name);
+    let mut title = row().gap(8.0).center_y().child(
+        text(shown.to_string())
+            .font(p.k.ty.ui_medium)
+            .color(p.ink()),
+    );
+    if shown != name {
+        title = title.child(text(name.to_string()).font(p.mono()).color(p.faint()));
+    }
+    row()
+        .key(key)
+        .label(label)
+        .w_full()
+        .py(10.0)
+        .px(4.0)
+        .gap(16.0)
+        .center_y()
+        .child(col().grow(1.0).shrink().child(title))
+        .child(control)
+}
+
 fn providers(d: &SetupState, p: &Paint) -> El {
     let trust = Trust::new(&d.draft);
-    let mut card = p.card().key("providers").gap(0.0).py(4.0);
-    for (i, pr) in trust.providers().iter().enumerate() {
-        if i > 0 {
-            card = card.child(p.separator());
-        }
-        let control = match pr.kind {
-            ProviderKind::Local => pill(p, "Trusted", p.k.c.success).key("trust"),
+    let mut here = p.section("this-machine", "This machine", None);
+    let mut services = p.section("services", "AI services", None).gap(0.0);
+    let mut listed = 0;
+    for pr in trust.providers() {
+        match pr.kind {
+            ProviderKind::Local => {
+                let mut about = col().gap(2.0).grow(1.0).shrink().child(
+                    text(if pr.name == OLLAMA {
+                        "Ollama"
+                    } else {
+                        &pr.name
+                    })
+                    .font(p.k.ty.ui_medium)
+                    .color(p.ink()),
+                );
+                for (name, where_) in runtime_lines(d.runtime.as_ref()) {
+                    about = about.child(
+                        row()
+                            .gap(10.0)
+                            .child(text(name).font(p.mono()).color(p.muted()))
+                            .child(text(where_).font(p.caption()).color(p.faint())),
+                    );
+                }
+                here = here.child(
+                    row()
+                        .key(format!("provider-{}", pr.name))
+                        .label(provider_label(pr))
+                        .w_full()
+                        .px(4.0)
+                        .gap(16.0)
+                        .center_y()
+                        .child(about)
+                        .child(pill(p, "Always trusted", p.k.c.success).key("trust")),
+                );
+            }
             ProviderKind::Remote => {
                 let name = pr.name.clone();
                 let trusted = pr.trusted;
-                row()
-                    .gap(8.0)
-                    .center_y()
-                    .child(
-                        text(if trusted { "Trusted" } else { "Not trusted" })
-                            .font(p.text())
-                            .color(if trusted { p.ink() } else { p.muted() }),
-                    )
-                    .child(
-                        Switch::new(trusted)
-                            .label(format!("Trust {}", pr.name))
-                            .hide_label()
-                            .control_size(ControlSize::Small)
-                            .on_toggle(move |s: &mut State| s.setup.set_trusted(&name, !trusted))
-                            .build(&p.k)
-                            .key("switch"),
-                    )
-            }
-        };
-        let mut about = col().gap(2.0).grow(1.0).shrink().child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(text(pr.name.clone()).font(p.k.ty.ui_medium).color(p.ink()))
-                .child(
-                    text(match pr.kind {
-                        ProviderKind::Local => "local, on this machine",
-                        ProviderKind::Remote => "remote",
-                    })
-                    .font(p.caption())
-                    .color(p.muted()),
-                ),
-        );
-        if pr.name == OLLAMA {
-            for (name, where_) in runtime_lines(d.runtime.as_ref()) {
-                about = about.child(
-                    row()
-                        .gap(10.0)
-                        .child(text(name).font(p.mono()).color(p.muted()))
-                        .child(text(where_).font(p.caption()).color(p.faint())),
-                );
+                let control = trust_switch(p, service_name(&pr.name), trusted, move |s| {
+                    s.setup.set_trusted(&name, !trusted)
+                });
+                services = services.child(if listed == 0 {
+                    el_spacer()
+                } else {
+                    p.separator()
+                });
+                listed += 1;
+                services = services.child(service_row(
+                    p,
+                    format!("provider-{}", pr.name),
+                    provider_label(pr),
+                    &pr.name,
+                    control,
+                ));
             }
         }
-        card = card.child(
-            row()
-                .key(format!("provider-{}", pr.name))
-                .label(provider_label(pr))
-                .w_full()
-                .py(10.0)
-                .px(4.0)
-                .gap(16.0)
-                .center_y()
-                .child(about)
-                .child(control),
-        );
+    }
+    // Common services the config doesn't list yet, ready to trust.
+    for (id, shown) in SERVICES {
+        if trust.provider(id).is_some() {
+            continue;
+        }
+        let control = trust_switch(p, shown, false, move |s| s.setup.trust_service(id));
+        services = services.child(p.separator()).child(service_row(
+            p,
+            format!("service-{id}"),
+            format!("{id} remote not trusted"),
+            id,
+            control,
+        ));
     }
     let field = TextInput::new(&d.provider)
-        .label("Remote provider")
-        .placeholder("a provider's name, e.g. anthropic")
+        .label("Another service")
+        .placeholder("another service, by the name its agents pass with --provider")
         .width(None)
         .on_edit(|s: &mut State| &mut s.setup.provider)
         .on_submit(|s: &mut State, _: &mut Tx| s.setup.add_provider())
@@ -689,10 +765,25 @@ fn providers(d: &SetupState, p: &Paint) -> El {
         .on_press(|s: &mut State| s.setup.add_provider())
         .build(&p.k)
         .key("add-provider");
+    services = services.child(
+        row()
+            .w_full()
+            .pt(12.0)
+            .gap(8.0)
+            .center_y()
+            .child(field)
+            .child(add),
+    );
     let mut c = col()
-        .gap(12.0)
-        .child(card)
-        .child(row().w_full().gap(8.0).center_y().child(field).child(add));
+        .gap(16.0)
+        .child(p.note(
+            "Trusting a service lets two things read your sessions: your agents that run at it, \
+             when they search or read through DISTILL, and DISTILL's own models when they run \
+             there (the next step). Each gets every secret replaced by a placeholder, and \
+             personal details as written. Anything not trusted is refused.",
+        ))
+        .child(here)
+        .child(services);
     if let Some(e) = &d.provider_error {
         c = c.child(
             text(e.clone())
@@ -706,10 +797,14 @@ fn providers(d: &SetupState, p: &Paint) -> El {
         c = c.child(p.note(format!("Ignored: {w}")));
     }
     c.child(p.note(
-        "Models on this machine are trusted. A model at a remote provider may read your \
-         sessions, with every secret replaced by a placeholder, only once you mark the provider \
-         trusted. Anything else is refused.",
+        "An agent names its service itself (`--provider`), and DISTILL cannot check it. Name a \
+         service for an agent only if every service that agent can use is trusted.",
     ))
+}
+
+/// Space before the first row of a list, where later rows have a separator.
+fn el_spacer() -> El {
+    rune::el().h(4.0)
 }
 
 fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
@@ -829,7 +924,7 @@ fn list_of(
 
 fn privacy(d: &SetupState, p: &Paint) -> El {
     let term = TextInput::new(&d.term)
-        .label("Personal term")
+        .label("Always personal")
         .placeholder("a name, a client, a place")
         .width(None)
         .on_edit(|s: &mut State| &mut s.setup.term)
@@ -856,13 +951,44 @@ fn privacy(d: &SetupState, p: &Paint) -> El {
         .on_press(|s: &mut State| s.setup.add_exclude())
         .build(&p.k)
         .key("add-exclude");
+    let st = &d.draft.steward;
+    let detection = match st.detail_model.as_ref().or(st.card_model.as_ref()) {
+        Some(m) => pill(p, &format!("Patterns and {m}"), p.k.c.success),
+        None => pill(p, "Patterns only", p.k.c.warning),
+    };
+    let automatic = p
+        .section("automatic", "Found automatically", None)
+        .gap(0.0)
+        .child(setting(
+            p,
+            "secrets",
+            "Secrets",
+            "API keys, tokens and passwords, by pattern. Always on.",
+            pill(p, "Always on", p.k.c.success),
+        ))
+        .child(p.separator())
+        .child(setting(
+            p,
+            "details",
+            "Personal details",
+            "Email addresses, hosts, your username and common name and address shapes, by \
+             pattern. The detection pass's model (Models step) also finds names, addresses, \
+             phone numbers and companies that no pattern can.",
+            detection.key("detection"),
+        ))
+        .child(p.note(
+            "In this window both are blurred until you click them. A trusted AI gets each \
+             secret as a placeholder and personal details as written.",
+        ));
     col()
         .gap(16.0)
+        .child(automatic)
         .child(
-            p.section("personal-terms", "Personal terms", None)
+            p.section("personal-terms", "Always personal", None)
                 .child(p.note(
-                    "Words and names that always count as personal details, matched as whole \
-                     words whatever their case.",
+                    "Names and words to treat as personal details even when nothing above \
+                     catches them: clients, people, places. Matched as whole words, whatever \
+                     their case.",
                 ))
                 .child(
                     row()

@@ -13,13 +13,15 @@
         text: Approvals
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         steps: Setup steps
           step-0: Harnesses
           text: 1 Harnesses
           step-1: Home folder
           text: 2 Home folder
-          step-2: Providers
-          text: 3 Providers
+          step-2: Trusted AI
+          text: 3 Trusted AI
           step-3: Models
           text: 4 Models
           step-4: Privacy
@@ -27,33 +29,61 @@
           step-5: Schedule
           text: 6 Schedule
         text: Step 3 of 6
-          step-title: Providers
-        text: Which models may read your sessions
+          step-title: Trusted AI
+        text: Who may read your sessions
+        text: Trusting a service lets two things read your sessions: your agents that run at it, when they search or read through DISTILL, and DISTILL's own models when they run there (the next step). Each gets every secret replaced by a placeholder, and personal details as written. Anything not trusted is refused.
+          this-machine: This machine
+              title: This machine
             provider-ollama: ollama local trusted
-            text: ollama
-            text: local, on this machine
+            text: Ollama
             text: qwen-small:4b
             text: stored on this machine
             text: embed-text:v1
             text: stored on this machine
             text: big-model:cloud
             text: served from a cloud (reads as ollama-cloud)
-              trust: Trusted
-              text: Trusted
+              trust: Always trusted
+              text: Always trusted
+          services: AI services
+              title: AI services
             provider-ollama-cloud: ollama-cloud remote not trusted
+            text: Ollama cloud
             text: ollama-cloud
-            text: remote
             text: Not trusted
-              switch: Trust ollama-cloud
+              switch: Trust Ollama cloud
             provider-example-cloud: example-cloud remote trusted
             text: example-cloud
-            text: remote
             text: Trusted
               switch: Trust example-cloud
-              input: 
-          add-provider: Add
-            label: Add
-        text: Models on this machine are trusted. A model at a remote provider may read your sessions, with every secret replaced by a placeholder, only once you mark the provider trusted. Anything else is refused.
+            service-anthropic: anthropic remote not trusted
+            text: Anthropic
+            text: anthropic
+            text: Not trusted
+              switch: Trust Anthropic
+            service-openai: openai remote not trusted
+            text: OpenAI
+            text: openai
+            text: Not trusted
+              switch: Trust OpenAI
+            service-google: google remote not trusted
+            text: Google
+            text: google
+            text: Not trusted
+              switch: Trust Google
+            service-xai: xai remote not trusted
+            text: xAI
+            text: xai
+            text: Not trusted
+              switch: Trust xAI
+            service-openrouter: openrouter remote not trusted
+            text: OpenRouter
+            text: openrouter
+            text: Not trusted
+              switch: Trust OpenRouter
+                input: 
+            add-provider: Add
+              label: Add
+        text: An agent names its service itself (`--provider`), and DISTILL cannot check it. Name a service for an agent only if every service that agent can use is trusted.
         back: Back
           label: Back
         next: Next

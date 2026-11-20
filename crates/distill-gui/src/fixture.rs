@@ -22,6 +22,7 @@ pub use sessions::*;
 pub type Scene = (&'static str, fn(&mut State));
 
 pub const SCENES: &[Scene] = &[
+    ("guide", |s| *s = base(None)),
     ("setup-harnesses", |s| setup_step(s, 0)),
     ("setup-home", |s| setup_step(s, 1)),
     ("setup-providers", |s| setup_step(s, 2)),
@@ -70,9 +71,11 @@ fn base(config: Option<Config>) -> State {
     s
 }
 
-/// Nothing set up yet: the window opens on Setup, with harnesses detected and Ollama running.
+/// Nothing set up yet, on Setup (the window itself opens on the Guide), with harnesses detected
+/// and Ollama running.
 pub fn fresh() -> State {
     let mut s = base(None);
+    s.screen = crate::nav::Screen::Setup;
     s.setup.draft = config();
     s.setup.detected(detections());
     s.setup.runtime = Some(runtime_state());

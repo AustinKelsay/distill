@@ -14,6 +14,8 @@
         text: 2
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         heading: Read log
       text: Every read of your sessions, every refusal, and every step of a reveal request, newest first. Days are in UTC. The log holds no session text and no value.
               input: 

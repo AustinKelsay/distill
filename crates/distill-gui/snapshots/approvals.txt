@@ -14,6 +14,8 @@
         text: 2
         nav-read-log: Read log
         text: Read log
+        nav-guide: Guide
+        text: Guide
         heading: Approvals
       text: A model at a trusted provider asks for the real value of specific secrets. Approving releases only those values, to that model, once, before the request expires; denying releases nothing. No value is shown here.
           request-3f9a1c0e7b2d4a68: Reveal request 3f9a1c0e7b2d4a68 from example-cloud/model-a
