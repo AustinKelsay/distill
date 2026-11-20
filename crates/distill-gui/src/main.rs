@@ -200,6 +200,10 @@ pub fn spec() -> AppSpec<State> {
         scenes: fixture::SCENES,
         setup: Some(start),
         poll: Some(poll),
+        // Space Grotesk (SIL Open Font License, assets/SpaceGrotesk-OFL.txt) in place of
+        // Rune's Inter; code stays in the system's monospace (SF Mono on macOS).
+        fonts: &[include_bytes!("../assets/SpaceGrotesk.ttf")],
+        families: ("Space Grotesk", "ui-monospace"),
         ..AppSpec::new("DISTILL", (1080.0, 780.0), init, view)
     }
 }
