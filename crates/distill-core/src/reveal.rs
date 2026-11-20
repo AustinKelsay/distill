@@ -109,7 +109,7 @@ impl Request {
         let asked: Vec<String> = self.secrets.iter().map(Secret::placeholder).collect();
         format!(
             "Reveal request {} is filed for {} in session {}: {}. Nothing is released until the \
-             owner approves it in Distill's window. Once it is approved, collect the values \
+             owner approves it in DISTILL's window. Once it is approved, collect the values \
              once with this request ID, before {}, when it expires.",
             self.id,
             crate::util::count(self.secrets.len() as u64, "secret"),
@@ -274,7 +274,7 @@ fn file(
     let refuse = |why: &str| Ok(Filed::Refused(why.to_string()));
     if !matches!(reader, Reader::Model { .. }) {
         return refuse(
-            "only a model files a reveal request; the owner sees every value in Distill's window.",
+            "only a model files a reveal request; the owner sees every value in DISTILL's window.",
         );
     }
     if let Access::Refused(why) = trust(home).check(reader, runtime) {
@@ -494,7 +494,7 @@ fn release(
         State::Pending => {
             return refuse(format!(
                 "reveal request {id} is not approved yet: the owner approves or denies it in \
-                 Distill's window. Try again before {}, when it expires.",
+                 DISTILL's window. Try again before {}, when it expires.",
                 r.expires_at
             ));
         }

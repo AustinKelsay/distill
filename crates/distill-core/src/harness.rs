@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::home::user_home;
 
-/// A harness whose sessions Distill collects.
+/// A harness whose sessions DISTILL collects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Harness {
@@ -81,7 +81,7 @@ impl Harness {
         Self::ALL.into_iter().find(|k| k.id() == s)
     }
 
-    /// Whether Distill can turn this harness's captures into events. Harnesses without a
+    /// Whether DISTILL can turn this harness's captures into events. Harnesses without a
     /// parser are still archived, so nothing is lost while one is written.
     pub fn has_parser(self) -> bool {
         crate::normalize::parser_version(self).is_some()

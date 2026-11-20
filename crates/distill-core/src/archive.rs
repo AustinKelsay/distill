@@ -1,5 +1,5 @@
 //! The raw archive: exact harness bytes, named by their capture hash, plus an append-only
-//! manifest of every capture. Nothing else in Distill writes here, and agents never do.
+//! manifest of every capture. Nothing else in DISTILL writes here, and agents never do.
 //!
 //! The on-disk format is the previous build's, unchanged (ADR 0001): `raw/<aa>/<sha256>` and
 //! `raw/manifest.jsonl`, with every manifest field name kept.

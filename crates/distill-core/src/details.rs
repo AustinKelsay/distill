@@ -8,7 +8,7 @@
 //!   `card_model`), so the read is logged and the model sees placeholders for detected
 //!   secrets.
 //! - **Placing.** The model answers with the exact text of each detail ([`parse_reply`], parsed
-//!   strictly). Distill finds that text in the stored messages itself, as a whole word, and an
+//!   strictly). DISTILL finds that text in the stored messages itself, as a whole word, and an
 //!   answer written nowhere is dropped (`findings::set_model`). A place that touches a pattern
 //!   finding is dropped too: a model finding never overrides a secret's place.
 //! - **Keeping.** The findings go in the session's findings file under `model`, with what they

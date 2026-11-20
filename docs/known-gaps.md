@@ -1,14 +1,14 @@
 # Known gaps
 
-What Distill does not do, or does only partly. Update this page when a change adds or removes a limit.
+What DISTILL does not do, or does only partly. Update this page when a change adds or removes a limit.
 
 ## Capture
 
 - With any privacy exclusion set, a harness whose sessions record no working directory is not archived at all: Antigravity, Hermes's session files, and Cursor (its stores and transcripts). Neither is a T3 Code thread whose worktree and project root are unknown, nor new native references for it.
-- Cursor's IDE chat store (`state.vscdb`) is not read: in the chats checked for #108, each chat with messages also had an agent transcript, which Distill archives, but the transcripts keep no tool results or reasoning; only the store has them (`docs/cursor-ide-chats.md`). A chat kept only in the store is missed. Cursor's SDK agent stores (`projects/*/sdk-agent-store`, how T3 Code runs Cursor) encrypt their blobs, so they are archived but not parsed; their agents are covered by Cursor's transcripts and the T3 threads that ran them.
-- OpenCode's spilled tool outputs are looked for only in `tool-output/` beside the database Distill reads. With `OPENCODE_DB` set elsewhere they are not captured.
+- Cursor's IDE chat store (`state.vscdb`) is not read: in the chats checked for #108, each chat with messages also had an agent transcript, which DISTILL archives, but the transcripts keep no tool results or reasoning; only the store has them (`docs/cursor-ide-chats.md`). A chat kept only in the store is missed. Cursor's SDK agent stores (`projects/*/sdk-agent-store`, how T3 Code runs Cursor) encrypt their blobs, so they are archived but not parsed; their agents are covered by Cursor's transcripts and the T3 threads that ran them.
+- OpenCode's spilled tool outputs are looked for only in `tool-output/` beside the database DISTILL reads. With `OPENCODE_DB` set elsewhere they are not captured.
 - Format drift inside a record type a parser knows (a renamed field) is not counted; only a capture that then parses to nothing shows it.
-- A config that lists every harness Distill knew when it was written gets new harnesses switched on; one that lists only some gets nothing added.
+- A config that lists every harness DISTILL knew when it was written gets new harnesses switched on; one that lists only some gets nothing added.
 - Each new capture costs two directory fsyncs (about 18 ms), so a first sweep of a large machine takes a few minutes.
 
 ## Findings
@@ -26,7 +26,7 @@ What Distill does not do, or does only partly. Update this page when a change ad
 
 ## Safety checks
 
-- The exposure check sees listeners only through `lsof`, and only Distill's own processes running at the time; without `lsof` that rule is unchecked. On Linux the disk counts as encrypted only on a dm-crypt device. The timer's unit files sit outside the home with the usual modes; they hold paths, not session data.
+- The exposure check sees listeners only through `lsof`, and only DISTILL's own processes running at the time; without `lsof` that rule is unchecked. On Linux the disk counts as encrypted only on a dm-crypt device. The timer's unit files sit outside the home with the usual modes; they hold paths, not session data.
 - The pruning check reads the owner's own harness settings and Claude Code's managed settings, not project-level settings, MDM profiles or server-managed settings. Antigravity's trimming by size and in-place rewrites have no setting to read (`docs/harness-pruning.md`).
 - Whether a model is stored on this machine is read from `OLLAMA_MODELS`, else `~/.ollama/models`; an Ollama server started with another model folder cannot be checked. With `[steward.generation]` set, a card or detail model counts as there when the provider's `/models` lists it.
 

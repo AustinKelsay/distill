@@ -104,7 +104,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
             print!("{text}")
         }),
         Searched::Refused(why) => bail!("refused: {why}"),
-        // Only the owner and Distill itself get hits, and neither searches from here.
+        // Only the owner and DISTILL itself get hits, and neither searches from here.
         Searched::Hits(_) => bail!("this reader is not served on the command line"),
     }
 }

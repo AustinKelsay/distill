@@ -1,4 +1,4 @@
-//! Distill's window: one window with navigation between Setup, Overview, Sessions, Findings,
+//! DISTILL's window: one window with navigation between Setup, Overview, Sessions, Findings,
 //! Approvals and Read log (`nav.rs`; each screen is a module under `screens/`).
 //!
 //! The window holds no logic. It reads and writes only through distill-core, in jobs on a
@@ -200,7 +200,7 @@ pub fn spec() -> AppSpec<State> {
         scenes: fixture::SCENES,
         setup: Some(start),
         poll: Some(poll),
-        ..AppSpec::new("Distill", (1080.0, 780.0), init, view)
+        ..AppSpec::new("DISTILL", (1080.0, 780.0), init, view)
     }
 }
 
@@ -208,6 +208,10 @@ fn main() {
     rune::prewarm_gpu();
     // A headless run (`--snap`, `--script`) renders fixtures and reads no home.
     if !rune::is_headless() {
+        // The Dock and app-switcher icon (`assets/icon.svg` is its source).
+        if let Err(e) = rune::set_app_icon(include_bytes!("../assets/icon.png").as_slice()) {
+            eprintln!("distill-gui: {e}");
+        }
         match Boot::load() {
             Ok(b) => {
                 let _ = BOOT.set(b);

@@ -44,7 +44,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
             print!("{text}")
         }),
         Read::Refused(why) => bail!("refused: {why}"),
-        // Only the owner and Distill itself get events, and neither reads from here.
+        // Only the owner and DISTILL itself get events, and neither reads from here.
         Read::Events(_) => bail!("this reader is not served on the command line"),
     }
 }

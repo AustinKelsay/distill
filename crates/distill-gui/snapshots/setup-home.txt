@@ -1,4 +1,4 @@
-      title: Distill
+      title: DISTILL
     text: Your session archive
       nav: Screens
         nav-setup: Setup
@@ -31,7 +31,7 @@
         text: Where the archive lives
         text: Home folder
             home-path: ~/distill
-        text: Everything in it is readable by you alone. To keep the archive somewhere else, start Distill with DISTILL_HOME set to that folder; the timer uses the same folder.
+        text: Everything in it is readable by you alone. To keep the archive somewhere else, start DISTILL with DISTILL_HOME set to that folder; the timer uses the same folder.
           text: config.toml
           text: what this setup writes
           text: raw/

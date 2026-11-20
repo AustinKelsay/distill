@@ -131,7 +131,7 @@ pub struct Producer {
     pub version: u32,
 }
 
-/// Session facts: what Distill records about a session without holding any of its text. Written
+/// Session facts: what DISTILL records about a session without holding any of its text. Written
 /// to `meta.json` and the session list, both rebuilt from the raw archive.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -160,7 +160,7 @@ pub struct SessionMeta {
     /// Kept, get no card, and are left out of search unless asked for.
     #[serde(default)]
     pub steward: bool,
-    /// A copy of a session Distill also captures from the harness's own files (a T3 Code
+    /// A copy of a session DISTILL also captures from the harness's own files (a T3 Code
     /// thread run on Codex, say). Counted as a duplicate only while its original is in the
     /// archive ([`SessionMeta::is_duplicate`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -190,7 +190,7 @@ impl SessionMeta {
 
     /// Whether `originals` hold what this mirror copies. With the originals named, each must be
     /// there; otherwise their harnesses must have sessions at all. A mirror of sessions that were
-    /// never captured (deleted before Distill ran, say) is the only copy, so it counts as a
+    /// never captured (deleted before DISTILL ran, say) is the only copy, so it counts as a
     /// session of its own.
     fn copied_in(&self, originals: &Originals) -> bool {
         // Runs whose original isn't named count as copied when their harness has sessions.
@@ -365,7 +365,7 @@ impl Roots {
     }
 }
 
-/// What a parser returns before Distill adds raw references and ids.
+/// What a parser returns before DISTILL adds raw references and ids.
 #[derive(Debug, Clone, Default)]
 pub struct Parsed {
     pub session_id: Option<String>,

@@ -94,7 +94,7 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
     let body = match (&s.overview.status, &s.overview.error) {
         (Some(st), _) if !st.configured => message(
             p,
-            "Distill is not set up yet",
+            "DISTILL is not set up yet",
             "Setup chooses what to archive and starts the timer.",
             true,
         ),

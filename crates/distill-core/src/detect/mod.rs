@@ -353,7 +353,7 @@ pub fn placeholder(kind: Kind, short_fingerprint: &str) -> String {
     format!("[secret: {} #{short_fingerprint}]", kind.name())
 }
 
-/// Where `text` holds placeholders. A session that read Distill's own output holds them, and
+/// Where `text` holds placeholders. A session that read DISTILL's own output holds them, and
 /// neither a placeholder nor what looks like an assignment inside one (`secret: openai_key`) is
 /// a secret.
 fn placeholders(text: &str) -> Vec<Range<usize>> {

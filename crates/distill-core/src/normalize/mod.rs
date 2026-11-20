@@ -128,7 +128,7 @@ const DRIFT_BYTES: u64 = 16 * 1024;
 
 /// Whether a capture is too big to hold nothing. Only for files a harness writes itself: not
 /// for Cursor (its chats are SQLite files whose size is mostly empty pages, and its parser fails
-/// outright when the store's layout is not what it expects), and not for sessions Distill
+/// outright when the store's layout is not what it expects), and not for sessions DISTILL
 /// exports from a database (`…#session=…`, `…#thread=…`), whose shape its own query fixes; a
 /// schema change fails that query instead. A database session can legitimately hold nothing
 /// but a long system prompt.

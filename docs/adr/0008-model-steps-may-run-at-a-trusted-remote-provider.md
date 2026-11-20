@@ -6,6 +6,6 @@ The model reads sessions through the read path like any trusted reader (ADR 0003
 
 ## Consequences
 
-- Distill now makes outbound connections to that provider. It still opens no listener, and ADR 0005's bar is unchanged: nothing the owner has not trusted reads session text.
+- DISTILL now makes outbound connections to that provider. It still opens no listener, and ADR 0005's bar is unchanged: nothing the owner has not trusted reads session text.
 - Trusting a provider for generation is the same decision as trusting it for MCP reads. There is no separate, narrower trust.
 - Without `[steward.generation]`, everything runs in Ollama as before.

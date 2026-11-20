@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::*;
 
-/// What the machine says when nothing of Distill listens and the disk is encrypted.
+/// What the machine says when nothing of DISTILL listens and the disk is encrypted.
 fn quiet() -> Probes {
     Probes {
         listeners: || Some(Vec::new()),
@@ -20,7 +20,7 @@ fn mode(path: &Path) -> u32 {
     fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-/// A user home in a temp dir, and a Distill home in it built by Distill's own writers.
+/// A user home in a temp dir, and a DISTILL home in it built by DISTILL's own writers.
 fn machine() -> (tempfile::TempDir, std::path::PathBuf, Home) {
     let dir = tempfile::tempdir().unwrap();
     let user = dir.path().join("user");

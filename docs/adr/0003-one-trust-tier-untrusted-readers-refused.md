@@ -9,4 +9,4 @@ A provider is either trusted or not: local providers automatically, remote ones 
 
 ## Consequences
 
-A reader states its provider when it connects, and Distill cannot verify the claim. The rule stops accidental leaks through a harness that was never trusted. It does not stop a process that lies.
+A reader states its provider when it connects, and DISTILL cannot verify the claim. The rule stops accidental leaks through a harness that was never trusted. It does not stop a process that lies.

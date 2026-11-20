@@ -189,7 +189,7 @@ pub fn scan_outcome(r: &findings::ScanReport) -> Result<StepOutcome> {
     })
 }
 
-/// Bring the word index up to date, reading through the read path as Distill itself.
+/// Bring the word index up to date, reading through the read path as DISTILL itself.
 pub fn index_step(
     home: &Home,
     _config: &Config,

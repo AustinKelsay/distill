@@ -150,7 +150,7 @@ pub fn sidebar(s: &State, p: &Paint) -> El {
             col()
                 .px(10.0)
                 .gap(2.0)
-                .child(text("Distill").key("title").font(p.title()).color(p.ink()))
+                .child(text("DISTILL").key("title").font(p.title()).color(p.ink()))
                 .child(
                     text("Your session archive")
                         .font(p.caption())

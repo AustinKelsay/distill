@@ -1,4 +1,4 @@
-      title: Distill
+      title: DISTILL
     text: Your session archive
       nav: Screens
         nav-setup: Setup
@@ -49,7 +49,7 @@
             when: 12 min ago
           status: Refused
           text: Refused
-            what: refused: unknown-cloud is not a provider Distill knows: add it with `distill providers add unknown-cloud`
+            what: refused: unknown-cloud is not a provider DISTILL knows: add it with `distill providers add unknown-cloud`
             who: Nov 15, 11:20:00 UTC · unknown-cloud/x · codex/rollout-0042
             when: 40 min ago
           status: Reveal

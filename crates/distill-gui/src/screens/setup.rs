@@ -29,7 +29,7 @@ pub const STEPS: [(&str, &str); 6] = [
     ("Providers", "Which models may read your sessions"),
     ("Models", "The models that organize the archive"),
     ("Privacy", "Names and places that always count as personal"),
-    ("Schedule", "How often Distill runs"),
+    ("Schedule", "How often DISTILL runs"),
 ];
 
 pub const SWEEPS: [(u32, &str); 4] = [
@@ -553,7 +553,7 @@ fn home(s: &State, p: &Paint) -> El {
                 )
                 .child(p.note(
                     "Everything in it is readable by you alone. To keep the archive somewhere \
-                     else, start Distill with DISTILL_HOME set to that folder; the timer uses \
+                     else, start DISTILL with DISTILL_HOME set to that folder; the timer uses \
                      the same folder.",
                 )),
         )

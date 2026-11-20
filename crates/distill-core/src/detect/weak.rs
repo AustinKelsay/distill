@@ -2,7 +2,7 @@
 //! like one (`element_token`, a tokenizer's `eos_token`), and values too short, too id-like or
 //! too obviously made up to be a secret. Shared by the assignment rule and the JSON credential
 //! field, so the same value under the same name is found by neither or both (issue #98). Since
-//! #120 it also holds the value shapes that are code, references to a secret, Distill's own text
+//! #120 it also holds the value shapes that are code, references to a secret, DISTILL's own text
 //! or stand-ins (`refused_shape`). A value refused here is read as any other string, so a vendor
 //! key inside it is still found.
 
@@ -266,7 +266,7 @@ fn is_env_read(lower: &str) -> bool {
     .any(|p| lower.starts_with(p))
 }
 
-/// R4: Distill's own text: a placeholder, a synthetic test value (`synthetic` as a whole part,
+/// R4: DISTILL's own text: a placeholder, a synthetic test value (`synthetic` as a whole part,
 /// `[synthetic-value]`, `SYNTHETIC_KEY`; not inside a word, as in a password like
 /// `mySyntheticHorse42`), a finding kind's name.
 fn is_distill_text(t: &str) -> bool {

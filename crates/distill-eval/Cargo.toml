@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Judges Distill's model steps against a copy of a home. Not installed."
+description = "Judges DISTILL's model steps against a copy of a home. Not installed."
 
 # Judges the model steps with a trusted provider's real models, against a copy of a home. Not
 # installed, and not a default member, so the shipped binaries never build `distill-core/eval`.

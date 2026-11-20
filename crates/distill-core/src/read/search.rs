@@ -40,7 +40,7 @@ pub enum Searched {
     /// For a model: the hits as text. Openings and passages sit between [`NOTICE_START`] and
     /// [`NOTICE_END`].
     Text(String),
-    /// For the owner and Distill itself.
+    /// For the owner and DISTILL itself.
     Hits(Box<Hits>),
     /// No hits, no facts and no counts, and why.
     Refused(String),

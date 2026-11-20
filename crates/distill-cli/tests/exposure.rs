@@ -32,7 +32,7 @@ impl Machine {
         }
     }
 
-    /// Run `distill` with umask 000, so anything Distill doesn't make owner-only is open to all.
+    /// Run `distill` with umask 000, so anything DISTILL doesn't make owner-only is open to all.
     fn run(&self, args: &[&str]) -> (bool, String) {
         let closed = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -81,7 +81,7 @@ impl Machine {
             ),
         )
         .unwrap();
-        // The test wrote the config with its own umask; set it as Distill would.
+        // The test wrote the config with its own umask; set it as DISTILL would.
         chmod(&self.home.join("config.toml"), 0o600);
     }
 

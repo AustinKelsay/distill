@@ -281,7 +281,7 @@ pub fn read_log_listed() -> State {
             Reader::model(Some("unknown-cloud"), Some("x")),
             Some("codex/rollout-0042"),
             ReadResult::Refused {
-                reason: "unknown-cloud is not a provider Distill knows: add it with `distill providers add unknown-cloud`".into(),
+                reason: "unknown-cloud is not a provider DISTILL knows: add it with `distill providers add unknown-cloud`".into(),
             },
         ),
         entry(

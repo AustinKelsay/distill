@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "The Distill window."
+description = "The DISTILL window."
 
 [dependencies]
 anyhow.workspace = true

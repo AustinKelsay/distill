@@ -1,4 +1,4 @@
-//! Everything Distill writes is owner-only even with a umask that would allow anything (#90),
+//! Everything DISTILL writes is owner-only even with a umask that would allow anything (#90),
 //! including what only the model steps and reveals write: cards, vectors, the steps' failure
 //! files and reveal requests, which a run of the binary with no model never makes. Its own test
 //! binary, since the umask is per process.

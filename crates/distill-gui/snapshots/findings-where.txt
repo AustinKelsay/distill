@@ -1,4 +1,4 @@
-      title: Distill
+      title: DISTILL
     text: Your session archive
       nav: Screens
         nav-setup: Setup

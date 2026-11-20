@@ -54,7 +54,7 @@ impl Tool for ReadSession {
         ) {
             Ok(Read::Text(text)) => Ok(text),
             Ok(Read::Refused(why)) => Err(format!("refused: {why}")),
-            // Only the owner and Distill itself get events, and neither reads from here.
+            // Only the owner and DISTILL itself get events, and neither reads from here.
             Ok(Read::Events(_)) => Err("this reader is not served by the MCP server".into()),
             Err(e) => Err(format!("the read failed: {e:#}")),
         }

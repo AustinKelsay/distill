@@ -1,7 +1,7 @@
-//! The exposure check (ADR 0005): whether Distill is no more exposed than the harness folders.
+//! The exposure check (ADR 0005): whether DISTILL is no more exposed than the harness folders.
 //!
 //! Four rules pass or fail: the home and everything in it are owner-only, the fingerprint key is
-//! owner-only, the home is not in a synced folder, and no Distill process listens on a network
+//! owner-only, the home is not in a synced folder, and no DISTILL process listens on a network
 //! port. Alongside them, as information: whether the disk is encrypted, a reminder that backups
 //! carry the archive, and the folders the previous build left that hold session-derived data.
 //! `distill exposure` prints it, `--fix` tightens an existing home's modes, and the status report
@@ -41,7 +41,7 @@ impl Exposure {
             Some(false) => {
                 "The disk is not encrypted: anyone holding this machine's disk can read the archive."
             }
-            None => "Distill could not tell whether the disk is encrypted.",
+            None => "DISTILL could not tell whether the disk is encrypted.",
         }
     }
 }
@@ -65,7 +65,7 @@ pub enum Rule {
     KeyOwnerOnly,
     /// The home is not inside a synced folder.
     NotSynced,
-    /// No Distill process is listening on a network port.
+    /// No DISTILL process is listening on a network port.
     NoListener,
 }
 
@@ -107,7 +107,7 @@ pub struct LeftFolder {
     pub holds: String,
 }
 
-/// What the check asks the machine: which Distill processes listen on a port (None when it
+/// What the check asks the machine: which DISTILL processes listen on a port (None when it
 /// can't tell), and whether the disk is encrypted.
 pub struct Probes {
     pub listeners: fn() -> Option<Vec<String>>,
@@ -335,12 +335,12 @@ fn no_listener(probes: &Probes) -> RuleResult {
         },
         Some(found) if found.is_empty() => pass(
             Rule::NoListener,
-            "No Distill process is listening on a network port.",
+            "No DISTILL process is listening on a network port.",
         ),
         Some(found) => RuleResult {
             rule: Rule::NoListener,
             outcome: Outcome::Fail,
-            message: "A Distill process is listening on a network port. Distill never opens one: stop the process.".into(),
+            message: "A DISTILL process is listening on a network port. DISTILL never opens one: stop the process.".into(),
             paths: found,
         },
     }
@@ -391,7 +391,7 @@ fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
-/// Network listeners held by Distill's processes (`distill`, `distill-mcp`, `distill-gui`), from
+/// Network listeners held by DISTILL's processes (`distill`, `distill-mcp`, `distill-gui`), from
 /// `lsof`. None when `lsof` is not on this machine.
 fn system_listeners() -> Option<Vec<String>> {
     let lsof = ["/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof"]
@@ -404,7 +404,7 @@ fn system_listeners() -> Option<Vec<String>> {
     Some(listeners_in(&String::from_utf8_lossy(&out.stdout)))
 }
 
-/// The listening sockets in `lsof -nP +c 0 -i` output that belong to a Distill process: a TCP
+/// The listening sockets in `lsof -nP +c 0 -i` output that belong to a DISTILL process: a TCP
 /// socket in `LISTEN`, or a UDP socket with no peer.
 fn listeners_in(lsof: &str) -> Vec<String> {
     let mut out = Vec::new();
