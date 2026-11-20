@@ -2,12 +2,13 @@
 //!
 //! Harnesses (detected, untick to skip), the home folder, trusted AI (the providers, via
 //! `trust::add` and `trust::set_trusted`, shown as `distill providers` lists them, with the local
-//! runtime's models and common services ready to trust), the steward's models (chosen from the
-//! models stored on this machine), privacy (what is found automatically, personal terms and
+//! runtime's models and common services ready to trust), the steward's models (run on this
+//! machine's Ollama, or at a trusted service through `[steward.generation]`, and chosen from the
+//! models it lists; embeddings always run in Ollama), privacy (what is found automatically, personal terms and
 //! excluded paths), and the schedule. Finish calls `setup::finish`, which writes
 //! `config.toml` and installs the timer. Nothing reaches disk before Finish.
 
-use distill_core::config::ProviderKind;
+use distill_core::config::{GenerationConfig, ProviderKind};
 use distill_core::harness::{self, Detection};
 use distill_core::runtime::{RuntimeState, Stored};
 use distill_core::trust::{self, OLLAMA, OLLAMA_CLOUD, Provider, Trust};
@@ -51,6 +52,9 @@ pub const SWEEPS: [(u32, &str); 4] = [
     (180, "3 hours"),
 ];
 
+/// The "run on" choice for running models on this machine.
+const HERE: &str = "This machine (Ollama)";
+
 /// The three model settings, as (select key, name, what it does, what "not set" means).
 const MODELS: [(&str, &str, &str, &str); 3] = [
     (
@@ -86,6 +90,12 @@ pub struct SetupState {
     pub term: TextEdit,
     pub exclude: TextEdit,
     pub provider_error: Option<String>,
+    /// The service's address and key file, while models run at a trusted service.
+    pub base_url: TextEdit,
+    pub key_file: TextEdit,
+    /// What that service listed when last asked: its models, or why it couldn't.
+    pub remote_models: Option<Result<Vec<String>, String>>,
+    pub checking: bool,
     /// The model menu that is open, by key.
     pub open: Option<&'static str>,
     pub finishing: bool,
@@ -97,6 +107,7 @@ pub struct SetupState {
 impl SetupState {
     pub fn new(config: Option<&Config>) -> SetupState {
         let mut draft = config.cloned().unwrap_or_default();
+        let generation = draft.steward.generation.clone();
         // Every harness gets a row, even one an older config doesn't list.
         for kind in Harness::ALL {
             if draft.harness(kind).is_none() {
@@ -113,6 +124,14 @@ impl SetupState {
             term: TextEdit::new(""),
             exclude: TextEdit::new(""),
             provider_error: None,
+            base_url: TextEdit::new(generation.as_ref().map_or("", |g| g.base_url.as_str())),
+            key_file: TextEdit::new(
+                generation
+                    .as_ref()
+                    .map_or(String::new(), |g| g.api_key_file.display().to_string()),
+            ),
+            remote_models: None,
+            checking: false,
             open: None,
             finishing: false,
             error: None,
@@ -149,6 +168,53 @@ impl SetupState {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// Where the card and detail models run: a trusted service's name, or None for this machine.
+    pub fn runs_at(&self) -> Option<&str> {
+        self.draft
+            .steward
+            .generation
+            .as_ref()
+            .map(|g| g.provider.as_str())
+    }
+
+    /// Run the card and detail models at `provider`, or on this machine. Their models are
+    /// cleared, since another runtime serves other models.
+    fn run_at(&mut self, provider: Option<&str>) {
+        if provider == self.runs_at() {
+            return;
+        }
+        let st = &mut self.draft.steward;
+        st.card_model = None;
+        st.detail_model = None;
+        st.generation = provider.map(|p| GenerationConfig {
+            provider: p.to_string(),
+            base_url: String::new(),
+            api_key_file: Default::default(),
+        });
+        self.remote_models = None;
+        self.sync_generation();
+    }
+
+    /// Copy the address and key file fields into the draft's `[steward.generation]`.
+    fn sync_generation(&mut self) {
+        if let Some(g) = &mut self.draft.steward.generation {
+            g.base_url = self.base_url.text.trim().to_string();
+            g.api_key_file = self.key_file.text.trim().into();
+        }
+    }
+
+    /// Why the draft can't be finished as it is, if it can't.
+    fn unfinished(&self) -> Option<String> {
+        let g = self.draft.steward.generation.as_ref()?;
+        if g.base_url.is_empty() || g.api_key_file.as_os_str().is_empty() {
+            return Some(format!(
+                "Models: give {}'s address and key file, or run models on this machine",
+                g.provider
+            ));
+        }
+        None
     }
 
     fn model(&mut self, key: &str) -> &mut Option<String> {
@@ -209,6 +275,7 @@ impl SetupState {
 /// Moving to Setup asks for what it shows: what each harness has on this machine, the local
 /// runtime's models, and whether the timer is installed.
 pub fn open(s: &mut State) {
+    check_service(s);
     let roots: Vec<_> = Harness::ALL
         .into_iter()
         .map(|k| (k, s.setup.draft.roots_for(k)))
@@ -230,9 +297,34 @@ pub fn open(s: &mut State) {
     }));
 }
 
+/// Ask the service the models run at for its models, when they run at one.
+fn check_service(s: &mut State) {
+    s.setup.sync_generation();
+    let Some(g) = s.setup.draft.steward.generation.clone() else {
+        return;
+    };
+    if g.base_url.is_empty() || g.api_key_file.as_os_str().is_empty() {
+        return;
+    }
+    s.setup.checking = true;
+    let config = s.setup.draft.clone();
+    s.ask(Job::new("service models", move |_| {
+        let listed = distill_core::tick::generation_models(&config, &g).map_err(jobs::line);
+        Box::new(move |s: &mut State| {
+            s.setup.checking = false;
+            s.setup.remote_models = Some(listed);
+        })
+    }));
+}
+
 /// Finish: write the draft and install the timer, then show the overview.
 fn finish(s: &mut State) {
     if s.setup.finishing {
+        return;
+    }
+    s.setup.sync_generation();
+    if let Some(e) = s.setup.unfinished() {
+        s.setup.error = Some(e);
         return;
     }
     s.setup.finishing = true;
@@ -807,8 +899,120 @@ fn el_spacer() -> El {
     rune::el().h(4.0)
 }
 
+/// Where the card and detail models run: this machine, or a trusted service with its address,
+/// key file and what it listed.
+fn runner(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
+    let trust = Trust::new(&d.draft);
+    let mut options = vec![HERE.to_string()];
+    options.extend(
+        trust
+            .providers()
+            .iter()
+            .filter(|pr| pr.kind == ProviderKind::Remote && pr.trusted)
+            .map(|pr| pr.name.clone()),
+    );
+    // A service set before but no longer trusted: shown, and refused at the next tick.
+    if let Some(at) = d.runs_at()
+        && !options.iter().any(|o| o == at)
+    {
+        options.push(at.to_string());
+    }
+    let shown = d.runs_at().unwrap_or(HERE).to_string();
+    let select = Select::new("runs-at", &options)
+        .label("Run models on")
+        .appearance(SelectAppearance::Field)
+        .width(240.0)
+        .current(Some(&shown))
+        .open(d.open == Some("runs-at"))
+        .on_toggle(|s: &mut State| {
+            s.setup.open = if s.setup.open == Some("runs-at") {
+                None
+            } else {
+                Some("runs-at")
+            }
+        })
+        .on_close(|s: &mut State| s.setup.open = None)
+        .on_choose(|s: &mut State, v: &str, _: &mut Tx| {
+            s.setup.run_at((v != HERE).then_some(v));
+            s.setup.open = None;
+        })
+        .build(&p.k, layer);
+    let mut card = p.card().key("runner").gap(0.0).py(4.0).child(setting(
+        p,
+        "runs-at",
+        "Run models on",
+        "Where the card and detection models run. A service must be trusted (the Trusted AI \
+         step) and OpenAI-compatible.",
+        select,
+    ));
+    let Some(at) = d.runs_at() else {
+        return card;
+    };
+    let field =
+        |edit: &TextEdit, label: &str, hint: &str, pick: fn(&mut State) -> &mut TextEdit| {
+            TextInput::new(edit)
+                .label(label)
+                .placeholder(hint)
+                .width(Some(360.0))
+                .on_edit(pick)
+                .build(&p.k)
+        };
+    card = card
+        .child(p.separator())
+        .child(setting(
+            p,
+            "base-url",
+            "Address",
+            "The service's HTTPS API address, with its version path.",
+            field(&d.base_url, "Address", "https://…/v1", |s| {
+                &mut s.setup.base_url
+            }),
+        ))
+        .child(p.separator())
+        .child(setting(
+            p,
+            "key-file",
+            "API key file",
+            "A file holding the key on its first line, readable by you alone.",
+            field(&d.key_file, "API key file", "/path/to/key", |s| {
+                &mut s.setup.key_file
+            }),
+        ));
+    let status = match (&d.remote_models, d.checking) {
+        (_, true) => text(format!("Asking {at}…")).color(p.muted()),
+        (Some(Ok(m)), _) if m.is_empty() => text(format!("{at} lists no models")).color(p.warn()),
+        (Some(Ok(m)), _) => {
+            text(format!("{at} serves {}", count(m.len() as u64, "model"))).color(p.good())
+        }
+        (Some(Err(e)), _) => text(e.clone()).color(p.bad()),
+        (None, _) => text("Check lists the models it serves.").color(p.muted()),
+    };
+    let check = Button::new("Check")
+        .disabled(
+            d.checking || d.base_url.text.trim().is_empty() || d.key_file.text.trim().is_empty(),
+        )
+        .on_press(check_service)
+        .build(&p.k)
+        .key("check");
+    card.child(
+        row()
+            .key("service-status")
+            .w_full()
+            .py(12.0)
+            .gap(12.0)
+            .center_y()
+            .child(check)
+            .child(status.font(p.caption()).wrap().shrink()),
+    )
+}
+
 fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
     let installed = d.local_models();
+    let served = match (d.runs_at(), &d.remote_models) {
+        (None, _) => installed.clone(),
+        (Some(_), Some(Ok(m))) => m.clone(),
+        (Some(_), _) => Vec::new(),
+    };
     let mut card = p.card().key("models").gap(0.0).py(4.0);
     for (i, (key, name, help, unset)) in MODELS.into_iter().enumerate() {
         if i > 0 {
@@ -820,7 +1024,16 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
             _ => d.draft.steward.detail_model.clone(),
         };
         let mut options = vec![unset.to_string()];
-        options.extend(installed.iter().cloned());
+        // Embeddings always run in Ollama on this machine.
+        options.extend(
+            (if key == "embedding-model" {
+                &installed
+            } else {
+                &served
+            })
+            .iter()
+            .cloned(),
+        );
         // A model set before but not offered now (the runtime stopped, or the model removed).
         if let Some(m) = &current
             && !options.contains(m)
@@ -870,12 +1083,13 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
     };
     col()
         .gap(12.0)
+        .child(runner(d, p, layer))
         .child(card)
         .child(p.note(note).key("models-note"))
         .child(p.note(
-            "A model that is not set means its step is skipped; the detail model falls back to the \
-         card model. Each takes the newest sessions \
-         first, a few per run. Embeddings run in Ollama on this machine.",
+            "A model that is not set means its step is skipped; the detection pass falls back to \
+             the card model. Each takes the newest sessions first, a few per run. Embeddings \
+             always run in Ollama on this machine.",
         ))
 }
 

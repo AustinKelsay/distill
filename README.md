@@ -43,7 +43,7 @@ base_url = "https://…/v1" # OpenAI-compatible: lists models at /models, takes 
 api_key_file = "/…/key"   # an absolute path; the first line is the key
 ```
 
-With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves.
+With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 
 ## Commands
 

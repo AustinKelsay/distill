@@ -35,5 +35,5 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 - Findings are covered with a chip naming their kind rather than blurred (ADR 0007). The list's chips are not clickable; a finding is shown only in an open session. A covered secret copies as its chip, a shown one as its value.
 - The session view has no search inside a session and no jump to the passage a search matched; it reads the whole session at once. A session opened from Findings or Approvals is headed by its key, not its card.
 - Approvals shows only pending requests; answered, collected and expired ones are in the read log. A request's expiry is recorded when the next call touches requests.
-- Setup cannot move the home, does not set `sessions_per_run` or `[steward.generation]`, and offers models stored on this machine (plus the one already set).
+- Setup cannot move the home or set `sessions_per_run`. It offers the models stored on this machine, or, when cards and detection run at a trusted service (`[steward.generation]`), the models that service lists when checked (plus the one already set). It takes the service's key as a file path, not the key itself.
 - A previous build's `recipes/`, `exports/` and `steward/` folders in the home are reported by the exposure check and otherwise ignored, never deleted.
