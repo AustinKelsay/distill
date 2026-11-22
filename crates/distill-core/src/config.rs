@@ -75,7 +75,8 @@ pub struct StewardConfig {
     /// Route cards and model detection through a trusted OpenAI-compatible provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerationConfig>,
-    /// How many sessions each model step takes per tick, newest first.
+    /// How many sessions the card and detail steps take per tick, newest first. The vectors step
+    /// is not limited by it: it embeds until its deadline.
     #[serde(default = "default_sessions_per_run", alias = "max_sessions_per_run")]
     pub sessions_per_run: usize,
 }

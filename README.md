@@ -38,7 +38,7 @@ Models are optional. With none set, DISTILL captures, parses, scans and finds by
 card_model = "…"          # writes a card per session (title, summary, tags, outcome)
 embedding_model = "…"     # search by meaning, run in Ollama on this machine
 detail_model = "…"        # finds names, addresses, phone numbers and companies; defaults to card_model
-sessions_per_run = 25     # sessions each model step takes per tick
+sessions_per_run = 25     # sessions the card and detail steps take per tick
 
 [steward.generation]      # optional: run cards and details at a trusted remote provider
 provider = "…"            # must be trusted: distill providers add <name> --trusted

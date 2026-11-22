@@ -57,7 +57,7 @@
               detail-model-trigger: Detection pass
                 text: Same as the card model
             text: Sessions per run
-            text: How many sessions each model step takes per run, newest first. More catches up sooner and sends more to the models; either way the model steps stop after 30 minutes, half the timer's interval.
+            text: How many sessions the card and detection steps take per run, newest first. More catches up sooner and sends more to the models; either way the model steps stop after 30 minutes, half the timer's interval. Search by meaning runs on this machine and takes every waiting session in that time.
             radiogroup: Sessions per run
               segment0: 25
                 label: 25

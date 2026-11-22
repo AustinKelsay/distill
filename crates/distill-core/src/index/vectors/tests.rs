@@ -398,8 +398,7 @@ fn vectors_of_another_model_are_rebuilt_whole() {
 }
 
 #[test]
-fn sessions_are_embedded_newest_first_up_to_sessions_per_run_and_never_mirrors_or_the_old_steward()
-{
+fn every_session_is_embedded_newest_first_but_never_mirrors_or_the_old_steward() {
     let (_d, home, mut config) = home(&[
         s("old", "2026-11-01T09:00:00Z", "the car"),
         s("mid", "2026-11-02T09:00:00Z", "the kitten"),
@@ -413,19 +412,22 @@ fn sessions_are_embedded_newest_first_up_to_sessions_per_run_and_never_mirrors_o
     m["steward"] = true.into();
     std::fs::write(&meta, m.to_string()).unwrap();
     crate::normalize::rebuild_session_list(&home).unwrap();
-    config.steward.sessions_per_run = 2;
+    // `sessions_per_run` paces the generation steps; embedding is local and takes every session
+    // the deadline allows.
+    config.steward.sessions_per_run = 1;
     let f = fake();
     let r = build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
-    assert_eq!((r.sessions, r.pending, r.embedded), (3, 3, 2), "{r:?}");
-    assert_eq!(embedded(&f), [vec!["the invoice"], vec!["the kitten"]]);
+    assert_eq!((r.sessions, r.pending, r.embedded), (3, 3, 3), "{r:?}");
+    assert_eq!(
+        embedded(&f),
+        [vec!["the invoice"], vec!["the kitten"], vec!["the car"]]
+    );
     let p = progress(&home).unwrap();
     assert_eq!(
         (p.sessions, p.current, p.pending, p.vectors),
-        (3, 2, 1, 2),
+        (3, 3, 0, 3),
         "{p:?}"
     );
-    build(&home, &config, &f.runtime(), Deadline::NONE).unwrap();
-    assert_eq!(embedded(&f).last().unwrap(), &["the car"]);
 }
 
 #[test]
