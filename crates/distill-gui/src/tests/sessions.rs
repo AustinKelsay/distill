@@ -527,3 +527,22 @@ fn frame_times() {
         ),
     );
 }
+
+#[test]
+fn a_search_says_when_search_by_meaning_covered_only_part_of_the_archive() {
+    use crate::screens::sessions::meaning_note;
+    use distill_core::read::Meaning;
+    assert_eq!(meaning_note(&Meaning::Used { unembedded: 0 }), None);
+    assert_eq!(
+        meaning_note(&Meaning::Used { unembedded: 4_088 }).as_deref(),
+        Some("4,088 sessions have no vectors yet, so only their words find them.")
+    );
+    assert_eq!(
+        meaning_note(&Meaning::Used { unembedded: 1 }).as_deref(),
+        Some("1 session has no vectors yet, so only its words find it.")
+    );
+    assert_eq!(
+        meaning_note(&Meaning::Skipped("no embedding_model is set".into())).as_deref(),
+        Some("Search by meaning is off (no embedding_model is set): word matches only.")
+    );
+}
