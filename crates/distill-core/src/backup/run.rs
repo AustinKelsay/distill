@@ -252,15 +252,22 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         if !entry.file_type().is_file() {
             continue;
         }
-        // Joined from its parts, so a `\\` in a name stays part of that name.
-        let rel = entry
+        // Joined from its parts, so a `\\` in a name stays part of that name. DISTILL names
+        // everything in the home; a name that isn't UTF-8 is refused, not changed into another.
+        let parts: Option<Vec<&str>> = entry
             .path()
             .strip_prefix(&home.root)
             .expect("under the home")
             .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+            .map(|c| c.as_os_str().to_str())
+            .collect();
+        let Some(parts) = parts else {
+            bail!(
+                "can't back up {}: its name isn't UTF-8",
+                entry.path().display()
+            );
+        };
+        let rel = parts.join("/");
         let wanted = match Home::keep(&rel) {
             Some(Keep::Always) => !rel.starts_with("raw/"),
             Some(Keep::Cards) => target.cards,

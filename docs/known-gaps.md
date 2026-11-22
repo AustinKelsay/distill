@@ -35,6 +35,7 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 - Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists, and nothing runs backups on a schedule or shows them in the window yet (#150). There is no restore or verify yet (#149), so a backup can't yet be proven.
 - The backup key can't be rotated yet (#147): `distill backup init` makes it once, and a new key would start every target over.
 - Every file of the backup set but `raw/` is stored whole whenever it changes, so the read log, which grows each tick, is stored again on every run that follows a read.
+- A folder target's first run can't tell an empty folder from a drive's mount point with the drive away (on Linux; on macOS the mount point goes with the drive), so it takes the folder; after its first successful run, a target without its `distill-backup/` folder is refused.
 - A target learns how many objects it holds, their sizes and when they arrive (ADR 0009). Nothing on a target is ever deleted, so it only grows.
 - A blob lost from this machine's archive before any backup took it can't be sent: the run stores the rest, then fails, counting it as missing.
 
