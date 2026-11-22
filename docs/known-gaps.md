@@ -32,12 +32,14 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 
 ## Backups
 
-- Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists, and nothing runs backups on a schedule or shows them in the window yet (#150). There is no restore or verify yet (#149), so a backup can't yet be proven.
+- Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists, and nothing runs backups on a schedule or shows them in the window yet (#150). `distill backup verify` checks that a target holds its newest run, by name or, with `--full`, by fetching and decrypting every object.
 - The backup key can't be rotated yet (#147): `distill backup init` makes it once, and a new key would start every target over.
 - Every file of the backup set but `raw/` is stored whole whenever it changes, so the read log, which grows each tick, is stored again on every run that follows a read.
 - A folder target's first run can't tell an empty folder from a drive's mount point with the drive away (on Linux; on macOS the mount point goes with the drive), so it takes the folder; after its first successful run, a target without its `distill-backup/` folder is refused.
 - A target learns how many objects it holds, their sizes and when they arrive (ADR 0009). Nothing on a target is ever deleted, so it only grows.
 - A blob lost from this machine's archive before any backup took it can't be sent: the run stores the rest, then fails, counting it as missing.
+- `distill restore` brings back only the newest run, only from a folder target, and only into an empty home whose parent folder exists; it never merges into a live one. It brings back the backup set alone: the next tick rebuilds sessions, findings and the index, and makes cards (unless the target carries them) and personal details again at model cost. Harness files DISTILL never captured, and anything after the newest run, are not in a backup. The restored backup log lacks the newest run's own line.
+- A restore stops when the target lacks a blob the manifest names, unless `--allow-missing` is given. It takes the recovery key from `--key-file` or a pipe, never typed at the terminal, where it would show on screen.
 
 ## The window
 

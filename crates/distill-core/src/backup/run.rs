@@ -391,12 +391,12 @@ fn put(store: &dyn Store, name: &str, sealed: &mut fs::File) -> Result<u64> {
 }
 
 /// Owner-only files under `state/` to seal into before storing, removed when dropped.
-struct Scratch {
+pub(super) struct Scratch {
     dir: tempfile::TempDir,
 }
 
 impl Scratch {
-    fn new(home: &Home) -> Result<Self> {
+    pub(super) fn new(home: &Home) -> Result<Self> {
         let parent = home.state_dir();
         crate::util::create_dir_private(&parent)?;
         let mut b = tempfile::Builder::new();
@@ -411,7 +411,7 @@ impl Scratch {
         })
     }
 
-    fn file(&self) -> Result<fs::File> {
+    pub(super) fn file(&self) -> Result<fs::File> {
         let mut nonce = [0u8; 8];
         getrandom::fill(&mut nonce).map_err(|e| anyhow!("generate a file name: {e}"))?;
         let path = self.dir.path().join(hex::encode(nonce));
