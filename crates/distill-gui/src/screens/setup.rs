@@ -1109,11 +1109,23 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
         &help,
         pace,
     ));
+    // What leaves this machine, said where the choice is made (issue #163).
+    let leaves = match d.runs_at() {
+        Some(provider) => format!(
+            "Each run sends the text of up to {per_run} sessions to {provider} for cards, and up \
+             to {per_run} for the detection pass. Secrets are replaced with placeholders; \
+             personal details are not."
+        ),
+        None => "Cards, the detection pass and embeddings run in Ollama on this machine: no \
+                 session text leaves it."
+            .to_string(),
+    };
     col()
         .gap(12.0)
         .child(runner(d, p, layer))
         .child(card)
         .child(pace_card)
+        .child(p.note(leaves).key("leaves"))
         .child(p.note(note).key("models-note"))
         .child(p.note(
             "A model that is not set means its step is skipped; the detection pass falls back to \
