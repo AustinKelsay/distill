@@ -23,7 +23,7 @@ The content hash that names a capture in the raw archive.
 _Avoid_: Fingerprint (a finding's), checksum
 
 **Raw archive**:
-The append-only store of every capture. Everything DISTILL knows about a session can be rebuilt from it, and it cannot be rebuilt from anything.
+The append-only store of every capture. Everything DISTILL knows about a session can be rebuilt from it, and it cannot be rebuilt from anything but a backup of it.
 _Avoid_: Raw, store, vault
 
 **Event**:
@@ -101,7 +101,7 @@ The record of which reader read which sessions, and when.
 _Avoid_: Audit trail, activity
 
 **Read path**:
-The one way session text leaves DISTILL. It decides what a given reader gets and records the read.
+The one way session text leaves DISTILL readable. It decides what a given reader gets and records the read. A backup is the only other way out, and leaves only as ciphertext.
 _Avoid_: API, accessor, gate
 
 **Detector**:
@@ -136,3 +136,33 @@ _Avoid_: Unmask, unredact
 
 **Rotation list**:
 The secrets found in the archive, grouped by fingerprint, for the owner to replace.
+
+### Backups
+
+**Backup**:
+An encrypted copy of the backup set at a backup target, made on this machine with the backup key. A backup is not a read: no reader gets session text from it.
+_Avoid_: Snapshot, export, sync
+
+**Backup set**:
+What a backup holds: everything in the home that cannot be rebuilt, and optionally cards and vectors.
+
+**Backup target**:
+One place a backup goes, set up as one `[[backup]]` entry: a folder, another machine, an object store. It holds only ciphertext under keyed names.
+_Avoid_: Store, remote, destination
+
+**Adapter**:
+What moves opaque, encrypted objects to and from one kind of backup target, through a small write-once contract. It never sees a key.
+_Avoid_: Plug-in, driver, backend
+
+**Backup key**:
+The key that encrypts and names a home's backups. It is separate from the fingerprint key, and the target never sees it.
+
+**Recovery key**:
+The backup key as given to the owner at setup, to keep somewhere other than this machine. Without it or the home's copy, the backups cannot be opened.
+_Avoid_: Recovery phrase, password
+
+**Backup log**:
+The record of each backup run, per backup target: when, what was sent and what failed.
+
+**Restore**:
+Rebuilding a home from a backup, into an empty home only. The only way a backup comes back in.
