@@ -1,7 +1,8 @@
 //! Everything DISTILL writes is owner-only even with a umask that would allow anything (#90),
 //! including what only the model steps and reveals write: cards, vectors, the steps' failure
 //! files and reveal requests, which a run of the binary with no model never makes. Its own test
-//! binary, since the umask is per process.
+//! binary, since the umask is per process. Having made every kind of file, it also checks that
+//! the backup set (`Home::keep`, ADR 0009) knows each one.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -167,6 +168,24 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
         .find(|r| r.rule == Rule::OwnerOnly)
         .unwrap();
     assert_eq!(owner_only.outcome, Outcome::Pass, "{owner_only:?}");
+    // Every kind of file is in or out of the backup set on purpose (#145).
+    distill_core::runlog::record(&home, &distill_core::runlog::RunEntry::of("tick", vec![]))
+        .unwrap();
+    let unknown: Vec<String> = walkdir::WalkDir::new(&home.root)
+        .into_iter()
+        .map(|e| e.unwrap())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| {
+            let rel = e.path().strip_prefix(&home.root).unwrap();
+            rel.to_string_lossy().replace('\\', "/")
+        })
+        .filter(|rel| Home::keep(rel).is_none())
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "files the backup set doesn't know (add them to Home::keep):\n{}",
+        unknown.join("\n")
+    );
 }
 
 /// Every file and folder under `dir`, `dir` included, with a group or other permission bit.
