@@ -134,7 +134,9 @@ impl StepOutcome {
     pub fn result(&self) -> StepResult {
         if !self.ok {
             StepResult::Failed
-        } else if self.report.get("skipped").is_some_and(|v| !v.is_null()) {
+        // A model step that did not run says why as a string; the parse step's `skipped` is a
+        // count of captures it skipped, not a skipped step.
+        } else if self.report.get("skipped").is_some_and(Value::is_string) {
             StepResult::Skipped
         } else if self.report.get("stopped_at_deadline") == Some(&Value::Bool(true)) {
             StepResult::Stopped
@@ -266,6 +268,7 @@ mod tests {
                 "tick",
                 vec![
                     step("sweep", true, Value::Null),
+                    step("parse", true, serde_json::json!({"skipped": 0})),
                     cards,
                     step(
                         "vectors",
@@ -298,14 +301,17 @@ mod tests {
         let marks = |g: &RunGroup| g.steps.iter().map(|s| s.result).collect::<Vec<_>>();
         use StepResult::*;
         assert_eq!(h.len(), 3, "{h:#?}");
-        assert_eq!((h[0].runs, marks(&h[0])), (1, vec![Ok, Ok, Skipped]));
+        assert_eq!((h[0].runs, marks(&h[0])), (1, vec![Ok, Ok, Ok, Skipped]));
         assert_eq!(
             (h[1].runs, h[1].newest.as_str(), h[1].oldest.as_str()),
             (3, "2026-11-21T09:00:00Z", "2026-11-20T11:00:00Z"),
             "folded across the day's files"
         );
-        assert_eq!(marks(&h[1]), vec![Ok, Stopped, Skipped]);
-        assert_eq!((h[2].runs, marks(&h[2])), (1, vec![Ok, Failed, Skipped]));
+        assert_eq!(marks(&h[1]), vec![Ok, Ok, Stopped, Skipped]);
+        assert_eq!(
+            (h[2].runs, marks(&h[2])),
+            (1, vec![Ok, Ok, Failed, Skipped])
+        );
         assert_eq!(h[2].failures, ["cards said so"]);
         assert_eq!(history(&home, 2).unwrap().len(), 2, "only the last runs");
     }
