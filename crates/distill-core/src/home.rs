@@ -233,6 +233,24 @@ impl Home {
         lock_at(&self.state_dir().join(format!("{name}.lock")), name)
     }
 
+    /// As [`Home::lock`], but `None` at once when someone else holds it.
+    pub fn try_lock(&self, name: &str) -> Result<Option<fs::File>> {
+        let path = self.state_dir().join(format!("{name}.lock"));
+        create_dir_private(&self.state_dir())?;
+        let f = private_file()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        match f.try_lock() {
+            Ok(()) => Ok(Some(f)),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(e)) => {
+                Err(e).with_context(|| format!("take the {name} lock"))
+            }
+        }
+    }
+
     /// The lock a session's findings file is written under.
     pub fn findings_lock_path(&self, harness: Harness, session_id: &str) -> PathBuf {
         self.state_dir()

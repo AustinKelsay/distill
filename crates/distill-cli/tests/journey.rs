@@ -257,21 +257,25 @@ sweep_every_minutes = 60
     assert_eq!(
         names,
         [
-            "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+            "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
         ],
         "{t}"
     );
     assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
     assert_eq!(
-        t["steps"][4]["report"]["skipped"], "no card_model is set",
+        t["steps"][4]["report"]["skipped"], "no [[backup]] target is set up",
         "{t}"
     );
     assert_eq!(
-        t["steps"][5]["report"]["skipped"], "no embedding_model is set",
+        t["steps"][5]["report"]["skipped"], "no card_model is set",
         "{t}"
     );
     assert_eq!(
-        t["steps"][6]["report"]["skipped"], "no detail_model or card_model is set",
+        t["steps"][6]["report"]["skipped"], "no embedding_model is set",
+        "{t}"
+    );
+    assert_eq!(
+        t["steps"][7]["report"]["skipped"], "no detail_model or card_model is set",
         "{t}"
     );
     let runs = json(&user, &home, &["runs", "--limit", "100"]);
@@ -303,8 +307,15 @@ sweep_every_minutes = 60
     assert_eq!(st["vectors"]["sessions"], 2, "{st}");
     assert_eq!(st["index"]["pending"], 0, "{st}");
     assert!(st["last_sweep"].is_string(), "{st}");
-    // Just swept, and no harness here deletes sessions sooner than the timer runs.
-    assert_eq!(st["warnings"], serde_json::json!([]), "{st}");
+    // Just swept, and no harness here deletes sessions sooner than the timer runs; only the
+    // missing backup target is warned about.
+    let kinds: Vec<_> = st["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["kind"].clone())
+        .collect();
+    assert_eq!(kinds, ["backup"], "{st}");
     let of = |k: &str| {
         st["harnesses"]
             .as_array()

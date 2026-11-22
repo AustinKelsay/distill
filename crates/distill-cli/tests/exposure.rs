@@ -194,7 +194,7 @@ fn everything_a_full_run_creates_is_owner_only() {
     assert_eq!(outcome(&v, "not_synced"), "pass");
     let (_, s) = m.json(&["status"]);
     assert_eq!(s["exposure"]["rules"], v["rules"]);
-    assert!(v["backups"].as_str().unwrap().contains("Backups"));
+    assert!(v["backups"].as_str().unwrap().contains("No backup target"));
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn the_check_names_what_fails_and_fix_tightens_an_existing_home() {
     assert!(out.contains("config.toml (0644)"), "{out}");
     assert!(out.contains("exports"), "{out}");
     assert!(out.contains("--fix"), "{out}");
-    assert!(out.to_lowercase().contains("backups"), "{out}");
+    assert!(out.contains("No backup target is set up"), "{out}");
     let (ok, v) = m.json(&["exposure"]);
     assert!(!ok);
     assert_eq!(outcome(&v, "owner_only"), "fail");

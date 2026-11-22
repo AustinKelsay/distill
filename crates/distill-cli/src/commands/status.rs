@@ -71,6 +71,15 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             "reveals: {} waiting for the owner in the GUI",
             distill_core::util::count(s.pending_reveals, "request")
         );
+        for t in &s.backups {
+            println!(
+                "backup {}: last whole run {}{}",
+                t.name,
+                t.last_ok.as_deref().unwrap_or("never"),
+                t.captures_behind
+                    .map_or(String::new(), |n| format!(", {n} captures behind"))
+            );
+        }
         for h in &s.harnesses {
             println!(
                 "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",

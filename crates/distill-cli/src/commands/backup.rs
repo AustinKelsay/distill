@@ -1,10 +1,11 @@
-//! `distill backup`: make the backup key, back up to the `[[backup]]` targets, and check that
-//! they hold their newest run (ADR 0009).
+//! `distill backup`: make the backup key, back up to the `[[backup]]` targets, show where each
+//! stands, and check that they hold their newest run (ADR 0009).
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use distill_core::backup::{self, BackupKey};
 use distill_core::config::BackupTarget;
+use distill_core::status::WarningKind;
 
 use super::Ctx;
 use crate::output::out;
@@ -24,6 +25,8 @@ enum Cmd {
         #[arg(long)]
         target: Option<String>,
     },
+    /// Each target's last whole run, its last failure and the captures it is behind
+    Status,
     /// Check that every target, or the one named, holds every object of its newest run
     Verify {
         #[arg(long)]
@@ -39,6 +42,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         Cmd::Init => init(ctx),
         Cmd::Run { target } => run_targets(ctx, target.as_deref()),
         Cmd::Verify { target, full } => verify(ctx, target.as_deref(), full),
+        Cmd::Status => status(ctx),
     }
 }
 
@@ -62,31 +66,34 @@ fn init(ctx: &Ctx) -> Result<()> {
 
 /// The `[[backup]]` targets in config.toml, or only the one named.
 fn targets(ctx: &Ctx, only: Option<&str>) -> Result<Vec<BackupTarget>> {
+    backup::targets(&ctx.home.load_config()?, only)
+}
+
+/// Each target's last whole run, its last failure and the captures it is behind.
+fn status(ctx: &Ctx) -> Result<()> {
     let config = ctx.home.load_config()?;
-    if let Some(t) = config
-        .backups
-        .iter()
-        .enumerate()
-        .find(|(i, t)| config.backups[..*i].iter().any(|u| u.name == t.name))
-        .map(|(_, t)| t)
-    {
-        bail!(
-            "config.toml names two [[backup]] targets {:?}; give each its own name",
-            t.name
-        );
+    if !config.backups.is_empty() {
+        backup::targets(&config, None)?;
     }
-    let targets: Vec<_> = config
-        .backups
-        .into_iter()
-        .filter(|t| only.is_none_or(|n| t.name == n))
-        .collect();
-    if targets.is_empty() {
-        match only {
-            Some(n) => bail!("no [[backup]] target named {n:?} in config.toml"),
-            None => bail!("no [[backup]] targets in config.toml"),
+    let s = distill_core::status::status(&ctx.home)?;
+    out(ctx.json, &s.backups, || {
+        if s.backups.is_empty() {
+            println!("No [[backup]] targets in config.toml.");
         }
-    }
-    Ok(targets)
+        for t in &s.backups {
+            let last = t.last_ok.as_deref().unwrap_or("never");
+            let behind = t
+                .captures_behind
+                .map_or(String::new(), |n| format!(", {n} captures behind"));
+            println!("{} ({}): last whole run {last}{behind}", t.name, t.kind);
+            if let (Some(at), Some(e)) = (&t.last_failed, &t.last_error) {
+                println!("  failed {at}: {e}");
+            }
+        }
+        for w in s.warnings.iter().filter(|w| w.kind == WarningKind::Backup) {
+            println!("{}", w.message);
+        }
+    })
 }
 
 fn verify(ctx: &Ctx, only: Option<&str>, full: bool) -> Result<()> {

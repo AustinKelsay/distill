@@ -133,8 +133,19 @@ pub fn restore(
                 );
             }
             let mut bytes = Vec::new();
-            fetch(store, key, &scratch, &f.object, &mut bytes)
-                .with_context(|| format!("restore {rel}"))?;
+            if f.object.is_empty() {
+                // A log, from its parts in order.
+                for part in &f.parts {
+                    if part.from != bytes.len() as u64 {
+                        bail!("run {}'s record has a gap in {rel}", rec.number);
+                    }
+                    fetch(store, key, &scratch, &part.object, &mut bytes)
+                        .with_context(|| format!("restore {rel}"))?;
+                }
+            } else {
+                fetch(store, key, &scratch, &f.object, &mut bytes)
+                    .with_context(|| format!("restore {rel}"))?;
+            }
             if hex::encode(Sha256::digest(&bytes)) != f.sha256 {
                 bail!("the backup's copy of {rel} does not match its record");
             }
@@ -271,7 +282,16 @@ pub fn verify(
         check(&key.name(&format!("blob/{sha}")), Some((&sha, size)))?;
     }
     for f in rec.files.values() {
-        check(&f.object, Some((&f.sha256, u64::MAX)))?;
+        if f.object.is_empty() {
+            for part in &f.parts {
+                check(
+                    &part.object,
+                    Some((&part.sha256, part.to.saturating_sub(part.from))),
+                )?;
+            }
+        } else {
+            check(&f.object, Some((&f.sha256, u64::MAX)))?;
+        }
     }
     Ok(c)
 }
@@ -572,14 +592,21 @@ mod tests {
         .map(|sha| key.name(&format!("blob/{sha}")))
         .collect();
         let mut keep: BTreeSet<String> = rec.manifest.iter().map(|p| p.object.clone()).collect();
-        keep.extend(rec.files.values().map(|f| f.object.clone()));
+        for f in rec.files.values() {
+            keep.insert(f.object.clone());
+            keep.extend(f.parts.iter().map(|p| p.object.clone()));
+        }
         keep.extend(blobs[1..].iter().cloned());
         keep.insert(run_name(&key, 8));
         let objects = target.path.as_ref().unwrap().join("distill-backup");
         for name in store.list().unwrap().difference(&keep) {
             fs::remove_file(objects.join(&name[..2]).join(name)).unwrap();
         }
-        assert!(store.list().unwrap().len() < 9, "fewer objects than runs");
+        let left = store.list().unwrap();
+        assert!(
+            (0..8).all(|n| !left.contains(&run_name(&key, n))),
+            "only run 8's record is left"
+        );
 
         let restored = Home::new(dir.path().join("restored"));
         let err = restore(&restored, &*store, &key, false).unwrap_err();
