@@ -256,11 +256,7 @@ fn fetch(
         match read::search(home, rt, &Reader::Owner, &q, filter, page)? {
             Searched::Hits(h) => {
                 let mut notes = Vec::new();
-                if let read::Meaning::Skipped(why) = &h.meaning {
-                    notes.push(format!(
-                        "Search by meaning is off ({why}): word matches only."
-                    ));
-                }
+                notes.extend(meaning_note(&h.meaning));
                 if h.unindexed > 0 {
                     notes.push(format!(
                         "{} not indexed yet, so a search can't find {}.",
@@ -501,4 +497,22 @@ pub fn values(st: &SessionsState) -> (Vec<String>, Vec<String>) {
         }
     }
     out
+}
+
+/// What a search's results say about search by meaning: off, and why; or on but covering only
+/// part of the archive while the vectors catch up (issue #153); or nothing when it covered all.
+pub(crate) fn meaning_note(m: &read::Meaning) -> Option<String> {
+    match m {
+        read::Meaning::Skipped(why) => Some(format!(
+            "Search by meaning is off ({why}): word matches only."
+        )),
+        read::Meaning::Used { unembedded: 0 } => None,
+        read::Meaning::Used { unembedded: n } => Some(format!(
+            "{} {} no vectors yet, so only {} words find {}.",
+            crate::ui::count(*n, "session"),
+            if *n == 1 { "has" } else { "have" },
+            if *n == 1 { "its" } else { "their" },
+            if *n == 1 { "it" } else { "them" }
+        )),
+    }
 }
