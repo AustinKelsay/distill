@@ -64,6 +64,12 @@ impl BackupKey {
         sync_dir(&dir)?;
         // A home made here (before `distill init`) must not vanish with its key either.
         if made_root && let Some(parent) = home.root.parent() {
+            // A relative home's parent is empty: the current folder.
+            let parent = if parent.as_os_str().is_empty() {
+                std::path::Path::new(".")
+            } else {
+                parent
+            };
             sync_dir(parent)?;
         }
         Ok(key)
