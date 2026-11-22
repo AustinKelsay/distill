@@ -264,6 +264,14 @@ fn models_are_chosen_from_the_local_runtimes_installed_models() {
     press(&mut rt, "card-model-trigger");
     choose(&mut rt, "Not set");
     assert_eq!(rt.state.setup.draft.steward.card_model, None);
+    assert!(
+        shows(
+            &rt,
+            "run in Ollama on this machine: no session text leaves it"
+        ),
+        "{:?}",
+        texts(&rt)
+    );
 }
 
 #[test]
@@ -436,6 +444,16 @@ fn models_can_run_at_a_trusted_service_which_setup_writes_as_generation() {
     );
     choose(&mut rt, "openrouter");
     assert_eq!(rt.state.setup.runs_at(), Some("openrouter"));
+    let per_run = rt.state.setup.draft.steward.sessions_per_run;
+    assert!(
+        shows(
+            &rt,
+            &format!("sends the text of up to {per_run} sessions to openrouter")
+        ),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(shows(&rt, "personal details are not"));
     assert_eq!(rt.state.setup.draft.steward.card_model, None);
     assert!(on(&rt, "base-url") && on(&rt, "key-file"));
 

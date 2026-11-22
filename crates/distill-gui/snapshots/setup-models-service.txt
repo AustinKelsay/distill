@@ -67,6 +67,7 @@
                 label: 100
               segment3: 200
                 label: 200
+          leaves: Each run sends the text of up to 25 sessions to example-cloud for cards, and up to 25 for the detection pass. Secrets are replaced with placeholders; personal details are not.
           models-note: Stored on this machine: qwen-small:4b, embed-text:v1. Models Ollama serves from a cloud are not offered.
         text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Embeddings always run in Ollama on this machine.
         back: Back

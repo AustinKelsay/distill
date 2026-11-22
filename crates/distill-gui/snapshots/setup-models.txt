@@ -58,6 +58,7 @@
                 label: 100
               segment3: 200
                 label: 200
+          leaves: Cards, the detection pass and embeddings run in Ollama on this machine: no session text leaves it.
           models-note: Stored on this machine: qwen-small:4b, embed-text:v1. Models Ollama serves from a cloud are not offered.
         text: A model that is not set means its step is skipped; the detection pass falls back to the card model. Embeddings always run in Ollama on this machine.
         back: Back
