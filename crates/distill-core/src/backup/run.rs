@@ -24,6 +24,7 @@ use super::store::{self, Store};
 use crate::archive::{Archive, expected_blobs, parse_manifest};
 use crate::config::BackupTarget;
 use crate::home::{Home, Keep};
+use crate::tick::Deadline;
 use crate::util::{append_jsonl, count, now_rfc3339, private_file};
 
 const RECORD_VERSION: u32 = 1;
@@ -74,6 +75,15 @@ pub struct BackupReport {
     /// Blobs the manifest says the archive holds that neither it nor the target had: lost on
     /// this machine before any backup took them (`distill verify` names them).
     pub blobs_missing: u64,
+    /// The manifest lines the run covers, from the first: the captures the target holds once
+    /// the run is whole. Status counts the captures behind from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_lines: Option<u64>,
+    /// A run of the tick's that reached the tick's time limit before or while sending blobs: it
+    /// wrote no record and is not in the backup log, and the next run goes on from the blobs it
+    /// sent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_at_deadline: bool,
 }
 
 impl BackupReport {
@@ -86,6 +96,13 @@ impl BackupReport {
                 count(self.blobs_sent, "new blob"),
                 count(self.manifest_lines_sent, "manifest line"),
                 count(self.files_sent, "file"),
+                size(self.bytes_sent)
+            ),
+            None if self.stopped_at_deadline => format!(
+                "Backup to {} (run {}) stopped at the tick's time limit after {} ({}); the next tick goes on.",
+                self.target,
+                self.run,
+                count(self.blobs_sent, "new blob"),
                 size(self.bytes_sent)
             ),
             None => format!(
@@ -114,36 +131,91 @@ fn size(n: u64) -> String {
 /// Back up `home` to `target`, and log the run either way. A run that failed, or could not be
 /// logged, is a report with `ok` false and its error.
 pub fn run(home: &Home, target: &BackupTarget) -> Result<BackupReport> {
+    let backup = home.lock("backup")?;
+    // A sweep waits while a run reads the archive, so no blob the run's manifest lines need is
+    // dropped under it by a longer append.
+    let archive = home.lock_archive()?;
+    run_locked(home, target, None, (backup, archive))
+}
+
+/// Back up as the tick does: only to a target that holds a run of this home's already, starting
+/// nothing once `deadline` has passed and sending no more blobs after it (the blobs sent stay,
+/// and the next run goes on from them). A run stopped so wrote no record and is not logged.
+/// `None` when another run or a sweep holds a lock it needs.
+pub(crate) fn run_scheduled(
+    home: &Home,
+    target: &BackupTarget,
+    deadline: Deadline,
+) -> Result<Option<BackupReport>> {
+    let stopped = || BackupReport {
+        at: now_rfc3339(),
+        target: target.name.clone(),
+        stopped_at_deadline: true,
+        ..Default::default()
+    };
+    if deadline.passed() {
+        return Ok(Some(stopped()));
+    }
+    let Some(backup) = home.try_lock("backup")? else {
+        return Ok(None);
+    };
+    let Some(archive) = home.try_lock("archive")? else {
+        return Ok(None);
+    };
+    run_locked(home, target, Some(deadline), (backup, archive)).map(Some)
+}
+
+/// The run, under the backup and archive locks, held until its line is in the backup log.
+fn run_locked(
+    home: &Home,
+    target: &BackupTarget,
+    scheduled: Option<Deadline>,
+    _locks: (fs::File, fs::File),
+) -> Result<BackupReport> {
     let mut r = BackupReport {
         at: now_rfc3339(),
         target: target.name.clone(),
         ..Default::default()
     };
-    let result = run_into(home, target, &mut r);
-    r.ok = result.is_ok();
+    let result = run_into(home, target, &mut r, scheduled);
+    r.ok = result.is_ok() && !r.stopped_at_deadline;
     r.error = result.as_ref().err().map(|e| format!("{e:#}"));
+    if r.stopped_at_deadline && r.error.is_none() {
+        return Ok(r);
+    }
     if let Err(e) = append_jsonl(&home.backup_log_path(), &r) {
         // The run's outcome stands; failing to log it is a failure too.
         let what = r.error.take().map_or(String::new(), |e| format!("{e}; "));
         r.ok = false;
+        r.stopped_at_deadline = false;
         r.error = Some(format!("{what}the backup log could not be written: {e:#}"));
     }
     Ok(r)
 }
 
-fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<()> {
+fn run_into(
+    home: &Home,
+    target: &BackupTarget,
+    r: &mut BackupReport,
+    scheduled: Option<Deadline>,
+) -> Result<()> {
     let key = BackupKey::existing(home)?
         .context("this home has no backup key yet: run `distill backup init` first")?;
     let used = crate::util::read_jsonl::<BackupReport>(&home.backup_log_path())?
         .iter()
         .any(|l| l.ok && l.target == target.name);
-    let store = store::open(target, !used)?;
-    let _lock = home.lock("backup")?;
-    // A sweep waits while a run reads the archive, so no blob the run's manifest lines need is
-    // dropped under it by a longer append.
-    let _archive = home.lock_archive()?;
+    let store = store::open(target, scheduled.is_none() && !used)?;
     let present = store.list()?;
     let last_run = last_run(&key, &present);
+    if scheduled.is_some() && last_run.is_none() {
+        // Another folder under the same name, or a target that lost its runs: a first run is
+        // the owner's to start.
+        bail!(
+            "backup target {:?} holds no run of this home's: run `distill backup run --target {}` to start it",
+            target.name,
+            target.name
+        );
+    }
     let number = last_run.map_or(0, |n| n + 1);
     r.run = number;
     let last = match last_run {
@@ -173,6 +245,7 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         )
         .collect();
     let lines = (starts.len() - 1) as u64;
+    r.manifest_lines = Some(lines);
     let (mut parts, sent_lines) = match &last {
         Some(rec) => {
             let upto = usize::try_from(rec.lines).unwrap_or(usize::MAX);
@@ -189,12 +262,27 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         }
         None => (Vec::new(), 0),
     };
+    // A run of the tick's starts no upload once the tick's time is over, checked again after
+    // the slow part of preparing one: the objects it stored stay, and the next run, finding
+    // them, goes on from there.
+    let late = || scheduled.is_some_and(|d| d.passed());
+    macro_rules! stop_if_late {
+        () => {
+            if late() {
+                r.stopped_at_deadline = true;
+                return Ok(());
+            }
+        };
+    }
+
     // An earlier run's manifest part the target lost is sent again from the same lines.
     for part in &parts {
         if !present.contains(&part.object) {
+            stop_if_late!();
             let lines = &manifest[starts[part.from as usize]..starts[part.to as usize]];
             let mut sealed = scratch.file()?;
             key.seal(lines, &mut sealed)?;
+            stop_if_late!();
             r.bytes_sent += put(&*store, &part.object, &mut sealed)?;
         }
     }
@@ -206,6 +294,7 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         if present.contains(&name) {
             continue;
         }
+        stop_if_late!();
         let mut blob = match archive.open_blob(sha) {
             Ok(b) => b,
             Err(e)
@@ -221,12 +310,14 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         key.seal(&mut blob, &mut sealed)?;
         // A blob that doesn't hash to its name is corrupt here; don't send it as if it were good.
         blob.finish()?;
+        stop_if_late!();
         r.bytes_sent += put(&*store, &name, &mut sealed)?;
         r.blobs_sent += 1;
     }
 
     // 2. The manifest lines the target lacks.
     if lines > sent_lines {
+        stop_if_late!();
         let new = &manifest[starts[sent_lines as usize]..];
         // Named by content too: another home with this key and the same earlier lines never
         // shares a part with this one.
@@ -236,6 +327,7 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         ));
         let mut sealed = scratch.file()?;
         key.seal(new, &mut sealed)?;
+        stop_if_late!();
         r.bytes_sent += put(&*store, &name, &mut sealed)?;
         r.manifest_lines_sent = lines - sent_lines;
         parts.push(ManifestPart {
@@ -282,8 +374,10 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         let sha = hex::encode(Sha256::digest(&bytes));
         let name = key.name(&format!("file/{rel}/{sha}"));
         if !present.contains(&name) {
+            stop_if_late!();
             let mut sealed = scratch.file()?;
             key.seal(bytes.as_slice(), &mut sealed)?;
+            stop_if_late!();
             r.bytes_sent += put(&*store, &name, &mut sealed)?;
             r.files_sent += 1;
         }
@@ -297,6 +391,7 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
     }
 
     // 4. The record, last.
+    stop_if_late!();
     let record = RunRecord {
         version: RECORD_VERSION,
         number,
@@ -311,6 +406,8 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
     let name = run_name(&key, number);
     store.sync()?;
     sealed.seek(SeekFrom::Start(0))?;
+    // A sync can be slow; a record that would start after the deadline waits for the next run.
+    stop_if_late!();
     if !store.put(&name, &mut sealed)? {
         bail!(
             "another backup run to {:?} finished meanwhile; nothing was lost",

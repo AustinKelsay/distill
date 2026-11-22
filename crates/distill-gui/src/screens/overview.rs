@@ -271,6 +271,7 @@ fn warnings(st: &Status, p: &Paint) -> El {
             WarningKind::SweepOverdue => "Sweep overdue",
             WarningKind::PrunesSooner => "Prunes sooner",
             WarningKind::Exposure => "Exposure",
+            WarningKind::Backup => "Backup",
         };
         if i > 0 {
             card = card.child(p.separator());

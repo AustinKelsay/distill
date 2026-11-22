@@ -13,10 +13,12 @@
 
 pub mod restore;
 pub mod run;
+pub mod status;
 pub mod store;
 
 pub use restore::{BackupCheck, RestoreReport, restore, verify};
 pub use run::{BackupReport, run};
+pub use status::{TargetStatus, TickBackups, targets};
 
 /// The recovery key's text, for a face to show the owner once.
 pub fn expose(recovery: &SecretString) -> &str {

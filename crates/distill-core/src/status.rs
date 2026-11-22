@@ -57,6 +57,9 @@ pub struct Status {
     /// Reveal requests waiting for the owner to approve or deny them in the GUI.
     #[serde(default)]
     pub pending_reveals: u64,
+    /// Each `[[backup]]` target and where it stands (issue #150).
+    #[serde(default)]
+    pub backups: Vec<crate::backup::TargetStatus>,
     /// The exposure check's results. Each failing rule is also a warning.
     pub exposure: Exposure,
     /// The last [`HISTORY_RUNS`] runs, newest first, with runs in a row that came to the same
@@ -87,6 +90,8 @@ pub enum WarningKind {
     PrunesSooner,
     /// A rule of the exposure check fails.
     Exposure,
+    /// No backup target is set up, or one has not had a whole run lately.
+    Backup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,6 +250,21 @@ pub fn status(home: &Home) -> Result<Status> {
         warnings.extend(prunes.map(|(w, _)| w));
     }
 
+    let mut backups = Vec::new();
+    if let Some(c) = &config {
+        match crate::backup::status::status(home, c, archive.records().len() as u64) {
+            Ok(b) => {
+                warnings.extend(backup_warnings(c, &b, chrono::Utc::now()));
+                backups = b;
+            }
+            Err(e) => warnings.push(Warning {
+                kind: WarningKind::Backup,
+                harness: None,
+                message: format!("Backups can't run: {e:#}"),
+            }),
+        }
+    }
+
     let exposure = exposure::check(home);
     warnings.extend(
         exposure
@@ -271,6 +291,7 @@ pub fn status(home: &Home) -> Result<Status> {
         vectors: index::vectors::progress(home)?,
         details: details::progress(home)?,
         pending_reveals: crate::reveal::pending_count(home),
+        backups,
         exposure,
         runs: runlog::history(home, HISTORY_RUNS)?,
     })
@@ -344,6 +365,57 @@ fn sweep_overdue(
             span(i64::from(every))
         ),
     })
+}
+
+/// A warning when no backup target is set up, and one for each target that has never had a whole
+/// run, whose newest run failed, or that has had no whole run for longer than twice the timer's
+/// interval.
+fn backup_warnings(
+    config: &Config,
+    targets: &[crate::backup::TargetStatus],
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<Warning> {
+    let warn = |message: String| Warning {
+        kind: WarningKind::Backup,
+        harness: None,
+        message,
+    };
+    if targets.is_empty() {
+        return vec![warn(
+            "No backup target is set up in config.toml, so DISTILL keeps no copy of the raw archive. \
+             Add a [[backup]] target, then run `distill backup init` and `distill backup run`."
+                .into(),
+        )];
+    }
+    let every = i64::from(crate::schedule::interval_minutes(config));
+    let ago = |at: &str| {
+        chrono::DateTime::parse_from_rfc3339(at)
+            .ok()
+            .map(|t| (now - t.with_timezone(&chrono::Utc)).num_minutes())
+    };
+    targets
+        .iter()
+        .filter_map(|t| {
+            let since = match &t.last_ok {
+                Some(at) => format!("its last whole run was {} ago", span(ago(at)?)),
+                None => "it has never had a whole run".into(),
+            };
+            Some(warn(match (&t.last_error, &t.last_ok) {
+                (Some(e), _) => format!("The last backup to {} failed, and {since}: {e}", t.name),
+                (None, None) => format!(
+                    "Backup target {} has never had a whole run: run `distill backup run --target {}` once, and the timer keeps it current after that.",
+                    t.name, t.name
+                ),
+                (None, Some(at)) if ago(at)? > 2 * every => format!(
+                    "Nothing has backed up to {} for {}, and the timer runs every {}: check that it is installed and running (`distill schedule`).",
+                    t.name,
+                    span(ago(at)?),
+                    span(every)
+                ),
+                _ => return None,
+            }))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -505,6 +577,55 @@ mod warning_tests {
         e.at = (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         runlog::record(home, &e).unwrap();
+    }
+
+    #[test]
+    fn backups_warn_when_none_is_set_up_never_ran_failed_or_fell_behind() {
+        let config = Config::default();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let t = |name: &str, ok: Option<&str>, error: Option<&str>| crate::backup::TargetStatus {
+            name: name.into(),
+            kind: "folder".into(),
+            last_ok: ok.map(Into::into),
+            last_error: error.map(Into::into),
+            last_failed: error.map(|_| "2026-11-22T11:59:00Z".into()),
+            captures_behind: None,
+        };
+        let none = backup_warnings(&config, &[], now);
+        assert_eq!(none.len(), 1);
+        assert!(none[0].message.starts_with("No backup target"), "{none:?}");
+        let w = backup_warnings(
+            &config,
+            &[
+                t("current", Some("2026-11-22T11:30:00Z"), None),
+                t("never", None, None),
+                t(
+                    "failed",
+                    Some("2026-11-22T11:00:00Z"),
+                    Some("the folder is gone"),
+                ),
+                t("behind", Some("2026-11-21T12:00:00Z"), None),
+            ],
+            now,
+        );
+        let messages: Vec<_> = w.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(w.len(), 3, "{messages:?}");
+        assert!(w.iter().all(|w| w.kind == WarningKind::Backup));
+        assert!(
+            messages[0].contains("target never has never had a whole run: run `distill backup run --target never` once"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1]
+                .contains("failed, and its last whole run was 60 minutes ago: the folder is gone"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[2].contains("Nothing has backed up to behind for 24 hours"),
+            "{messages:?}"
+        );
     }
 
     fn overdue(s: &Status) -> bool {

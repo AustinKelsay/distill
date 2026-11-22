@@ -62,13 +62,15 @@ impl Folder {
             );
         }
         let objects = path.join("distill-backup");
-        if !first && !objects.is_dir() {
-            bail!(
-                "{} is not there, though this home backed up to it before (is the drive mounted?)",
-                objects.display()
-            );
-        }
-        if make_dir(&objects)? {
+        if !first {
+            // Never made here: the drive could go away between a check and a `mkdir`.
+            if !objects.is_dir() {
+                bail!(
+                    "{} is not there, though this home backed up to it before (is the drive mounted?)",
+                    objects.display()
+                );
+            }
+        } else if make_dir(&objects)? {
             sync_dir(path)?;
         }
         Ok(Self { objects })

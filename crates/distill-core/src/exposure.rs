@@ -2,8 +2,8 @@
 //!
 //! Four rules pass or fail: the home and everything in it are owner-only, the fingerprint key is
 //! owner-only, the home is not in a synced folder, and no DISTILL process listens on a network
-//! port. Alongside them, as information: whether the disk is encrypted, a reminder that backups
-//! carry the archive, and the folders the previous build left that hold session-derived data.
+//! port. Alongside them, as information: whether the disk is encrypted, whether backups are set
+//! up and what other copies carry, and the folders the previous build left that hold session-derived data.
 //! `distill exposure` prints it, `--fix` tightens an existing home's modes, and the status report
 //! carries it.
 
@@ -22,7 +22,7 @@ pub struct Exposure {
     pub rules: Vec<RuleResult>,
     /// Whether the disk is encrypted, when this machine can tell. Information, not a rule.
     pub disk_encrypted: Option<bool>,
-    /// The reminder that backups carry the archive.
+    /// Whether backup targets are set up, and a reminder that other copies carry the archive.
     pub backups: String,
     /// Folders the previous build left that hold session-derived data, with their modes.
     pub previous_build: Vec<LeftFolder>,
@@ -154,9 +154,26 @@ pub fn check_at(home: &Home, user: &Path, probes: &Probes) -> Exposure {
             no_listener(probes),
         ],
         disk_encrypted: (probes.disk_encrypted)(),
-        backups: "Backups carry the archive, every secret in it included: keep them encrypted too."
-            .into(),
+        backups: backups_note(home),
         previous_build: previous_build(home, user),
+    }
+}
+
+/// Where the archive's copies are, and what they carry.
+fn backups_note(home: &Home) -> String {
+    let other = "Any other copy of the home, such as a disk backup, carries the archive readable, \
+                 every secret in it included: keep it encrypted too.";
+    match home.load_config().map(|c| c.backups.len()) {
+        Err(_) => {
+            format!("config.toml could not be read to tell whether backups are set up. {other}")
+        }
+        Ok(0) => format!(
+            "No backup target is set up in config.toml, so DISTILL keeps no copy of the raw archive (`distill backup`). {other}"
+        ),
+        Ok(n) => format!(
+            "Backups to {} are encrypted on this machine before they leave it. {other}",
+            crate::util::count(n as u64, "target")
+        ),
     }
 }
 

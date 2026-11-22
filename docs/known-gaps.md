@@ -32,7 +32,9 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 
 ## Backups
 
-- Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists, and nothing runs backups on a schedule or shows them in the window yet (#150). `distill backup verify` checks that a target holds its newest run, by name or, with `--full`, by fetching and decrypting every object.
+- Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists. `distill backup verify` checks that a target holds its newest run, by name or, with `--full`, by fetching and decrypting every object. The window doesn't show backups or set them up yet (#150); `distill backup status` and the status report do.
+- The tick backs up only to targets that have had a whole run by hand (`distill backup run`), so it never starts a target over or makes its folder. It has no time limit of its own: it sends what changed since the last run, which is usually little. A target that isn't there, such as an unplugged drive, fails the tick's backup step every tick until it's back.
+- MCP doesn't report backups: they are the owner's, and a client sees only sessions.
 - The backup key can't be rotated yet (#147): `distill backup init` makes it once, and a new key would start every target over.
 - Every file of the backup set but `raw/` is stored whole whenever it changes, so the read log, which grows each tick, is stored again on every run that follows a read.
 - A folder target's first run can't tell an empty folder from a drive's mount point with the drive away (on Linux; on macOS the mount point goes with the drive), so it takes the folder; after its first successful run, a target without its `distill-backup/` folder is refused.

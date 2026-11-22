@@ -1,6 +1,6 @@
 //! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
 //! tick writes one entry to the run log. Today the steps are sweep, parse, scan, the word index,
-//! cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
+//! backups, cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
 //! model gets the runtime for that step, and the steps before it never wait on one.
 //!
 //! The model steps share one time budget per tick for starting work, [`model_budget`], counted
@@ -113,6 +113,12 @@ pub const STEPS: &[Step] = &[
         run: index_step,
     },
     Step {
+        name: "backup",
+        model: false,
+        generation: false,
+        run: backup_step,
+    },
+    Step {
         name: "cards",
         model: true,
         generation: true,
@@ -202,6 +208,24 @@ pub fn index_step(
         ok: r.failed == 0,
         summary: r.summary(),
         errors: r.errors.clone(),
+        report: serde_json::to_value(&r)?,
+    })
+}
+
+/// Back up to every `[[backup]]` target that has had a first run by hand (issue #150), sending
+/// no more blobs once the tick's budget is over; the model steps get what is left of it.
+pub fn backup_step(
+    home: &Home,
+    config: &Config,
+    _: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<StepOutcome> {
+    let r = crate::backup::status::tick(home, config, deadline)?;
+    Ok(StepOutcome {
+        name: "backup".into(),
+        ok: r.ok(),
+        summary: r.summary(),
+        errors: r.runs.iter().filter_map(|r| r.error.clone()).collect(),
         report: serde_json::to_value(&r)?,
     })
 }
@@ -347,7 +371,9 @@ fn tick_with_runtimes(
                 let left = end.saturating_duration_since(Instant::now());
                 Deadline::between(left / sharing, left)
             }
-            _ => Deadline::NONE,
+            // A step that calls no model may still stop at the tick's end: the backup step.
+            Some(end) => Deadline::after(end.saturating_duration_since(Instant::now())),
+            None => Deadline::NONE,
         };
         let runtime = if s.generation {
             generation.as_ref()
@@ -371,12 +397,12 @@ mod tests {
     use crate::harness::Harness;
 
     #[test]
-    fn the_steps_are_sweep_parse_scan_index_cards_vectors_then_details() {
+    fn the_steps_are_sweep_parse_scan_index_backup_cards_vectors_then_details() {
         let names: Vec<_> = STEPS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
             [
-                "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+                "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
             ]
         );
     }
@@ -566,7 +592,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "sweep", "parse", "scan", "index", "cards", "vectors", "details"
+                "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
             ]
         );
         assert!(r.steps.iter().all(|s| s.ok), "{r:?}");
@@ -600,16 +626,16 @@ mod tests {
         }
         assert!(!home.card_path(Harness::Pi, "p1").exists());
         // With no card_model, the card step is skipped, and the run log says why.
-        assert_eq!(r.steps[4].summary, "cards skipped: no card_model is set");
-        assert_eq!(r.steps[4].report["skipped"], "no card_model is set");
+        assert_eq!(r.steps[5].summary, "cards skipped: no card_model is set");
+        assert_eq!(r.steps[5].report["skipped"], "no card_model is set");
         // So is the vectors step, with no embedding_model, and nothing is written for it.
         assert_eq!(
-            r.steps[5].summary,
+            r.steps[6].summary,
             "vectors skipped: no embedding_model is set"
         );
         assert!(!home.vectors_path().exists());
         assert_eq!(
-            r.steps[6].summary,
+            r.steps[7].summary,
             "model detection skipped: no detail_model or card_model is set"
         );
     }
@@ -654,7 +680,7 @@ mod tests {
             });
 
         let r = tick_with(&home, &config, &fake.runtime()).unwrap();
-        let cards = &r.steps[4];
+        let cards = &r.steps[5];
         assert_eq!(cards.name, "cards");
         // One card written and one to retry: the step did its work.
         assert!(cards.ok, "{cards:?}");
@@ -667,8 +693,8 @@ mod tests {
         assert!(home.card_path(Harness::Pi, "p1").exists());
         // The steps before it all ran and succeeded.
         assert!(r.steps[..4].iter().all(|s| s.ok), "{r:?}");
-        assert_eq!(r.steps[5].name, "vectors");
-        assert_eq!(r.steps[6].name, "details");
+        assert_eq!(r.steps[6].name, "vectors");
+        assert_eq!(r.steps[7].name, "details");
         let runs = runlog::recent(&home, 10).unwrap();
         assert_eq!(runs[0].steps, r.steps);
     }
@@ -733,7 +759,7 @@ mod tests {
             r.steps[..4].iter().all(|s| s.ok),
             "capture ran first: {r:?}"
         );
-        let cards = &r.steps[4];
+        let cards = &r.steps[5];
         let written = cards.report["written"].as_u64().unwrap();
         assert!(written < SESSIONS, "{cards:?}");
         assert_eq!(cards.report["stopped_at_deadline"], true, "{cards:?}");
@@ -771,7 +797,7 @@ mod tests {
             .replying(answer(false));
         let r = tick_with(&home, &config, &fast.runtime()).unwrap();
         assert_eq!(r.steps[0].report["new"], 1, "{r:?}");
-        let cards = &r.steps[4];
+        let cards = &r.steps[5];
         assert_eq!(
             cards.report["written"].as_u64().unwrap(),
             SESSIONS - written + 1,

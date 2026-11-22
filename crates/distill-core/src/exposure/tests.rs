@@ -47,7 +47,7 @@ fn a_home_distill_built_passes_every_rule() {
     assert!(e.passes());
     assert_eq!(e.disk_encrypted, Some(true));
     assert!(
-        e.backups.to_lowercase().contains("backups"),
+        e.backups.starts_with("No backup target is set up"),
         "{}",
         e.backups
     );

@@ -64,7 +64,7 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | Command | What it does |
 | --- | --- |
 | `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
-| `distill backup init` / `run` / `verify` | Make the backup key (printing its recovery key once), back up to every `[[backup]]` target now, or check that each holds its newest run (`--full` decrypts every object). |
+| `distill backup init` / `run` / `status` / `verify` | Make the backup key (printing its recovery key once), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
 | `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the recovery key from `--key-file` or a pipe. The next tick rebuilds the rest. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
@@ -106,7 +106,7 @@ DISTILL makes outbound connections only to the providers you set:
 - **Ollama on this machine:** embeddings, and cards and details unless generation is set.
 - **The trusted generation provider,** when `[steward.generation]` is set: cards and details (ADR 0008). It reads sessions with secrets as placeholders, but personal details are not masked for a trusted reader.
 
-What DISTILL does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), backups (they carry the archive; keep them encrypted), and an administrator on the machine.
+What DISTILL does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), copies of the home other than DISTILL's own encrypted backups, such as a disk backup (they carry the archive readable; keep them encrypted), and an administrator on the machine.
 
 Claude Code deletes transcripts after 30 days by default. DISTILL sweeps hourly, so it keeps them.
 
