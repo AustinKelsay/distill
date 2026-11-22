@@ -117,6 +117,95 @@ pub fn last_ok(home: &Home, step: &str) -> Result<Option<(String, StepOutcome)>>
         .find_map(|e| e.outcome(step).filter(|o| o.ok).map(|o| (e.at.clone(), o))))
 }
 
+/// What a step came to in one run, for the run history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepResult {
+    Ok,
+    /// It stopped taking sessions at the tick's time limit, with some left for the next run.
+    Stopped,
+    /// It did not run: no model is set, or none can run it.
+    Skipped,
+    Failed,
+}
+
+impl StepOutcome {
+    /// What the step came to, read from its report.
+    pub fn result(&self) -> StepResult {
+        if !self.ok {
+            StepResult::Failed
+        } else if self.report.get("skipped").is_some_and(|v| !v.is_null()) {
+            StepResult::Skipped
+        } else if self.report.get("stopped_at_deadline") == Some(&Value::Bool(true)) {
+            StepResult::Stopped
+        } else {
+            StepResult::Ok
+        }
+    }
+}
+
+/// One step of a run in the run history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepMark {
+    pub name: String,
+    pub result: StepResult,
+}
+
+/// Runs in a row that came to the same results, for the run history (issue #160).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunGroup {
+    /// When the newest and the oldest of them ran.
+    pub newest: String,
+    pub oldest: String,
+    pub runs: u64,
+    /// `tick`, or the one step that ran.
+    pub step: String,
+    /// Each step and what it came to, in the order they ran.
+    pub steps: Vec<StepMark>,
+    /// The newest run's sentence for each step that failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<String>,
+}
+
+/// The last `runs` entries of the run log, newest first, with runs in a row that came to the same
+/// results folded into one group.
+pub fn history(home: &Home, runs: usize) -> Result<Vec<RunGroup>> {
+    let mut groups: Vec<RunGroup> = Vec::new();
+    for e in recent(home, runs)? {
+        let outcomes = if e.steps.is_empty() {
+            e.outcome(&e.step).into_iter().collect()
+        } else {
+            e.steps.clone()
+        };
+        let steps: Vec<StepMark> = outcomes
+            .iter()
+            .map(|s| StepMark {
+                name: s.name.clone(),
+                result: s.result(),
+            })
+            .collect();
+        match groups.last_mut() {
+            Some(g) if g.step == e.step && g.steps == steps => {
+                g.oldest = e.at.clone();
+                g.runs += 1;
+            }
+            _ => groups.push(RunGroup {
+                newest: e.at.clone(),
+                oldest: e.at.clone(),
+                runs: 1,
+                step: e.step.clone(),
+                steps,
+                failures: outcomes
+                    .iter()
+                    .filter(|s| !s.ok)
+                    .map(|s| s.summary.clone())
+                    .collect(),
+            }),
+        }
+    }
+    Ok(groups)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +247,66 @@ mod tests {
             last_ok(&home, "sweep").unwrap().unwrap().0,
             "2026-11-15T10:00:00Z"
         );
+    }
+
+    #[test]
+    fn the_history_folds_runs_in_a_row_with_the_same_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let step = |name: &str, ok, report: Value| StepOutcome {
+            name: name.into(),
+            ok,
+            summary: format!("{name} said so"),
+            report,
+            errors: vec![],
+        };
+        let tick = |at: &str, cards: StepOutcome| RunEntry {
+            at: at.into(),
+            ..RunEntry::of(
+                "tick",
+                vec![
+                    step("sweep", true, Value::Null),
+                    cards,
+                    step(
+                        "vectors",
+                        true,
+                        serde_json::json!({"skipped": "no embedding_model is set"}),
+                    ),
+                ],
+            )
+        };
+        let stopped = || {
+            step(
+                "cards",
+                true,
+                serde_json::json!({"stopped_at_deadline": true}),
+            )
+        };
+        for e in [
+            tick("2026-11-20T10:00:00Z", step("cards", false, Value::Null)),
+            tick("2026-11-20T11:00:00Z", stopped()),
+            tick("2026-11-20T12:00:00Z", stopped()),
+            tick("2026-11-21T09:00:00Z", stopped()),
+            tick(
+                "2026-11-21T10:00:00Z",
+                step("cards", true, serde_json::json!({})),
+            ),
+        ] {
+            record(&home, &e).unwrap();
+        }
+        let h = history(&home, 50).unwrap();
+        let marks = |g: &RunGroup| g.steps.iter().map(|s| s.result).collect::<Vec<_>>();
+        use StepResult::*;
+        assert_eq!(h.len(), 3, "{h:#?}");
+        assert_eq!((h[0].runs, marks(&h[0])), (1, vec![Ok, Ok, Skipped]));
+        assert_eq!(
+            (h[1].runs, h[1].newest.as_str(), h[1].oldest.as_str()),
+            (3, "2026-11-21T09:00:00Z", "2026-11-20T11:00:00Z"),
+            "folded across the day's files"
+        );
+        assert_eq!(marks(&h[1]), vec![Ok, Stopped, Skipped]);
+        assert_eq!((h[2].runs, marks(&h[2])), (1, vec![Ok, Failed, Skipped]));
+        assert_eq!(h[2].failures, ["cards said so"]);
+        assert_eq!(history(&home, 2).unwrap().len(), 2, "only the last runs");
     }
 }
