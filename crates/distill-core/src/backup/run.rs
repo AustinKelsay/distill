@@ -79,7 +79,15 @@ pub struct BackupReport {
 impl BackupReport {
     pub fn summary(&self) -> String {
         match &self.error {
-            Some(e) => format!("Backup to {} failed: {e}", self.target),
+            Some(e) => format!(
+                "Backup to {} (run {}) failed: {e} It stored {}, {}, {}; {}.",
+                self.target,
+                self.run,
+                count(self.blobs_sent, "new blob"),
+                count(self.manifest_lines_sent, "manifest line"),
+                count(self.files_sent, "file"),
+                size(self.bytes_sent)
+            ),
             None => format!(
                 "Backed up to {} (run {}): {}, {}, {}; {} stored, encrypted.",
                 self.target,
@@ -682,6 +690,11 @@ mod tests {
         );
         let log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path()).unwrap();
         let r = log.last().unwrap();
+        let summary = r.summary();
+        assert!(
+            summary.contains("(run 0) failed") && summary.contains("3 files"),
+            "{summary}"
+        );
         assert_eq!((r.ok, r.blobs_missing), (false, 1), "{r:?}");
         assert_eq!(read_record(&*store, &key, 0).unwrap().lines, 3);
     }
