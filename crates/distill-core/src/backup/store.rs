@@ -125,11 +125,11 @@ impl Store for Folder {
                 // A file system without hard links (exFAT gives ENOTSUP, FAT on Linux EPERM).
                 // Any other failure is an error: falling back then could race a put whose link
                 // succeeds.
+                // (ENOTSUP and EOPNOTSUPP are one number on Linux, two on macOS.)
                 Err(e)
-                    if matches!(
-                        e.raw_os_error(),
-                        Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::EPERM)
-                    ) =>
+                    if e.raw_os_error().is_some_and(|c| {
+                        [libc::ENOTSUP, libc::EOPNOTSUPP, libc::EPERM].contains(&c)
+                    }) =>
                 {
                     claim_and_rename(&tmp, &path)
                 }
