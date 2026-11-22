@@ -55,6 +55,8 @@ enum Cmd {
     Runs(runs::Args),
     /// Providers, which are local and which are trusted, and the local runtime's models
     Providers(providers::Args),
+    /// Encrypted backups to the `[[backup]]` targets: make the key, or back up now
+    Backup(backup::Args),
     /// Read a session's events as a model at a named provider
     Read(read::Args),
     /// The read log: who read which session, and what they got
@@ -100,6 +102,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Status(a) => status::run(&ctx, a),
         Cmd::Runs(a) => runs::run(&ctx, a),
         Cmd::Providers(a) => providers::run(&ctx, a),
+        Cmd::Backup(a) => backup::run(&ctx, a),
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Search(a) => search::run(&ctx, a),

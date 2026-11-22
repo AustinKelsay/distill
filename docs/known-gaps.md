@@ -30,6 +30,14 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 - The pruning check reads the owner's own harness settings and Claude Code's managed settings, not project-level settings, MDM profiles or server-managed settings. Antigravity's trimming by size and in-place rewrites have no setting to read (`docs/harness-pruning.md`).
 - Whether a model is stored on this machine is read from `OLLAMA_MODELS`, else `~/.ollama/models`; an Ollama server started with another model folder cannot be checked. With `[steward.generation]` set, a card or detail model counts as there when the provider's `/models` lists it.
 
+## Backups
+
+- Backups so far: `distill backup init` makes the key and prints its recovery key once; `distill backup run` copies to each `[[backup]]` target. Only the `folder` kind exists, and nothing runs backups on a schedule or shows them in the window yet (#150). There is no restore or verify yet (#149), so a backup can't yet be proven.
+- The backup key can't be rotated yet (#147): `distill backup init` makes it once, and a new key would start every target over.
+- Every file of the backup set but `raw/` is stored whole whenever it changes, so the read log, which grows each tick, is stored again on every run that follows a read.
+- A target learns how many objects it holds, their sizes and when they arrive (ADR 0009). Nothing on a target is ever deleted, so it only grows.
+- A blob lost from this machine's archive before any backup took it can't be sent: the run stores the rest, then fails, counting it as missing.
+
 ## The window
 
 - Findings are covered with a chip naming their kind rather than blurred (ADR 0007). The list's chips are not clickable; a finding is shown only in an open session. A covered secret copies as its chip, a shown one as its value.
