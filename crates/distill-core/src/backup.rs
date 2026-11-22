@@ -34,6 +34,7 @@ impl BackupKey {
     pub fn create(home: &Home) -> Result<Self> {
         let key = Self::from_identity(age::x25519::Identity::generate());
         let dir = home.keys_dir();
+        let made_root = !home.root.exists();
         create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
         set_private(&home.root);
         set_private(&dir);
@@ -61,6 +62,10 @@ impl BackupKey {
         let _ = fs::remove_file(&tmp);
         placed?;
         sync_dir(&dir)?;
+        // A home made here (before `distill init`) must not vanish with its key either.
+        if made_root && let Some(parent) = home.root.parent() {
+            sync_dir(parent)?;
+        }
         Ok(key)
     }
 
