@@ -4,7 +4,7 @@
 //! The on-disk format is the previous build's, unchanged (ADR 0001): `raw/<aa>/<sha256>` and
 //! `raw/manifest.jsonl`, with every manifest field name kept.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -328,6 +328,85 @@ pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
         .split(|b| *b == b'\n')
         .filter_map(|line| serde_json::from_slice(line).ok())
         .collect()
+}
+
+/// Restore an archive into `home`, which has none (ADR 0009, issue #149): every blob `manifest`
+/// says it should hold, from `fetch` (which writes a blob's bytes and says whether it had it),
+/// then the manifest itself, so every line names bytes that are in place. Each blob is checked
+/// against its capture hash and size before it goes in. Returns the blobs `fetch` lacked.
+pub fn restore(
+    home: &Home,
+    manifest: &[u8],
+    mut fetch: impl FnMut(&str, &mut dyn Write) -> Result<bool>,
+) -> Result<Vec<String>> {
+    let raw = home.raw_dir();
+    if home.manifest_path().exists() {
+        bail!("{} already has an archive", home.root.display());
+    }
+    create_dir_private(&raw)?;
+    set_private(&raw);
+    let tmp = raw.join(format!(".restoring-{}", std::process::id()));
+    let mut missing = Vec::new();
+    let mut shards = BTreeSet::new();
+    for (sha, size) in expected_blobs(&parse_manifest(manifest)) {
+        let placed = (|| -> Result<bool> {
+            let file = private_file()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)?;
+            let mut out = Hashing {
+                file,
+                hasher: Sha256::new(),
+                bytes: 0,
+            };
+            if !fetch(&sha, &mut out)? {
+                return Ok(false);
+            }
+            out.file.sync_all()?;
+            let actual = hex::encode(out.hasher.finalize());
+            if actual != sha || out.bytes != size {
+                bail!("the backup's copy of blob {sha} does not match its capture hash");
+            }
+            Ok(true)
+        })();
+        if !placed.inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })? {
+            missing.push(sha);
+            continue;
+        }
+        let shard = raw.join(&sha[..2]);
+        create_dir_private(&shard)?;
+        fs::rename(&tmp, shard.join(&sha))?;
+        shards.insert(shard);
+    }
+    let _ = fs::remove_file(&tmp);
+    for shard in &shards {
+        crate::util::sync_dir(shard)?;
+    }
+    crate::util::write_atomic(&home.manifest_path(), manifest)?;
+    crate::util::sync_dir(&raw)?;
+    Ok(missing)
+}
+
+/// A file being written, hashed and counted as it goes.
+struct Hashing {
+    file: fs::File,
+    hasher: Sha256,
+    bytes: u64,
+}
+
+impl Write for Hashing {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.file.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.bytes += n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -10,6 +10,7 @@ pub mod parse;
 pub mod providers;
 pub mod read;
 pub mod reads;
+pub mod restore;
 pub mod reveal;
 pub mod runs;
 pub mod scan;

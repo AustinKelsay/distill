@@ -11,9 +11,11 @@
 //!   object is (a blob's capture hash, a file's path). A plain SHA-256 would let a target test
 //!   whether it holds a file it already knows.
 
+pub mod restore;
 pub mod run;
 pub mod store;
 
+pub use restore::{BackupCheck, RestoreReport, restore, verify};
 pub use run::{BackupReport, run};
 
 /// The recovery key's text, for a face to show the owner once.
@@ -43,6 +45,12 @@ impl BackupKey {
     /// over, so that is never done by accident.
     pub fn create(home: &Home) -> Result<Self> {
         let key = Self::from_identity(age::x25519::Identity::generate());
+        key.install(home)?;
+        Ok(key)
+    }
+
+    /// Make this key `home`'s backup key, as a restore does. Refused when it has one.
+    pub fn install(&self, home: &Home) -> Result<()> {
         let dir = home.keys_dir();
         let made_root = !home.root.exists();
         create_dir_private(&dir).with_context(|| format!("create {}", dir.display()))?;
@@ -57,7 +65,7 @@ impl BackupKey {
                 .create_new(true)
                 .open(&tmp)
                 .with_context(|| format!("create {}", tmp.display()))?;
-            f.write_all(key.recovery().expose_secret().as_bytes())?;
+            f.write_all(self.recovery().expose_secret().as_bytes())?;
             f.sync_all()?;
             // The `keys/` entry must be durable before the key is put in place: a crash must not
             // lose the key the owner is about to be shown, and a failure here leaves no key.
@@ -82,7 +90,7 @@ impl BackupKey {
             };
             sync_dir(parent)?;
         }
-        Ok(key)
+        Ok(())
     }
 
     /// This home's backup key, if it has one.
