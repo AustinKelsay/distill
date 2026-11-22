@@ -45,7 +45,7 @@ pub const SERVICES: [(&str, &str); 6] = [
     (OLLAMA_CLOUD, "Ollama cloud"),
 ];
 
-/// How many sessions each model step may take per run.
+/// How many sessions the card and detail steps may take per run.
 pub const PER_RUN: [usize; 4] = [25, 50, 100, 200];
 
 pub const SWEEPS: [(u32, &str); 4] = [
@@ -1094,9 +1094,10 @@ fn models(d: &SetupState, p: &Paint, layer: &mut Vec<El>) -> El {
         .build(&p.k);
     let budget = schedule::interval_minutes(&d.draft) / 2;
     let mut help = format!(
-        "How many sessions each model step takes per run, newest first. More catches up \
-         sooner and sends more to the models; either way the model steps stop after \
-         {budget} minutes, half the timer's interval."
+        "How many sessions the card and detection steps take per run, newest first. More catches \
+         up sooner and sends more to the models; either way the model steps stop after \
+         {budget} minutes, half the timer's interval. Search by meaning runs on this machine \
+         and takes every waiting session in that time."
     );
     if !PER_RUN.contains(&per_run) {
         help += &format!(" Now {per_run}.");

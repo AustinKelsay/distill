@@ -10,8 +10,10 @@
 //!   ([`MadeFrom`](super::MadeFrom): its events, its secret findings and its current card), and
 //!   are rebuilt when any of it changes. The file names the model that made it; vectors from
 //!   another model are not comparable, so a file of another model or version is rebuilt whole.
-//! - **Which sessions.** The sessions that get a card ([`cards::wanted`]), newest first, up to
-//!   `sessions_per_run` each tick. Deleting the file and running the tick rebuilds it.
+//! - **Which sessions.** The sessions that get a card ([`cards::wanted`]), newest first, as many
+//!   as the tick's deadline allows: embedding runs locally and is fast, so `sessions_per_run`,
+//!   which paces the steps that run a generation model, does not limit it (issue #152). Deleting
+//!   the file and running the tick rebuilds it.
 //! - **Search.** A query is embedded by the same model and compared with every vector in the
 //!   file; a session scores its best vector. A query that holds a secret is never embedded.
 //!
@@ -318,8 +320,7 @@ fn usable_model(config: &Config, runtime: &LocalRuntime) -> std::result::Result<
     }
 }
 
-/// Embed the sessions whose vectors are missing or out of date, newest first, up to
-/// `sessions_per_run`, reading each through the read path for the embedding model. Skipped, with
+/// Embed the sessions whose vectors are missing or out of date, newest first, reading each through the read path for the embedding model. Skipped, with
 /// the reason in the report, when `embedding_model` is not set or no local runtime can run it.
 /// Takes no session once `deadline` has passed. One writer at a time.
 pub fn build(
@@ -378,7 +379,6 @@ pub fn build(
             .cmp(&started(a))
             .then_with(|| a.key().cmp(&b.key()))
     });
-    pending.truncate(config.steward.sessions_per_run);
     let pending: Vec<SessionMeta> = pending.into_iter().cloned().collect();
 
     r.stopped_at_deadline = read::for_embedding(

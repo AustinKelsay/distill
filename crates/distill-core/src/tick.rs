@@ -231,8 +231,8 @@ pub fn cards_step(
     })
 }
 
-/// Embed the sessions whose vectors are missing or out of date, newest first, up to
-/// `sessions_per_run`; skipped when `embedding_model` is not set or no local runtime can run it.
+/// Embed the sessions whose vectors are missing or out of date, newest first, until the step's
+/// deadline (not limited by `sessions_per_run`); skipped when `embedding_model` is not set or no local runtime can run it.
 pub fn vectors_step(
     home: &Home,
     config: &Config,
