@@ -43,6 +43,9 @@
           text: Model detection pass
               value: Not yet available
             detail: 
+        runs: Recent runs
+            title: Recent runs
+          message: No runs yet: the timer's first tick will show here.
         reveals: Reveal requests
             title: Reveal requests
             message: No reveal requests are waiting.

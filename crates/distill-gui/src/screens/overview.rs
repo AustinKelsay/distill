@@ -1,13 +1,15 @@
 //! Overview: the status report (`distill_core::status::Status`), rendered. Sessions and capture
 //! health per harness, format drift, the last sweep, warnings, each step's progress (scan, word
 //! index, cards, vectors and the model detection pass), the reveal
-//! requests waiting and the exposure check, with a Fix button that calls `exposure::fix`. A step
-//! with nothing to report says it is not yet available. No session text is shown.
+//! requests waiting, the recent runs and the exposure check, with a Fix button that calls
+//! `exposure::fix`. A step with nothing to report says it is not yet available. No session text
+//! is shown.
 //!
 //! When a ticket adds a field to `Status`, it adds its line here: a step's progress goes in
 //! [`steps`], anything else in its own section of [`report`].
 
 use distill_core::exposure::{self, Exposure, Outcome, Rule};
+use distill_core::runlog::{RunGroup, StepResult};
 use distill_core::status::{self, HarnessStatus, Health, Status, WarningKind};
 use rune::{Align, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize};
@@ -222,6 +224,7 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
         body = body.child(warnings(st, p));
     }
     body.child(progress(st, p))
+        .child(runs(s, st, p))
         .child(reveals(st, p))
         .child(harnesses(s, st, p))
         .child(exposure_section(s, &st.exposure, p))
@@ -547,6 +550,98 @@ fn reveals(st: &Status, p: &Paint) -> El {
             );
     }
     p.section("reveals", "Reveal requests", None).child(line)
+}
+
+/// How many groups of runs the overview shows.
+const RUN_ROWS: usize = 8;
+
+/// The recent runs, newest first: runs in a row that came to the same results are one row, each
+/// step that did not simply finish is named, and a failure's sentence is shown under its row.
+fn runs(s: &State, st: &Status, p: &Paint) -> El {
+    let mut card = p.section("runs", "Recent runs", None);
+    if st.runs.is_empty() {
+        return card.child(
+            text("No runs yet: the timer's first tick will show here.")
+                .key("message")
+                .font(p.text())
+                .color(p.muted()),
+        );
+    }
+    for (i, g) in st.runs.iter().take(RUN_ROWS).enumerate() {
+        if i > 0 {
+            card = card.child(p.separator());
+        }
+        card = card.child(run_row(s, g, p));
+    }
+    card
+}
+
+fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
+    let what = if g.step == "tick" {
+        "Tick".to_string()
+    } else {
+        let mut name = g.step.clone();
+        if let Some(first) = name.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        format!("{name} on its own")
+    };
+    let when = if g.runs == 1 {
+        ago(&g.newest, s.now())
+    } else {
+        format!(
+            "{} runs, {} to {}",
+            g.runs,
+            ago(&g.oldest, s.now()),
+            ago(&g.newest, s.now())
+        )
+    };
+    let mut marks = row().key("steps").gap(6.0).center_y().flex_wrap();
+    let mut all_ok = true;
+    for m in &g.steps {
+        let (label, role) = match m.result {
+            StepResult::Ok => continue,
+            StepResult::Stopped => (format!("{}: time limit", m.name), p.k.c.info),
+            StepResult::Skipped => (format!("{}: skipped", m.name), p.k.c.warning),
+            StepResult::Failed => (format!("{}: failed", m.name), p.k.c.danger),
+        };
+        all_ok = false;
+        marks = marks.child(pill(p, &label, role));
+    }
+    if all_ok {
+        let label = if g.steps.len() == 1 {
+            "OK"
+        } else {
+            "All steps OK"
+        };
+        marks = marks.child(pill(p, label, p.k.c.success));
+    } else if g.steps.iter().any(|m| m.result == StepResult::Ok) {
+        marks = marks.child(text("others OK").font(p.caption()).color(p.muted()));
+    }
+    let mut out = col().key("run").w_full().py(2.0).gap(6.0).child(
+        row()
+            .w_full()
+            .gap(12.0)
+            .center_y()
+            .justify_between()
+            .child(
+                col()
+                    .gap(2.0)
+                    .child(text(what).key("what").font(p.text()).color(p.ink()))
+                    .child(text(when).key("when").font(p.caption()).color(p.muted())),
+            )
+            .child(marks),
+    );
+    for f in &g.failures {
+        out = out.child(
+            text(f.clone())
+                .key("failure")
+                .font(p.caption())
+                .color(p.bad())
+                .wrap(),
+        );
+    }
+    out
 }
 
 fn health(h: Health) -> &'static str {

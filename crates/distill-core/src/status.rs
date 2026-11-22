@@ -59,7 +59,14 @@ pub struct Status {
     pub pending_reveals: u64,
     /// The exposure check's results. Each failing rule is also a warning.
     pub exposure: Exposure,
+    /// The last [`HISTORY_RUNS`] runs, newest first, with runs in a row that came to the same
+    /// results folded into one group (issue #160).
+    #[serde(default)]
+    pub runs: Vec<runlog::RunGroup>,
 }
+
+/// How many runs the status report's run history covers: about two days of the hourly timer.
+pub const HISTORY_RUNS: usize = 48;
 
 /// One thing the owner should act on, in a sentence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -265,6 +272,7 @@ pub fn status(home: &Home) -> Result<Status> {
         details: details::progress(home)?,
         pending_reveals: crate::reveal::pending_count(home),
         exposure,
+        runs: runlog::history(home, HISTORY_RUNS)?,
     })
 }
 

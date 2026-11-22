@@ -360,10 +360,44 @@ pub fn running() -> State {
             "vectors": { "model": "embed-text:v1", "sessions": 5_300, "current": 900, "pending": 4_400, "vectors": 1_800, "bytes": 5_500_000 },
             "details": { "model": "qwen-small:4b", "sessions": 5_529, "current": 640, "pending": 4_889, "failing": 2, "found": 88 },
             "pending_reveals": 2,
+            "runs": runs(),
         }),
         exposure(true),
     ));
     s
+}
+
+/// A run history: the cards step reaching its time limit most hours, one tick whose card
+/// provider did not answer, and a sweep run on its own.
+fn runs() -> serde_json::Value {
+    let steps = |odd: &[(&str, &str)]| {
+        [
+            "sweep", "parse", "scan", "index", "cards", "vectors", "details",
+        ]
+        .map(|name| {
+            let result = odd
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or("ok", |(_, r)| r);
+            serde_json::json!({ "name": name, "result": result })
+        })
+        .to_vec()
+    };
+    serde_json::json!([
+        { "newest": at(40), "oldest": at(40), "runs": 1, "step": "tick",
+          "steps": steps(&[("cards", "stopped")]) },
+        { "newest": at(100), "oldest": at(400), "runs": 6, "step": "tick",
+          "steps": steps(&[("cards", "stopped"), ("details", "stopped")]) },
+        { "newest": at(460), "oldest": at(460), "runs": 1, "step": "tick",
+          "steps": steps(&[("cards", "failed"), ("details", "failed")]),
+          "failures": [
+            "cards failed: the provider did not answer within 120 seconds",
+            "details failed: the provider did not answer within 120 seconds",
+          ] },
+        { "newest": at(520), "oldest": at(1_900), "runs": 24, "step": "tick", "steps": steps(&[]) },
+        { "newest": at(2_000), "oldest": at(2_000), "runs": 1, "step": "sweep",
+          "steps": [{ "name": "sweep", "result": "ok" }] },
+    ])
 }
 
 /// An archive that needs the owner: a sweep overdue, a harness pruning early, drift, and

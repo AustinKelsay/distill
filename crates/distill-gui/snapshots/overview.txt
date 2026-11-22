@@ -49,6 +49,37 @@
               value: 640 of 5,529 checked by the model
               percent: 11%
             detail: 4,889 waiting · 2 to retry · 88 personal details found · qwen-small:4b
+        runs: Recent runs
+            title: Recent runs
+            what: Tick
+            when: 40 min ago
+            status: cards: time limit
+            text: cards: time limit
+            text: others OK
+            what: Tick
+            when: 6 runs, 6 h ago to 1 h ago
+            status: cards: time limit
+            text: cards: time limit
+            status: details: time limit
+            text: details: time limit
+            text: others OK
+            what: Tick
+            when: 7 h ago
+            status: cards: failed
+            text: cards: failed
+            status: details: failed
+            text: details: failed
+            text: others OK
+            failure: cards failed: the provider did not answer within 120 seconds
+            failure#dup1: details failed: the provider did not answer within 120 seconds
+            what: Tick
+            when: 24 runs, yesterday to 8 h ago
+            status: All steps OK
+            text: All steps OK
+            what: Sweep on its own
+            when: yesterday
+            status: OK
+            text: OK
         reveals: Reveal requests
             title: Reveal requests
             message: 2 reveal requests wait for you

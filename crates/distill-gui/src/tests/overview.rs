@@ -175,7 +175,18 @@ fn a_step_with_nothing_to_report_is_not_yet_available() {
     }
     assert!(shows(&rt, "no card_model is set"));
     assert!(shows(&rt, "No reveal requests"));
+    assert!(shows(&rt, "No runs yet"));
     assert_eq!(text_of(&rt, "harness-claude-code/last"), "Not yet");
+}
+
+#[test]
+fn recent_runs_fold_alike_runs_and_name_the_steps_that_did_not_simply_finish() {
+    let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
+    assert_eq!(text_of(&rt, "runs/what"), "Tick");
+    assert!(shows(&rt, "6 runs, 6 h ago to 1 h ago"), "{:?}", texts(&rt));
+    assert!(shows(&rt, "cards: time limit") && shows(&rt, "details: failed"));
+    assert!(shows(&rt, "cards failed: the provider did not answer"));
+    assert!(shows(&rt, "All steps OK") && shows(&rt, "Sweep on its own"));
 }
 
 /// A temporary home with one synthetic Claude Code session, and a fake runtime.
@@ -231,6 +242,12 @@ fn opening_the_overview_loads_the_status_report_from_core_and_shows_no_session_t
     );
     assert_eq!(text_of(&rt, "harness-claude-code/sessions"), "1");
     assert_eq!(text_of(&rt, "step-scan/value"), "1 of 1 scanned");
+    assert_eq!(text_of(&rt, "run/what"), "Tick");
+    assert!(
+        shows(&rt, "cards: skipped"),
+        "no model runs: {:?}",
+        texts(&rt)
+    );
     assert!(
         !shows(&rt, "zebra-marmalade"),
         "no session text: {:?}",
