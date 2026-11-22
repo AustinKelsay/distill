@@ -27,7 +27,8 @@ use crate::home::{Home, Keep};
 use crate::tick::Deadline;
 use crate::util::{append_jsonl, count, now_rfc3339, private_file};
 
-const RECORD_VERSION: u32 = 1;
+/// Version 2 stores the logs in parts (`FileRef::parts`); a version 1 record still reads.
+const RECORD_VERSION: u32 = 2;
 
 /// What a run stored, written last and read by a restore.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,12 +50,64 @@ pub struct ManifestPart {
     pub object: String,
     pub from: u64,
     pub to: u64,
+    /// How many runs' lines the part holds ([`merge_tail`]).
+    #[serde(default = "one")]
+    pub runs: u64,
+}
+
+fn one() -> u64 {
+    1
+}
+
+/// How many of the newest parts, the newest being one run's, a run stores again as one: the
+/// newest joins the part before it while that holds as many runs, as a binary counter carries.
+/// So a record lists at most log2(runs) + 1 parts of each, and each line or byte is stored again
+/// at most that many times: a record that listed one part per run would grow with every run,
+/// and the records together with the square of the run count.
+fn merge_tail(runs: impl DoubleEndedIterator<Item = u64>) -> usize {
+    let mut runs = runs.rev();
+    let mut held = runs.next().unwrap_or(0);
+    let mut merged = 1;
+    for r in runs {
+        if r != held {
+            break;
+        }
+        held += r;
+        merged += 1;
+    }
+    merged
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileRef {
+    /// The object holding the whole file; empty for a log held in `parts`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub object: String,
+    /// The SHA-256 of the file as a restore writes it.
     pub sha256: String,
+    /// An append-only log (the read log, the backup log): what each run appended, oldest first,
+    /// together the log's first `len` bytes, its whole lines. Stored whole on every run, a log
+    /// that grows each tick would cost the square of the run count.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<LogPart>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub len: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// Bytes `from..to` of a log, as one object.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogPart {
+    pub object: String,
+    pub from: u64,
+    pub to: u64,
+    pub sha256: String,
+    /// How many runs' appends the part holds ([`merge_tail`]).
+    #[serde(default = "one")]
+    pub runs: u64,
 }
 
 /// What a run did, as one line of the backup log.
@@ -275,18 +328,6 @@ fn run_into(
         };
     }
 
-    // An earlier run's manifest part the target lost is sent again from the same lines.
-    for part in &parts {
-        if !present.contains(&part.object) {
-            stop_if_late!();
-            let lines = &manifest[starts[part.from as usize]..starts[part.to as usize]];
-            let mut sealed = scratch.file()?;
-            key.seal(lines, &mut sealed)?;
-            stop_if_late!();
-            r.bytes_sent += put(&*store, &part.object, &mut sealed)?;
-        }
-    }
-
     // 1. Blobs the lines this run covers say the archive holds, that the target lacks.
     let archive = Archive::open(home)?;
     for sha in expected_blobs(&parse_manifest(manifest)).keys() {
@@ -315,29 +356,63 @@ fn run_into(
         r.blobs_sent += 1;
     }
 
-    // 2. The manifest lines the target lacks.
+    // 2. The manifest lines the target lacks, as one more part, merged with the parts before it
+    // as `merge_tail` says. A part the target lost is sent again from the same lines.
+    // A version 1 record listed one part per run: the first run after it stores them as one.
+    if last.as_ref().is_some_and(|l| l.version == 1) && parts.len() > 1 {
+        let (from, to) = (parts[0].from, parts[parts.len() - 1].to);
+        let bytes = &manifest[starts[from as usize]..starts[to as usize]];
+        parts = vec![ManifestPart {
+            object: key.name(&format!(
+                "manifest/{from}-{to}/{}",
+                hex::encode(Sha256::digest(bytes))
+            )),
+            from,
+            to,
+            runs: parts.iter().map(|p| p.runs).sum(),
+        }];
+    }
     if lines > sent_lines {
-        stop_if_late!();
-        let new = &manifest[starts[sent_lines as usize]..];
-        // Named by content too: another home with this key and the same earlier lines never
-        // shares a part with this one.
-        let name = key.name(&format!(
-            "manifest/{sent_lines}-{lines}/{}",
-            hex::encode(Sha256::digest(new))
-        ));
-        let mut sealed = scratch.file()?;
-        key.seal(new, &mut sealed)?;
-        stop_if_late!();
-        r.bytes_sent += put(&*store, &name, &mut sealed)?;
-        r.manifest_lines_sent = lines - sent_lines;
         parts.push(ManifestPart {
-            object: name,
+            object: String::new(),
             from: sent_lines,
             to: lines,
+            runs: 1,
+        });
+        let tail = parts.split_off(parts.len() - merge_tail(parts.iter().map(|p| p.runs)));
+        let (from, to) = (tail[0].from, lines);
+        // Named by content too: another home with this key and the same earlier lines never
+        // shares a part with this one.
+        let bytes = &manifest[starts[from as usize]..starts[to as usize]];
+        parts.push(ManifestPart {
+            object: key.name(&format!(
+                "manifest/{from}-{to}/{}",
+                hex::encode(Sha256::digest(bytes))
+            )),
+            from,
+            to,
+            runs: tail.iter().map(|p| p.runs).sum(),
         });
     }
+    for part in &parts {
+        if !present.contains(&part.object) {
+            stop_if_late!();
+            let lines = &manifest[starts[part.from as usize]..starts[part.to as usize]];
+            let mut sealed = scratch.file()?;
+            key.seal(lines, &mut sealed)?;
+            stop_if_late!();
+            r.bytes_sent += put(&*store, &part.object, &mut sealed)?;
+        }
+    }
+    r.manifest_lines_sent = lines - sent_lines;
 
-    // 3. Every other file of the backup set.
+    // 3. Every other file of the backup set; the logs as what was appended since.
+    let logs = [home.read_log_path(), home.backup_log_path()].map(|p| {
+        p.strip_prefix(&home.root)
+            .expect("under the home")
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/")
+    });
     let mut files = BTreeMap::new();
     for entry in walkdir::WalkDir::new(&home.root).sort_by_file_name() {
         let entry = entry?;
@@ -371,6 +446,61 @@ fn run_into(
             continue;
         }
         let bytes = fs::read(entry.path()).with_context(|| format!("read {rel}"))?;
+        if logs.contains(&rel) {
+            // Only the whole lines, and of them only what the last run didn't cover, unless the
+            // log no longer starts with what it covered.
+            let whole = &bytes[..bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)];
+            let earlier = last
+                .as_ref()
+                .and_then(|rec| rec.files.get(&rel))
+                .filter(|f| {
+                    f.object.is_empty()
+                        && usize::try_from(f.len).is_ok_and(|n| n <= whole.len())
+                        && hex::encode(Sha256::digest(&whole[..f.len as usize])) == f.sha256
+                });
+            let (mut parts, from) =
+                earlier.map_or((Vec::new(), 0), |f| (f.parts.clone(), f.len as usize));
+            if whole.len() > from {
+                parts.push(LogPart {
+                    object: String::new(),
+                    from: from as u64,
+                    to: whole.len() as u64,
+                    sha256: String::new(),
+                    runs: 1,
+                });
+                let tail = parts.split_off(parts.len() - merge_tail(parts.iter().map(|p| p.runs)));
+                let (from, to) = (tail[0].from, whole.len() as u64);
+                let sha = hex::encode(Sha256::digest(&whole[from as usize..]));
+                parts.push(LogPart {
+                    object: key.name(&format!("log/{rel}/{from}-{to}/{sha}")),
+                    from,
+                    to,
+                    sha256: sha,
+                    runs: tail.iter().map(|p| p.runs).sum(),
+                });
+            }
+            // Each part the target lacks: the new one, or an earlier one it lost.
+            for part in &parts {
+                if !present.contains(&part.object) {
+                    stop_if_late!();
+                    let mut sealed = scratch.file()?;
+                    key.seal(&whole[part.from as usize..part.to as usize], &mut sealed)?;
+                    stop_if_late!();
+                    r.bytes_sent += put(&*store, &part.object, &mut sealed)?;
+                    r.files_sent += 1;
+                }
+            }
+            files.insert(
+                rel,
+                FileRef {
+                    object: String::new(),
+                    sha256: hex::encode(Sha256::digest(whole)),
+                    parts,
+                    len: whole.len() as u64,
+                },
+            );
+            continue;
+        }
         let sha = hex::encode(Sha256::digest(&bytes));
         let name = key.name(&format!("file/{rel}/{sha}"));
         if !present.contains(&name) {
@@ -386,6 +516,8 @@ fn run_into(
             FileRef {
                 object: name,
                 sha256: sha,
+                parts: Vec::new(),
+                len: 0,
             },
         );
     }
@@ -470,7 +602,7 @@ pub fn read_record(store: &dyn Store, key: &BackupKey, n: u64) -> Result<RunReco
         .with_context(|| format!("open run {n}'s record"))?;
     let rec: RunRecord =
         serde_json::from_slice(&plain).map_err(|e| anyhow!("run {n}'s record: {e}"))?;
-    if rec.version != RECORD_VERSION || rec.number != n {
+    if !(1..=RECORD_VERSION).contains(&rec.version) || rec.number != n {
         bail!("run {n}'s record is not one this version reads");
     }
     Ok(rec)
@@ -571,6 +703,104 @@ mod tests {
         )
     }
 
+    #[test]
+    fn the_logs_are_stored_as_what_each_run_appended() {
+        let (_dir, home, target) = setup();
+        let log: String = (0..2000)
+            .map(|i| format!("{{\"reader\":\"owner\",\"i\":{i}}}\n"))
+            .collect();
+        fs::write(home.read_log_path(), log).unwrap();
+        let first = run(&home, &target).unwrap();
+        assert!(first.ok && first.bytes_sent > 50_000, "{first:?}");
+
+        // One line more: the second run's part joins the first's, as one part of two runs.
+        append_jsonl(&home.read_log_path(), &serde_json::json!({"reader": "x"})).unwrap();
+        let second = run(&home, &target).unwrap();
+        assert!(second.ok, "{second:?}");
+        assert_eq!(
+            second.files_sent, 2,
+            "the read log and the backup log: {second:?}"
+        );
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, false).unwrap();
+        let rec = read_record(&*store, &key, 1).unwrap();
+        let reads = &rec.files["log/reads.jsonl"];
+        assert!(reads.object.is_empty(), "{reads:?}");
+        assert_eq!(
+            (reads.parts.len(), reads.parts[0].runs),
+            (1, 2),
+            "{reads:?}"
+        );
+        assert_eq!(reads.len, fs::metadata(home.read_log_path()).unwrap().len());
+        assert_eq!(rec.files["log/backups.jsonl"].parts.len(), 1);
+
+        // A part the target lost is sent again.
+        let lost = &reads.parts[0].object;
+        let objects = target.path.as_ref().unwrap().join("distill-backup");
+        fs::remove_file(objects.join(&lost[..2]).join(lost)).unwrap();
+        let third = run(&home, &target).unwrap();
+        assert!(
+            third.ok && store.list().unwrap().contains(lost),
+            "{third:?}"
+        );
+
+        // Forty more runs, each after a capture and a read: each list stays at most log2(runs) + 1
+        // parts long, so a record stays small, and a restore brings back each log whole.
+        let mut archive = Archive::open(&home).unwrap();
+        let mut sent = 0;
+        for i in 0..40 {
+            let text = format!("session {i}\n");
+            archive
+                .put(
+                    Harness::Codex,
+                    &format!("/s/{i}.jsonl"),
+                    "1",
+                    text.as_bytes(),
+                )
+                .unwrap();
+            append_jsonl(&home.read_log_path(), &serde_json::json!({"reader": i})).unwrap();
+            let r = run(&home, &target).unwrap();
+            assert!(r.ok, "{r:?}");
+            sent += r.bytes_sent;
+        }
+        // Whole copies would have stored the read log forty times again.
+        assert!(sent < 8 * first.bytes_sent, "{sent} bytes for forty runs");
+        let rec = read_record(&*store, &key, 42).unwrap();
+        assert!(rec.manifest.len() <= 7, "{:?}", rec.manifest);
+        for log in ["log/reads.jsonl", "log/backups.jsonl"] {
+            assert!(rec.files[log].parts.len() <= 7, "{:?}", rec.files[log]);
+        }
+        let mut sealed = Vec::new();
+        store.get(&run_name(&key, 42), &mut sealed).unwrap();
+        assert!(sealed.len() < 6_000, "the record is {} bytes", sealed.len());
+        let restored = Home::new(_dir.path().join("restored"));
+        crate::backup::restore(&restored, &*store, &key, false).unwrap();
+        for p in [
+            Home::read_log_path,
+            Home::backup_log_path,
+            Home::manifest_path,
+        ] {
+            let (a, b) = (fs::read(p(&home)).unwrap(), fs::read(p(&restored)).unwrap());
+            // The restored backup log lacks the newest run's own line.
+            assert!(
+                a.starts_with(&b) && b.len() + 400 > a.len(),
+                "{}",
+                p(&home).display()
+            );
+        }
+
+        // A log that no longer starts with what was stored is stored over from its start.
+        fs::write(home.read_log_path(), "{\"reader\":\"y\"}\n").unwrap();
+        assert!(run(&home, &target).unwrap().ok);
+        let rec = read_record(&*store, &key, 43).unwrap();
+        let reads = &rec.files["log/reads.jsonl"];
+        assert_eq!(
+            (reads.parts.len(), reads.parts[0].from),
+            (1, 0),
+            "{reads:?}"
+        );
+    }
+
     /// Every file under `dir`, read whole.
     fn stored(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
         walkdir::WalkDir::new(dir)
@@ -648,12 +878,13 @@ mod tests {
         let store = store::open(&target, true).unwrap();
         let rec = read_record(&*store, &key, 2).unwrap();
         assert_eq!(rec.lines, 3);
+        // Run 2's part, of one run, joined run 0's as one part of two runs.
         assert_eq!(
             rec.manifest
                 .iter()
-                .map(|p| (p.from, p.to))
+                .map(|p| (p.from, p.to, p.runs))
                 .collect::<Vec<_>>(),
-            [(0, 2), (2, 3)]
+            [(0, 3, 2)]
         );
         assert!(rec.files.contains_key("config.toml") && rec.files.contains_key("log/reads.jsonl"));
         assert!(
