@@ -9,6 +9,7 @@
 //! [`Home`] has a path helper for every entry in it.
 
 pub mod archive;
+pub mod backup;
 pub mod cards;
 pub mod config;
 pub mod details;

@@ -9,6 +9,7 @@ publish.workspace = true
 description = "DISTILL core: capture, parsers, findings, search and the read path."
 
 [dependencies]
+age.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
