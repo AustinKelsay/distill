@@ -28,13 +28,29 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
 ///   log/reads.jsonl              read_log_path
+///   log/backups.jsonl            backup_log_path
 ///   runs/                        runs_dir: the run log
 ///   reveals/                     reveals_dir: one file per reveal request (reveal_path)
 ///   keys/fingerprint.key         fingerprint_key_path
+///   keys/backup.key              backup_key_path
 /// ```
 ///
-/// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. Folders a previous
+/// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. What a backup holds
+/// is [`Home::keep`]'s answer for each path (ADR 0009). Folders a previous
 /// build left in a home ([`Home::PREVIOUS_BUILD`]) are ignored, never deleted.
+/// Whether a backup holds a file of the home (ADR 0009).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keep {
+    /// In every backup: nothing can rebuild it.
+    Always,
+    /// Only when the target carries cards: rebuildable, but at the cost of model time.
+    Cards,
+    /// Only when the target carries vectors: rebuildable, but at the cost of embedding again.
+    Vectors,
+    /// Never: rebuilt from `raw/`, not needed (locks, the run log), or the backup key itself.
+    Never,
+}
+
 #[derive(Debug, Clone)]
 pub struct Home {
     pub root: PathBuf,
@@ -164,6 +180,37 @@ impl Home {
     pub fn fingerprint_key_path(&self) -> PathBuf {
         self.keys_dir().join("fingerprint.key")
     }
+    /// The key that encrypts and names this home's backups (ADR 0009). Never in a backup: the
+    /// owner keeps a copy as the recovery key.
+    pub fn backup_key_path(&self) -> PathBuf {
+        self.keys_dir().join("backup.key")
+    }
+    /// The backup log: one line per backup run per target.
+    pub fn backup_log_path(&self) -> PathBuf {
+        self.log_dir().join("backups.jsonl")
+    }
+
+    /// Whether a backup holds the file at `rel`, a path relative to the home's root with `/`
+    /// between its parts (ADR 0009, issue #145): always, only when the target carries cards or
+    /// vectors, or never. None for a path the layout doesn't know, which a test catches, so a new
+    /// kind of file can't be left out of backups unnoticed.
+    pub fn keep(rel: &str) -> Option<Keep> {
+        let parts: Vec<&str> = rel.split('/').collect();
+        Some(match parts.as_slice() {
+            ["config.toml"] => Keep::Always,
+            ["raw", _, ..] => Keep::Always,
+            ["keys", "fingerprint.key"] => Keep::Always,
+            ["keys", "backup.key"] => Keep::Never,
+            ["log", "reads.jsonl" | "backups.jsonl"] => Keep::Always,
+            ["reveals", _] => Keep::Always,
+            ["sessions", _, _, "card.json"] => Keep::Cards,
+            ["sessions", _, ..] => Keep::Never,
+            ["index", "vectors.bin"] => Keep::Vectors,
+            ["index", _, ..] | ["state", _, ..] | ["runs", _, ..] => Keep::Never,
+            [dir, ..] if Self::PREVIOUS_BUILD.contains(dir) => Keep::Never,
+            _ => return None,
+        })
+    }
 
     /// The sessions whose last card attempt failed, so they are retried after the rest.
     pub fn card_failures_path(&self) -> PathBuf {
@@ -266,5 +313,34 @@ mod tests {
             p(h.findings_lock_path(k, id)),
             "/h/state/findings/codex/s1.lock"
         );
+    }
+
+    #[test]
+    fn a_backup_holds_what_cannot_be_rebuilt_and_cards_and_vectors_only_on_request() {
+        use Keep::*;
+        for (rel, want) in [
+            ("config.toml", Some(Always)),
+            ("raw/ab/abcdef", Some(Always)),
+            ("raw/manifest.jsonl", Some(Always)),
+            ("keys/fingerprint.key", Some(Always)),
+            ("keys/backup.key", Some(Never)),
+            ("log/reads.jsonl", Some(Always)),
+            ("log/backups.jsonl", Some(Always)),
+            ("reveals/r1.json", Some(Always)),
+            ("sessions/codex/s1/card.json", Some(Cards)),
+            ("sessions/codex/s1/events.jsonl", Some(Never)),
+            ("sessions/index.jsonl", Some(Never)),
+            ("index/vectors.bin", Some(Vectors)),
+            ("index/words/seg-1.bin", Some(Never)),
+            ("state/cards.json", Some(Never)),
+            ("runs/2026-11-22.jsonl", Some(Never)),
+            ("exports/old", Some(Never)),
+            ("raw", None),
+            ("keys/other.key", None),
+            ("log/other.jsonl", None),
+            ("stray.txt", None),
+        ] {
+            assert_eq!(Home::keep(rel), want, "{rel}");
+        }
     }
 }
