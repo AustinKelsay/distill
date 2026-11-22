@@ -1,0 +1,734 @@
+//! A backup run (ADR 0009, issue #143): copy what one target lacks of the backup set, encrypted.
+//!
+//! 1. **Blobs** the target lacks, each sealed and named `name("blob/<capture hash>")`.
+//! 2. **Manifest lines** the target lacks, as one new object,
+//!    `name("manifest/<from>-<to>/<sha256>")`.
+//! 3. **Every other file** of the backup set ([`Home::keep`]) whose content the target lacks,
+//!    named `name("file/<path>/<sha256>")`.
+//! 4. **The run's record**, under [`run_name`] for the next `n`: every manifest object in
+//!    order and the object holding each file now. It is written last, so a run cut short leaves
+//!    no record and the next run redoes it; a restore reads only the newest record.
+//!
+//! Each run adds a line to the backup log. Nothing on the target is overwritten or deleted.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::{Read, Seek, SeekFrom};
+
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use super::BackupKey;
+use super::store::{self, Store};
+use crate::archive::{Archive, expected_blobs, parse_manifest};
+use crate::config::BackupTarget;
+use crate::home::{Home, Keep};
+use crate::util::{append_jsonl, count, now_rfc3339, private_file};
+
+const RECORD_VERSION: u32 = 1;
+
+/// What a run stored, written last and read by a restore.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunRecord {
+    pub version: u32,
+    pub number: u64,
+    pub at: String,
+    /// The manifest objects, oldest first; together they hold its first `lines` lines.
+    pub manifest: Vec<ManifestPart>,
+    pub lines: u64,
+    /// The SHA-256 of those lines, so a later run can tell this home's manifest from another's.
+    pub lines_sha256: String,
+    /// Each other file of the backup set, by its path in the home.
+    pub files: BTreeMap<String, FileRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestPart {
+    pub object: String,
+    pub from: u64,
+    pub to: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileRef {
+    pub object: String,
+    pub sha256: String,
+}
+
+/// What a run did, as one line of the backup log.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BackupReport {
+    pub at: String,
+    pub target: String,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The run's number at the target.
+    pub run: u64,
+    pub blobs_sent: u64,
+    pub manifest_lines_sent: u64,
+    pub files_sent: u64,
+    /// Bytes stored at the target, encrypted.
+    pub bytes_sent: u64,
+    /// Blobs the manifest says the archive holds that neither it nor the target had: lost on
+    /// this machine before any backup took them (`distill verify` names them).
+    pub blobs_missing: u64,
+}
+
+impl BackupReport {
+    pub fn summary(&self) -> String {
+        match &self.error {
+            Some(e) => format!(
+                "Backup to {} (run {}) failed: {e} It stored {}, {}, {}; {}.",
+                self.target,
+                self.run,
+                count(self.blobs_sent, "new blob"),
+                count(self.manifest_lines_sent, "manifest line"),
+                count(self.files_sent, "file"),
+                size(self.bytes_sent)
+            ),
+            None => format!(
+                "Backed up to {} (run {}): {}, {}, {}; {} stored, encrypted.",
+                self.target,
+                self.run,
+                count(self.blobs_sent, "new blob"),
+                count(self.manifest_lines_sent, "manifest line"),
+                count(self.files_sent, "file"),
+                size(self.bytes_sent)
+            ),
+        }
+    }
+}
+
+/// `812 bytes`, `4.2 MB`.
+fn size(n: u64) -> String {
+    match n {
+        0..1_000 => count(n, "byte"),
+        1_000..1_000_000 => format!("{:.1} KB", n as f64 / 1e3),
+        1_000_000..1_000_000_000 => format!("{:.1} MB", n as f64 / 1e6),
+        _ => format!("{:.1} GB", n as f64 / 1e9),
+    }
+}
+
+/// Back up `home` to `target`, and log the run either way. A run that failed, or could not be
+/// logged, is a report with `ok` false and its error.
+pub fn run(home: &Home, target: &BackupTarget) -> Result<BackupReport> {
+    let mut r = BackupReport {
+        at: now_rfc3339(),
+        target: target.name.clone(),
+        ..Default::default()
+    };
+    let result = run_into(home, target, &mut r);
+    r.ok = result.is_ok();
+    r.error = result.as_ref().err().map(|e| format!("{e:#}"));
+    if let Err(e) = append_jsonl(&home.backup_log_path(), &r) {
+        // The run's outcome stands; failing to log it is a failure too.
+        let what = r.error.take().map_or(String::new(), |e| format!("{e}; "));
+        r.ok = false;
+        r.error = Some(format!("{what}the backup log could not be written: {e:#}"));
+    }
+    Ok(r)
+}
+
+fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<()> {
+    let key = BackupKey::existing(home)?
+        .context("this home has no backup key yet: run `distill backup init` first")?;
+    let used = crate::util::read_jsonl::<BackupReport>(&home.backup_log_path())?
+        .iter()
+        .any(|l| l.ok && l.target == target.name);
+    let store = store::open(target, !used)?;
+    let _lock = home.lock("backup")?;
+    // A sweep waits while a run reads the archive, so no blob the run's manifest lines need is
+    // dropped under it by a longer append.
+    let _archive = home.lock_archive()?;
+    let present = store.list()?;
+    let last_run = last_run(&key, &present);
+    let number = last_run.map_or(0, |n| n + 1);
+    r.run = number;
+    let last = match last_run {
+        Some(n) => Some(read_record(&*store, &key, n)?),
+        None => None,
+    };
+    let scratch = Scratch::new(home)?;
+
+    // The manifest's whole lines as they are now; lines appended later go in the next run.
+    let manifest = match fs::read(home.manifest_path()) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).context("read the archive's manifest"),
+    };
+    let whole = manifest
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1);
+    let manifest = &manifest[..whole];
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            manifest
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| i + 1),
+        )
+        .collect();
+    let lines = (starts.len() - 1) as u64;
+    let (mut parts, sent_lines) = match &last {
+        Some(rec) => {
+            let upto = usize::try_from(rec.lines).unwrap_or(usize::MAX);
+            if upto > starts.len() - 1
+                || hex::encode(Sha256::digest(&manifest[..starts[upto]])) != rec.lines_sha256
+            {
+                bail!(
+                    "backup target {:?} holds another home's archive, or this home's manifest \
+                     lost lines; nothing was sent",
+                    target.name
+                );
+            }
+            (rec.manifest.clone(), rec.lines)
+        }
+        None => (Vec::new(), 0),
+    };
+    // An earlier run's manifest part the target lost is sent again from the same lines.
+    for part in &parts {
+        if !present.contains(&part.object) {
+            let lines = &manifest[starts[part.from as usize]..starts[part.to as usize]];
+            let mut sealed = scratch.file()?;
+            key.seal(lines, &mut sealed)?;
+            r.bytes_sent += put(&*store, &part.object, &mut sealed)?;
+        }
+    }
+
+    // 1. Blobs the lines this run covers say the archive holds, that the target lacks.
+    let archive = Archive::open(home)?;
+    for sha in expected_blobs(&parse_manifest(manifest)).keys() {
+        let name = key.name(&format!("blob/{sha}"));
+        if present.contains(&name) {
+            continue;
+        }
+        let mut blob = match archive.open_blob(sha) {
+            Ok(b) => b,
+            Err(e)
+                if e.downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                r.blobs_missing += 1;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        let mut sealed = scratch.file()?;
+        key.seal(&mut blob, &mut sealed)?;
+        // A blob that doesn't hash to its name is corrupt here; don't send it as if it were good.
+        blob.finish()?;
+        r.bytes_sent += put(&*store, &name, &mut sealed)?;
+        r.blobs_sent += 1;
+    }
+
+    // 2. The manifest lines the target lacks.
+    if lines > sent_lines {
+        let new = &manifest[starts[sent_lines as usize]..];
+        // Named by content too: another home with this key and the same earlier lines never
+        // shares a part with this one.
+        let name = key.name(&format!(
+            "manifest/{sent_lines}-{lines}/{}",
+            hex::encode(Sha256::digest(new))
+        ));
+        let mut sealed = scratch.file()?;
+        key.seal(new, &mut sealed)?;
+        r.bytes_sent += put(&*store, &name, &mut sealed)?;
+        r.manifest_lines_sent = lines - sent_lines;
+        parts.push(ManifestPart {
+            object: name,
+            from: sent_lines,
+            to: lines,
+        });
+    }
+
+    // 3. Every other file of the backup set.
+    let mut files = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(&home.root).sort_by_file_name() {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        // Joined from its parts, so a `\\` in a name stays part of that name. DISTILL names
+        // everything in the home; a name that isn't UTF-8 is refused, not changed into another.
+        let parts: Option<Vec<&str>> = entry
+            .path()
+            .strip_prefix(&home.root)
+            .expect("under the home")
+            .components()
+            .map(|c| c.as_os_str().to_str())
+            .collect();
+        let Some(parts) = parts else {
+            bail!(
+                "can't back up {}: its name isn't UTF-8",
+                entry.path().display()
+            );
+        };
+        let rel = parts.join("/");
+        let wanted = match Home::keep(&rel) {
+            Some(Keep::Always) => !rel.starts_with("raw/"),
+            Some(Keep::Cards) => target.cards,
+            Some(Keep::Vectors) => target.vectors,
+            Some(Keep::Never) | None => false,
+        };
+        // The backup log as it stands: this run's own line is written after it, for the next.
+        if !wanted {
+            continue;
+        }
+        let bytes = fs::read(entry.path()).with_context(|| format!("read {rel}"))?;
+        let sha = hex::encode(Sha256::digest(&bytes));
+        let name = key.name(&format!("file/{rel}/{sha}"));
+        if !present.contains(&name) {
+            let mut sealed = scratch.file()?;
+            key.seal(bytes.as_slice(), &mut sealed)?;
+            r.bytes_sent += put(&*store, &name, &mut sealed)?;
+            r.files_sent += 1;
+        }
+        files.insert(
+            rel,
+            FileRef {
+                object: name,
+                sha256: sha,
+            },
+        );
+    }
+
+    // 4. The record, last.
+    let record = RunRecord {
+        version: RECORD_VERSION,
+        number,
+        at: r.at.clone(),
+        manifest: parts,
+        lines,
+        lines_sha256: hex::encode(Sha256::digest(manifest)),
+        files,
+    };
+    let mut sealed = scratch.file()?;
+    key.seal(serde_json::to_vec(&record)?.as_slice(), &mut sealed)?;
+    let name = run_name(&key, number);
+    store.sync()?;
+    sealed.seek(SeekFrom::Start(0))?;
+    if !store.put(&name, &mut sealed)? {
+        bail!(
+            "another backup run to {:?} finished meanwhile; nothing was lost",
+            target.name
+        );
+    }
+    // Everything else is stored, but the archive itself lost bytes: that is a failure to see.
+    if r.blobs_missing > 0 {
+        bail!(
+            "{} the manifest names {} missing from this archive, so this run lacks {}; \
+             everything else was stored. Run `distill verify`.",
+            count(r.blobs_missing, "blob"),
+            if r.blobs_missing == 1 { "is" } else { "are" },
+            if r.blobs_missing == 1 { "it" } else { "them" }
+        );
+    }
+    Ok(())
+}
+
+/// The name run `n`'s record is stored under. Unlike other names the key can read it back: a
+/// keyed value of `n` (40 hex), then `n` masked by a keyed value of that (16 hex), then a keyed
+/// check (8 hex). [`last_run`] so finds the newest record from a listing alone, however many
+/// objects a target lost, while to the target every name looks alike: it can't pick the records
+/// out, or put them in order, without the key.
+pub fn run_name(key: &BackupKey, n: u64) -> String {
+    let lead = run_lead(key, n);
+    let check = &key.name(&format!("run check/{n}"))[..8];
+    format!("{lead}{:016x}{check}", n ^ run_mask(key, &lead))
+}
+
+fn run_lead(key: &BackupKey, n: u64) -> String {
+    key.name(&format!("run/{n}"))[..40].to_string()
+}
+
+fn run_mask(key: &BackupKey, lead: &str) -> u64 {
+    u64::from_str_radix(&key.name(&format!("run mask/{lead}"))[..16], 16).expect("hex")
+}
+
+/// The run number a name holds, if it is one of this key's run records.
+fn run_number(key: &BackupKey, name: &str) -> Option<u64> {
+    let (lead, masked) = (name.get(..40)?, name.get(40..56)?);
+    let n = u64::from_str_radix(masked, 16).ok()? ^ run_mask(key, lead);
+    (run_lead(key, n) == lead && run_name(key, n) == name).then_some(n)
+}
+
+/// The highest run number with a record at a target.
+pub fn last_run(key: &BackupKey, present: &BTreeSet<String>) -> Option<u64> {
+    present
+        .iter()
+        .filter_map(|name| run_number(key, name))
+        .max()
+}
+
+/// The record of run `n` at a target.
+pub fn read_record(store: &dyn Store, key: &BackupKey, n: u64) -> Result<RunRecord> {
+    let mut sealed = Vec::new();
+    store.get(&run_name(key, n), &mut sealed)?;
+    let mut plain = Vec::new();
+    key.open(sealed.as_slice(), &mut plain)
+        .with_context(|| format!("open run {n}'s record"))?;
+    let rec: RunRecord =
+        serde_json::from_slice(&plain).map_err(|e| anyhow!("run {n}'s record: {e}"))?;
+    if rec.version != RECORD_VERSION || rec.number != n {
+        bail!("run {n}'s record is not one this version reads");
+    }
+    Ok(rec)
+}
+
+/// Store a sealed file from its start; the bytes stored, or 0 when the target had it already.
+fn put(store: &dyn Store, name: &str, sealed: &mut fs::File) -> Result<u64> {
+    let len = sealed.seek(SeekFrom::End(0))?;
+    sealed.seek(SeekFrom::Start(0))?;
+    Ok(if store.put(name, &mut (sealed as &mut dyn Read))? {
+        len
+    } else {
+        0
+    })
+}
+
+/// Owner-only files under `state/` to seal into before storing, removed when dropped.
+struct Scratch {
+    dir: tempfile::TempDir,
+}
+
+impl Scratch {
+    fn new(home: &Home) -> Result<Self> {
+        let parent = home.state_dir();
+        crate::util::create_dir_private(&parent)?;
+        let mut b = tempfile::Builder::new();
+        b.prefix("backup-");
+        // Owner-only whatever the umask.
+        #[cfg(unix)]
+        b.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        Ok(Self {
+            dir: b
+                .tempdir_in(&parent)
+                .context("make a scratch folder for the backup")?,
+        })
+    }
+
+    fn file(&self) -> Result<fs::File> {
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).map_err(|e| anyhow!("generate a file name: {e}"))?;
+        let path = self.dir.path().join(hex::encode(nonce));
+        let f = private_file()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("create {}", path.display()))?;
+        // Unlinked at once: the open handle is all a run needs, and nothing is left behind.
+        fs::remove_file(&path)?;
+        Ok(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::Harness;
+
+    /// A home with two captures, a config and a read log, and a folder target beside it.
+    fn setup() -> (tempfile::TempDir, Home, BackupTarget) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let mut archive = Archive::open(&home).unwrap();
+        archive
+            .put(
+                Harness::ClaudeCode,
+                "/s/a.jsonl",
+                "1",
+                secret_session().as_bytes(),
+            )
+            .unwrap();
+        archive
+            .put(Harness::Codex, "/s/b.jsonl", "1", &b"another session\n"[..])
+            .unwrap();
+        crate::Config::default().save(&home.config_path()).unwrap();
+        append_jsonl(
+            &home.read_log_path(),
+            &serde_json::json!({"reader": "owner"}),
+        )
+        .unwrap();
+        BackupKey::create(&home).unwrap();
+        fs::create_dir(dir.path().join("drive")).unwrap();
+        let target = BackupTarget {
+            name: "drive".into(),
+            kind: "folder".into(),
+            path: Some(dir.path().join("drive")),
+            cards: false,
+            vectors: false,
+        };
+        (dir, home, target)
+    }
+
+    fn secret_session() -> String {
+        format!(
+            "deploy with {}\n",
+            ["sk-", "live-", &"Zq9".repeat(8)].concat()
+        )
+    }
+
+    /// Every file under `dir`, read whole.
+    fn stored(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+        walkdir::WalkDir::new(dir)
+            .into_iter()
+            .map(|e| e.unwrap())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().to_string(),
+                    fs::read(e.path()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_run_stores_the_backup_set_encrypted_and_the_next_only_what_changed() {
+        let (dir, home, target) = setup();
+        let r = run(&home, &target).unwrap();
+        assert_eq!(
+            (r.run, r.blobs_sent, r.manifest_lines_sent, r.files_sent),
+            (0, 2, 2, 2),
+            "two blobs, two lines, the config and the read log: {r:?}"
+        );
+        assert!(r.ok && r.bytes_sent > 0);
+
+        // Only ciphertext under keyed names: no capture hash, no session text, no path.
+        let archive = Archive::open(&home).unwrap();
+        let hashes: Vec<String> = archive
+            .records()
+            .iter()
+            .map(|r| r.capture_hash.clone())
+            .collect();
+        let files = stored(&dir.path().join("drive"));
+        assert_eq!(
+            files.len(),
+            2 + 1 + 2 + 1,
+            "blobs, a manifest part, files, a record"
+        );
+        for (name, bytes) in &files {
+            assert!(!hashes.contains(name), "{name} is a capture hash");
+            for plain in [
+                secret_session().trim().as_bytes(),
+                b"another session",
+                b"claude-code",
+                b"config.toml",
+            ] {
+                assert!(
+                    !bytes.windows(plain.len()).any(|w| w == plain),
+                    "{name} holds {}",
+                    String::from_utf8_lossy(plain)
+                );
+            }
+        }
+
+        // Nothing changed: a record, and nothing else.
+        let r = run(&home, &target).unwrap();
+        assert_eq!(
+            (r.run, r.blobs_sent, r.manifest_lines_sent, r.files_sent),
+            (1, 0, 0, 1),
+            "only the backup log, which the first run wrote: {r:?}"
+        );
+        // A new capture: its blob and its manifest line.
+        let mut archive = Archive::open(&home).unwrap();
+        archive
+            .put(Harness::Codex, "/s/c.jsonl", "1", &b"a third session\n"[..])
+            .unwrap();
+        let r = run(&home, &target).unwrap();
+        assert_eq!(
+            (r.run, r.blobs_sent, r.manifest_lines_sent),
+            (2, 1, 1),
+            "{r:?}"
+        );
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, true).unwrap();
+        let rec = read_record(&*store, &key, 2).unwrap();
+        assert_eq!(rec.lines, 3);
+        assert_eq!(
+            rec.manifest
+                .iter()
+                .map(|p| (p.from, p.to))
+                .collect::<Vec<_>>(),
+            [(0, 2), (2, 3)]
+        );
+        assert!(rec.files.contains_key("config.toml") && rec.files.contains_key("log/reads.jsonl"));
+        assert!(
+            rec.files.contains_key("keys/fingerprint.key") || !home.fingerprint_key_path().exists()
+        );
+        assert!(
+            !rec.files.keys().any(|k| k.starts_with("keys/backup")),
+            "never the backup key"
+        );
+
+        let log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path()).unwrap();
+        assert_eq!(log.len(), 3);
+        assert!(log.iter().all(|l| l.ok && l.target == "drive"));
+    }
+
+    #[test]
+    fn a_missing_folder_or_key_or_another_homes_target_is_refused_and_logged() {
+        let (dir, home, mut target) = setup();
+        let drive = target.path.clone().unwrap();
+
+        target.path = Some(dir.path().join("unplugged"));
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(
+            !dir.path().join("unplugged").exists(),
+            "not made on this disk"
+        );
+
+        target.path = Some(drive.clone());
+        run(&home, &target).unwrap();
+        // Once used, a target whose drive is gone (its mount point left empty) is refused.
+        fs::rename(&drive, dir.path().join("away")).unwrap();
+        fs::create_dir(&drive).unwrap();
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(err.contains("is the drive mounted"), "{err}");
+        assert!(
+            !drive.join("distill-backup").exists(),
+            "not made on this disk"
+        );
+        fs::remove_dir(&drive).unwrap();
+        fs::rename(dir.path().join("away"), &drive).unwrap();
+        // Another home with the same key (a restored copy that then diverged) at the same target.
+        let other = Home::new(dir.path().join("other"));
+        other.ensure().unwrap();
+        Archive::open(&other)
+            .unwrap()
+            .put(Harness::Codex, "/s/x.jsonl", "1", &b"something else\n"[..])
+            .unwrap();
+        fs::create_dir_all(other.keys_dir()).unwrap();
+        fs::copy(home.backup_key_path(), other.backup_key_path()).unwrap();
+        let err = run(&other, &target).unwrap().error.unwrap();
+        assert!(err.contains("another home's archive"), "{err}");
+
+        fs::remove_file(home.backup_key_path()).unwrap();
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(err.contains("no backup key"), "{err}");
+
+        let log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path()).unwrap();
+        assert_eq!(
+            log.iter().map(|l| l.ok).collect::<Vec<_>>(),
+            [false, true, false, false]
+        );
+    }
+
+    /// The path a folder target keeps the object `name` at.
+    fn object(target: &BackupTarget, name: &str) -> std::path::PathBuf {
+        let root = target.path.as_ref().unwrap().join("distill-backup");
+        root.join(&name[..2]).join(name)
+    }
+
+    #[test]
+    fn a_target_that_lost_an_object_is_repaired_and_never_numbered_backwards() {
+        let (_dir, home, target) = setup();
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, true).unwrap();
+        for n in 0..3 {
+            assert_eq!(run(&home, &target).unwrap().run, n);
+        }
+        // A lost record in the middle: the next run still comes after the newest.
+        fs::remove_file(object(&target, &run_name(&key, 1))).unwrap();
+        assert_eq!(run(&home, &target).unwrap().run, 3);
+
+        // A lost manifest part is sent again from this home's own lines.
+        let part = read_record(&*store, &key, 3).unwrap().manifest[0]
+            .object
+            .clone();
+        fs::remove_file(object(&target, &part)).unwrap();
+        let r = run(&home, &target).unwrap();
+        assert_eq!(r.manifest_lines_sent, 0, "{r:?}");
+        let mut sealed = Vec::new();
+        store.get(&part, &mut sealed).unwrap();
+        let mut lines = Vec::new();
+        key.open(sealed.as_slice(), &mut lines).unwrap();
+        assert_eq!(lines, fs::read(home.manifest_path()).unwrap());
+
+        // A target that lost all but its newest record still numbers after the runs this home
+        // logged.
+        let newest = run_name(&key, 4);
+        for name in store.list().unwrap() {
+            if name != newest {
+                fs::remove_file(object(&target, &name)).unwrap();
+            }
+        }
+        assert_eq!(run(&home, &target).unwrap().run, 5);
+    }
+
+    #[test]
+    fn only_blobs_the_manifest_still_needs_are_sent_and_a_lost_one_is_named() {
+        let (_dir, home, target) = setup();
+        let mut archive = Archive::open(&home).unwrap();
+        // A longer append drops the blob it supersedes: that one is not missing.
+        archive
+            .put(
+                Harness::Codex,
+                "/s/b.jsonl",
+                "2",
+                &b"another session\nmore\n"[..],
+            )
+            .unwrap();
+        let blob = archive.blob_path(&archive.latest()["/s/a.jsonl"].capture_hash);
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, true).unwrap();
+
+        // A blob that can't be read is not a missing one: the run stops before its record.
+        // A link to itself: unreadable whoever runs the test.
+        fs::remove_file(&blob).unwrap();
+        std::os::unix::fs::symlink(&blob, &blob).unwrap();
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(!err.contains("missing from this archive"), "{err}");
+        assert!(read_record(&*store, &key, 0).is_err());
+
+        // A lost one fails the run too, once everything else is stored under its record.
+        fs::remove_file(&blob).unwrap();
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(
+            err.contains("1 blob the manifest names is missing"),
+            "{err}"
+        );
+        let log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path()).unwrap();
+        let r = log.last().unwrap();
+        let summary = r.summary();
+        assert!(
+            summary.contains("(run 0) failed") && summary.contains("3 files"),
+            "{summary}"
+        );
+        assert_eq!((r.ok, r.blobs_missing), (false, 1), "{r:?}");
+        assert_eq!(read_record(&*store, &key, 0).unwrap().lines, 3);
+    }
+
+    #[test]
+    fn a_run_records_name_gives_its_number_back_to_its_own_key_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = BackupKey::create(&Home::new(dir.path().join("a"))).unwrap();
+        let other = BackupKey::create(&Home::new(dir.path().join("b"))).unwrap();
+        let present = BTreeSet::from([
+            run_name(&key, 3),
+            run_name(&key, 70_000),
+            run_name(&other, 90_000),
+            key.name("blob/ab"),
+            format!("{}{}", &run_name(&key, 7)[..40], "0".repeat(24)),
+        ]);
+        assert_eq!(
+            last_run(&key, &present),
+            Some(70_000),
+            "no ceiling, no other key's"
+        );
+        assert_eq!(last_run(&other, &present), Some(90_000));
+        assert_ne!(run_name(&key, 3), key.name("run/3"));
+        assert_eq!(run_name(&key, 3).len(), 64);
+        // Nothing in common between records that a target could sort or group them by.
+        let (a, b) = (run_name(&key, 4), run_name(&key, 5));
+        assert_ne!(a[..8], b[..8]);
+        assert_ne!(a[56..], b[56..]);
+    }
+}

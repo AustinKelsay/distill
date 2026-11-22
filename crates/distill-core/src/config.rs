@@ -24,6 +24,27 @@ pub struct Config {
     pub steward: StewardConfig,
     #[serde(default)]
     pub schedule: Schedule,
+    /// Where backups go (ADR 0009): `[[backup]]` tables.
+    #[serde(default, rename = "backup", skip_serializing_if = "Vec::is_empty")]
+    pub backups: Vec<BackupTarget>,
+}
+
+/// One backup target: a `[[backup]]` table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackupTarget {
+    /// How the owner names it; the backup log and status use it.
+    pub name: String,
+    /// `folder` (built in); other kinds come as adapters later.
+    pub kind: String,
+    /// For a `folder` target: the folder, which must exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    /// Also carry cards, which cost model time to rebuild.
+    #[serde(default)]
+    pub cards: bool,
+    /// Also carry vectors, which cost embedding time to rebuild.
+    #[serde(default)]
+    pub vectors: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,6 +170,7 @@ impl Default for Config {
             providers: Vec::new(),
             steward: StewardConfig::default(),
             schedule: Schedule::default(),
+            backups: Vec::new(),
         }
     }
 }

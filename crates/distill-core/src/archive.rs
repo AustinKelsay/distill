@@ -279,19 +279,7 @@ impl Archive {
     /// Check every blob the archive should still hold.
     pub fn verify(&self) -> Result<VerifyReport> {
         let mut report = VerifyReport::default();
-        let mut expected: BTreeMap<String, u64> = BTreeMap::new();
-        for r in self.latest.values() {
-            expected.insert(r.capture_hash.clone(), r.size);
-        }
-        for r in &self.records {
-            if r.kind == CaptureKind::Rewrite
-                && let Some(prev) = &r.previous
-                && let Some(p) = self.records.iter().find(|x| &x.capture_hash == prev)
-            {
-                expected.insert(prev.clone(), p.size);
-            }
-        }
-        for (sha, size) in &expected {
+        for (sha, size) in &expected_blobs(&self.records) {
             report.checked += 1;
             let path = self.blob_path(sha);
             match fs::File::open(&path) {
@@ -309,6 +297,37 @@ impl Archive {
         }
         Ok(report)
     }
+}
+
+/// The blobs an archive with these records should hold, with their sizes: the latest capture
+/// of each origin, and the older side of every rewrite. A blob a longer append superseded is not
+/// among them.
+pub(crate) fn expected_blobs(records: &[CaptureRecord]) -> BTreeMap<String, u64> {
+    let mut latest = BTreeMap::new();
+    for r in records {
+        latest.insert(&r.origin, r);
+    }
+    let mut expected: BTreeMap<String, u64> = latest
+        .values()
+        .map(|r| (r.capture_hash.clone(), r.size))
+        .collect();
+    for r in records {
+        if r.kind == CaptureKind::Rewrite
+            && let Some(prev) = &r.previous
+            && let Some(p) = records.iter().find(|x| &x.capture_hash == prev)
+        {
+            expected.insert(prev.clone(), p.size);
+        }
+    }
+    expected
+}
+
+/// The records in manifest lines, as [`read_jsonl`] reads them.
+pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
+    bytes
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -48,11 +48,23 @@ api_key_file = "/…/key"   # an absolute path; the first line is the key
 
 With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 
+Backups (ADR 0009) go to `[[backup]]` targets, encrypted on this machine first. Run `distill backup init` once to make the key; keep the recovery key it prints somewhere other than this machine.
+
+```toml
+[[backup]]
+name = "drive"
+kind = "folder"             # built in; the folder must exist (an unplugged drive is refused)
+path = "/Volumes/Backup"
+cards = false               # also carry cards, which cost model time to rebuild
+vectors = false             # also carry vectors, which cost embedding time to rebuild
+```
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
+| `distill backup init` / `run` | Make the backup key (printing its recovery key once), or back up to every `[[backup]]` target now. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
 | `distill read <session>` | A session's events for a model at a named provider, with a placeholder for each secret. |
