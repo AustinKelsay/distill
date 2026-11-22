@@ -26,15 +26,16 @@ pub trait Store {
     fn sync(&self) -> Result<()>;
 }
 
-/// The store for `target`'s kind.
-pub fn open(target: &BackupTarget) -> Result<Box<dyn Store>> {
+/// The store for `target`'s kind. `first` says whether this is its first use: only then may a
+/// folder target's `distill-backup/` be made.
+pub fn open(target: &BackupTarget, first: bool) -> Result<Box<dyn Store>> {
     match target.kind.as_str() {
         "folder" => {
             let path = target
                 .path
                 .as_ref()
                 .with_context(|| format!("backup target {:?} needs a path", target.name))?;
-            Ok(Box::new(Folder::open(path)?))
+            Ok(Box::new(Folder::open(path, first)?))
         }
         other => bail!(
             "backup target {:?} has kind {other:?}; only \"folder\" is supported so far",
@@ -50,8 +51,10 @@ pub struct Folder {
 
 impl Folder {
     /// The target at `path`, which must exist: a drive that isn't mounted must not turn into a
-    /// folder on this machine's own disk.
-    pub fn open(path: &Path) -> Result<Self> {
+    /// folder on this machine's own disk. Only on a target's first use (`first`) is its
+    /// `distill-backup/` made; after that a missing one means the drive isn't there, even when
+    /// its mount point is (an empty folder, on Linux).
+    pub fn open(path: &Path, first: bool) -> Result<Self> {
         if !path.is_dir() {
             bail!(
                 "the backup folder {} does not exist (is the drive connected?)",
@@ -59,6 +62,12 @@ impl Folder {
             );
         }
         let objects = path.join("distill-backup");
+        if !first && !objects.is_dir() {
+            bail!(
+                "{} is not there, though this home backed up to it before (is the drive mounted?)",
+                objects.display()
+            );
+        }
         if make_dir(&objects)? {
             sync_dir(path)?;
         }
@@ -221,7 +230,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let drive = dir.path().join("drive");
         fs::create_dir(&drive).unwrap();
-        let store = Folder::open(&drive).unwrap();
+        assert!(
+            Folder::open(&drive, false).is_err(),
+            "used before, so not made again"
+        );
+        let store = Folder::open(&drive, true).unwrap();
         let (a, b) = ("a".repeat(64), "b".repeat(64));
         assert!(store.put(&a, &mut &b"first"[..]).unwrap());
         assert!(!store.put(&a, &mut &b"other"[..]).unwrap(), "write-once");

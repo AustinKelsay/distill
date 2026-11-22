@@ -103,8 +103,8 @@ fn size(n: u64) -> String {
     }
 }
 
-/// Back up `home` to `target`, and log the run either way. A run that failed is a report with
-/// `ok` false and its error; only failing to log it is an `Err`.
+/// Back up `home` to `target`, and log the run either way. A run that failed, or could not be
+/// logged, is a report with `ok` false and its error.
 pub fn run(home: &Home, target: &BackupTarget) -> Result<BackupReport> {
     let mut r = BackupReport {
         at: now_rfc3339(),
@@ -114,14 +114,22 @@ pub fn run(home: &Home, target: &BackupTarget) -> Result<BackupReport> {
     let result = run_into(home, target, &mut r);
     r.ok = result.is_ok();
     r.error = result.as_ref().err().map(|e| format!("{e:#}"));
-    append_jsonl(&home.backup_log_path(), &r)?;
+    if let Err(e) = append_jsonl(&home.backup_log_path(), &r) {
+        // The run's outcome stands; failing to log it is a failure too.
+        let what = r.error.take().map_or(String::new(), |e| format!("{e}; "));
+        r.ok = false;
+        r.error = Some(format!("{what}the backup log could not be written: {e:#}"));
+    }
     Ok(r)
 }
 
 fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<()> {
     let key = BackupKey::existing(home)?
         .context("this home has no backup key yet: run `distill backup init` first")?;
-    let store = store::open(target)?;
+    let used = crate::util::read_jsonl::<BackupReport>(&home.backup_log_path())?
+        .iter()
+        .any(|l| l.ok && l.target == target.name);
+    let store = store::open(target, !used)?;
     let _lock = home.lock("backup")?;
     // A sweep waits while a run reads the archive, so no blob the run's manifest lines need is
     // dropped under it by a longer append.
@@ -236,12 +244,15 @@ fn run_into(home: &Home, target: &BackupTarget, r: &mut BackupReport) -> Result<
         if !entry.file_type().is_file() {
             continue;
         }
+        // Joined from its parts, so a `\\` in a name stays part of that name.
         let rel = entry
             .path()
             .strip_prefix(&home.root)
             .expect("under the home")
-            .to_string_lossy()
-            .replace('\\', "/");
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let wanted = match Home::keep(&rel) {
             Some(Keep::Always) => !rel.starts_with("raw/"),
             Some(Keep::Cards) => target.cards,
@@ -522,7 +533,7 @@ mod tests {
             "{r:?}"
         );
         let key = BackupKey::existing(&home).unwrap().unwrap();
-        let store = store::open(&target).unwrap();
+        let store = store::open(&target, true).unwrap();
         let rec = read_record(&*store, &key, 2).unwrap();
         assert_eq!(rec.lines, 3);
         assert_eq!(
@@ -561,6 +572,17 @@ mod tests {
 
         target.path = Some(drive.clone());
         run(&home, &target).unwrap();
+        // Once used, a target whose drive is gone (its mount point left empty) is refused.
+        fs::rename(&drive, dir.path().join("away")).unwrap();
+        fs::create_dir(&drive).unwrap();
+        let err = run(&home, &target).unwrap().error.unwrap();
+        assert!(err.contains("is the drive mounted"), "{err}");
+        assert!(
+            !drive.join("distill-backup").exists(),
+            "not made on this disk"
+        );
+        fs::remove_dir(&drive).unwrap();
+        fs::rename(dir.path().join("away"), &drive).unwrap();
         // Another home with the same key (a restored copy that then diverged) at the same target.
         let other = Home::new(dir.path().join("other"));
         other.ensure().unwrap();
@@ -580,7 +602,7 @@ mod tests {
         let log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path()).unwrap();
         assert_eq!(
             log.iter().map(|l| l.ok).collect::<Vec<_>>(),
-            [false, true, false]
+            [false, true, false, false]
         );
     }
 
@@ -594,7 +616,7 @@ mod tests {
     fn a_target_that_lost_an_object_is_repaired_and_never_numbered_backwards() {
         let (_dir, home, target) = setup();
         let key = BackupKey::existing(&home).unwrap().unwrap();
-        let store = store::open(&target).unwrap();
+        let store = store::open(&target, true).unwrap();
         for n in 0..3 {
             assert_eq!(run(&home, &target).unwrap().run, n);
         }
@@ -641,11 +663,12 @@ mod tests {
             .unwrap();
         let blob = archive.blob_path(&archive.latest()["/s/a.jsonl"].capture_hash);
         let key = BackupKey::existing(&home).unwrap().unwrap();
-        let store = store::open(&target).unwrap();
+        let store = store::open(&target, true).unwrap();
 
         // A blob that can't be read is not a missing one: the run stops before its record.
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&blob, fs::Permissions::from_mode(0o000)).unwrap();
+        // A link to itself: unreadable whoever runs the test.
+        fs::remove_file(&blob).unwrap();
+        std::os::unix::fs::symlink(&blob, &blob).unwrap();
         let err = run(&home, &target).unwrap().error.unwrap();
         assert!(!err.contains("missing from this archive"), "{err}");
         assert!(read_record(&*store, &key, 0).is_err());

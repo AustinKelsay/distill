@@ -56,6 +56,18 @@ fn run_targets(ctx: &Ctx, only: Option<&str>) -> Result<()> {
         .iter()
         .filter(|t| only.is_none_or(|n| t.name == n))
         .collect();
+    if let Some(t) = config
+        .backups
+        .iter()
+        .enumerate()
+        .find(|(i, t)| config.backups[..*i].iter().any(|u| u.name == t.name))
+        .map(|(_, t)| t)
+    {
+        bail!(
+            "config.toml names two [[backup]] targets {:?}; give each its own name",
+            t.name
+        );
+    }
     if targets.is_empty() {
         match only {
             Some(n) => bail!("no [[backup]] target named {n:?} in config.toml"),
