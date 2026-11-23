@@ -137,8 +137,9 @@ fn next_word(bytes: &[u8], at: &mut usize, prev: &mut Vec<u8>) -> Result<u64> {
         keep <= prev.len(),
         "a word shares more than the one before it"
     );
-    let rest = bytes
-        .get(*at..*at + len)
+    let rest = at
+        .checked_add(len)
+        .and_then(|end| bytes.get(*at..end))
         .context("a segment ends inside a word")?;
     prev.truncate(keep);
     prev.extend_from_slice(rest);
@@ -334,7 +335,11 @@ impl Segment {
         } else {
             self.blocks_start - self.words_start
         };
-        ensure!(start <= end, "{} does not add up", self.path.display());
+        ensure!(
+            start <= end && end <= self.blocks_start - self.words_start,
+            "{} does not add up",
+            self.path.display()
+        );
         Ok((self.bytes(self.words_start + start, end - start)?, run))
     }
 
@@ -361,8 +366,12 @@ impl Segment {
         let (mut at, mut cur) = (0, Vec::new());
         while at < bytes.len() {
             let len = next_word(&bytes, &mut at, &mut cur)?;
+            let end = run
+                .checked_add(len)
+                .filter(|&end| self.postings_start <= run && end <= self.words_start)
+                .with_context(|| format!("{} does not add up", self.path.display()))?;
             match cur.as_slice().cmp(w) {
-                std::cmp::Ordering::Less => run += len,
+                std::cmp::Ordering::Less => run = end,
                 std::cmp::Ordering::Equal => {
                     return Ok(Some(self.bytes(run, len)?));
                 }
@@ -401,6 +410,11 @@ fn u32_at(r: &mut impl Read) -> Result<u32> {
     Ok(u32::from_le_bytes(b))
 }
 
+/// How many bytes `r` has left: buffered, and not yet read from its area.
+fn left(r: &BufReader<std::io::Take<File>>) -> u64 {
+    r.buffer().len() as u64 + r.get_ref().limit()
+}
+
 /// A segment's words in order, read front to back.
 pub struct Words {
     words: BufReader<std::io::Take<File>>,
@@ -424,12 +438,18 @@ impl Iterator for Words {
                 keep <= self.prev.len(),
                 "a word shares more than the one before it"
             );
+            // Checked against what is left of each area before anything is allocated for it.
+            ensure!(
+                len as u64 <= left(&self.words),
+                "a word runs past the words"
+            );
             self.prev.truncate(keep);
             let at = self.prev.len();
             self.prev.resize(at + len, 0);
             self.words.read_exact(&mut self.prev[at..])?;
-            let run_len = read_varint(&mut self.words)? as usize;
-            let mut run = vec![0u8; run_len];
+            let run_len = read_varint(&mut self.words)?;
+            ensure!(run_len <= left(&self.runs), "a run runs past the postings");
+            let mut run = vec![0u8; usize::try_from(run_len)?];
             self.runs.read_exact(&mut run)?;
             Ok((String::from_utf8(self.prev.clone())?, run))
         };
@@ -528,6 +548,32 @@ mod tests {
         assert!(Segment::open(&path).is_err());
         fs::write(&path, b"not a segment at all, just some text here").unwrap();
         assert!(Segment::open(&path).is_err());
+
+        // A length past the end of its area is an error, not an allocation of that size.
+        let mut w = Writer::create(&path, &["a".to_string()]).unwrap();
+        w.add("ab", &[0, 1, 1, 0]).unwrap();
+        w.finish().unwrap();
+        let good = fs::read(&path).unwrap();
+        let s = Segment::open(&path).unwrap();
+        let (words_start, blocks_start) = (s.words_start as usize, s.blocks_start as usize);
+        assert_eq!(&good[words_start..blocks_start], &[0, 2, b'a', b'b', 4]);
+        for (at, huge) in [(words_start + 1, true), (words_start + 4, false)] {
+            let mut bad = good.clone();
+            // A ten-byte varint of u64::MAX in place of the word's or the run's length.
+            bad.splice(at..at + 1, [0xff; 9].into_iter().chain([0x01]));
+            let len = bad.len() as u64;
+            // Keep the footer adding up: the blocks and footer moved 9 bytes on.
+            let shift = |b: &mut Vec<u8>, i: usize| {
+                let v = u64::from_le_bytes(b[i..i + 8].try_into().unwrap()) + 9;
+                b[i..i + 8].copy_from_slice(&v.to_le_bytes());
+            };
+            let f = len as usize - FOOTER as usize;
+            shift(&mut bad, f + 16);
+            fs::write(&path, &bad).unwrap();
+            let s = Segment::open(&path).unwrap();
+            assert!(s.words().unwrap().next().unwrap().is_err(), "huge {huge}");
+            assert!(s.get("ab").is_err(), "huge {huge}");
+        }
 
         // A segment with no words at all (sessions with no text) is a segment.
         Writer::create(&path, &["a".to_string()])
