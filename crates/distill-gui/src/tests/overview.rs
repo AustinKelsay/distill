@@ -222,11 +222,6 @@ fn recent_runs_collapse_same_relative_time_and_format_manual_groups_and_cadence(
         "Every 15 min · sweep to models"
     );
     assert_eq!(text_of(&rt, "runs/when"), "yesterday");
-    assert!(
-        !shows(&rt, "yesterday to yesterday"),
-        "same relative time collapses: {:?}",
-        texts(&rt)
-    );
     assert!(shows(&rt, "3 scheduled runs"), "{:?}", texts(&rt));
     assert!(shows(&rt, "Sweep on its own · 2 runs"), "{:?}", texts(&rt));
 

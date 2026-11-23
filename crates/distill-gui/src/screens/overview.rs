@@ -799,11 +799,12 @@ fn runs(s: &State, st: &Status, p: &Paint) -> El {
 }
 
 fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
-    let newest = ago(&g.newest, s.now());
-    let when = if g.runs <= 1 {
+    let now = s.now();
+    let newest = ago(&g.newest, now);
+    let when = if g.runs == 1 {
         newest
     } else {
-        let oldest = ago(&g.oldest, s.now());
+        let oldest = ago(&g.oldest, now);
         if oldest == newest {
             newest
         } else {
@@ -817,7 +818,7 @@ fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
         if let Some(first) = name.get_mut(..1) {
             first.make_ascii_uppercase();
         }
-        Some(if g.runs <= 1 {
+        Some(if g.runs == 1 {
             format!("{name} on its own")
         } else {
             format!("{name} on its own · {} runs", g.runs)
