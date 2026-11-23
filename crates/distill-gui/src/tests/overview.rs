@@ -182,11 +182,61 @@ fn a_step_with_nothing_to_report_is_not_yet_available() {
 #[test]
 fn recent_runs_fold_alike_runs_and_name_the_steps_that_did_not_simply_finish() {
     let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
-    assert_eq!(text_of(&rt, "runs/what"), "Tick");
-    assert!(shows(&rt, "6 runs, 6 h ago to 1 h ago"), "{:?}", texts(&rt));
+    assert_eq!(text_of(&rt, "runs/cadence"), "Hourly · sweep to models");
+    assert_eq!(text_of(&rt, "runs/when"), "40 min ago");
+    assert!(!shows(&rt, "Tick"), "no bare Tick rows: {:?}", texts(&rt));
+    assert!(
+        shows(&rt, "6 h ago to 1 h ago") && shows(&rt, "6 scheduled runs"),
+        "{:?}",
+        texts(&rt)
+    );
     assert!(shows(&rt, "cards: time limit") && shows(&rt, "details: failed"));
     assert!(shows(&rt, "cards failed: the provider did not answer"));
     assert!(shows(&rt, "All steps OK") && shows(&rt, "Sweep on its own"));
+}
+
+#[test]
+fn recent_runs_collapse_same_relative_time_and_format_manual_groups_and_cadence() {
+    let mut s = fixture::running();
+    s.config.as_mut().unwrap().schedule.sweep_every_minutes = 15;
+    s.overview.status.as_mut().unwrap().runs = serde_json::from_value(serde_json::json!([
+        {
+            "newest": fixture::at(60 * 26),
+            "oldest": fixture::at(60 * 30),
+            "runs": 3,
+            "step": "tick",
+            "steps": [{ "name": "sweep", "result": "ok" }]
+        },
+        {
+            "newest": fixture::at(60 * 48),
+            "oldest": fixture::at(60 * 72),
+            "runs": 2,
+            "step": "sweep",
+            "steps": [{ "name": "sweep", "result": "ok" }]
+        }
+    ]))
+    .unwrap();
+    let rt = runtime_sized(s, (1080.0, 2400.0));
+    assert_eq!(
+        text_of(&rt, "runs/cadence"),
+        "Every 15 min · sweep to models"
+    );
+    assert_eq!(text_of(&rt, "runs/when"), "yesterday");
+    assert!(shows(&rt, "3 scheduled runs"), "{:?}", texts(&rt));
+    assert!(shows(&rt, "Sweep on its own · 2 runs"), "{:?}", texts(&rt));
+
+    let mut s_hours = fixture::running();
+    s_hours
+        .config
+        .as_mut()
+        .unwrap()
+        .schedule
+        .sweep_every_minutes = 120;
+    let rt_hours = runtime_sized(s_hours, (1080.0, 2400.0));
+    assert_eq!(
+        text_of(&rt_hours, "runs/cadence"),
+        "Every 2 h · sweep to models"
+    );
 }
 
 /// A temporary home with one synthetic Claude Code session, and a fake runtime.
@@ -242,7 +292,12 @@ fn opening_the_overview_loads_the_status_report_from_core_and_shows_no_session_t
     );
     assert_eq!(text_of(&rt, "harness-claude-code/sessions"), "1");
     assert_eq!(text_of(&rt, "step-scan/value"), "1 of 1 scanned");
-    assert_eq!(text_of(&rt, "run/what"), "Tick");
+    assert!(on(&rt, "run/when"), "run timestamp shown: {:?}", texts(&rt));
+    assert!(
+        !on(&rt, "run/what"),
+        "single tick needs no caption: {:?}",
+        texts(&rt)
+    );
     assert!(
         shows(&rt, "cards: skipped"),
         "no model runs: {:?}",

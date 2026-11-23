@@ -50,6 +50,7 @@
               label: Set up backups
         runs: Recent runs
             title: Recent runs
+            cadence: Hourly · sweep to models
           message: No runs yet: the timer's first tick will show here.
         reveals: Reveal requests
             title: Reveal requests
