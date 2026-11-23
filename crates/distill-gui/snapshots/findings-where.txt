@@ -29,7 +29,7 @@
           apply: Apply
             label: Apply
         summary: 4 fingerprints
-        pending: 3 sessions not scanned yet, or scanned by an older detector, so not counted here; the next tick scans them.
+        pending: 3 sessions not scanned yet, or scanned by an older detector, so not counted here; the next scheduled run scans them.
             fingerprint: #a1a1a1a1
             kinds: ‹anthropic key›
             spread: 4 sessions

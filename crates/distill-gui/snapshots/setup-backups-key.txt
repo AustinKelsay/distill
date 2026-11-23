@@ -62,7 +62,7 @@
               hide-key: Hide
                 label: Hide
           text: Keep it in a password manager or on paper. Without it or this machine's copy, no one can open the backups, you included. A copy leaves the clipboard after two minutes.
-          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every tick keeps it current.
+          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every scheduled run keeps it current.
         back: Back
           label: Back
         next: Next

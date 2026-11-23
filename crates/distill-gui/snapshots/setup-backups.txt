@@ -59,7 +59,7 @@
           text: Every backup is encrypted with this home's backup key. Making it writes keys/backup.key now and shows its recovery key here, for you to keep somewhere other than this machine.
             make-key: Make the backup key
               label: Make the backup key
-          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every tick keeps it current.
+          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every scheduled run keeps it current.
         back: Back
           label: Back
         next: Next

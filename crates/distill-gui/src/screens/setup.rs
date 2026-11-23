@@ -1537,7 +1537,7 @@ fn backups(s: &State, p: &Paint) -> El {
                 0 => "Without a backup folder, DISTILL keeps one copy of the archive: this one.",
                 _ => {
                     "Finish saves these folders. Back up to each once from the Overview (Back up \
-                  now); after that every tick keeps it current."
+                  now); after that every scheduled run keeps it current."
                 }
             })
             .key("backups-next"),
@@ -1719,7 +1719,7 @@ fn timer(s: &State, p: &Paint) -> El {
             p,
             "sweep",
             "Sweep every",
-            "How often the timer runs a tick: sweep the harnesses, then parse, scan, index \
+            "How often the timer runs: sweep the harnesses, then parse, scan, index \
                  and organize what is new.",
             sweep,
         )))
