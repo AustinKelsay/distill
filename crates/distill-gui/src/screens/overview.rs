@@ -114,16 +114,13 @@ fn back_up(s: &mut State, name: String) {
         return;
     }
     s.ask(Job::apart("back up", move |core| {
-        let r = target(core, &name)
-            .and_then(|t| backup::run(&core.home, &t))
-            .map_err(jobs::line)
-            .and_then(|r| {
-                if r.ok {
-                    Ok(r.summary())
-                } else {
-                    Err(r.summary())
-                }
-            });
+        let r = jobs::caught(|| backup::run(&core.home, &target(core, &name)?)).and_then(|r| {
+            if r.ok {
+                Ok(r.summary())
+            } else {
+                Err(r.summary())
+            }
+        });
         Box::new(move |s: &mut State| {
             s.overview.backing_up.remove(&name);
             s.overview.backup_results.insert(name, r);
@@ -138,14 +135,13 @@ fn verify(s: &mut State, name: String) {
         return;
     }
     s.ask(Job::apart("verify backup", move |core| {
-        let r = (|| {
+        let r = jobs::caught(|| {
             let key = BackupKey::existing(&core.home)?
                 .ok_or_else(|| anyhow::anyhow!("this home has no backup key"))?;
             let t = target(core, &name)?;
             let store = backup::store::open(&t, false)?;
             backup::verify(&core.home, &t.name, &*store, &key, false)
-        })()
-        .map_err(jobs::line)
+        })
         .and_then(|c| {
             if c.ok() {
                 Ok(c.summary())

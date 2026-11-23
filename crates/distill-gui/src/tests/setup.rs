@@ -612,3 +612,66 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_recovery_key_to_keep() {
     assert_eq!(saved.backups.len(), 1);
     assert_eq!(saved.backups[0].path.as_deref(), Some(drive.as_path()));
 }
+
+#[test]
+fn a_test_that_lands_after_its_target_changed_is_dropped() {
+    let t = temp(false);
+    let mut s = State::new(t.core.home.clone(), None);
+    s.fixture = true;
+    let mut rt = runtime_sized(s, (1080.0, 1600.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Setup));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Backups");
+    let add = |rt: &mut Runtime<State>, path: &str| {
+        type_into(rt, |s| &mut s.setup.backup_name, "drive");
+        type_into(rt, |s| &mut s.setup.backup_path, path);
+        press(rt, "add-backup");
+    };
+    add(&mut rt, "/nowhere/a");
+    press(&mut rt, "backup-0/test");
+    // Removed and added again at another folder before the test of the first lands.
+    press(&mut rt, "backup-0/remove");
+    add(&mut rt, "/nowhere/b");
+    run_jobs(&mut rt, &t.core);
+    assert!(rt.state.setup.testing.is_empty());
+    assert!(
+        rt.state.setup.tests.is_empty(),
+        "{:?}",
+        rt.state.setup.tests
+    );
+}
+
+#[test]
+fn the_recovery_key_shows_only_on_the_backups_step_after_a_press() {
+    let t = temp(false);
+    distill_core::backup::BackupKey::create(&t.core.home).unwrap();
+    let mut s = State::new(t.core.home.clone(), None);
+    s.fixture = true;
+    let mut rt = runtime_sized(s, (1080.0, 1600.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Setup));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Backups");
+    press(&mut rt, "show-key");
+    run_jobs(&mut rt, &t.core);
+    assert!(rt.state.setup.recovery.is_some());
+
+    // Away by the sidebar and back: hidden.
+    press(&mut rt, "nav-overview");
+    press(&mut rt, "nav-setup");
+    assert!(rt.state.setup.recovery.is_none());
+    assert_eq!(rt.state.setup.step, crate::screens::setup::BACKUPS);
+
+    // A read that lands after the owner left is dropped.
+    press(&mut rt, "show-key");
+    press(&mut rt, "nav-overview");
+    run_jobs(&mut rt, &t.core);
+    assert!(rt.state.setup.recovery.is_none());
+}
+
+#[test]
+fn a_job_that_panics_still_lands_an_error() {
+    let r: Result<(), String> = crate::jobs::caught(|| panic!("boom"));
+    assert_eq!(r, Err("it stopped unexpectedly: boom".into()));
+    let r = crate::jobs::caught(|| anyhow::bail!("no drive"));
+    assert_eq!(r, Err::<(), _>("no drive".into()));
+}

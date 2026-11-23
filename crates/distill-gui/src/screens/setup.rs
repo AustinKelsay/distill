@@ -344,6 +344,9 @@ impl SetupState {
 /// runtime's models, and whether the timer is installed.
 pub fn open(s: &mut State) {
     check_service(s);
+    // Shown only after a press on the Backups step, never on coming back to Setup.
+    s.setup.recovery = None;
+    s.setup.copied = false;
     let roots: Vec<_> = Harness::ALL
         .into_iter()
         .map(|k| (k, s.setup.draft.roots_for(k)))
@@ -372,6 +375,16 @@ pub fn open(s: &mut State) {
     }));
 }
 
+impl State {
+    /// Show the recovery key a job read, if the owner is still on the Backups step; a key read
+    /// after they left is dropped.
+    fn show_recovery(&mut self, text: String) {
+        if self.screen == Screen::Setup && self.setup.step == BACKUPS {
+            self.setup.recovery = Some(text);
+        }
+    }
+}
+
 /// How long a copied recovery key stays on the clipboard.
 pub const COPY_FOR: Duration = Duration::from_secs(120);
 
@@ -392,10 +405,13 @@ fn test_backup(s: &mut State, name: String) {
         return;
     }
     s.ask(Job::apart("test backup target", move |core| {
-        let r = backup::test(&core.home, &t).map_err(jobs::line);
+        let r = jobs::caught(|| backup::test(&core.home, &t));
         Box::new(move |s: &mut State| {
             s.setup.testing.remove(&name);
-            s.setup.tests.insert(name, r);
+            // Removed, or added again at another folder, while the test ran: not its result.
+            if s.setup.draft.backups.contains(&t) {
+                s.setup.tests.insert(name, r);
+            }
         })
     }));
 }
@@ -415,7 +431,7 @@ fn make_key(s: &mut State) {
             match r {
                 Ok(text) => {
                     s.setup.has_key = Some(true);
-                    s.setup.recovery = Some(text);
+                    s.show_recovery(text);
                     s.setup.key_error = None;
                 }
                 Err(e) => s.setup.key_error = Some(e),
@@ -441,7 +457,7 @@ fn show_key(s: &mut State) {
             s.setup.key_busy = false;
             match r {
                 Ok(text) => {
-                    s.setup.recovery = Some(text);
+                    s.show_recovery(text);
                     s.setup.key_error = None;
                 }
                 Err(e) => s.setup.key_error = Some(e),
