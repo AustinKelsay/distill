@@ -43,6 +43,11 @@
           text: Model detection pass
               value: Not yet available
             detail: 
+        backups: Backups
+            title: Backups
+            message: No backup folder is set up, so this archive is the only copy.
+            set-up-backups: Set up backups
+              label: Set up backups
         runs: Recent runs
             title: Recent runs
           message: No runs yet: the timer's first tick will show here.

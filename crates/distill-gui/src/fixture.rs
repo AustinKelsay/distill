@@ -29,7 +29,9 @@ pub const SCENES: &[Scene] = &[
     ("setup-models", |s| setup_step(s, 3)),
     ("setup-models-service", models_at_a_service),
     ("setup-privacy", |s| setup_step(s, 4)),
-    ("setup-schedule", |s| setup_step(s, 5)),
+    ("setup-backups", |s| setup_step(s, 5)),
+    ("setup-backups-key", backups_key_shown),
+    ("setup-schedule", |s| setup_step(s, 6)),
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
     ("overview-new", |s| *s = just_set_up()),
@@ -98,6 +100,34 @@ fn setup_step(s: &mut State, step: usize) {
         s.setup.draft.privacy.personal_terms = vec!["Northwind".into(), "Jo Example".into()];
         s.setup.draft.privacy.exclude_paths = vec!["~/work/client-x".into()];
     }
+    if step == 5 {
+        s.setup.draft.backups = backup_targets();
+        s.setup.tests.insert(
+            "drive".into(),
+            Ok("drive can be written to. The first backup starts it.".into()),
+        );
+        s.setup.tests.insert(
+            "share".into(),
+            Err("the backup folder /Volumes/Share does not exist (is the drive connected?)".into()),
+        );
+        s.setup.has_key = Some(false);
+    }
+}
+
+/// Two folder targets: an external drive and a mounted share.
+fn backup_targets() -> Vec<distill_core::config::BackupTarget> {
+    let mut c = Config::default();
+    distill_core::backup::add_folder(&mut c, "drive", "/Volumes/Backup").expect("valid target");
+    distill_core::backup::add_folder(&mut c, "share", "/Volumes/Share").expect("valid target");
+    c.backups
+}
+
+/// The backups step just after the backup key was made, its recovery key shown. The key is
+/// made up and opens nothing.
+fn backups_key_shown(s: &mut State) {
+    setup_step(s, 5);
+    s.setup.has_key = Some(true);
+    s.setup.recovery = Some(format!("AGE-SECRET-KEY-1{}", "EXAMPLE".repeat(9)));
 }
 
 /// The models step with cards and detection run at a trusted service that listed its models.
@@ -361,9 +391,16 @@ pub fn running() -> State {
             "details": { "model": "qwen-small:4b", "sessions": 5_529, "current": 640, "pending": 4_889, "failing": 2, "found": 88 },
             "pending_reveals": 2,
             "runs": runs(),
+            "backups": [
+                { "name": "drive", "kind": "folder", "last_ok": at(40), "captures_behind": 0 },
+                { "name": "share", "kind": "folder", "last_ok": at(1_500), "captures_behind": 212 },
+            ],
         }),
         exposure(true),
     ));
+    if let Some(c) = s.config.as_mut() {
+        c.backups = backup_targets();
+    }
     s
 }
 
@@ -435,6 +472,15 @@ pub fn troubled() -> State {
             message: "Exposure: 2 files in the home can be read by others: run `distill exposure --fix`".into(),
         },
     ];
+    st.warnings.push(Warning {
+        kind: WarningKind::Backup,
+        harness: None,
+        message: "The last backup to share failed, and its last whole run was 25 hours ago: the backup folder /Volumes/Share does not exist (is the drive connected?)".into(),
+    });
+    let share = &mut st.backups[1];
+    share.last_failed = Some(at(40));
+    share.last_error =
+        Some("the backup folder /Volumes/Share does not exist (is the drive connected?)".into());
     st.exposure = exposure(false);
     st.cards.skipped = Some("the local runtime is not running".into());
     s

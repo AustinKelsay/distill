@@ -38,6 +38,9 @@
             kind: Exposure
             text: Exposure
             message: Exposure: 2 files in the home can be read by others: run `distill exposure --fix`
+            kind: Backup
+            text: Backup
+            message: The last backup to share failed, and its last whole run was 25 hours ago: the backup folder /Volumes/Share does not exist (is the drive connected?)
         progress: Progress
             title: Progress
           text: Scan for findings
@@ -60,6 +63,27 @@
               value: 640 of 5,529 checked by the model
               percent: 11%
             detail: 4,889 waiting · 2 to retry · 88 personal details found · qwen-small:4b
+        backups: Backups
+            title: Backups
+          text: drive
+          text: /Volumes/Backup
+            text: Up to date
+            text: ·
+              when: Last whole run 40 min ago
+            verify: Verify
+              label: Verify
+            back-up: Back up now
+              label: Back up now
+          text: share
+          text: /Volumes/Share
+            text: Last run failed
+            text: ·
+              when: Last whole run yesterday
+            verify: Verify
+              label: Verify
+            back-up: Back up now
+              label: Back up now
+            failure: Failed 40 min ago: the backup folder /Volumes/Share does not exist (is the drive connected?)
         runs: Recent runs
             title: Recent runs
             what: Tick

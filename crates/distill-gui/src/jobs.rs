@@ -8,8 +8,8 @@
 //! over a temporary home, the fake runtime and a stand-in installer.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use distill_core::runtime::LocalRuntime;
@@ -58,6 +58,8 @@ pub type Land = Box<dyn FnOnce(&mut State) + Send>;
 /// One piece of work for the worker, named so tests can see what was asked.
 pub struct Job {
     pub what: &'static str,
+    /// Runs on its own thread, so a long job (a first backup) holds up no other.
+    apart: bool,
     run: Box<dyn FnOnce(&Core) -> Land + Send>,
 }
 
@@ -65,7 +67,18 @@ impl Job {
     pub fn new(what: &'static str, run: impl FnOnce(&Core) -> Land + Send + 'static) -> Job {
         Job {
             what,
+            apart: false,
             run: Box::new(run),
+        }
+    }
+
+    /// A job that may take minutes: the worker starts it on a thread of its own and goes on (or
+    /// runs it itself when no thread starts). Its work goes through [`caught`], so it lands even
+    /// when it panics.
+    pub fn apart(what: &'static str, run: impl FnOnce(&Core) -> Land + Send + 'static) -> Job {
+        Job {
+            apart: true,
+            ..Job::new(what, run)
         }
     }
 
@@ -88,6 +101,31 @@ pub fn spawn(core: Core, waker: Waker) -> Link {
         .name("distill-gui-worker".into())
         .spawn(move || {
             for job in job_rx {
+                let job = if job.apart {
+                    // Held where both threads reach it: if no thread starts, the worker runs it.
+                    let slot = Arc::new(Mutex::new(Some(job)));
+                    let (core, land_tx, waker) = (core.clone(), land_tx.clone(), waker.clone());
+                    let theirs = slot.clone();
+                    let started = thread::Builder::new()
+                        .name("distill-gui-apart".into())
+                        .spawn(move || {
+                            let job = theirs.lock().ok().and_then(|mut j| j.take());
+                            if let Some(job) = job
+                                && land_tx.send(job.run(&core)).is_ok()
+                            {
+                                waker();
+                            }
+                        });
+                    match started {
+                        Ok(_) => continue,
+                        Err(_) => match slot.lock().ok().and_then(|mut j| j.take()) {
+                            Some(job) => job,
+                            None => continue,
+                        },
+                    }
+                } else {
+                    job
+                };
                 if land_tx.send(job.run(&core)).is_err() {
                     break;
                 }
@@ -109,6 +147,25 @@ pub fn run_queued(s: &mut State, core: &Core) -> Vec<&'static str> {
         }
     }
     ran
+}
+
+/// Run `f`, a job's work, so that it always gives the job something to land: its error as one
+/// line, or that it panicked. A job whose landing clears an in-flight marker uses it, so a panic
+/// can't leave a button stuck.
+pub fn caught<T>(f: impl FnOnce() -> anyhow::Result<T>) -> Result<T, String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r.map_err(line),
+        Err(p) => Err(
+            match p
+                .downcast_ref::<&str>()
+                .map(|m| m.to_string())
+                .or_else(|| p.downcast_ref::<String>().cloned())
+            {
+                Some(m) => format!("it stopped unexpectedly: {m}"),
+                None => "it stopped unexpectedly".to_string(),
+            },
+        ),
+    }
 }
 
 /// An error as one line for the screen.

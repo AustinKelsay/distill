@@ -1,13 +1,19 @@
-//! Setup: six steps over a draft `Config`, written on Finish together with the timer.
+//! Setup: seven steps over a draft `Config`, written on Finish together with the timer.
 //!
 //! Harnesses (detected, untick to skip), the home folder, trusted AI (the providers, via
 //! `trust::add` and `trust::set_trusted`, shown as `distill providers` lists them, with the local
 //! runtime's models and common services ready to trust), the steward's models (run on this
 //! machine's Ollama, or at a trusted service through `[steward.generation]`, and chosen from the
 //! models it lists; embeddings always run in Ollama), privacy (what is found automatically, personal terms and
-//! excluded paths), and the schedule. Finish calls `setup::finish`, which writes
-//! `config.toml` and installs the timer. Nothing reaches disk before Finish.
+//! excluded paths), backups (folder targets, each tested with `backup::test`, and the backup key),
+//! and the schedule. Finish calls `setup::finish`, which writes `config.toml` and installs the
+//! timer. Nothing reaches disk before Finish but the backup key, which the owner makes with its
+//! own button so its recovery key can be shown and kept before any backup needs it.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
+
+use distill_core::backup::{self, BackupKey};
 use distill_core::config::{GenerationConfig, ProviderKind};
 use distill_core::harness::{self, Detection};
 use distill_core::runtime::{RuntimeState, Stored};
@@ -25,14 +31,18 @@ use crate::nav::{self, Screen};
 use crate::ui::{Paint, count, dot, human_bytes, pill, tilde};
 
 /// (name, what the step decides).
-pub const STEPS: [(&str, &str); 6] = [
+pub const STEPS: [(&str, &str); 7] = [
     ("Harnesses", "Which harnesses' sessions to archive"),
     ("Home folder", "Where the archive lives"),
     ("Trusted AI", "Who may read your sessions"),
     ("Models", "The models that organize the archive"),
     ("Privacy", "What DISTILL finds by itself, and what you add"),
+    ("Backups", "Where encrypted copies of the archive go"),
     ("Schedule", "How often DISTILL runs"),
 ];
+
+/// The Backups step's place in [`STEPS`], for the overview's "Set up backups".
+pub const BACKUPS: usize = 5;
 
 /// Common AI services, as (the provider name an agent passes with `--provider`, how it is shown).
 /// Each is offered ready to trust; trusting one adds it to the config's `[[providers]]`.
@@ -103,6 +113,24 @@ pub struct SetupState {
     pub open: Option<&'static str>,
     pub finishing: bool,
     pub error: Option<String>,
+    pub backup_name: TextEdit,
+    pub backup_path: TextEdit,
+    pub backup_error: Option<String>,
+    /// Each target's last test, by name: what it holds, or why a backup there would fail.
+    pub tests: BTreeMap<String, Result<String, String>>,
+    pub testing: BTreeSet<String>,
+    /// Whether the home has a backup key; None until asked.
+    pub has_key: Option<bool>,
+    /// The recovery key, while the owner has it shown. Dropped when they hide it or leave the
+    /// step.
+    pub recovery: Option<String>,
+    pub key_busy: bool,
+    pub key_error: Option<String>,
+    /// The recovery key was copied, and is cleared from the clipboard after [`COPY_FOR`].
+    pub copied: bool,
+    /// Counts the owner's visits to the Backups step (each opening of Setup, each step change, each
+    /// Hide). A key read lands only in the visit that asked for it.
+    pub visit: u64,
     /// No config yet: detection decides which harnesses start ticked.
     fresh: bool,
 }
@@ -138,6 +166,17 @@ impl SetupState {
             open: None,
             finishing: false,
             error: None,
+            backup_name: TextEdit::new(""),
+            backup_path: TextEdit::new(""),
+            backup_error: None,
+            tests: BTreeMap::new(),
+            testing: BTreeSet::new(),
+            has_key: None,
+            recovery: None,
+            key_busy: false,
+            key_error: None,
+            copied: false,
+            visit: 0,
             fresh: config.is_none(),
         }
     }
@@ -154,6 +193,42 @@ impl SetupState {
 
     fn last(&self) -> bool {
         self.step + 1 == STEPS.len()
+    }
+
+    /// Move to step `i`, closing any menu and hiding the recovery key.
+    pub fn go(&mut self, i: usize) {
+        self.step = i.min(STEPS.len() - 1);
+        self.open = None;
+        self.hide_recovery();
+    }
+
+    /// Hide the recovery key, and drop any key read still under way.
+    pub fn hide_recovery(&mut self) {
+        self.recovery = None;
+        self.copied = false;
+        self.visit += 1;
+    }
+
+    fn add_backup(&mut self) {
+        match backup::add_folder(
+            &mut self.draft,
+            &self.backup_name.text,
+            &self.backup_path.text,
+        ) {
+            Ok(()) => {
+                self.backup_name.clear();
+                self.backup_path.clear();
+                self.backup_error = None;
+            }
+            Err(e) => self.backup_error = Some(jobs::line(e)),
+        }
+    }
+
+    fn remove_backup(&mut self, i: usize) {
+        if i < self.draft.backups.len() {
+            let t = self.draft.backups.remove(i);
+            self.tests.remove(&t.name);
+        }
     }
 
     fn toggle(&mut self, kind: Harness) {
@@ -279,6 +354,8 @@ impl SetupState {
 /// runtime's models, and whether the timer is installed.
 pub fn open(s: &mut State) {
     check_service(s);
+    // Shown only after a press on the Backups step, never on coming back to Setup.
+    s.setup.hide_recovery();
     let roots: Vec<_> = Harness::ALL
         .into_iter()
         .map(|k| (k, s.setup.draft.roots_for(k)))
@@ -297,6 +374,106 @@ pub fn open(s: &mut State) {
     s.ask(Job::new("timer", |core| {
         let on = (core.timer.installed)();
         Box::new(move |s: &mut State| s.setup.timer_installed = Some(on))
+    }));
+    s.ask(Job::new("backup key", |core| {
+        let has = BackupKey::existing(&core.home).map_err(jobs::line);
+        Box::new(move |s: &mut State| match has {
+            Ok(k) => s.setup.has_key = Some(k.is_some()),
+            Err(e) => s.setup.key_error = Some(e),
+        })
+    }));
+}
+
+impl State {
+    /// Show the recovery key a job read in `visit`, if the owner is still in that visit to the
+    /// Backups step; a key read after they left, even if they have come back since, is dropped.
+    fn show_recovery(&mut self, text: String, visit: u64) {
+        if self.screen == Screen::Setup && self.setup.step == BACKUPS && self.setup.visit == visit {
+            self.setup.recovery = Some(text);
+        }
+    }
+}
+
+/// How long a copied recovery key stays on the clipboard.
+pub const COPY_FOR: Duration = Duration::from_secs(120);
+
+/// Test the draft's target `name`: that it is there, takes a write, and what it holds. On its own
+/// thread, since a share that went away can hang.
+fn test_backup(s: &mut State, name: String) {
+    let Some(t) = s
+        .setup
+        .draft
+        .backups
+        .iter()
+        .find(|t| t.name == name)
+        .cloned()
+    else {
+        return;
+    };
+    if !s.setup.testing.insert(name.clone()) {
+        return;
+    }
+    s.ask(Job::apart("test backup target", move |core| {
+        let r = jobs::caught(|| backup::test(&core.home, &t));
+        Box::new(move |s: &mut State| {
+            s.setup.testing.remove(&name);
+            // Removed, or added again at another folder, while the test ran: not its result.
+            if s.setup.draft.backups.contains(&t) {
+                s.setup.tests.insert(name, r);
+            }
+        })
+    }));
+}
+
+/// Make the home's backup key now, and show its recovery key.
+fn make_key(s: &mut State) {
+    if s.setup.key_busy || s.setup.has_key != Some(false) {
+        return;
+    }
+    s.setup.key_busy = true;
+    let visit = s.setup.visit;
+    s.ask(Job::new("make backup key", move |core| {
+        let r = BackupKey::create(&core.home)
+            .map(|k| backup::expose(&k.recovery()).to_string())
+            .map_err(jobs::line);
+        Box::new(move |s: &mut State| {
+            s.setup.key_busy = false;
+            match r {
+                Ok(text) => {
+                    s.setup.has_key = Some(true);
+                    s.show_recovery(text, visit);
+                    s.setup.key_error = None;
+                }
+                Err(e) => s.setup.key_error = Some(e),
+            }
+        })
+    }));
+}
+
+/// Read the home's backup key and show its recovery key.
+fn show_key(s: &mut State) {
+    if s.setup.key_busy {
+        return;
+    }
+    s.setup.key_busy = true;
+    let visit = s.setup.visit;
+    s.ask(Job::new("show recovery key", move |core| {
+        let r = BackupKey::existing(&core.home)
+            .and_then(|k| {
+                k.map(|k| backup::expose(&k.recovery()).to_string())
+                    .ok_or_else(|| anyhow::anyhow!("this home has no backup key"))
+            })
+            .map_err(jobs::line);
+        Box::new(move |s: &mut State| {
+            s.setup.key_busy = false;
+            match r {
+                Ok(text) => {
+                    s.show_recovery(text, visit);
+                    s.setup.key_error = None;
+                }
+                Err(e) => s.setup.key_error = Some(e),
+            }
+        })
     }));
 }
 
@@ -343,6 +520,7 @@ fn finish(s: &mut State) {
                     s.config = Some(config);
                     s.config_error = None;
                     s.setup.fresh = false;
+                    s.setup.recovery = None;
                     s.setup.timer_installed = Some(true);
                     s.overview.notice = Some("Setup saved and the timer installed".into());
                     nav::go(s, Screen::Overview);
@@ -365,6 +543,7 @@ pub fn view(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
         2 => providers(d, p),
         3 => models(d, p, layer),
         4 => privacy(d, p),
+        BACKUPS => backups(s, p),
         _ => timer(s, p),
     };
     let mut scroll = col()
@@ -434,10 +613,7 @@ fn stepper(d: &SetupState, p: &Paint) -> El {
                     })
                     .border(p.hair, p.t.separator)
                     .focusable(true)
-                    .on_press(move |s: &mut State| {
-                        s.setup.step = i;
-                        s.setup.open = None;
-                    })
+                    .on_press(move |s: &mut State| s.setup.go(i))
                     .child(
                         text(format!("{} {}", i + 1, name))
                             .font(if current { p.k.ty.ui_medium } else { p.text() })
@@ -464,10 +640,7 @@ fn footer(d: &SetupState, p: &Paint) -> El {
     }
     let back = Button::new("Back")
         .disabled(d.step == 0)
-        .on_press(|s: &mut State| {
-            s.setup.step = s.setup.step.saturating_sub(1);
-            s.setup.open = None;
-        })
+        .on_press(|s: &mut State| s.setup.go(s.setup.step.saturating_sub(1)))
         .build(&p.k)
         .key("back");
     let next = if d.last() {
@@ -484,10 +657,7 @@ fn footer(d: &SetupState, p: &Paint) -> El {
     } else {
         Button::new("Next")
             .variant(ButtonVariant::Submit)
-            .on_press(|s: &mut State| {
-                s.setup.step = (s.setup.step + 1).min(STEPS.len() - 1);
-                s.setup.open = None;
-            })
+            .on_press(|s: &mut State| s.setup.go(s.setup.step + 1))
             .build(&p.k)
             .key("next")
     };
@@ -630,7 +800,10 @@ fn home(s: &State, p: &Paint) -> El {
         ("index/", "the search index"),
         ("log/", "the read log: every read of session text"),
         ("reveals/", "reveal requests waiting for you"),
-        ("keys/", "the key that fingerprints findings"),
+        (
+            "keys/",
+            "the key that fingerprints findings, and the backup key",
+        ),
     ];
     let mut tree = col().key("layout").gap(6.0);
     for (dir, what) in layout {
@@ -1293,6 +1466,233 @@ fn privacy(d: &SetupState, p: &Paint) -> El {
                     },
                 )),
         )
+}
+
+fn backups(s: &State, p: &Paint) -> El {
+    let d = &s.setup;
+    let mut targets = p.section("backup-targets", "Backup folders", None).gap(0.0);
+    if d.draft.backups.is_empty() {
+        targets = targets.child(p.empty("none", "No backup folder yet."));
+    }
+    for (i, t) in d.draft.backups.iter().enumerate() {
+        if i > 0 {
+            targets = targets.child(p.separator());
+        }
+        targets = targets.child(backup_row(d, p, i, t));
+    }
+    let name = TextInput::new(&d.backup_name)
+        .label("Name")
+        .placeholder("a name, like drive")
+        .width(Some(160.0))
+        .on_edit(|s: &mut State| &mut s.setup.backup_name)
+        .on_submit(|s: &mut State, _: &mut Tx| s.setup.add_backup())
+        .build(&p.k)
+        .key("backup-name");
+    let folder = TextInput::new(&d.backup_path)
+        .label("Folder")
+        .placeholder("/Volumes/Backup")
+        .width(None)
+        .on_edit(|s: &mut State| &mut s.setup.backup_path)
+        .on_submit(|s: &mut State, _: &mut Tx| s.setup.add_backup())
+        .build(&p.k)
+        .key("backup-path")
+        .grow(1.0)
+        .shrink();
+    let add = Button::new("Add")
+        .disabled(d.backup_name.text.trim().is_empty() || d.backup_path.text.trim().is_empty())
+        .on_press(|s: &mut State| s.setup.add_backup())
+        .build(&p.k)
+        .key("add-backup");
+    targets = targets.child(
+        row()
+            .w_full()
+            .pt(12.0)
+            .gap(8.0)
+            .center_y()
+            .child(name)
+            .child(folder)
+            .child(add),
+    );
+    if let Some(e) = &d.backup_error {
+        targets = targets.child(
+            text(e.clone())
+                .key("backup-error")
+                .font(p.caption())
+                .color(p.bad())
+                .wrap(),
+        );
+    }
+    col()
+        .gap(16.0)
+        .child(p.note(
+            "The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, \
+             with your settings and logs, to folders you choose: an external drive or a mounted \
+             share. Everything is encrypted on this machine first, so a folder only ever holds \
+             ciphertext.",
+        ))
+        .child(targets)
+        .child(recovery_key(d, p))
+        .child(
+            p.note(match d.draft.backups.len() {
+                0 => "Without a backup folder, DISTILL keeps one copy of the archive: this one.",
+                _ => {
+                    "Finish saves these folders. Back up to each once from the Overview (Back up \
+                  now); after that every tick keeps it current."
+                }
+            })
+            .key("backups-next"),
+        )
+}
+
+fn backup_row(d: &SetupState, p: &Paint, i: usize, t: &distill_core::config::BackupTarget) -> El {
+    let name = t.name.clone();
+    let testing = d.testing.contains(&t.name);
+    let test = Button::new(if testing { "Testing…" } else { "Test" })
+        .control_size(ControlSize::Small)
+        .disabled(testing)
+        .on_press(move |s: &mut State| test_backup(s, name.clone()))
+        .build(&p.k)
+        .key("test");
+    let remove = Button::new("Remove")
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .on_press(move |s: &mut State| s.setup.remove_backup(i))
+        .build(&p.k)
+        .key("remove");
+    let place = t.path.as_deref().map_or(String::new(), tilde);
+    let mut about = col()
+        .gap(2.0)
+        .grow(1.0)
+        .shrink()
+        .child(text(t.name.clone()).font(p.k.ty.ui_medium).color(p.ink()))
+        .child(text(place).font(p.mono()).color(p.muted()).truncate());
+    if let Some(r) = d.tests.get(&t.name) {
+        let (line, color) = match r {
+            Ok(m) => (m.clone(), p.good()),
+            Err(e) => (e.clone(), p.bad()),
+        };
+        about = about.child(
+            text(line)
+                .key("tested")
+                .font(p.caption())
+                .color(color)
+                .wrap(),
+        );
+    }
+    row()
+        .key(format!("backup-{i}"))
+        .w_full()
+        .py(10.0)
+        .px(4.0)
+        .gap(12.0)
+        .center_y()
+        .child(about)
+        .child(row().gap(6.0).child(test).child(remove))
+}
+
+/// The backup key: make it, or show its recovery key to copy and keep.
+fn recovery_key(d: &SetupState, p: &Paint) -> El {
+    let mut c = p.section("recovery-key", "Recovery key", None);
+    match (d.has_key, &d.recovery) {
+        (None, _) => c = c.child(p.note("Looking for the backup key…")),
+        (Some(false), _) => {
+            c = c
+                .child(p.note(
+                    "Every backup is encrypted with this home's backup key. Making it writes \
+                     keys/backup.key now and shows its recovery key here, for you to keep \
+                     somewhere other than this machine.",
+                ))
+                .child(
+                    row().child(
+                        Button::new(if d.key_busy {
+                            "Making…"
+                        } else {
+                            "Make the backup key"
+                        })
+                        .variant(ButtonVariant::Submit)
+                        .disabled(d.key_busy)
+                        .on_press(make_key)
+                        .build(&p.k)
+                        .key("make-key"),
+                    ),
+                );
+        }
+        (Some(true), None) => {
+            c = c
+                .child(p.note(
+                    "This home has a backup key, in keys/backup.key. Keep its recovery key \
+                     somewhere other than this machine: without it, a lost disk means lost \
+                     backups.",
+                ))
+                .child(
+                    row().child(
+                        Button::new(if d.key_busy {
+                            "Reading…"
+                        } else {
+                            "Show recovery key"
+                        })
+                        .disabled(d.key_busy)
+                        .on_press(show_key)
+                        .build(&p.k)
+                        .key("show-key"),
+                    ),
+                );
+        }
+        (Some(true), Some(key)) => {
+            let copy = Button::new(if d.copied { "Copied" } else { "Copy" })
+                .control_size(ControlSize::Small)
+                .on_press_tx(|s: &mut State, tx: &mut Tx| {
+                    if let Some(k) = &s.setup.recovery {
+                        let _ = tx.copy_secret(k.clone(), COPY_FOR);
+                        s.setup.copied = true;
+                    }
+                })
+                .build(&p.k)
+                .key("copy-key");
+            let hide = Button::new("Hide")
+                .control_size(ControlSize::Small)
+                .on_press(|s: &mut State| s.setup.hide_recovery())
+                .build(&p.k)
+                .key("hide-key");
+            c = c
+                .child(
+                    row()
+                        .key("recovery")
+                        .w_full()
+                        .px(12.0)
+                        .py(10.0)
+                        .gap(12.0)
+                        .center_y()
+                        .radius(8.0)
+                        .fill(p.t.control_track)
+                        .child(
+                            text(key.clone())
+                                .key("recovery-text")
+                                .font(p.mono())
+                                .color(p.ink())
+                                .wrap()
+                                .grow(1.0)
+                                .shrink(),
+                        )
+                        .child(row().gap(6.0).child(copy).child(hide)),
+                )
+                .child(p.note(
+                    "Keep it in a password manager or on paper. Without it or this machine's \
+                     copy, no one can open the backups, you included. A copy leaves the \
+                     clipboard after two minutes.",
+                ));
+        }
+    }
+    if let Some(e) = &d.key_error {
+        c = c.child(
+            text(e.clone())
+                .key("key-error")
+                .font(p.caption())
+                .color(p.bad())
+                .wrap(),
+        );
+    }
+    c
 }
 
 fn timer(s: &State, p: &Paint) -> El {

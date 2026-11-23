@@ -383,7 +383,8 @@ fn backup_warnings(
     if targets.is_empty() {
         return vec![warn(
             "No backup target is set up in config.toml, so DISTILL keeps no copy of the raw archive. \
-             Add a [[backup]] target, then run `distill backup init` and `distill backup run`."
+             Add one in Setup's Backups step, or add a [[backup]] target to config.toml and run \
+             `distill backup init` and `distill backup run`."
                 .into(),
         )];
     }
@@ -403,7 +404,7 @@ fn backup_warnings(
             Some(warn(match (&t.last_error, &t.last_ok) {
                 (Some(e), _) => format!("The last backup to {} failed, and {since}: {e}", t.name),
                 (None, None) => format!(
-                    "Backup target {} has never had a whole run: run `distill backup run --target {}` once, and the timer keeps it current after that.",
+                    "Backup target {} has never had a whole run: back up to it once (Back up now in the window, or `distill backup run --target {}`), and the timer keeps it current after that.",
                     t.name, t.name
                 ),
                 (None, Some(at)) if ago(at)? > 2 * every => format!(
@@ -614,7 +615,7 @@ mod warning_tests {
         assert_eq!(w.len(), 3, "{messages:?}");
         assert!(w.iter().all(|w| w.kind == WarningKind::Backup));
         assert!(
-            messages[0].contains("target never has never had a whole run: run `distill backup run --target never` once"),
+            messages[0].contains("target never has never had a whole run: back up to it once (Back up now in the window, or `distill backup run --target never`)"),
             "{messages:?}"
         );
         assert!(
