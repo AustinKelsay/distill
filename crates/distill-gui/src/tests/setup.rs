@@ -687,3 +687,28 @@ fn a_job_that_panics_still_lands_an_error() {
     let r = crate::jobs::caught(|| anyhow::bail!("no drive"));
     assert_eq!(r, Err::<(), _>("no drive".into()));
 }
+
+#[test]
+fn setup_copy_uses_scheduled_runs_while_keeping_the_literal_command() {
+    let mut s = fixture::fresh();
+    distill_core::backup::add_folder(&mut s.setup.draft, "drive", "/Volumes/Backup").unwrap();
+    let mut rt = runtime_sized(s, (1080.0, 1400.0));
+    step(&mut rt, "Backups");
+    assert!(
+        shows(&rt, "every scheduled run keeps it current."),
+        "{:?}",
+        texts(&rt)
+    );
+
+    step(&mut rt, "Schedule");
+    assert!(
+        shows(&rt, "How often the timer runs: sweep the harnesses"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(
+        shows(&rt, "`distill tick`"),
+        "literal CLI command stays: {:?}",
+        texts(&rt)
+    );
+}

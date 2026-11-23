@@ -783,7 +783,7 @@ fn runs(s: &State, st: &Status, p: &Paint) -> El {
     let mut card = p.section("runs", "Recent runs", cadence);
     if st.runs.is_empty() {
         return card.child(
-            text("No runs yet: the timer's first tick will show here.")
+            text("No runs yet: the timer's first scheduled run will show here.")
                 .key("message")
                 .font(p.text())
                 .color(p.muted()),
@@ -793,12 +793,12 @@ fn runs(s: &State, st: &Status, p: &Paint) -> El {
         if i > 0 {
             card = card.child(p.separator());
         }
-        card = card.child(run_row(s, g, p));
+        card = card.child(run_row(s, i, g, p));
     }
     card
 }
 
-fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
+fn run_row(s: &State, i: usize, g: &RunGroup, p: &Paint) -> El {
     let now = s.now();
     let newest = ago(&g.newest, now);
     let when = if g.runs == 1 {
@@ -852,19 +852,24 @@ fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
     if let Some(what) = what {
         heading = heading.child(text(what).key("what").font(p.caption()).color(p.muted()));
     }
-    let mut out = col().key("run").w_full().py(2.0).gap(6.0).child(
-        row()
-            .w_full()
-            .gap(12.0)
-            .center_y()
-            .justify_between()
-            .child(heading)
-            .child(marks),
-    );
-    for f in &g.failures {
+    let mut out = col()
+        .key(format!("run-{i}"))
+        .w_full()
+        .py(2.0)
+        .gap(6.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .center_y()
+                .justify_between()
+                .child(heading)
+                .child(marks),
+        );
+    for (j, f) in g.failures.iter().enumerate() {
         out = out.child(
             text(f.clone())
-                .key("failure")
+                .key(format!("failure-{j}"))
                 .font(p.caption())
                 .color(p.bad())
                 .wrap(),

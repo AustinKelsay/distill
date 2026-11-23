@@ -89,8 +89,8 @@
             status: details: failed
             text: details: failed
             text: others OK
-            failure: cards failed: the provider did not answer within 120 seconds
-            failure#dup1: details failed: the provider did not answer within 120 seconds
+            failure-0: cards failed: the provider did not answer within 120 seconds
+            failure-1: details failed: the provider did not answer within 120 seconds
             when: yesterday to 8 h ago
             what: 24 scheduled runs
             status: All steps OK

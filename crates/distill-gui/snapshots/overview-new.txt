@@ -51,7 +51,7 @@
         runs: Recent runs
             title: Recent runs
             cadence: Hourly · sweep to models
-          message: No runs yet: the timer's first tick will show here.
+          message: No runs yet: the timer's first scheduled run will show here.
         reveals: Reveal requests
             title: Reveal requests
             message: No reveal requests are waiting.

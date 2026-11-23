@@ -175,7 +175,10 @@ fn a_step_with_nothing_to_report_is_not_yet_available() {
     }
     assert!(shows(&rt, "no card_model is set"));
     assert!(shows(&rt, "No reveal requests"));
-    assert!(shows(&rt, "No runs yet"));
+    assert!(shows(
+        &rt,
+        "No runs yet: the timer's first scheduled run will show here."
+    ));
     assert_eq!(text_of(&rt, "harness-claude-code/last"), "Not yet");
 }
 
@@ -185,6 +188,20 @@ fn recent_runs_fold_alike_runs_and_name_the_steps_that_did_not_simply_finish() {
     assert_eq!(text_of(&rt, "runs/cadence"), "Hourly · sweep to models");
     assert_eq!(text_of(&rt, "runs/when"), "40 min ago");
     assert!(!shows(&rt, "Tick"), "no bare Tick rows: {:?}", texts(&rt));
+    assert!(
+        on(&rt, "run-0") && on(&rt, "run-1") && on(&rt, "run-2"),
+        "indexed run row keys"
+    );
+    assert!(
+        on(&rt, "run-2/failure-0") && on(&rt, "run-2/failure-1"),
+        "indexed failure keys"
+    );
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| e.key.as_deref().is_some_and(|k| k.contains("#dup"))),
+        "no duplicate sibling keys"
+    );
     assert!(
         shows(&rt, "6 h ago to 1 h ago") && shows(&rt, "6 scheduled runs"),
         "{:?}",
@@ -292,9 +309,13 @@ fn opening_the_overview_loads_the_status_report_from_core_and_shows_no_session_t
     );
     assert_eq!(text_of(&rt, "harness-claude-code/sessions"), "1");
     assert_eq!(text_of(&rt, "step-scan/value"), "1 of 1 scanned");
-    assert!(on(&rt, "run/when"), "run timestamp shown: {:?}", texts(&rt));
     assert!(
-        !on(&rt, "run/what"),
+        on(&rt, "run-0/when"),
+        "run timestamp shown: {:?}",
+        texts(&rt)
+    );
+    assert!(
+        !on(&rt, "run-0/what"),
         "single tick needs no caption: {:?}",
         texts(&rt)
     );

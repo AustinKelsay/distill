@@ -166,3 +166,14 @@ fn a_fingerprint_lists_its_sessions_and_opens_one_in_the_sessions_screen() {
     assert!(shows(&rt, "claude-code/bbbb"), "{:?}", texts(&rt));
     assert!(rt.state.sessions.open.is_none());
 }
+
+#[test]
+fn unscanned_sessions_note_refers_to_the_next_scheduled_run() {
+    let rt = runtime_sized(crate::fixture::findings_listed(), (1080.0, 1200.0));
+    assert!(
+        shows(&rt, "the next scheduled run scans them."),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(!shows(&rt, "next tick"), "{:?}", texts(&rt));
+}

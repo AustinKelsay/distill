@@ -398,7 +398,7 @@ fn list(st: &FindingsState, p: &Paint) -> El {
         top = top.child(
             p.note(format!(
                 "{} not scanned yet, or scanned by an older detector, so not counted here; the \
-                 next tick scans {}.",
+                 next scheduled run scans {}.",
                 count(l.pending, "session"),
                 if l.pending == 1 { "it" } else { "them" }
             ))

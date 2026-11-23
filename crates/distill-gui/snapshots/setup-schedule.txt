@@ -34,7 +34,7 @@
           step-title: Schedule
         text: How often DISTILL runs
             text: Sweep every
-            text: How often the timer runs a tick: sweep the harnesses, then parse, scan, index and organize what is new.
+            text: How often the timer runs: sweep the harnesses, then parse, scan, index and organize what is new.
             radiogroup: Sweep every
               segment0: 15 min
                 label: 15 min
