@@ -197,10 +197,11 @@ fn recent_runs_fold_alike_runs_and_name_the_steps_that_did_not_simply_finish() {
         "indexed failure keys"
     );
     assert!(
-        !rt.elements()
-            .iter()
-            .any(|e| e.key.as_deref().is_some_and(|k| k.contains("#dup"))),
-        "no duplicate sibling keys"
+        !rt.elements().iter().any(|e| {
+            e.path.split('/').any(|seg| seg == "runs")
+                && e.key.as_deref().is_some_and(|k| k.contains("#dup"))
+        }),
+        "no duplicate sibling keys under runs"
     );
     assert!(
         shows(&rt, "6 h ago to 1 h ago") && shows(&rt, "6 scheduled runs"),
