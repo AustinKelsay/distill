@@ -26,9 +26,11 @@
           text: 4 Models
           step-4: Privacy
           text: 5 Privacy
-          step-5: Schedule
-          text: 6 Schedule
-        text: Step 3 of 6
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 3 of 7
           step-title: Trusted AI
         text: Who may read your sessions
         text: Trusting a service lets two things read your sessions: your agents that run at it, when they search or read through DISTILL, and DISTILL's own models when they run there (the next step). Each gets every secret replaced by a placeholder, and personal details as written. Anything not trusted is refused.

@@ -44,6 +44,21 @@ pub fn open(target: &BackupTarget, first: bool) -> Result<Box<dyn Store>> {
     }
 }
 
+/// Check that `target` is there and takes a write, by writing a small file at it and removing
+/// it. Nothing else is made: a folder target's `distill-backup/` waits for its first run.
+pub fn probe(target: &BackupTarget) -> Result<()> {
+    match target.kind.as_str() {
+        "folder" => {
+            let path = target
+                .path
+                .as_ref()
+                .with_context(|| format!("backup target {:?} needs a path", target.name))?;
+            Folder::probe(path)
+        }
+        _ => open(target, false).map(|_| ()),
+    }
+}
+
 /// A folder target: `<path>/distill-backup/<aa>/<name>`, each object written once.
 pub struct Folder {
     objects: PathBuf,
@@ -74,6 +89,27 @@ impl Folder {
             sync_dir(path)?;
         }
         Ok(Self { objects })
+    }
+
+    /// Write a file in `path` and remove it.
+    fn probe(path: &Path) -> Result<()> {
+        if !path.is_dir() {
+            bail!(
+                "the backup folder {} does not exist (is the drive connected?)",
+                path.display()
+            );
+        }
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).map_err(|e| anyhow!("generate a file name: {e}"))?;
+        let tmp = path.join(format!(".distill-test-{}", hex::encode(nonce)));
+        let wrote = (|| -> Result<()> {
+            let mut f = private_file().write(true).create_new(true).open(&tmp)?;
+            f.write_all(b"distill")?;
+            f.sync_all()?;
+            Ok(())
+        })();
+        let _ = fs::remove_file(&tmp);
+        wrote.with_context(|| format!("the backup folder {} can't be written to", path.display()))
     }
 
     fn path(&self, name: &str) -> Result<PathBuf> {

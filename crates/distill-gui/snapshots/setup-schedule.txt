@@ -26,9 +26,11 @@
           text: 4 Models
           step-4: Privacy
           text: 5 Privacy
-          step-5: Schedule
-          text: 6 Schedule
-        text: Step 6 of 6
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 7 of 7
           step-title: Schedule
         text: How often DISTILL runs
             text: Sweep every

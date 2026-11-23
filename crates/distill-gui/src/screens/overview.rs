@@ -1,13 +1,16 @@
 //! Overview: the status report (`distill_core::status::Status`), rendered. Sessions and capture
 //! health per harness, format drift, the last sweep, warnings, each step's progress (scan, word
 //! index, cards, vectors and the model detection pass), the reveal
-//! requests waiting, the recent runs and the exposure check, with a Fix button that calls
-//! `exposure::fix`. A step with nothing to report says it is not yet available. No session text
+//! requests waiting, the recent runs, the backup targets (each with Back up now and Verify) and
+//! the exposure check, with a Fix button that calls `exposure::fix`. A step with nothing to report says it is not yet available. No session text
 //! is shown.
 //!
 //! When a ticket adds a field to `Status`, it adds its line here: a step's progress goes in
 //! [`steps`], anything else in its own section of [`report`].
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use distill_core::backup::{self, BackupKey, TargetStatus};
 use distill_core::exposure::{self, Exposure, Outcome, Rule};
 use distill_core::runlog::{RunGroup, StepResult};
 use distill_core::status::{self, HarnessStatus, Health, Status, WarningKind};
@@ -17,6 +20,7 @@ use rune_kit::{Button, ButtonVariant, ControlSize};
 use crate::State;
 use crate::jobs::{self, Job};
 use crate::nav::{self, Screen};
+use crate::screens::setup;
 use crate::ui::{Paint, ago, count, dot, human_bytes, pill, thousands};
 
 /// Seconds between reloads while the overview shows.
@@ -30,6 +34,11 @@ pub struct OverviewState {
     pub fixing: bool,
     /// A one-line result of the last action.
     pub notice: Option<String>,
+    /// Backup targets with a run or a check under way, by name.
+    pub backing_up: BTreeSet<String>,
+    pub verifying: BTreeSet<String>,
+    /// The last run or check from this window, per target: its summary, or why it failed.
+    pub backup_results: BTreeMap<String, Result<String, String>>,
     next_refresh: f64,
 }
 
@@ -88,6 +97,65 @@ fn fix(s: &mut State) {
                 Err(e) => format!("Could not fix the modes: {e}"),
             });
             load(s);
+        })
+    }));
+}
+
+/// The `[[backup]]` target `name` as config.toml has it now.
+fn target(core: &jobs::Core, name: &str) -> anyhow::Result<distill_core::config::BackupTarget> {
+    let config = core.home.load_config()?;
+    Ok(backup::targets(&config, Some(name))?.remove(0))
+}
+
+/// Back up to `name` now, as `distill backup run --target` does, then reload the report. A first
+/// run copies the whole archive, so it runs on its own thread.
+fn back_up(s: &mut State, name: String) {
+    if !s.overview.backing_up.insert(name.clone()) {
+        return;
+    }
+    s.ask(Job::apart("back up", move |core| {
+        let r = target(core, &name)
+            .and_then(|t| backup::run(&core.home, &t))
+            .map_err(jobs::line)
+            .and_then(|r| {
+                if r.ok {
+                    Ok(r.summary())
+                } else {
+                    Err(r.summary())
+                }
+            });
+        Box::new(move |s: &mut State| {
+            s.overview.backing_up.remove(&name);
+            s.overview.backup_results.insert(name, r);
+            load(s);
+        })
+    }));
+}
+
+/// Check that `name` holds every object of its newest run, by name, as `distill backup verify`.
+fn verify(s: &mut State, name: String) {
+    if !s.overview.verifying.insert(name.clone()) {
+        return;
+    }
+    s.ask(Job::apart("verify backup", move |core| {
+        let r = (|| {
+            let key = BackupKey::existing(&core.home)?
+                .ok_or_else(|| anyhow::anyhow!("this home has no backup key"))?;
+            let t = target(core, &name)?;
+            let store = backup::store::open(&t, false)?;
+            backup::verify(&core.home, &t.name, &*store, &key, false)
+        })()
+        .map_err(jobs::line)
+        .and_then(|c| {
+            if c.ok() {
+                Ok(c.summary())
+            } else {
+                Err(c.summary())
+            }
+        });
+        Box::new(move |s: &mut State| {
+            s.overview.verifying.remove(&name);
+            s.overview.backup_results.insert(name, r);
         })
     }));
 }
@@ -224,6 +292,7 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
         body = body.child(warnings(st, p));
     }
     body.child(progress(st, p))
+        .child(backups(s, st, p))
         .child(runs(s, st, p))
         .child(reveals(st, p))
         .child(harnesses(s, st, p))
@@ -551,6 +620,149 @@ fn reveals(st: &Status, p: &Paint) -> El {
             );
     }
     p.section("reveals", "Reveal requests", None).child(line)
+}
+
+/// Each backup target: its last whole run, how far behind it is, its last failure, and buttons
+/// to back up now or check it. With none, a way to Setup's Backups step.
+fn backups(s: &State, st: &Status, p: &Paint) -> El {
+    let mut card = p.section("backups", "Backups", None);
+    if st.backups.is_empty() {
+        return card.child(
+            row()
+                .key("backups-none")
+                .w_full()
+                .gap(12.0)
+                .center_y()
+                .justify_between()
+                .child(
+                    text("No backup folder is set up, so this archive is the only copy.")
+                        .key("message")
+                        .font(p.text())
+                        .color(p.muted())
+                        .wrap()
+                        .shrink(),
+                )
+                .child(
+                    Button::new("Set up backups")
+                        .control_size(ControlSize::Small)
+                        .on_press(|s: &mut State| {
+                            nav::go(s, Screen::Setup);
+                            s.setup.go(setup::BACKUPS);
+                        })
+                        .build(&p.k)
+                        .key("set-up-backups"),
+                ),
+        );
+    }
+    for (i, t) in st.backups.iter().enumerate() {
+        if i > 0 {
+            card = card.child(p.separator());
+        }
+        card = card.child(backup_row(s, t, p));
+    }
+    card
+}
+
+fn backup_row(s: &State, t: &TargetStatus, p: &Paint) -> El {
+    let place = s
+        .config
+        .as_ref()
+        .and_then(|c| c.backups.iter().find(|b| b.name == t.name))
+        .and_then(|b| b.path.as_deref())
+        .map_or(t.kind.clone(), crate::ui::tilde);
+    let failed = t.last_failed.is_some();
+    let (color, state) = match (&t.last_ok, t.captures_behind) {
+        _ if failed => (p.bad(), "Last run failed".to_string()),
+        (None, _) => (
+            p.warn(),
+            "Never backed up: back up once to start it".to_string(),
+        ),
+        (Some(_), Some(n)) if n > 0 => (p.warn(), format!("{} behind", count(n, "capture"))),
+        (Some(_), _) => (p.good(), "Up to date".to_string()),
+    };
+    let when = match &t.last_ok {
+        Some(at) => format!("Last whole run {}", ago(at, s.now())),
+        None => "No whole run yet".to_string(),
+    };
+    let name = t.name.clone();
+    let running = s.overview.backing_up.contains(&t.name);
+    let back_up_now = Button::new(if running {
+        "Backing up…"
+    } else {
+        "Back up now"
+    })
+    .control_size(ControlSize::Small)
+    .disabled(running)
+    .on_press(move |s: &mut State| back_up(s, name.clone()))
+    .build(&p.k)
+    .key("back-up");
+    let name = t.name.clone();
+    let checking = s.overview.verifying.contains(&t.name);
+    let check = Button::new(if checking { "Verifying…" } else { "Verify" })
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .disabled(checking || t.last_ok.is_none())
+        .on_press(move |s: &mut State| verify(s, name.clone()))
+        .build(&p.k)
+        .key("verify");
+    let mut c = col()
+        .key(format!("backup-{}", t.name))
+        .w_full()
+        .py(2.0)
+        .gap(6.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .center_y()
+                .child(
+                    col()
+                        .gap(2.0)
+                        .grow(1.0)
+                        .shrink()
+                        .child(
+                            row()
+                                .gap(8.0)
+                                .center_y()
+                                .child(text(t.name.clone()).font(p.k.ty.ui_medium).color(p.ink()))
+                                .child(text(place).font(p.mono()).color(p.faint()).truncate()),
+                        )
+                        .child(
+                            row()
+                                .key("state")
+                                .gap(6.0)
+                                .center_y()
+                                .child(dot(color, 7.0))
+                                .child(text(state).font(p.caption()).color(p.ink()))
+                                .child(text("·").font(p.caption()).color(p.faint()))
+                                .child(text(when).key("when").font(p.caption()).color(p.muted())),
+                        ),
+                )
+                .child(row().gap(6.0).child(check).child(back_up_now)),
+        );
+    if let (Some(at), Some(e)) = (&t.last_failed, &t.last_error) {
+        c = c.child(
+            text(format!("Failed {}: {e}", ago(at, s.now())))
+                .key("failure")
+                .font(p.caption())
+                .color(p.bad())
+                .wrap(),
+        );
+    }
+    if let Some(r) = s.overview.backup_results.get(&t.name) {
+        let (line, color) = match r {
+            Ok(m) => (m.clone(), p.muted()),
+            Err(e) => (e.clone(), p.bad()),
+        };
+        c = c.child(
+            text(line)
+                .key("result")
+                .font(p.caption())
+                .color(color)
+                .wrap(),
+        );
+    }
+    c
 }
 
 /// How many groups of runs the overview shows.

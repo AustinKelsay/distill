@@ -293,3 +293,85 @@ fn fix_tightens_the_homes_modes_and_reloads_the_report() {
         texts(&rt)
     );
 }
+
+#[test]
+fn back_up_now_starts_a_target_then_verify_checks_it_and_the_report_says_it_is_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let (core, mut config) = temp_home(dir.path());
+    distill_core::tick::tick_with(&core.home, &config, &core.runtime).unwrap();
+    let drive = dir.path().join("drive");
+    std::fs::create_dir(&drive).unwrap();
+    distill_core::backup::add_folder(&mut config, "drive", drive.to_str().unwrap()).unwrap();
+    config.save(&core.home.config_path()).unwrap();
+    distill_core::backup::BackupKey::create(&core.home).unwrap();
+
+    let mut s = State::new(core.home.clone(), Some(config));
+    s.fixture = true;
+    let mut rt = runtime_sized(s, (1080.0, 2400.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Overview));
+    run_jobs(&mut rt, &core);
+    assert!(
+        shows(&rt, "Never backed up"),
+        "a target with no run: {:?}",
+        texts(&rt)
+    );
+    assert!(
+        shows(&rt, "Back up now in the window"),
+        "the warning names the button"
+    );
+
+    press(&mut rt, "backup-drive/back-up");
+    assert_eq!(run_jobs(&mut rt, &core), ["back up", "status"]);
+    assert!(
+        text_of(&rt, "backup-drive/result").starts_with("Backed up to drive (run 0)"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(shows(&rt, "Up to date"), "{:?}", texts(&rt));
+    assert!(drive.join("distill-backup").is_dir());
+
+    press(&mut rt, "backup-drive/verify");
+    assert_eq!(run_jobs(&mut rt, &core), ["verify backup"]);
+    assert!(
+        text_of(&rt, "backup-drive/result").contains("is whole"),
+        "{:?}",
+        texts(&rt)
+    );
+
+    // The drive goes away: Back up now says why, and the report shows the failure.
+    std::fs::rename(&drive, dir.path().join("away")).unwrap();
+    press(&mut rt, "backup-drive/back-up");
+    run_jobs(&mut rt, &core);
+    assert!(
+        text_of(&rt, "backup-drive/result").contains("does not exist"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(shows(&rt, "Last run failed"), "{:?}", texts(&rt));
+}
+
+#[test]
+fn with_no_backup_target_the_overview_leads_to_setups_backups_step() {
+    let mut rt = runtime_sized(fixture::just_set_up(), (1080.0, 2400.0));
+    assert!(shows(&rt, "this archive is the only copy"));
+    press(&mut rt, "set-up-backups");
+    assert_eq!(rt.state.screen, Screen::Setup);
+    assert_eq!(
+        rt.state.setup.step,
+        crate::screens::setup::BACKUPS,
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(shows(&rt, "Backup folders"));
+}
+
+#[test]
+fn the_overview_shows_where_each_backup_target_stands() {
+    let rt = runtime_sized(fixture::troubled(), (1080.0, 2400.0));
+    assert_eq!(text_of(&rt, "backup-drive/state"), "Up to date");
+    assert_eq!(text_of(&rt, "backup-share/state"), "Last run failed");
+    assert!(shows(&rt, "/Volumes/Share does not exist"));
+    let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
+    assert_eq!(text_of(&rt, "backup-share/state"), "212 captures behind");
+    assert!(shows(&rt, "/Volumes/Backup"), "the target's folder");
+}

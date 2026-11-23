@@ -1,0 +1,69 @@
+        title: DISTILL
+      text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Trusted AI
+          text: 3 Trusted AI
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 6 of 7
+          step-title: Backups
+        text: Where encrypted copies of the archive go
+        text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive or a mounted share. Everything is encrypted on this machine first, so a folder only ever holds ciphertext.
+          backup-targets: Backup folders
+              title: Backup folders
+            text: drive
+            text: /Volumes/Backup
+              tested: drive can be written to. The first backup starts it.
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+            text: share
+            text: /Volumes/Share
+              tested: the backup folder /Volumes/Share does not exist (is the drive connected?)
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+                input: 
+                input: 
+            add-backup: Add
+              label: Add
+          recovery-key: Recovery key
+              title: Recovery key
+              recovery-text: AGE-SECRET-KEY-1EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE
+              copy-key: Copy
+                label: Copy
+              hide-key: Hide
+                label: Hide
+          text: Keep it in a password manager or on paper. Without it or this machine's copy, no one can open the backups, you included. A copy leaves the clipboard after two minutes.
+          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every tick keeps it current.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

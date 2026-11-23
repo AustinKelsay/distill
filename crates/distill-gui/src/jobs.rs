@@ -58,6 +58,8 @@ pub type Land = Box<dyn FnOnce(&mut State) + Send>;
 /// One piece of work for the worker, named so tests can see what was asked.
 pub struct Job {
     pub what: &'static str,
+    /// Runs on its own thread, so a long job (a first backup) holds up no other.
+    apart: bool,
     run: Box<dyn FnOnce(&Core) -> Land + Send>,
 }
 
@@ -65,7 +67,16 @@ impl Job {
     pub fn new(what: &'static str, run: impl FnOnce(&Core) -> Land + Send + 'static) -> Job {
         Job {
             what,
+            apart: false,
             run: Box::new(run),
+        }
+    }
+
+    /// A job that may take minutes: the worker starts it on a thread of its own and goes on.
+    pub fn apart(what: &'static str, run: impl FnOnce(&Core) -> Land + Send + 'static) -> Job {
+        Job {
+            apart: true,
+            ..Job::new(what, run)
         }
     }
 
@@ -88,6 +99,21 @@ pub fn spawn(core: Core, waker: Waker) -> Link {
         .name("distill-gui-worker".into())
         .spawn(move || {
             for job in job_rx {
+                if job.apart {
+                    let (core, land_tx, waker) = (core.clone(), land_tx.clone(), waker.clone());
+                    let what = job.what;
+                    let started = thread::Builder::new()
+                        .name(format!("distill-gui-{what}"))
+                        .spawn(move || {
+                            if land_tx.send(job.run(&core)).is_ok() {
+                                waker();
+                            }
+                        });
+                    if started.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 if land_tx.send(job.run(&core)).is_err() {
                     break;
                 }

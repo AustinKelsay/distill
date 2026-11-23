@@ -110,7 +110,10 @@ fn opening_setup_detects_harnesses_the_local_models_and_the_timer() {
     let mut rt = fresh_window(&t);
     let mut ran = run_jobs(&mut rt, &t.core);
     ran.sort();
-    assert_eq!(ran, ["detect harnesses", "local runtime", "timer"]);
+    assert_eq!(
+        ran,
+        ["backup key", "detect harnesses", "local runtime", "timer"]
+    );
 
     // Detected harnesses are ticked; the rest are not.
     assert!(rt.state.setup.draft.enabled(Harness::ClaudeCode));
@@ -150,6 +153,7 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
             "Trusted AI",
             "Models",
             "Privacy",
+            "Backups",
             "Schedule"
         ]
     );
@@ -159,10 +163,10 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
     assert!(shows(&rt, "DISTILL_HOME"));
     press(&mut rt, "back");
     assert_eq!(rt.state.setup.step, 0);
-    for _ in 0..5 {
+    for _ in 0..6 {
         press(&mut rt, "next");
     }
-    assert_eq!(rt.state.setup.step, 5);
+    assert_eq!(rt.state.setup.step, 6);
     assert!(!on(&rt, "next") && on(&rt, "finish"));
 }
 
@@ -537,4 +541,74 @@ fn sessions_per_run_is_chosen_on_the_models_step_and_saved() {
     run_jobs(&mut rt, &t.core);
     let saved = Config::load(&t.core.home.config_path()).unwrap();
     assert_eq!(saved.steward.sessions_per_run, 100);
+}
+
+#[test]
+fn the_backups_step_adds_and_tests_folders_and_makes_a_recovery_key_to_keep() {
+    let t = temp(false);
+    let mut s = State::new(t.core.home.clone(), None);
+    s.fixture = true;
+    for h in &mut s.setup.draft.harnesses {
+        h.roots = vec![t.roots.join(h.kind.id())];
+    }
+    let mut rt = runtime_sized(s, (1080.0, 1600.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Setup));
+    run_jobs(&mut rt, &t.core);
+    assert_eq!(rt.state.setup.has_key, Some(false));
+    step(&mut rt, "Backups");
+
+    // A folder that isn't there yet can be added; its test says so.
+    let drive = t.roots.parent().unwrap().join("drive");
+    type_into(&mut rt, |s| &mut s.setup.backup_name, "drive");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.backup_path,
+        drive.to_str().unwrap(),
+    );
+    press(&mut rt, "add-backup");
+    assert_eq!(rt.state.setup.draft.backups.len(), 1);
+    assert_eq!(rt.state.setup.backup_name.text, "", "the fields clear");
+    type_into(&mut rt, |s| &mut s.setup.backup_name, "drive");
+    type_into(&mut rt, |s| &mut s.setup.backup_path, "/elsewhere");
+    press(&mut rt, "add-backup");
+    assert!(shows(&rt, "already named"), "{:?}", texts(&rt));
+
+    press(&mut rt, "backup-0/test");
+    assert_eq!(run_jobs(&mut rt, &t.core), ["test backup target"]);
+    assert!(shows(&rt, "does not exist"), "{:?}", texts(&rt));
+    std::fs::create_dir(&drive).unwrap();
+    press(&mut rt, "backup-0/test");
+    run_jobs(&mut rt, &t.core);
+    assert!(shows(&rt, "The first backup starts it"), "{:?}", texts(&rt));
+    assert_eq!(
+        std::fs::read_dir(&drive).unwrap().count(),
+        0,
+        "a test leaves nothing"
+    );
+
+    // Making the key writes it now and shows its recovery key, which Show brings back.
+    press(&mut rt, "make-key");
+    assert_eq!(run_jobs(&mut rt, &t.core), ["make backup key"]);
+    let kept = distill_core::backup::BackupKey::existing(&t.core.home)
+        .unwrap()
+        .expect("the key was made");
+    let recovery = distill_core::backup::expose(&kept.recovery()).to_string();
+    assert_eq!(rt.state.setup.recovery.as_deref(), Some(recovery.as_str()));
+    assert!(shows(&rt, &recovery));
+    press(&mut rt, "copy-key");
+    assert!(rt.state.setup.copied);
+    press(&mut rt, "hide-key");
+    assert!(rt.state.setup.recovery.is_none() && !shows(&rt, &recovery));
+    press(&mut rt, "show-key");
+    run_jobs(&mut rt, &t.core);
+    assert!(shows(&rt, &recovery));
+
+    // Leaving the step hides it; Finish saves the folder.
+    step(&mut rt, "Schedule");
+    assert!(rt.state.setup.recovery.is_none());
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    let saved = t.core.home.load_config().unwrap();
+    assert_eq!(saved.backups.len(), 1);
+    assert_eq!(saved.backups[0].path.as_deref(), Some(drive.as_path()));
 }

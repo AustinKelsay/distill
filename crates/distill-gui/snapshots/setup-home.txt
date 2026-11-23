@@ -26,9 +26,11 @@
           text: 4 Models
           step-4: Privacy
           text: 5 Privacy
-          step-5: Schedule
-          text: 6 Schedule
-        text: Step 2 of 6
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 2 of 7
           step-title: Home folder
         text: Where the archive lives
         text: Home folder
@@ -47,7 +49,7 @@
           text: reveals/
           text: reveal requests waiting for you
           text: keys/
-          text: the key that fingerprints findings
+          text: the key that fingerprints findings, and the backup key
         back: Back
           label: Back
         next: Next
