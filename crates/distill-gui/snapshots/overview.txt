@@ -71,19 +71,18 @@
               label: Back up now
         runs: Recent runs
             title: Recent runs
-            what: Tick
+            cadence: Hourly · sweep to models
             when: 40 min ago
             status: cards: time limit
             text: cards: time limit
             text: others OK
-            what: Tick
-            when: 6 runs, 6 h ago to 1 h ago
+            when: 6 h ago to 1 h ago
+            what: 6 scheduled runs
             status: cards: time limit
             text: cards: time limit
             status: details: time limit
             text: details: time limit
             text: others OK
-            what: Tick
             when: 7 h ago
             status: cards: failed
             text: cards: failed
@@ -92,12 +91,12 @@
             text: others OK
             failure: cards failed: the provider did not answer within 120 seconds
             failure#dup1: details failed: the provider did not answer within 120 seconds
-            what: Tick
-            when: 24 runs, yesterday to 8 h ago
+            when: yesterday to 8 h ago
+            what: 24 scheduled runs
             status: All steps OK
             text: All steps OK
-            what: Sweep on its own
             when: yesterday
+            what: Sweep on its own
             status: OK
             text: OK
         reveals: Reveal requests

@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use distill_core::backup::{self, BackupKey, TargetStatus};
 use distill_core::exposure::{self, Exposure, Outcome, Rule};
 use distill_core::runlog::{RunGroup, StepResult};
+use distill_core::schedule;
 use distill_core::status::{self, HarnessStatus, Health, Status, WarningKind};
 use rune::{Align, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize};
@@ -765,9 +766,21 @@ fn backup_row(s: &State, t: &TargetStatus, p: &Paint) -> El {
 const RUN_ROWS: usize = 8;
 
 /// The recent runs, newest first: runs in a row that came to the same results are one row, each
-/// step that did not simply finish is named, and a failure's sentence is shown under its row.
+/// row leads with when it ran (with a muted caption only for grouped counts or single-step runs),
+/// each step that did not simply finish is named, and a failure's sentence is shown under its row.
 fn runs(s: &State, st: &Status, p: &Paint) -> El {
-    let mut card = p.section("runs", "Recent runs", None);
+    let cadence = s.config.as_ref().map(|c| {
+        let every = match schedule::interval_minutes(c) {
+            60 => "Hourly".to_string(),
+            m if m.is_multiple_of(60) => format!("Every {} h", m / 60),
+            m => format!("Every {m} min"),
+        };
+        text(format!("{every} · sweep to models"))
+            .key("cadence")
+            .font(p.caption())
+            .color(p.muted())
+    });
+    let mut card = p.section("runs", "Recent runs", cadence);
     if st.runs.is_empty() {
         return card.child(
             text("No runs yet: the timer's first tick will show here.")
@@ -786,24 +799,29 @@ fn runs(s: &State, st: &Status, p: &Paint) -> El {
 }
 
 fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
+    let newest = ago(&g.newest, s.now());
+    let when = if g.runs <= 1 {
+        newest
+    } else {
+        let oldest = ago(&g.oldest, s.now());
+        if oldest == newest {
+            newest
+        } else {
+            format!("{oldest} to {newest}")
+        }
+    };
     let what = if g.step == "tick" {
-        "Tick".to_string()
+        (g.runs > 1).then(|| format!("{} scheduled runs", g.runs))
     } else {
         let mut name = g.step.clone();
         if let Some(first) = name.get_mut(..1) {
             first.make_ascii_uppercase();
         }
-        format!("{name} on its own")
-    };
-    let when = if g.runs == 1 {
-        ago(&g.newest, s.now())
-    } else {
-        format!(
-            "{} runs, {} to {}",
-            g.runs,
-            ago(&g.oldest, s.now()),
-            ago(&g.newest, s.now())
-        )
+        Some(if g.runs <= 1 {
+            format!("{name} on its own")
+        } else {
+            format!("{name} on its own · {} runs", g.runs)
+        })
     };
     let mut marks = row().key("steps").gap(6.0).center_y().flex_wrap();
     let mut all_ok = true;
@@ -827,18 +845,19 @@ fn run_row(s: &State, g: &RunGroup, p: &Paint) -> El {
     } else if g.steps.iter().any(|m| m.result == StepResult::Ok) {
         marks = marks.child(text("others OK").font(p.caption()).color(p.muted()));
     }
+    let mut heading = col()
+        .gap(2.0)
+        .child(text(when).key("when").font(p.text()).color(p.ink()));
+    if let Some(what) = what {
+        heading = heading.child(text(what).key("what").font(p.caption()).color(p.muted()));
+    }
     let mut out = col().key("run").w_full().py(2.0).gap(6.0).child(
         row()
             .w_full()
             .gap(12.0)
             .center_y()
             .justify_between()
-            .child(
-                col()
-                    .gap(2.0)
-                    .child(text(what).key("what").font(p.text()).color(p.ink()))
-                    .child(text(when).key("when").font(p.caption()).color(p.muted())),
-            )
+            .child(heading)
             .child(marks),
     );
     for f in &g.failures {
