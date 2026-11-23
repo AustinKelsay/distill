@@ -128,6 +128,9 @@ pub struct SetupState {
     pub key_error: Option<String>,
     /// The recovery key was copied, and is cleared from the clipboard after [`COPY_FOR`].
     pub copied: bool,
+    /// Counts the owner's visits to the Backups step (each opening of Setup, each step change, each
+    /// Hide). A key read lands only in the visit that asked for it.
+    pub visit: u64,
     /// No config yet: detection decides which harnesses start ticked.
     fresh: bool,
 }
@@ -173,6 +176,7 @@ impl SetupState {
             key_busy: false,
             key_error: None,
             copied: false,
+            visit: 0,
             fresh: config.is_none(),
         }
     }
@@ -195,8 +199,14 @@ impl SetupState {
     pub fn go(&mut self, i: usize) {
         self.step = i.min(STEPS.len() - 1);
         self.open = None;
+        self.hide_recovery();
+    }
+
+    /// Hide the recovery key, and drop any key read still under way.
+    pub fn hide_recovery(&mut self) {
         self.recovery = None;
         self.copied = false;
+        self.visit += 1;
     }
 
     fn add_backup(&mut self) {
@@ -345,8 +355,7 @@ impl SetupState {
 pub fn open(s: &mut State) {
     check_service(s);
     // Shown only after a press on the Backups step, never on coming back to Setup.
-    s.setup.recovery = None;
-    s.setup.copied = false;
+    s.setup.hide_recovery();
     let roots: Vec<_> = Harness::ALL
         .into_iter()
         .map(|k| (k, s.setup.draft.roots_for(k)))
@@ -376,10 +385,10 @@ pub fn open(s: &mut State) {
 }
 
 impl State {
-    /// Show the recovery key a job read, if the owner is still on the Backups step; a key read
-    /// after they left is dropped.
-    fn show_recovery(&mut self, text: String) {
-        if self.screen == Screen::Setup && self.setup.step == BACKUPS {
+    /// Show the recovery key a job read in `visit`, if the owner is still in that visit to the
+    /// Backups step; a key read after they left, even if they have come back since, is dropped.
+    fn show_recovery(&mut self, text: String, visit: u64) {
+        if self.screen == Screen::Setup && self.setup.step == BACKUPS && self.setup.visit == visit {
             self.setup.recovery = Some(text);
         }
     }
@@ -422,7 +431,8 @@ fn make_key(s: &mut State) {
         return;
     }
     s.setup.key_busy = true;
-    s.ask(Job::new("make backup key", |core| {
+    let visit = s.setup.visit;
+    s.ask(Job::new("make backup key", move |core| {
         let r = BackupKey::create(&core.home)
             .map(|k| backup::expose(&k.recovery()).to_string())
             .map_err(jobs::line);
@@ -431,7 +441,7 @@ fn make_key(s: &mut State) {
             match r {
                 Ok(text) => {
                     s.setup.has_key = Some(true);
-                    s.show_recovery(text);
+                    s.show_recovery(text, visit);
                     s.setup.key_error = None;
                 }
                 Err(e) => s.setup.key_error = Some(e),
@@ -446,7 +456,8 @@ fn show_key(s: &mut State) {
         return;
     }
     s.setup.key_busy = true;
-    s.ask(Job::new("show recovery key", |core| {
+    let visit = s.setup.visit;
+    s.ask(Job::new("show recovery key", move |core| {
         let r = BackupKey::existing(&core.home)
             .and_then(|k| {
                 k.map(|k| backup::expose(&k.recovery()).to_string())
@@ -457,7 +468,7 @@ fn show_key(s: &mut State) {
             s.setup.key_busy = false;
             match r {
                 Ok(text) => {
-                    s.show_recovery(text);
+                    s.show_recovery(text, visit);
                     s.setup.key_error = None;
                 }
                 Err(e) => s.setup.key_error = Some(e),
@@ -1640,10 +1651,7 @@ fn recovery_key(d: &SetupState, p: &Paint) -> El {
                 .key("copy-key");
             let hide = Button::new("Hide")
                 .control_size(ControlSize::Small)
-                .on_press(|s: &mut State| {
-                    s.setup.recovery = None;
-                    s.setup.copied = false;
-                })
+                .on_press(|s: &mut State| s.setup.hide_recovery())
                 .build(&p.k)
                 .key("hide-key");
             c = c

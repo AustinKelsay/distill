@@ -666,6 +666,18 @@ fn the_recovery_key_shows_only_on_the_backups_step_after_a_press() {
     press(&mut rt, "nav-overview");
     run_jobs(&mut rt, &t.core);
     assert!(rt.state.setup.recovery.is_none());
+
+    // Even when they have come back to the Backups step before it lands.
+    press(&mut rt, "nav-setup");
+    run_jobs(&mut rt, &t.core);
+    press(&mut rt, "show-key");
+    press(&mut rt, "nav-overview");
+    press(&mut rt, "nav-setup");
+    assert_eq!(rt.state.setup.step, crate::screens::setup::BACKUPS);
+    let ran = run_jobs(&mut rt, &t.core);
+    assert!(ran.contains(&"show recovery key"), "{ran:?}");
+    assert!(rt.state.setup.recovery.is_none());
+    assert!(!rt.state.setup.key_busy, "Show can be pressed again");
 }
 
 #[test]
