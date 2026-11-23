@@ -8,14 +8,19 @@
 //! magic (8 bytes)
 //! u32 session count, then each session's key: u32 length, bytes      (ordinal = position)
 //! postings: one run per word, in word order
-//! words: each word's bytes, in word order
-//! table: per word, u64 word offset (into words), u32 word length,
-//!        u64 postings offset (into the file), u32 postings length
-//! footer: u64 word count, u64 words start, u64 table start, magic
+//! words: in blocks of BLOCK words, in word order; per word, varint bytes it shares with the
+//!        word before it in its block (0 for a block's first), varint length of the rest, the
+//!        rest, varint length of its run of postings
+//! blocks: per block, u64 offset of its words, u64 offset of its first word's run
+//! footer: u64 word count, u64 words start, u64 blocks start, magic
 //! ```
 //!
-//! A run of postings is, per session in ordinal order: varint ordinal, varint count of the word
-//! in that session, varint number of events, then each event's sequence number as a varint delta.
+//! A run of postings is, per session in ordinal order: varint ordinal (the first) or how far it
+//! is past the one before (the rest), varint count of the word in that session, varint number of
+//! events, then each event's sequence number as a varint delta.
+//!
+//! A word costs its bytes past what it shares with the word before it and three varints, plus a
+//! block's entry per `BLOCK` words: no fixed-size entry per word (issue #154).
 
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -23,8 +28,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 
-const MAGIC: &[u8; 8] = b"DSTLWRD1";
-const ENTRY: u64 = 24;
+const MAGIC: &[u8; 8] = b"DSTLWRD2";
+/// Words per block. A lookup finds a word's block by binary search and reads the block through.
+const BLOCK: u64 = if cfg!(test) { 4 } else { 32 };
+/// What a block's entry takes.
+const ENTRY: u64 = 16;
 const FOOTER: u64 = 32;
 
 /// A word's occurrences in one session.
@@ -38,11 +46,14 @@ pub struct Posting {
     pub events: Vec<u64>,
 }
 
-/// `postings`, in ordinal order, as one run.
+/// `postings`, in ascending ordinal order, as one run.
 pub fn encode(postings: &[Posting]) -> Vec<u8> {
     let mut out = Vec::new();
+    let mut last_ord = 0;
     for p in postings {
-        varint(&mut out, u64::from(p.ord));
+        debug_assert!(p.ord >= last_ord, "postings in ordinal order");
+        varint(&mut out, u64::from(p.ord - last_ord));
+        last_ord = p.ord;
         varint(&mut out, u64::from(p.count));
         varint(&mut out, p.events.len() as u64);
         let mut last = 0;
@@ -57,8 +68,11 @@ pub fn encode(postings: &[Posting]) -> Vec<u8> {
 pub fn decode(bytes: &[u8]) -> Result<Vec<Posting>> {
     let mut at = 0;
     let mut out = Vec::new();
+    let mut ord = 0u32;
     while at < bytes.len() {
-        let ord = u32::try_from(unvarint(bytes, &mut at)?)?;
+        ord = ord
+            .checked_add(u32::try_from(unvarint(bytes, &mut at)?)?)
+            .context("an ordinal overflows")?;
         let count = u32::try_from(unvarint(bytes, &mut at)?)?;
         let n = unvarint(bytes, &mut at)?;
         let mut events = Vec::with_capacity(n.min(64) as usize);
@@ -85,14 +99,52 @@ fn varint(out: &mut Vec<u8>, mut v: u64) {
 fn unvarint(bytes: &[u8], at: &mut usize) -> Result<u64> {
     let mut v = 0u64;
     for shift in (0..64).step_by(7) {
-        let b = *bytes.get(*at).context("postings end inside a number")?;
+        let b = *bytes.get(*at).context("a segment ends inside a number")?;
         *at += 1;
         v |= u64::from(b & 0x7f) << shift;
         if b & 0x80 == 0 {
             return Ok(v);
         }
     }
-    bail!("a number in the postings is too long")
+    bail!("a number in a segment is too long")
+}
+
+/// A varint read from `r`.
+fn read_varint(r: &mut impl Read) -> Result<u64> {
+    let mut v = 0u64;
+    for shift in (0..64).step_by(7) {
+        let mut b = [0u8; 1];
+        r.read_exact(&mut b)?;
+        v |= u64::from(b[0] & 0x7f) << shift;
+        if b[0] & 0x80 == 0 {
+            return Ok(v);
+        }
+    }
+    bail!("a number in a segment is too long")
+}
+
+/// How many leading bytes `a` and `b` share.
+fn shared(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+}
+
+/// One word as the words area holds it, after `prev`: rebuilt into `prev`, with its run's length.
+/// `bytes` is read from `at`.
+fn next_word(bytes: &[u8], at: &mut usize, prev: &mut Vec<u8>) -> Result<u64> {
+    let keep = unvarint(bytes, at)? as usize;
+    let len = unvarint(bytes, at)? as usize;
+    ensure!(
+        keep <= prev.len(),
+        "a word shares more than the one before it"
+    );
+    let rest = at
+        .checked_add(len)
+        .and_then(|end| bytes.get(*at..end))
+        .context("a segment ends inside a word")?;
+    prev.truncate(keep);
+    prev.extend_from_slice(rest);
+    *at += len;
+    unvarint(bytes, at)
 }
 
 /// Writes a segment, one word at a time in word order. Nothing is in place until [`finish`].
@@ -105,9 +157,10 @@ pub struct Writer {
     pos: u64,
     words: BufWriter<File>,
     words_len: u64,
-    table: BufWriter<File>,
+    blocks: BufWriter<File>,
     count: u64,
-    last: Option<String>,
+    last: Vec<u8>,
+    buf: Vec<u8>,
 }
 
 impl Writer {
@@ -139,34 +192,45 @@ impl Writer {
             pos,
             words: BufWriter::new(tempfile::tempfile_in(dir)?),
             words_len: 0,
-            table: BufWriter::new(tempfile::tempfile_in(dir)?),
+            blocks: BufWriter::new(tempfile::tempfile_in(dir)?),
             count: 0,
-            last: None,
+            last: Vec::new(),
+            buf: Vec::new(),
         })
     }
 
     /// Add `word` with its run of postings. Words must come in ascending order.
     pub fn add(&mut self, word: &str, run: &[u8]) -> Result<()> {
+        let w = word.as_bytes();
         ensure!(
-            self.last.as_deref().is_none_or(|l| l < word),
+            self.count == 0 || self.last.as_slice() < w,
             "words must be added in order"
         );
+        // A block's first word is whole, so a lookup can start reading at any block.
+        let keep = if self.count.is_multiple_of(BLOCK) {
+            self.blocks.write_all(&self.words_len.to_le_bytes())?;
+            self.blocks.write_all(&self.pos.to_le_bytes())?;
+            0
+        } else {
+            shared(&self.last, w)
+        };
+        self.buf.clear();
+        varint(&mut self.buf, keep as u64);
+        varint(&mut self.buf, (w.len() - keep) as u64);
+        self.buf.extend_from_slice(&w[keep..]);
+        varint(&mut self.buf, run.len() as u64);
+        self.words.write_all(&self.buf)?;
+        self.words_len += self.buf.len() as u64;
         self.out.write_all(run)?;
-        self.words.write_all(word.as_bytes())?;
-        self.table.write_all(&self.words_len.to_le_bytes())?;
-        self.table
-            .write_all(&u32::try_from(word.len())?.to_le_bytes())?;
-        self.table.write_all(&self.pos.to_le_bytes())?;
-        self.table
-            .write_all(&u32::try_from(run.len())?.to_le_bytes())?;
         self.pos += run.len() as u64;
-        self.words_len += word.len() as u64;
         self.count += 1;
-        self.last = Some(word.to_string());
+        self.last.clear();
+        self.last.extend_from_slice(w);
         Ok(())
     }
 
-    /// Write the words, the table and the footer, and put the segment in place. Returns its size.
+    /// Write the words, the blocks and the footer, and put the segment in place. Returns its
+    /// size.
     pub fn finish(self) -> Result<u64> {
         let Self {
             path,
@@ -174,7 +238,7 @@ impl Writer {
             mut out,
             pos,
             words,
-            table,
+            blocks,
             count,
             ..
         } = self;
@@ -182,18 +246,19 @@ impl Writer {
         let mut words = words.into_inner()?;
         words.seek(SeekFrom::Start(0))?;
         let words_len = std::io::copy(&mut words, &mut out)?;
-        let table_start = words_start + words_len;
-        let mut table = table.into_inner()?;
-        table.seek(SeekFrom::Start(0))?;
-        let table_len = std::io::copy(&mut table, &mut out)?;
+        let blocks_start = words_start + words_len;
+        // Block offsets were written relative to the words area; they are kept that way.
+        let mut blocks = blocks.into_inner()?;
+        blocks.seek(SeekFrom::Start(0))?;
+        let blocks_len = std::io::copy(&mut blocks, &mut out)?;
         out.write_all(&count.to_le_bytes())?;
         out.write_all(&words_start.to_le_bytes())?;
-        out.write_all(&table_start.to_le_bytes())?;
+        out.write_all(&blocks_start.to_le_bytes())?;
         out.write_all(MAGIC)?;
         let file = out.into_inner()?;
         file.sync_all()?;
         fs::rename(&tmp, &path).with_context(|| format!("put {} in place", path.display()))?;
-        Ok(table_start + table_len + FOOTER)
+        Ok(blocks_start + blocks_len + FOOTER)
     }
 }
 
@@ -206,7 +271,7 @@ pub struct Segment {
     postings_start: u64,
     count: u64,
     words_start: u64,
-    table_start: u64,
+    blocks_start: u64,
 }
 
 impl Segment {
@@ -233,11 +298,11 @@ impl Segment {
         (&file).read_exact(&mut footer)?;
         ensure!(&footer[24..] == MAGIC, "{} is cut short", path.display());
         let at = |i: usize| u64::from_le_bytes(footer[i..i + 8].try_into().unwrap());
-        let (count, words_start, table_start) = (at(0), at(8), at(16));
+        let (count, words_start, blocks_start) = (at(0), at(8), at(16));
         ensure!(
             pos <= words_start
-                && words_start <= table_start
-                && table_start + count * ENTRY + FOOTER == len,
+                && words_start <= blocks_start
+                && blocks_start + count.div_ceil(BLOCK) * ENTRY + FOOTER == len,
             "{} does not add up",
             path.display()
         );
@@ -248,21 +313,69 @@ impl Segment {
             postings_start: pos,
             count,
             words_start,
-            table_start,
+            blocks_start,
         })
+    }
+
+    fn blocks(&self) -> u64 {
+        self.count.div_ceil(BLOCK)
+    }
+
+    /// Block `i`'s words, as bytes, and where its first word's run starts.
+    fn block(&self, i: u64) -> Result<(Vec<u8>, u64)> {
+        let n = self.blocks();
+        let e = self.bytes(
+            self.blocks_start + i * ENTRY,
+            if i + 1 < n { 2 * ENTRY } else { ENTRY },
+        )?;
+        let at = |j: usize| u64::from_le_bytes(e[j..j + 8].try_into().unwrap());
+        let (start, run) = (at(0), at(8));
+        let end = if i + 1 < n {
+            at(16)
+        } else {
+            self.blocks_start - self.words_start
+        };
+        ensure!(
+            start <= end && end <= self.blocks_start - self.words_start,
+            "{} does not add up",
+            self.path.display()
+        );
+        Ok((self.bytes(self.words_start + start, end - start)?, run))
     }
 
     /// The run of postings for `word`, if the segment has it.
     pub fn get(&self, word: &str) -> Result<Option<Vec<u8>>> {
-        let (mut lo, mut hi) = (0u64, self.count);
+        let w = word.as_bytes();
+        // The last block whose first word is not after `word`.
+        let (mut lo, mut hi) = (0u64, self.blocks());
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let e = self.entry(mid)?;
-            let w = self.bytes(self.words_start + e.word, e.word_len)?;
-            match w.as_slice().cmp(word.as_bytes()) {
-                std::cmp::Ordering::Less => lo = mid + 1,
-                std::cmp::Ordering::Greater => hi = mid,
-                std::cmp::Ordering::Equal => return Ok(Some(self.bytes(e.run, e.run_len)?)),
+            let (bytes, _) = self.block(mid)?;
+            let mut first = Vec::new();
+            next_word(&bytes, &mut 0, &mut first)?;
+            if first.as_slice() <= w {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo == 0 {
+            return Ok(None);
+        }
+        let (bytes, mut run) = self.block(lo - 1)?;
+        let (mut at, mut cur) = (0, Vec::new());
+        while at < bytes.len() {
+            let len = next_word(&bytes, &mut at, &mut cur)?;
+            let end = run
+                .checked_add(len)
+                .filter(|&end| self.postings_start <= run && end <= self.words_start)
+                .with_context(|| format!("{} does not add up", self.path.display()))?;
+            match cur.as_slice().cmp(w) {
+                std::cmp::Ordering::Less => run = end,
+                std::cmp::Ordering::Equal => {
+                    return Ok(Some(self.bytes(run, len)?));
+                }
+                std::cmp::Ordering::Greater => break,
             }
         }
         Ok(None)
@@ -270,47 +383,24 @@ impl Segment {
 
     /// Every word with its run of postings, in word order.
     pub fn words(&self) -> Result<Words> {
-        let open = |at: u64| -> Result<BufReader<File>> {
+        let open = |at: u64, len: u64| -> Result<BufReader<std::io::Take<File>>> {
             let mut f = File::open(&self.path)?;
             f.seek(SeekFrom::Start(at))?;
-            Ok(BufReader::new(f))
+            Ok(BufReader::new(f.take(len)))
         };
         Ok(Words {
-            table: open(self.table_start)?,
-            words: open(self.words_start)?,
-            runs: open(self.postings_start)?,
+            words: open(self.words_start, self.blocks_start - self.words_start)?,
+            runs: open(self.postings_start, self.words_start - self.postings_start)?,
             left: self.count,
+            prev: Vec::new(),
         })
     }
 
-    fn entry(&self, i: u64) -> Result<Entry> {
-        let b = self.bytes(self.table_start + i * ENTRY, ENTRY as u32)?;
-        Ok(Entry::from(&b))
-    }
-
-    fn bytes(&self, at: u64, len: u32) -> Result<Vec<u8>> {
-        let mut out = vec![0u8; len as usize];
+    fn bytes(&self, at: u64, len: u64) -> Result<Vec<u8>> {
+        let mut out = vec![0u8; usize::try_from(len)?];
         (&self.file).seek(SeekFrom::Start(at))?;
         (&self.file).read_exact(&mut out)?;
         Ok(out)
-    }
-}
-
-struct Entry {
-    word: u64,
-    word_len: u32,
-    run: u64,
-    run_len: u32,
-}
-
-impl Entry {
-    fn from(b: &[u8]) -> Self {
-        Self {
-            word: u64::from_le_bytes(b[0..8].try_into().unwrap()),
-            word_len: u32::from_le_bytes(b[8..12].try_into().unwrap()),
-            run: u64::from_le_bytes(b[12..20].try_into().unwrap()),
-            run_len: u32::from_le_bytes(b[20..24].try_into().unwrap()),
-        }
     }
 }
 
@@ -320,12 +410,17 @@ fn u32_at(r: &mut impl Read) -> Result<u32> {
     Ok(u32::from_le_bytes(b))
 }
 
+/// How many bytes `r` has left: buffered, and not yet read from its area.
+fn left(r: &BufReader<std::io::Take<File>>) -> u64 {
+    r.buffer().len() as u64 + r.get_ref().limit()
+}
+
 /// A segment's words in order, read front to back.
 pub struct Words {
-    table: BufReader<File>,
-    words: BufReader<File>,
-    runs: BufReader<File>,
+    words: BufReader<std::io::Take<File>>,
+    runs: BufReader<std::io::Take<File>>,
     left: u64,
+    prev: Vec<u8>,
 }
 
 impl Iterator for Words {
@@ -337,14 +432,26 @@ impl Iterator for Words {
         }
         self.left -= 1;
         let mut read = || -> Result<(String, Vec<u8>)> {
-            let mut b = [0u8; ENTRY as usize];
-            self.table.read_exact(&mut b)?;
-            let e = Entry::from(&b);
-            let mut word = vec![0u8; e.word_len as usize];
-            self.words.read_exact(&mut word)?;
-            let mut run = vec![0u8; e.run_len as usize];
+            let keep = read_varint(&mut self.words)? as usize;
+            let len = read_varint(&mut self.words)? as usize;
+            ensure!(
+                keep <= self.prev.len(),
+                "a word shares more than the one before it"
+            );
+            // Checked against what is left of each area before anything is allocated for it.
+            ensure!(
+                len as u64 <= left(&self.words),
+                "a word runs past the words"
+            );
+            self.prev.truncate(keep);
+            let at = self.prev.len();
+            self.prev.resize(at + len, 0);
+            self.words.read_exact(&mut self.prev[at..])?;
+            let run_len = read_varint(&mut self.words)?;
+            ensure!(run_len <= left(&self.runs), "a run runs past the postings");
+            let mut run = vec![0u8; usize::try_from(run_len)?];
             self.runs.read_exact(&mut run)?;
-            Ok((String::from_utf8(word)?, run))
+            Ok((String::from_utf8(self.prev.clone())?, run))
         };
         Some(read())
     }
@@ -364,11 +471,19 @@ mod tests {
             count,
             events: events.to_vec(),
         };
-        let words = [
+        // More words than a block holds, sharing beginnings, and one not ASCII.
+        let mut words = vec![
             ("alpha", vec![p(0, 3, &[1, 4, 300])]),
+            ("alphabet", vec![p(1, 1, &[2])]),
+            ("alphabets", vec![p(0, 1, &[9]), p(1, 1, &[9])]),
+            ("alpine", vec![p(1, 2, &[])]),
             ("beta", vec![p(0, 1, &[2]), p(1, 2, &[0, 7])]),
+            ("betas", vec![p(0, 1, &[3])]),
             ("zed", vec![p(1, 1, &[1_000_000])]),
+            ("zé", vec![p(0, 1, &[5])]),
+            ("zéro", vec![p(0, 1, &[6]), p(1, 4, &[6, 8])]),
         ];
+        words.sort_by(|a, b| a.0.cmp(b.0));
         let mut w = Writer::create(&path, &sessions).unwrap();
         for (word, postings) in &words {
             w.add(word, &encode(postings)).unwrap();
@@ -385,7 +500,17 @@ mod tests {
             let run = s.get(word).unwrap().unwrap();
             assert_eq!(&decode(&run).unwrap(), postings, "{word}");
         }
-        for missing in ["", "a", "alphas", "c", "zzz"] {
+        for missing in [
+            "",
+            "a",
+            "alph",
+            "alphas",
+            "alphabetz",
+            "b",
+            "c",
+            "zf",
+            "zzz",
+        ] {
             assert!(s.get(missing).unwrap().is_none(), "{missing}");
         }
         let all: Vec<(String, Vec<Posting>)> = s
@@ -423,5 +548,40 @@ mod tests {
         assert!(Segment::open(&path).is_err());
         fs::write(&path, b"not a segment at all, just some text here").unwrap();
         assert!(Segment::open(&path).is_err());
+
+        // A length past the end of its area is an error, not an allocation of that size.
+        let mut w = Writer::create(&path, &["a".to_string()]).unwrap();
+        w.add("ab", &[0, 1, 1, 0]).unwrap();
+        w.finish().unwrap();
+        let good = fs::read(&path).unwrap();
+        let s = Segment::open(&path).unwrap();
+        let (words_start, blocks_start) = (s.words_start as usize, s.blocks_start as usize);
+        assert_eq!(&good[words_start..blocks_start], &[0, 2, b'a', b'b', 4]);
+        for (at, huge) in [(words_start + 1, true), (words_start + 4, false)] {
+            let mut bad = good.clone();
+            // A ten-byte varint of u64::MAX in place of the word's or the run's length.
+            bad.splice(at..at + 1, [0xff; 9].into_iter().chain([0x01]));
+            let len = bad.len() as u64;
+            // Keep the footer adding up: the blocks and footer moved 9 bytes on.
+            let shift = |b: &mut Vec<u8>, i: usize| {
+                let v = u64::from_le_bytes(b[i..i + 8].try_into().unwrap()) + 9;
+                b[i..i + 8].copy_from_slice(&v.to_le_bytes());
+            };
+            let f = len as usize - FOOTER as usize;
+            shift(&mut bad, f + 16);
+            fs::write(&path, &bad).unwrap();
+            let s = Segment::open(&path).unwrap();
+            assert!(s.words().unwrap().next().unwrap().is_err(), "huge {huge}");
+            assert!(s.get("ab").is_err(), "huge {huge}");
+        }
+
+        // A segment with no words at all (sessions with no text) is a segment.
+        Writer::create(&path, &["a".to_string()])
+            .unwrap()
+            .finish()
+            .unwrap();
+        let s = Segment::open(&path).unwrap();
+        assert!(s.get("x").unwrap().is_none());
+        assert_eq!(s.words().unwrap().count(), 0);
     }
 }

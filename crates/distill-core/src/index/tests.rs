@@ -253,7 +253,7 @@ fn deleting_the_index_and_building_again_gives_the_same_results() {
     }
     let p = progress(&home).unwrap();
     assert_eq!((p.current, p.pending), (12, 0));
-    assert!(p.segments as usize <= MAX_SEGMENTS, "{p:?}");
+    assert!(p.segments as usize <= TIER, "{p:?}");
     let queries = [
         "common",
         "beta",
@@ -280,6 +280,45 @@ fn deleting_the_index_and_building_again_gives_the_same_results() {
         .map(|q| found(&home, q, &Filter::default()))
         .collect();
     assert_eq!(incremental, rebuilt);
+}
+
+#[test]
+fn a_segment_merged_away_before_a_manifest_names_it_is_deleted_at_once() {
+    let sessions: Vec<S> = (0..8)
+        .map(|i| s(&format!("s{i}"), "2026-11-01T09:00:00Z", "same words"))
+        .collect();
+    let (_d, home) = home_with(&sessions);
+    build(&home).unwrap();
+    let mut m = load(&home);
+    let saved: BTreeSet<u64> = m.segments.keys().copied().collect();
+    let [a, b] = saved.iter().copied().collect::<Vec<_>>()[..] else {
+        panic!("two segments of four sessions: {saved:?}")
+    };
+    // A build moves a's sessions to a new segment, then finds it mostly dead copies.
+    let fresh = m.next_segment;
+    m.next_segment += 1;
+    fs::copy(home.words_segment_path(a), home.words_segment_path(fresh)).unwrap();
+    let mut info = m.segments[&a].clone();
+    for e in m.entries.values_mut().filter(|e| e.segment == a) {
+        e.segment = fresh;
+    }
+    info.sessions *= 4;
+    m.segments.insert(fresh, info);
+
+    merge(&home, &mut m, &saved).unwrap();
+    // The saved manifest still names a and b, so their files stay until it is replaced.
+    assert!(home.words_segment_path(a).exists());
+    assert!(home.words_segment_path(b).exists());
+    assert!(
+        !home.words_segment_path(fresh).exists(),
+        "never saved, so gone"
+    );
+    assert!(!m.segments.contains_key(&fresh) && !m.segments.contains_key(&a));
+    assert_eq!(
+        keys(&home, "same").len(),
+        8,
+        "the saved index still answers"
+    );
 }
 
 #[test]
@@ -334,6 +373,38 @@ fn words_are_letters_digits_and_underscores_and_a_part_finds_the_whole() {
     assert!(keys(&home, "sess").is_empty(), "whole words only");
     let long = "x".repeat(MAX_WORD + 1);
     assert!(query_words(&long).is_empty());
+}
+
+#[test]
+fn words_inside_encoded_data_are_not_indexed() {
+    // Base64 as an image or payload in tool output: a long run with digits, split by `+` and `/`.
+    let blob: String = (0..12)
+        .map(|i| format!("QmFzZTY0{i}aW1hZ2U+ZGF0YQ/"))
+        .collect();
+    assert!(blob.len() >= ENCODED);
+    let text = format!("before {blob} after\nsame=\"{blob}\" and kept");
+    assert_eq!(
+        query_words(&text),
+        ["before", "after", "same", "and", "kept"]
+    );
+    // Shorter than ENCODED, or with no digit (a long path or slug), it is words as usual.
+    let short = &blob[..ENCODED - 1];
+    assert_eq!(query_words(short)[0], "qmfzzty00aw1hz2u");
+    let slug = "a-very-long-slug-made-of-words/".repeat(4);
+    assert!(slug.len() >= ENCODED);
+    assert_eq!(
+        query_words(&slug),
+        ["a", "very", "long", "slug", "made", "of", "words"]
+    );
+
+    let (_d, home) = home_with(&[s(
+        "a",
+        "2026-11-01T09:00:00Z",
+        &format!("the screenshot {blob} shows the bug"),
+    )]);
+    build(&home).unwrap();
+    assert_eq!(keys(&home, "screenshot bug"), ["claude-code/a"]);
+    assert!(keys(&home, "qmfzzty00aw1hz2u").is_empty());
 }
 
 /// Sessions of mixed sizes: shared words, `_` words, repeats, and some that are long.
@@ -414,6 +485,34 @@ fn a_batch_is_written_once_it_passes_its_byte_budget_not_only_its_session_count(
 }
 
 #[test]
+fn a_build_merges_segments_of_about_the_same_size_once_a_tier_fills() {
+    let sessions: Vec<S> = (0..40)
+        .map(|i| {
+            s(
+                &format!("t{i:02}"),
+                "2026-11-01T09:00:00Z",
+                &format!("word{i} shared"),
+            )
+        })
+        .collect();
+    let (_d, home) = home_with(&sessions);
+    let one_each = Limits {
+        budget: 1,
+        giant: usize::MAX,
+        pass: u64::MAX,
+    };
+    build_within(&home, one_each).unwrap();
+    let m = load(&home);
+    // 40 segments written, every eight small ones merged as they filled their tier: never one
+    // big segment rewritten for each small one.
+    assert!(m.segments.values().all(|s| tier(s.bytes) == 0), "{m:?}");
+    assert!(m.segments.len() < TIER, "{}", m.segments.len());
+    assert_eq!(m.next_segment, 40 + 5, "five merges of eight");
+    assert_eq!(keys(&home, "shared").len(), 40);
+    assert_eq!(keys(&home, "word17"), ["claude-code/t17"]);
+}
+
+#[test]
 fn a_build_split_by_bytes_or_in_passes_gives_the_same_matches_as_one_batch() {
     let sessions = mixed();
     let (_a, one) = home_with(&sessions);
@@ -426,7 +525,7 @@ fn a_build_split_by_bytes_or_in_passes_gives_the_same_matches_as_one_batch() {
     };
     build_within(&one, roomy).unwrap();
     build_within(&by_bytes, Limits { budget: 1, ..roomy }).unwrap();
-    // Every session is a giant here, in passes of a few hundred words.
+    // Every session is a giant here, in passes of a few hundred distinct words.
     build_within(
         &passes,
         Limits {
@@ -436,6 +535,19 @@ fn a_build_split_by_bytes_or_in_passes_gives_the_same_matches_as_one_batch() {
         },
     )
     .unwrap();
+    // A segment per session, merged by tiers as the build goes: no tier is left full, and only
+    // the segments the manifest names are on disk.
+    for h in [&by_bytes, &passes] {
+        let m = load(h);
+        let mut per_tier: BTreeMap<u32, usize> = BTreeMap::new();
+        for s in m.segments.values() {
+            *per_tier.entry(tier(s.bytes)).or_default() += 1;
+        }
+        assert!(per_tier.values().all(|&n| n < TIER), "{per_tier:?}");
+        assert!(m.next_segment >= 14, "one segment written per session");
+        let files = fs::read_dir(h.words_dir()).unwrap().count();
+        assert_eq!(files, m.segments.len() + 1, "segments and the manifest");
+    }
     let want = lookups(&one);
     assert!(want.iter().any(|(_, m)| m.len() > 3), "{want:?}");
     assert_eq!(lookups(&by_bytes), want);

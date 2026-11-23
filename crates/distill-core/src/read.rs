@@ -1,5 +1,6 @@
 //! The read path: the one way session text leaves DISTILL (issue #72, "The read path"; ADR 0002).
 
+use std::collections::HashMap;
 use std::ops::ControlFlow;
 
 use anyhow::{Context, Result, bail};
@@ -416,11 +417,16 @@ fn scan(home: &Home, config: &Config, facts: &SessionMeta, events: &[Event]) -> 
 /// details left in place. Findings that don't fit their events are an error: the read is
 /// refused rather than served with a secret left in.
 fn mask(mut events: Vec<Event>, scan: &Findings) -> Result<Vec<Event>> {
+    // By event, once: a long session can have tens of thousands of events and of findings.
+    let mut by_event: HashMap<u64, Vec<&Finding>> = HashMap::new();
+    for f in scan.all().filter(|f| f.is_secret()) {
+        by_event.entry(f.event).or_default().push(f);
+    }
     for e in &mut events {
         let mut text: Vec<&Finding> = Vec::new();
         let mut values: Vec<&Finding> = Vec::new();
         let mut keys: Vec<&Finding> = Vec::new();
-        for f in scan.in_event(e.seq).filter(|f| f.is_secret()) {
+        for &f in by_event.get(&e.seq).into_iter().flatten() {
             match &f.field {
                 Field::Text => text.push(f),
                 Field::Input { key: false, .. } => values.push(f),
