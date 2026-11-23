@@ -19,7 +19,10 @@
 //!   gives the same results.
 //!
 //! Words are runs of letters, digits and `_`, matched ignoring case. A word with `_` in it is also
-//! found by each of its parts. Words longer than [`MAX_WORD`] characters are not indexed.
+//! found by each of its parts. Words longer than [`MAX_WORD`] characters are not indexed, nor are
+//! words inside encoded data: a run of at least [`ENCODED`] bytes of base64's characters with a
+//! digit in it (issue #154). Images and payloads in tool output split into tens of millions of
+//! words found in one session each, nearly the whole index, and nobody searches for them.
 
 pub mod segment;
 pub mod vectors;
@@ -44,10 +47,15 @@ use segment::{Posting, Segment, Writer};
 
 /// The version of the index's format and of how it splits text into words. An index of another
 /// version is rebuilt.
-pub const INDEX_VERSION: u32 = 2;
+pub const INDEX_VERSION: u32 = 3;
 
 /// Words longer than this many characters are not indexed.
 pub const MAX_WORD: usize = 64;
+
+/// A run of base64's characters (letters, digits, `+`, `/`, `=`, `_`, `-`) at least this many
+/// bytes long, with a digit in it, is encoded data, and none of its words are indexed. A path or a
+/// slug that long has a `.` or a space in it, or no digit.
+pub const ENCODED: usize = 100;
 
 /// How many sessions go into one new segment at most. Small in tests, so that they split the
 /// index into segments and merge them.
@@ -67,11 +75,30 @@ const GIANT: usize = if cfg!(test) {
 } else {
     16 * 1024 * 1024
 };
-/// How many occurrences of words one pass over a giant session holds at most. A distinct word
-/// takes about 300 bytes while it is counted.
-const PASS: u64 = if cfg!(test) { 20_000 } else { 4_000_000 };
-/// How many segments the index keeps before it merges the smallest.
-const MAX_SEGMENTS: usize = 8;
+/// How many distinct words one pass over a giant session holds at most. A distinct word takes
+/// about 300 bytes while it is counted.
+const PASS: u64 = if cfg!(test) { 20_000 } else { 1_000_000 };
+/// Bits in the map a giant session's first pass marks each distinct word in: 16 MiB, whatever
+/// the session's size. Two words that share a bit count once, so a session with tens of millions
+/// of distinct words is counted a little short.
+const SEEN_BITS: usize = if cfg!(test) { 1 << 16 } else { 1 << 27 };
+/// How many segments of about the same size the index keeps before it merges them into one.
+/// Segments are in tiers by size, each [`TIER`] times the one below, starting at [`FLOOR`] bytes;
+/// a tier that fills is merged into one segment of the tier above. So each copy of a session is
+/// rewritten about once per tier, and the index holds at most `TIER - 1` segments per tier.
+const TIER: usize = 8;
+/// The size below which every segment is in the lowest tier.
+const FLOOR: u64 = if cfg!(test) { 1024 } else { 4 * 1024 * 1024 };
+
+/// The tier of a segment of `bytes` (see [`TIER`]).
+fn tier(bytes: u64) -> u32 {
+    let (mut t, mut top) = (0, FLOOR * TIER as u64);
+    while bytes >= top {
+        t += 1;
+        top = top.saturating_mul(TIER as u64);
+    }
+    t
+}
 /// How many events of a session each word records, for finding its passage.
 const MAX_EVENTS: usize = 16;
 
@@ -226,7 +253,7 @@ struct Limits {
     /// A session whose text is longer than this many bytes is written as a segment of its own,
     /// in passes over word ranges (see [`write_alone`]).
     giant: usize,
-    /// How many occurrences of words one such pass holds at most.
+    /// How many distinct words one such pass holds at most.
     pass: u64,
 }
 
@@ -244,6 +271,9 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
     let _lock = home.lock("index")?;
     let sessions = normalize::read_session_list(home)?;
     let mut m = load(home);
+    // The segments the saved manifest names, which a query may be reading. Any other segment
+    // this build writes and then merges away is deleted at once.
+    let saved: BTreeSet<u64> = m.segments.keys().copied().collect();
     let mut r = IndexReport {
         sessions: sessions.len() as u64,
         ..Default::default()
@@ -278,7 +308,7 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
                         limits.pass,
                     )?;
                     r.indexed += 1;
-                    merge(home, &mut m)?;
+                    merge(home, &mut m, &saved)?;
                     return Ok(());
                 }
                 batch.add(facts, &events, card.as_ref(), made_from);
@@ -287,7 +317,7 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
                     batch.flush(home, &mut m)?;
                     // Merging as it goes keeps a first build of a large archive to a few
                     // segments open at a time.
-                    merge(home, &mut m)?;
+                    merge(home, &mut m, &saved)?;
                 }
             }
             Err(why) => {
@@ -299,7 +329,7 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
         Ok(())
     })?;
     batch.flush(home, &mut m)?;
-    merge(home, &mut m)?;
+    merge(home, &mut m, &saved)?;
     // The commit point: the segments it names are written, and those it no longer names go.
     write_atomic(&home.words_manifest_path(), &serde_json::to_vec(&m)?)?;
     remove_unlisted(home, &m);
@@ -473,10 +503,11 @@ fn bucket(w: &str) -> usize {
 }
 
 /// Index one session as a segment of its own, in passes over ranges of words, so that its words
-/// are never all in memory at once: a first pass counts the occurrences in each [`bucket`], the
-/// buckets are cut into ranges of about `pass` occurrences, and each range is counted and written
-/// in word order before the next. The segment is the one a batch of this session alone would
-/// write.
+/// are never all in memory at once: a first pass counts the distinct words in each [`bucket`]
+/// (see [`SEEN_BITS`]), the buckets are cut into ranges of about `pass` distinct words, and each
+/// range is counted and written in word order before the next. Each pass reads the whole session,
+/// so they are cut by distinct words, which take memory, not by occurrences, which repeat. The
+/// segment is the one a batch of this session alone would write.
 fn write_alone(
     home: &Home,
     m: &mut Manifest,
@@ -487,7 +518,18 @@ fn write_alone(
     pass: u64,
 ) -> Result<()> {
     let mut sizes = vec![0u64; 1 << 16];
-    let total = notes(events, card, |w, _| sizes[bucket(&w)] += 1);
+    let mut seen = vec![0u64; SEEN_BITS / 64];
+    let total = notes(events, card, |w, _| {
+        let mut h = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&w, &mut h);
+        let bit = std::hash::Hasher::finish(&h) as usize % SEEN_BITS;
+        let (word, mask) = (bit / 64, 1u64 << (bit % 64));
+        if seen[word] & mask == 0 {
+            seen[word] |= mask;
+            sizes[bucket(&w)] += 1;
+        }
+    });
+    drop(seen);
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     let (mut start, mut held) = (0, 0u64);
     for (b, &n) in sizes.iter().enumerate() {
@@ -571,6 +613,8 @@ fn for_each_word(text: &str, mut f: impl FnMut(String)) {
 
 /// Where each indexed word of `text` is, as byte ranges.
 pub(crate) fn word_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let encoded = encoded_runs(text);
+    let mut skip = encoded.into_iter().peekable();
     let mut chars = text.char_indices().peekable();
     std::iter::from_fn(move || {
         loop {
@@ -585,11 +629,31 @@ pub(crate) fn word_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '
                 n += 1;
                 chars.next();
             }
-            if n <= MAX_WORD {
+            while skip.next_if(|&(_, e)| e < end).is_some() {}
+            let inside = skip.peek().is_some_and(|&(s, e)| s <= start && end <= e);
+            if n <= MAX_WORD && !inside {
                 return Some((start, end));
             }
         }
     })
+}
+
+/// The runs of encoded data in `text` (see [`ENCODED`]), as byte ranges, in order.
+fn encoded_runs(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let (mut start, mut digit) = (None, false);
+    for (i, b) in text.bytes().enumerate().chain([(text.len(), b' ')]) {
+        if b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'_' | b'-') {
+            start.get_or_insert(i);
+            digit |= b.is_ascii_digit();
+        } else if let Some(s) = start.take() {
+            if digit && i - s >= ENCODED {
+                out.push((s, i));
+            }
+            digit = false;
+        }
+    }
+    out
 }
 
 fn is_word_char(c: char) -> bool {
@@ -706,41 +770,59 @@ fn lookup_once(home: &Home, words: &[String]) -> Result<Lookup> {
     Ok(Lookup { matches, indexed })
 }
 
-/// Merge segments that are mostly dead copies, and, past [`MAX_SEGMENTS`], the smallest, into
-/// one new segment holding only their current copies.
-fn merge(home: &Home, m: &mut Manifest) -> Result<()> {
-    let mut live: BTreeMap<u64, u32> = m.segments.keys().map(|&id| (id, 0)).collect();
-    for e in m.entries.values() {
-        *live.entry(e.segment).or_default() += 1;
-    }
-    m.segments
-        .retain(|id, _| live.get(id).copied().unwrap_or(0) > 0);
-    let mut chosen: BTreeSet<u64> = m
-        .segments
-        .iter()
-        .filter(|(id, s)| live[id] * 2 < s.sessions)
-        .map(|(&id, _)| id)
-        .collect();
-    // How many segments are left once the chosen ones are merged into one.
-    let left =
-        |chosen: &BTreeSet<u64>| m.segments.len() - chosen.len() + usize::from(!chosen.is_empty());
-    let mut by_size: Vec<u64> = m
-        .segments
-        .keys()
-        .filter(|id| !chosen.contains(id))
-        .copied()
-        .collect();
-    by_size.sort_by_key(|id| (live[id], *id));
-    for id in by_size {
-        if left(&chosen) <= MAX_SEGMENTS {
-            break;
+/// Merge until nothing is left to merge: segments that are mostly dead copies, and any tier that
+/// holds [`TIER`] segments, each into one new segment holding only their current copies. A
+/// segment it drops is deleted unless it is one of `saved`, which a query may be reading until
+/// the manifest that drops it is written; so a first build of a large archive holds about one
+/// index's worth of segments at a time, not every segment it wrote.
+fn merge(home: &Home, m: &mut Manifest, saved: &BTreeSet<u64>) -> Result<()> {
+    let discard = |id: u64| {
+        if !saved.contains(&id) {
+            let _ = fs::remove_file(home.words_segment_path(id));
         }
-        chosen.insert(id);
+    };
+    loop {
+        let mut live: BTreeMap<u64, u32> = m.segments.keys().map(|&id| (id, 0)).collect();
+        for e in m.entries.values() {
+            *live.entry(e.segment).or_default() += 1;
+        }
+        m.segments.retain(|&id, _| {
+            let keep = live.get(&id).copied().unwrap_or(0) > 0;
+            if !keep {
+                discard(id);
+            }
+            keep
+        });
+        let mut chosen: BTreeSet<u64> = m
+            .segments
+            .iter()
+            .filter(|(id, s)| live[id] * 2 < s.sessions)
+            .map(|(&id, _)| id)
+            .collect();
+        if chosen.is_empty() {
+            let mut tiers: BTreeMap<u32, BTreeSet<u64>> = BTreeMap::new();
+            for (&id, s) in &m.segments {
+                tiers.entry(tier(s.bytes)).or_default().insert(id);
+            }
+            if let Some(full) = tiers.into_values().find(|ids| ids.len() >= TIER) {
+                chosen = full;
+            }
+        }
+        if chosen.is_empty() {
+            return Ok(());
+        }
+        merge_into_one(home, m, chosen, &discard)?;
     }
-    if chosen.is_empty() {
-        return Ok(());
-    }
+}
 
+/// Merge the `chosen` segments into one new segment holding only their current copies, and
+/// `discard` each of them.
+fn merge_into_one(
+    home: &Home,
+    m: &mut Manifest,
+    chosen: BTreeSet<u64>,
+    discard: &impl Fn(u64),
+) -> Result<()> {
     // The current copies in the chosen segments, in a new order.
     let mut keys: Vec<String> = m
         .entries
@@ -809,6 +891,8 @@ fn merge(home: &Home, m: &mut Manifest) -> Result<()> {
         e.ord = new_ord[k.as_str()];
     }
     m.segments.retain(|id, _| !chosen.contains(id));
+    drop(sources);
+    chosen.into_iter().for_each(discard);
     m.segments.insert(
         id,
         SegmentInfo {
