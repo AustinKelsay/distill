@@ -14,7 +14,7 @@ pub struct Args {
     /// The folder target to restore from: the `path` of its `[[backup]]` entry
     #[arg(long)]
     folder: PathBuf,
-    /// A file holding the recovery key (default: read it from standard input, piped)
+    /// A file holding the backup key (default: read it from standard input, piped)
     #[arg(long)]
     key_file: Option<PathBuf>,
     /// Restore even when the target lacks blobs the manifest names, and count them
@@ -27,7 +27,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         Some(p) => std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?,
         // Typed at a terminal, the key would show on screen and stay in its scrollback.
         None if std::io::stdin().is_terminal() => bail!(
-            "give the recovery key with --key-file, or pipe it in (for example \
+            "give the backup key with --key-file, or pipe it in (for example \
              `pbpaste | distill restore --folder ...`)"
         ),
         None => {

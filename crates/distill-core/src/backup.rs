@@ -5,7 +5,7 @@
 //!
 //! - **The key** is an age X25519 identity in `keys/backup.key`, owner-only. It is made once, at
 //!   backup setup, and never replaced silently: a new key starts every target over.
-//! - **The recovery key** is the same key as text, shown to the owner to keep somewhere other
+//! - **The owner's copy** is the same key as text, shown to the owner to keep somewhere other
 //!   than this machine. Without it or the home's copy, no one can open the backups.
 //! - **Object names** are an HMAC-SHA256, under a key derived from the backup key, of what the
 //!   object is (a blob's capture hash, a file's path). A plain SHA-256 would let a target test
@@ -20,9 +20,9 @@ pub mod target;
 pub use restore::{BackupCheck, RestoreReport, restore, verify};
 pub use run::{BackupReport, run};
 pub use status::{TargetStatus, TickBackups, targets};
-pub use target::{add_folder, test};
+pub use target::{Place, add_folder, places, reused_name, synced, test};
 
-/// The recovery key's text, for a face to show the owner once.
+/// The backup key's text, for a face to show the owner.
 pub fn expose(recovery: &SecretString) -> &str {
     recovery.expose_secret()
 }
@@ -114,7 +114,7 @@ impl BackupKey {
         let identity = text
             .trim()
             .parse::<age::x25519::Identity>()
-            .map_err(|e| anyhow!("not a backup recovery key: {e}"))?;
+            .map_err(|e| anyhow!("not a backup key: {e}"))?;
         Ok(Self::from_identity(identity))
     }
 

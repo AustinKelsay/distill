@@ -398,13 +398,13 @@ fn backup_warnings(
         .iter()
         .filter_map(|t| {
             let since = match &t.last_ok {
-                Some(at) => format!("its last whole run was {} ago", span(ago(at)?)),
-                None => "it has never had a whole run".into(),
+                Some(at) => format!("its last backup was {} ago", span(ago(at)?)),
+                None => "it has not been backed up to yet".into(),
             };
             Some(warn(match (&t.last_error, &t.last_ok) {
                 (Some(e), _) => format!("The last backup to {} failed, and {since}: {e}", t.name),
                 (None, None) => format!(
-                    "Backup target {} has never had a whole run: back up to it once (Back up now in the window, or `distill backup run --target {}`), and the timer keeps it current after that.",
+                    "Nothing has been backed up to {} yet: back up to it once (Back up now in the window, or `distill backup run --target {}`), and every scheduled run keeps it current after that.",
                     t.name, t.name
                 ),
                 (None, Some(at)) if ago(at)? > 2 * every => format!(
@@ -615,12 +615,12 @@ mod warning_tests {
         assert_eq!(w.len(), 3, "{messages:?}");
         assert!(w.iter().all(|w| w.kind == WarningKind::Backup));
         assert!(
-            messages[0].contains("target never has never had a whole run: back up to it once (Back up now in the window, or `distill backup run --target never`)"),
+            messages[0].contains("Nothing has been backed up to never yet: back up to it once (Back up now in the window, or `distill backup run --target never`)"),
             "{messages:?}"
         );
         assert!(
             messages[1]
-                .contains("failed, and its last whole run was 60 minutes ago: the folder is gone"),
+                .contains("failed, and its last backup was 60 minutes ago: the folder is gone"),
             "{messages:?}"
         );
         assert!(

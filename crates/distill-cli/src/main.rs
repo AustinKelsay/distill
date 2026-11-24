@@ -57,7 +57,7 @@ enum Cmd {
     Providers(providers::Args),
     /// Encrypted backups to the `[[backup]]` targets: make the key, back up now, or check them
     Backup(backup::Args),
-    /// Bring a backup back into an empty home, with its recovery key
+    /// Bring a backup back into an empty home, with its backup key
     Restore(restore::Args),
     /// Read a session's events as a model at a named provider
     Read(read::Args),

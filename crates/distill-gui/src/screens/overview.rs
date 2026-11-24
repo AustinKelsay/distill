@@ -14,7 +14,7 @@ use distill_core::backup::{self, BackupKey, TargetStatus};
 use distill_core::exposure::{self, Exposure, Outcome, Rule};
 use distill_core::runlog::{RunGroup, StepResult};
 use distill_core::schedule;
-use distill_core::status::{self, HarnessStatus, Health, Status, WarningKind};
+use distill_core::status::{self, HarnessStatus, Health, Status, Warning, WarningKind};
 use rune::{Align, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize};
 
@@ -109,8 +109,9 @@ fn target(core: &jobs::Core, name: &str) -> anyhow::Result<distill_core::config:
 }
 
 /// Back up to `name` now, as `distill backup run --target` does, then reload the report. A first
-/// run copies the whole archive, so it runs on its own thread.
-fn back_up(s: &mut State, name: String) {
+/// run copies the whole archive, so it runs on its own thread. Setup's Finish calls it for each
+/// folder, so the first backup to each starts with no further press.
+pub(crate) fn back_up(s: &mut State, name: String) {
     if !s.overview.backing_up.insert(name.clone()) {
         return;
     }
@@ -285,8 +286,14 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
             stick_bottom: false,
         })
         .child(tiles(st, p));
-    if !st.warnings.is_empty() {
-        body = body.child(warnings(st, p));
+    // While a backup runs, its warnings (back up once, the last run failed) are out of date.
+    let shown: Vec<&Warning> = st
+        .warnings
+        .iter()
+        .filter(|w| s.overview.backing_up.is_empty() || w.kind != WarningKind::Backup)
+        .collect();
+    if !shown.is_empty() {
+        body = body.child(warnings(&shown, p));
     }
     body.child(progress(st, p))
         .child(backups(s, st, p))
@@ -330,9 +337,9 @@ fn tiles(st: &Status, p: &Paint) -> El {
         ))
 }
 
-fn warnings(st: &Status, p: &Paint) -> El {
+fn warnings(shown: &[&Warning], p: &Paint) -> El {
     let mut card = p.section("warnings", "Needs your attention", None);
-    for (i, w) in st.warnings.iter().enumerate() {
+    for (i, w) in shown.iter().enumerate() {
         let kind = match w.kind {
             WarningKind::SweepOverdue => "Sweep overdue",
             WarningKind::PrunesSooner => "Prunes sooner",
@@ -668,21 +675,22 @@ fn backup_row(s: &State, t: &TargetStatus, p: &Paint) -> El {
         .and_then(|b| b.path.as_deref())
         .map_or(t.kind.clone(), crate::ui::tilde);
     let failed = t.last_failed.is_some();
+    let running = s.overview.backing_up.contains(&t.name);
     let (color, state) = match (&t.last_ok, t.captures_behind) {
+        (None, _) if running => (p.warn(), "First backup running…".to_string()),
         _ if failed => (p.bad(), "Last run failed".to_string()),
-        (None, _) => (
+        (None, _) => (p.warn(), "Not backed up yet".to_string()),
+        (Some(_), Some(n)) if n > 0 => (
             p.warn(),
-            "Never backed up: back up once to start it".to_string(),
+            format!("{} not backed up yet", count(n, "session update")),
         ),
-        (Some(_), Some(n)) if n > 0 => (p.warn(), format!("{} behind", count(n, "capture"))),
         (Some(_), _) => (p.good(), "Up to date".to_string()),
     };
     let when = match &t.last_ok {
-        Some(at) => format!("Last whole run {}", ago(at, s.now())),
-        None => "No whole run yet".to_string(),
+        Some(at) => format!("Last backup {}", ago(at, s.now())),
+        None => "No backup yet".to_string(),
     };
     let name = t.name.clone();
-    let running = s.overview.backing_up.contains(&t.name);
     let back_up_now = Button::new(if running {
         "Backing up…"
     } else {

@@ -48,7 +48,7 @@ api_key_file = "/…/key"   # an absolute path; the first line is the key
 
 With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 
-Backups (ADR 0009) go to `[[backup]]` targets, encrypted on this machine first. Run `distill backup init` once to make the key; keep the recovery key it prints somewhere other than this machine.
+Backups (ADR 0009) go to `[[backup]]` targets, encrypted on this machine first. Run `distill backup init` once to make the key; keep a copy of the key it prints somewhere other than this machine.
 
 ```toml
 [[backup]]
@@ -64,8 +64,8 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | Command | What it does |
 | --- | --- |
 | `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
-| `distill backup init` / `run` / `status` / `verify` | Make the backup key (printing its recovery key once), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
-| `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the recovery key from `--key-file` or a pipe. The next tick rebuilds the rest. |
+| `distill backup init` / `run` / `status` / `verify` | Make the backup key (printing it once), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
+| `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the backup key from `--key-file` or a pipe. The next tick rebuilds the rest. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
 | `distill read <session>` | A session's events for a model at a named provider, with a placeholder for each secret. |

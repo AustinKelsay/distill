@@ -5,15 +5,17 @@
 //! runtime's models and common services ready to trust), the steward's models (run on this
 //! machine's Ollama, or at a trusted service through `[steward.generation]`, and chosen from the
 //! models it lists; embeddings always run in Ollama), privacy (what is found automatically, personal terms and
-//! excluded paths), backups (folder targets, each tested with `backup::test`, and the backup key),
-//! and the schedule. Finish calls `setup::finish`, which writes `config.toml` and installs the
-//! timer. Nothing reaches disk before Finish but the backup key, which the owner makes with its
-//! own button so its recovery key can be shown and kept before any backup needs it.
+//! excluded paths), backups (folder targets, typed or picked from the drives and cloud folders
+//! `backup::places` finds, each tested with `backup::test`, and the backup key), and the
+//! schedule. Finish calls `setup::finish`, which writes `config.toml` and installs the timer, then
+//! starts the first backup to each folder. Nothing reaches disk before Finish but the backup key,
+//! which the owner makes with its own button so it can be shown and a copy kept before any
+//! backup needs it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use distill_core::backup::{self, BackupKey};
+use distill_core::backup::{self, BackupKey, Place};
 use distill_core::config::{GenerationConfig, ProviderKind};
 use distill_core::harness::{self, Detection};
 use distill_core::runtime::{RuntimeState, Stored};
@@ -28,6 +30,7 @@ use rune_kit::{
 use crate::State;
 use crate::jobs::{self, Job};
 use crate::nav::{self, Screen};
+use crate::screens::overview;
 use crate::ui::{Paint, count, dot, human_bytes, pill, tilde};
 
 /// (name, what the step decides).
@@ -121,12 +124,15 @@ pub struct SetupState {
     pub testing: BTreeSet<String>,
     /// Whether the home has a backup key; None until asked.
     pub has_key: Option<bool>,
-    /// The recovery key, while the owner has it shown. Dropped when they hide it or leave the
-    /// step.
+    /// The drives and cloud folders found on this machine, offered as backup folders; None until
+    /// asked.
+    pub places: Option<Vec<Place>>,
+    /// The backup key's text, while the owner has it shown. Dropped when they hide it or leave
+    /// the step.
     pub recovery: Option<String>,
     pub key_busy: bool,
     pub key_error: Option<String>,
-    /// The recovery key was copied, and is cleared from the clipboard after [`COPY_FOR`].
+    /// The backup key was copied, and is cleared from the clipboard after [`COPY_FOR`].
     pub copied: bool,
     /// Counts the owner's visits to the Backups step (each opening of Setup, each step change, each
     /// Hide). A key read lands only in the visit that asked for it.
@@ -172,6 +178,7 @@ impl SetupState {
             tests: BTreeMap::new(),
             testing: BTreeSet::new(),
             has_key: None,
+            places: None,
             recovery: None,
             key_busy: false,
             key_error: None,
@@ -195,18 +202,37 @@ impl SetupState {
         self.step + 1 == STEPS.len()
     }
 
-    /// Move to step `i`, closing any menu and hiding the recovery key.
+    /// Move to step `i`, closing any menu and hiding the backup key.
     pub fn go(&mut self, i: usize) {
         self.step = i.min(STEPS.len() - 1);
         self.open = None;
         self.hide_recovery();
     }
 
-    /// Hide the recovery key, and drop any key read still under way.
+    /// Hide the backup key, and drop any key read still under way.
     pub fn hide_recovery(&mut self) {
         self.recovery = None;
         self.copied = false;
         self.visit += 1;
+    }
+
+    /// Add the found place `i` as a backup folder, under the place's name (numbered when a
+    /// folder already has it).
+    fn add_place(&mut self, i: usize) {
+        let Some(place) = self.places.as_ref().and_then(|p| p.get(i)).cloned() else {
+            return;
+        };
+        let mut name = place.name.clone();
+        for n in 2.. {
+            if !self.draft.backups.iter().any(|t| t.name == name) {
+                break;
+            }
+            name = format!("{} {n}", place.name);
+        }
+        match backup::add_folder(&mut self.draft, &name, &place.path.to_string_lossy()) {
+            Ok(()) => self.backup_error = None,
+            Err(e) => self.backup_error = Some(jobs::line(e)),
+        }
     }
 
     fn add_backup(&mut self) {
@@ -285,12 +311,17 @@ impl SetupState {
 
     /// Why the draft can't be finished as it is, if it can't.
     fn unfinished(&self) -> Option<String> {
-        let g = self.draft.steward.generation.as_ref()?;
-        if g.base_url.is_empty() || g.api_key_file.as_os_str().is_empty() {
+        if let Some(g) = &self.draft.steward.generation
+            && (g.base_url.is_empty() || g.api_key_file.as_os_str().is_empty())
+        {
             return Some(format!(
                 "Models: give {}'s address and key file, or run models on this machine",
                 g.provider
             ));
+        }
+        // Finish backs up to each folder, and a backup needs the key.
+        if !self.draft.backups.is_empty() && self.has_key != Some(true) {
+            return Some("Backups: make the backup key, or remove the backup folders".into());
         }
         None
     }
@@ -351,7 +382,8 @@ impl SetupState {
 }
 
 /// Moving to Setup asks for what it shows: what each harness has on this machine, the local
-/// runtime's models, and whether the timer is installed.
+/// runtime's models, whether the timer is installed, the backup key and the places a backup
+/// could go.
 pub fn open(s: &mut State) {
     check_service(s);
     // Shown only after a press on the Backups step, never on coming back to Setup.
@@ -382,10 +414,15 @@ pub fn open(s: &mut State) {
             Err(e) => s.setup.key_error = Some(e),
         })
     }));
+    // On its own thread: a share that went away can hang a look at its mount.
+    s.ask(Job::apart("backup places", |core| {
+        let found = (core.places)();
+        Box::new(move |s: &mut State| s.setup.places = Some(found))
+    }));
 }
 
 impl State {
-    /// Show the recovery key a job read in `visit`, if the owner is still in that visit to the
+    /// Show the backup key a job read in `visit`, if the owner is still in that visit to the
     /// Backups step; a key read after they left, even if they have come back since, is dropped.
     fn show_recovery(&mut self, text: String, visit: u64) {
         if self.screen == Screen::Setup && self.setup.step == BACKUPS && self.setup.visit == visit {
@@ -394,7 +431,7 @@ impl State {
     }
 }
 
-/// How long a copied recovery key stays on the clipboard.
+/// How long a copied backup key stays on the clipboard.
 pub const COPY_FOR: Duration = Duration::from_secs(120);
 
 /// Test the draft's target `name`: that it is there, takes a write, and what it holds. On its own
@@ -425,7 +462,7 @@ fn test_backup(s: &mut State, name: String) {
     }));
 }
 
-/// Make the home's backup key now, and show its recovery key.
+/// Make the home's backup key now, and show it.
 fn make_key(s: &mut State) {
     if s.setup.key_busy || s.setup.has_key != Some(false) {
         return;
@@ -450,14 +487,14 @@ fn make_key(s: &mut State) {
     }));
 }
 
-/// Read the home's backup key and show its recovery key.
+/// Read the home's backup key and show it.
 fn show_key(s: &mut State) {
     if s.setup.key_busy {
         return;
     }
     s.setup.key_busy = true;
     let visit = s.setup.visit;
-    s.ask(Job::new("show recovery key", move |core| {
+    s.ask(Job::new("show backup key", move |core| {
         let r = BackupKey::existing(&core.home)
             .and_then(|k| {
                 k.map(|k| backup::expose(&k.recovery()).to_string())
@@ -497,7 +534,8 @@ fn check_service(s: &mut State) {
     }));
 }
 
-/// Finish: write the draft and install the timer, then show the overview.
+/// Finish: write the draft and install the timer, then show the overview and start the first
+/// backup to each folder that has none, so it needs no press of Back up now.
 fn finish(s: &mut State) {
     if s.setup.finishing {
         return;
@@ -511,8 +549,24 @@ fn finish(s: &mut State) {
     s.setup.error = None;
     let config = s.setup.draft.clone();
     s.ask(Job::new("finish setup", move |core| {
-        let r = distill_core::setup::finish(&core.home, &config, |h, c| (core.timer.install)(h, c))
-            .map_err(jobs::line);
+        let r = match backup::reused_name(&core.home, &config) {
+            Ok(Some(name)) => Err(format!(
+                "Backups: {name:?} was the name of another backup folder; give this one a new name"
+            )),
+            _ => {
+                distill_core::setup::finish(&core.home, &config, |h, c| (core.timer.install)(h, c))
+                    .map_err(jobs::line)
+            }
+        };
+        // The folders with no backup yet; the timer keeps the others current.
+        let first: Vec<String> = backup::status::status(&core.home, &config, 0)
+            .map(|ts| {
+                ts.into_iter()
+                    .filter(|t| t.last_ok.is_none())
+                    .map(|t| t.name)
+                    .collect()
+            })
+            .unwrap_or_default();
         Box::new(move |s: &mut State| {
             s.setup.finishing = false;
             match r {
@@ -522,8 +576,17 @@ fn finish(s: &mut State) {
                     s.setup.fresh = false;
                     s.setup.recovery = None;
                     s.setup.timer_installed = Some(true);
-                    s.overview.notice = Some("Setup saved and the timer installed".into());
+                    s.overview.notice = Some(if first.is_empty() {
+                        "Setup saved and the timer installed".into()
+                    } else {
+                        "Setup saved and the timer installed. The first backup to each new \
+                         folder has started."
+                            .into()
+                    });
                     nav::go(s, Screen::Overview);
+                    for name in first {
+                        overview::back_up(s, name);
+                    }
                 }
                 Err(e) => s.setup.error = Some(e),
             }
@@ -1503,6 +1566,9 @@ fn backups(s: &State, p: &Paint) -> El {
         .on_press(|s: &mut State| s.setup.add_backup())
         .build(&p.k)
         .key("add-backup");
+    if let Some(places) = d.places.as_ref().filter(|p| !p.is_empty()) {
+        targets = targets.child(found(d, p, places));
+    }
     targets = targets.child(
         row()
             .w_full()
@@ -1526,9 +1592,10 @@ fn backups(s: &State, p: &Paint) -> El {
         .gap(16.0)
         .child(p.note(
             "The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, \
-             with your settings and logs, to folders you choose: an external drive or a mounted \
-             share. Everything is encrypted on this machine first, so a folder only ever holds \
-             ciphertext.",
+             with your settings and logs, to folders you choose: an external drive, a mounted \
+             share, or a cloud folder that syncs (Google Drive, iCloud, Dropbox). Everything is \
+             encrypted on this machine first, so the folder, and the cloud behind it, only ever \
+             sees scrambled files.",
         ))
         .child(targets)
         .child(recovery_key(d, p))
@@ -1536,12 +1603,45 @@ fn backups(s: &State, p: &Paint) -> El {
             p.note(match d.draft.backups.len() {
                 0 => "Without a backup folder, DISTILL keeps one copy of the archive: this one.",
                 _ => {
-                    "Finish saves these folders. Back up to each once from the Overview (Back up \
-                  now); after that every scheduled run keeps it current."
+                    "Finish makes the first backup to each folder; after that every scheduled run \
+                     keeps it current."
                 }
             })
             .key("backups-next"),
         )
+}
+
+/// The drives and cloud folders found on this machine, one press each to add as a backup folder.
+fn found(d: &SetupState, p: &Paint, places: &[Place]) -> El {
+    let mut chips = row().key("places").w_full().gap(8.0).flex_wrap();
+    for (i, place) in places.iter().enumerate() {
+        let added = d
+            .draft
+            .backups
+            .iter()
+            .any(|t| t.path.as_deref() == Some(place.path.as_path()));
+        let label = match (added, place.cloud) {
+            (true, _) => format!("{} · added", place.name),
+            (false, true) => format!("{} · cloud folder", place.name),
+            (false, false) => format!("{} · drive", place.name),
+        };
+        chips = chips.child(
+            Button::new(label)
+                .variant(ButtonVariant::Outline)
+                .control_size(ControlSize::Small)
+                .disabled(added)
+                .on_press(move |s: &mut State| s.setup.add_place(i))
+                .build(&p.k)
+                .key(format!("place-{i}")),
+        );
+    }
+    col()
+        .key("found")
+        .w_full()
+        .pt(12.0)
+        .gap(8.0)
+        .child(p.note("Found on this machine: press one to add it, or type a folder below."))
+        .child(chips)
 }
 
 fn backup_row(d: &SetupState, p: &Paint, i: usize, t: &distill_core::config::BackupTarget) -> El {
@@ -1579,6 +1679,13 @@ fn backup_row(d: &SetupState, p: &Paint, i: usize, t: &distill_core::config::Bac
                 .wrap(),
         );
     }
+    // A folder a sync app uploads: Verify sees only the copy here.
+    if t.path.as_deref().is_some_and(backup::synced) {
+        about = about.child(
+            p.note("Verify checks the copy on this machine; your sync app uploads it.")
+                .key("synced"),
+        );
+    }
     row()
         .key(format!("backup-{i}"))
         .w_full()
@@ -1590,17 +1697,17 @@ fn backup_row(d: &SetupState, p: &Paint, i: usize, t: &distill_core::config::Bac
         .child(row().gap(6.0).child(test).child(remove))
 }
 
-/// The backup key: make it, or show its recovery key to copy and keep.
+/// The backup key: make it, or show it to copy and keep.
 fn recovery_key(d: &SetupState, p: &Paint) -> El {
-    let mut c = p.section("recovery-key", "Recovery key", None);
+    let mut c = p.section("recovery-key", "Backup key", None);
     match (d.has_key, &d.recovery) {
         (None, _) => c = c.child(p.note("Looking for the backup key…")),
         (Some(false), _) => {
             c = c
                 .child(p.note(
-                    "Every backup is encrypted with this home's backup key. Making it writes \
-                     keys/backup.key now and shows its recovery key here, for you to keep \
-                     somewhere other than this machine.",
+                    "Every backup is locked with this home's backup key. Making it saves the key \
+                     on this machine, in keys/backup.key, and shows it here so you can keep a copy \
+                     somewhere else.",
                 ))
                 .child(
                     row().child(
@@ -1620,16 +1727,15 @@ fn recovery_key(d: &SetupState, p: &Paint) -> El {
         (Some(true), None) => {
             c = c
                 .child(p.note(
-                    "This home has a backup key, in keys/backup.key. Keep its recovery key \
-                     somewhere other than this machine: without it, a lost disk means lost \
-                     backups.",
+                    "This home has a backup key, in keys/backup.key. Keep a copy of it somewhere \
+                     other than this machine: without one, a lost disk means lost backups.",
                 ))
                 .child(
                     row().child(
                         Button::new(if d.key_busy {
                             "Reading…"
                         } else {
-                            "Show recovery key"
+                            "Show backup key"
                         })
                         .disabled(d.key_busy)
                         .on_press(show_key)

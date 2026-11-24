@@ -16,7 +16,7 @@ A target is one `[[backup]]` table in `config.toml` with a `name`, a `kind` and 
 
 ## Keys and restore
 
-The backup key is separate from the fingerprint key, which travels inside the backup set, and lives owner-only in `keys/`. At setup the owner is shown the same key as a recovery key to keep somewhere else. If both are lost, no one can open the backups, the owner included. A new key starts each target over; objects written under the old key stay readable with it until pruned.
+The backup key is separate from the fingerprint key, which travels inside the backup set, and lives owner-only in `keys/`. At setup the owner is shown the backup key to keep a copy somewhere else. If both are lost, no one can open the backups, the owner included. A new key starts each target over; objects written under the old key stay readable with it until pruned.
 
 `distill restore` writes only into an empty home. It fetches and decrypts, checks every blob against its capture hash, writes `raw/` through `archive.rs`, and writes every other file of the backup set as it was stored: `config.toml`, the fingerprint key, the logs, the reveal requests and the owner's tags, plus cards and vectors when the target carries them. The tick rebuilds the rest. Merging a backup into a live home is not offered.
 
