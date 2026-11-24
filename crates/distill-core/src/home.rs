@@ -181,7 +181,7 @@ impl Home {
         self.keys_dir().join("fingerprint.key")
     }
     /// The key that encrypts and names this home's backups (ADR 0009). Never in a backup: the
-    /// owner keeps a copy as the recovery key.
+    /// owner keeps a copy of it elsewhere.
     pub fn backup_key_path(&self) -> PathBuf {
         self.keys_dir().join("backup.key")
     }

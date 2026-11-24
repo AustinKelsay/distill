@@ -56,6 +56,26 @@ pub fn shows(rt: &Runtime<State>, needle: &str) -> bool {
     texts(rt).iter().any(|t| t.contains(needle))
 }
 
+/// The text of the element with `key`, or of the first text inside it.
+pub fn text_of(rt: &Runtime<State>, key: &str) -> String {
+    let els = rt.elements();
+    let parts: Vec<&str> = key.split('/').collect();
+    let (last, outer) = parts.split_last().unwrap();
+    let at = els
+        .iter()
+        .position(|e| {
+            e.key.as_deref() == Some(*last)
+                && outer.iter().all(|o| e.path.split('/').any(|seg| seg == *o))
+        })
+        .unwrap_or_else(|| panic!("no {key}"));
+    let path = &els[at].path;
+    els[at..]
+        .iter()
+        .take_while(|e| e.path.starts_with(path.as_str()))
+        .find_map(|e| e.text.clone())
+        .unwrap_or_default()
+}
+
 /// Run every queued job against `core`, as the worker would, and redraw.
 pub fn run_jobs(rt: &mut Runtime<State>, core: &crate::jobs::Core) -> Vec<&'static str> {
     let mut ran = Vec::new();

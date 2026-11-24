@@ -95,6 +95,7 @@ pub fn home(dir: &std::path::Path) -> Core {
             install: Arc::new(|_, _| panic!("no test installs the timer here")),
             installed: Arc::new(|| false),
         },
+        places: Arc::new(Vec::new),
     }
 }
 

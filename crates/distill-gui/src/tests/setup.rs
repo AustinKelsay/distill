@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use distill_core::backup::{self, Place};
 use distill_core::config::ProviderKind;
 use distill_core::runtime::{FakeRuntime, Stored};
 use distill_core::trust::Trust;
@@ -49,7 +50,8 @@ fn type_into(
 }
 
 /// A temporary home and harness folders, the fake runtime with two local models and a cloud
-/// one, and a timer stand-in that records what it was asked to install.
+/// one, a timer stand-in that records what it was asked to install, and two backup places in
+/// the temp folder (a drive and a cloud folder, neither made).
 struct Temp {
     _dir: tempfile::TempDir,
     core: Core,
@@ -64,6 +66,11 @@ fn temp(timer_fails: bool) -> Temp {
     std::fs::write(roots.join("claude-code/-w/a.jsonl"), "{}\n").unwrap();
     let installed = Arc::new(Mutex::new(Vec::new()));
     let log = installed.clone();
+    let (drive, cloud) = (
+        dir.path().join("Backup"),
+        dir.path()
+            .join("Library/CloudStorage/GoogleDrive-a@example.com/My Drive"),
+    );
     let fake = FakeRuntime::running()
         .with_model("qwen-small:4b", Stored::Here)
         .with_model("embed-text:v1", Stored::Here)
@@ -83,6 +90,20 @@ fn temp(timer_fails: bool) -> Temp {
             }),
             installed: Arc::new(|| false),
         },
+        places: Arc::new(move || {
+            vec![
+                Place {
+                    name: "Backup".into(),
+                    path: drive.clone(),
+                    cloud: false,
+                },
+                Place {
+                    name: "Google Drive".into(),
+                    path: cloud.clone(),
+                    cloud: true,
+                },
+            ]
+        }),
     };
     Temp {
         _dir: dir,
@@ -112,7 +133,13 @@ fn opening_setup_detects_harnesses_the_local_models_and_the_timer() {
     ran.sort();
     assert_eq!(
         ran,
-        ["backup key", "detect harnesses", "local runtime", "timer"]
+        [
+            "backup key",
+            "backup places",
+            "detect harnesses",
+            "local runtime",
+            "timer"
+        ]
     );
 
     // Detected harnesses are ticked; the rest are not.
@@ -544,7 +571,7 @@ fn sessions_per_run_is_chosen_on_the_models_step_and_saved() {
 }
 
 #[test]
-fn the_backups_step_adds_and_tests_folders_and_makes_a_recovery_key_to_keep() {
+fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
     let t = temp(false);
     let mut s = State::new(t.core.home.clone(), None);
     s.fixture = true;
@@ -579,14 +606,29 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_recovery_key_to_keep() {
     std::fs::create_dir(&drive).unwrap();
     press(&mut rt, "backup-0/test");
     run_jobs(&mut rt, &t.core);
-    assert!(shows(&rt, "The first backup starts it"), "{:?}", texts(&rt));
+    assert!(
+        shows(&rt, "Ready. Nothing is copied until the first backup."),
+        "{:?}",
+        texts(&rt)
+    );
     assert_eq!(
         std::fs::read_dir(&drive).unwrap().count(),
         0,
         "a test leaves nothing"
     );
 
-    // Making the key writes it now and shows its recovery key, which Show brings back.
+    // Without the key, Finish says to make it: it backs up to each folder.
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    assert!(
+        shows(&rt, "Backups: make the backup key"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(run_jobs(&mut rt, &t.core).is_empty(), "nothing was saved");
+    step(&mut rt, "Backups");
+
+    // Making the key writes it now and shows it, and Show brings it back.
     press(&mut rt, "make-key");
     assert_eq!(run_jobs(&mut rt, &t.core), ["make backup key"]);
     let kept = distill_core::backup::BackupKey::existing(&t.core.home)
@@ -603,14 +645,118 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_recovery_key_to_keep() {
     run_jobs(&mut rt, &t.core);
     assert!(shows(&rt, &recovery));
 
-    // Leaving the step hides it; Finish saves the folder.
+    // Leaving the step hides it; Finish saves the folder and starts its first backup, which the
+    // overview shows running until it lands.
     step(&mut rt, "Schedule");
     assert!(rt.state.setup.recovery.is_none());
     press(&mut rt, "finish");
-    run_jobs(&mut rt, &t.core);
+    let core = t.core.clone();
+    rt.update(|s, _| {
+        for job in std::mem::take(&mut s.outbox) {
+            job.run(&core)(s);
+        }
+    });
+    settle(&mut rt);
     let saved = t.core.home.load_config().unwrap();
     assert_eq!(saved.backups.len(), 1);
     assert_eq!(saved.backups[0].path.as_deref(), Some(drive.as_path()));
+    assert_eq!(rt.state.screen, Screen::Overview);
+    assert!(rt.state.overview.backing_up.contains("drive"));
+    // The overview's report lands while the backup still runs.
+    rt.update(|s, _| {
+        let i = s.outbox.iter().position(|j| j.what == "status").unwrap();
+        s.outbox.remove(i).run(&core)(s);
+    });
+    settle(&mut rt);
+    assert_eq!(text_of(&rt, "backup-drive/state"), "First backup running…");
+    assert!(
+        !shows(&rt, "Back up now in the window"),
+        "no warning to start it while it runs"
+    );
+    let ran = run_jobs(&mut rt, &t.core);
+    assert!(ran.contains(&"back up"), "{ran:?}");
+    assert!(
+        drive.join("distill-backup").is_dir(),
+        "the first backup ran"
+    );
+    assert_eq!(text_of(&rt, "backup-drive/state"), "Up to date");
+
+    // Finishing again starts no backup: the timer keeps a backed-up folder current.
+    press(&mut rt, "nav-setup");
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    let ran = run_jobs(&mut rt, &t.core);
+    assert!(
+        ran.contains(&"finish setup") && !ran.contains(&"back up"),
+        "{ran:?}"
+    );
+
+    // Another folder under the backed-up folder's name would take its runs: Finish refuses it.
+    press(&mut rt, "nav-setup");
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Backups");
+    press(&mut rt, "backup-0/remove");
+    let other = t.roots.parent().unwrap().join("other");
+    type_into(&mut rt, |s| &mut s.setup.backup_name, "drive");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.backup_path,
+        other.to_str().unwrap(),
+    );
+    press(&mut rt, "add-backup");
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    assert!(
+        shows(&rt, "was the name of another backup folder"),
+        "{:?}",
+        texts(&rt)
+    );
+    let saved = t.core.home.load_config().unwrap();
+    assert_eq!(
+        saved.backups[0].path.as_deref(),
+        Some(drive.as_path()),
+        "nothing saved"
+    );
+}
+
+#[test]
+fn the_backups_step_offers_the_drives_and_cloud_folders_it_finds() {
+    let t = temp(false);
+    let mut rt = runtime_sized(fresh_window(&t).state, (1080.0, 1600.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Setup));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Backups");
+    assert_eq!(text_of(&rt, "place-0"), "Backup · drive");
+    assert_eq!(text_of(&rt, "place-1"), "Google Drive · cloud folder");
+
+    // One press adds a place under its own name (numbered when a folder already has it), and its
+    // chip then says so.
+    rt.update(|s, _| {
+        backup::add_folder(&mut s.setup.draft, "Google Drive", "/elsewhere").unwrap();
+    });
+    press(&mut rt, "place-1");
+    let added = &rt.state.setup.draft.backups;
+    assert_eq!(added.len(), 2);
+    assert_eq!(added[1].name, "Google Drive 2");
+    press(&mut rt, "backup-0/remove");
+    assert_eq!(text_of(&rt, "place-1"), "Google Drive · added");
+    press(&mut rt, "place-1");
+    assert_eq!(rt.state.setup.draft.backups.len(), 1, "added once");
+
+    // A cloud folder says that its sync app, not Verify, sees the upload.
+    assert!(
+        shows(
+            &rt,
+            "Verify checks the copy on this machine; your sync app uploads it."
+        ),
+        "{:?}",
+        texts(&rt)
+    );
+    press(&mut rt, "place-0");
+    assert_eq!(rt.state.setup.draft.backups.len(), 2);
+    assert!(on(&rt, "backup-0/synced") && !on(&rt, "backup-1/synced"));
 }
 
 #[test]
@@ -642,7 +788,7 @@ fn a_test_that_lands_after_its_target_changed_is_dropped() {
 }
 
 #[test]
-fn the_recovery_key_shows_only_on_the_backups_step_after_a_press() {
+fn the_backup_key_shows_only_on_the_backups_step_after_a_press() {
     let t = temp(false);
     distill_core::backup::BackupKey::create(&t.core.home).unwrap();
     let mut s = State::new(t.core.home.clone(), None);
@@ -675,7 +821,7 @@ fn the_recovery_key_shows_only_on_the_backups_step_after_a_press() {
     press(&mut rt, "nav-setup");
     assert_eq!(rt.state.setup.step, crate::screens::setup::BACKUPS);
     let ran = run_jobs(&mut rt, &t.core);
-    assert!(ran.contains(&"show recovery key"), "{ran:?}");
+    assert!(ran.contains(&"show backup key"), "{ran:?}");
     assert!(rt.state.setup.recovery.is_none());
     assert!(!rt.state.setup.key_busy, "Show can be pressed again");
 }
@@ -711,4 +857,33 @@ fn setup_copy_uses_scheduled_runs_while_keeping_the_literal_command() {
         "literal CLI command stays: {:?}",
         texts(&rt)
     );
+}
+
+#[test]
+fn finish_refuses_two_backup_folders_of_one_name_and_saves_nothing() {
+    let t = temp(false);
+    let mut rt = fresh_window(&t);
+    run_jobs(&mut rt, &t.core);
+    distill_core::backup::BackupKey::create(&t.core.home).unwrap();
+    rt.update(|s, _| {
+        // As a hand-edited config.toml can have them.
+        backup::add_folder(&mut s.setup.draft, "drive", "/nowhere/a").unwrap();
+        let twin = s.setup.draft.backups[0].clone();
+        s.setup.draft.backups.push(twin);
+        s.setup.has_key = Some(true);
+    });
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    assert!(
+        rt.state
+            .setup
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("drive")),
+        "{:?}",
+        rt.state.setup.error
+    );
+    assert!(!t.core.home.config_path().exists(), "nothing saved");
+    assert!(t.installed.lock().unwrap().is_empty(), "no timer installed");
 }

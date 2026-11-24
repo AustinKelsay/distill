@@ -1,0 +1,60 @@
+        title: DISTILL
+      text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Trusted AI
+          text: 3 Trusted AI
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 6 of 7
+          step-title: Backups
+        text: Where encrypted copies of the archive go
+        text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive, a mounted share, or a cloud folder that syncs (Google Drive, iCloud, Dropbox). Everything is encrypted on this machine first, so the folder, and the cloud behind it, only ever sees scrambled files.
+          backup-targets: Backup folders
+              title: Backup folders
+              message: No backup folder yet.
+            text: Found on this machine: press one to add it, or type a folder below.
+                place-0: Backup · drive
+                  label: Backup · drive
+                place-1: Google Drive · cloud folder
+                  label: Google Drive · cloud folder
+                place-2: iCloud Drive · cloud folder
+                  label: iCloud Drive · cloud folder
+                input: 
+                input: 
+            add-backup: Add
+              label: Add
+          recovery-key: Backup key
+              title: Backup key
+          text: Every backup is locked with this home's backup key. Making it saves the key on this machine, in keys/backup.key, and shows it here so you can keep a copy somewhere else.
+            make-key: Make the backup key
+              label: Make the backup key
+          backups-next: Without a backup folder, DISTILL keeps one copy of the archive: this one.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

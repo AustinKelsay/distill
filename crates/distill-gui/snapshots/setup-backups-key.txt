@@ -33,12 +33,12 @@
         text: Step 6 of 7
           step-title: Backups
         text: Where encrypted copies of the archive go
-        text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive or a mounted share. Everything is encrypted on this machine first, so a folder only ever holds ciphertext.
+        text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive, a mounted share, or a cloud folder that syncs (Google Drive, iCloud, Dropbox). Everything is encrypted on this machine first, so the folder, and the cloud behind it, only ever sees scrambled files.
           backup-targets: Backup folders
               title: Backup folders
             text: drive
             text: /Volumes/Backup
-              tested: drive can be written to. The first backup starts it.
+              tested: Ready. Nothing is copied until the first backup.
               test: Test
                 label: Test
               remove: Remove
@@ -50,19 +50,33 @@
                 label: Test
               remove: Remove
                 label: Remove
+            text: Google Drive
+            text: /Users/you/Library/CloudStorage/GoogleDrive-you@example.com/My Drive
+              synced: Verify checks the copy on this machine; your sync app uploads it.
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+            text: Found on this machine: press one to add it, or type a folder below.
+                place-0: Backup · added
+                  label: Backup · added
+                place-1: Google Drive · added
+                  label: Google Drive · added
+                place-2: iCloud Drive · cloud folder
+                  label: iCloud Drive · cloud folder
                 input: 
                 input: 
             add-backup: Add
               label: Add
-          recovery-key: Recovery key
-              title: Recovery key
+          recovery-key: Backup key
+              title: Backup key
               recovery-text: AGE-SECRET-KEY-1EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE
               copy-key: Copy
                 label: Copy
               hide-key: Hide
                 label: Hide
           text: Keep it in a password manager or on paper. Without it or this machine's copy, no one can open the backups, you included. A copy leaves the clipboard after two minutes.
-          backups-next: Finish saves these folders. Back up to each once from the Overview (Back up now); after that every scheduled run keeps it current.
+          backups-next: Finish makes the first backup to each folder; after that every scheduled run keeps it current.
         back: Back
           label: Back
         next: Next

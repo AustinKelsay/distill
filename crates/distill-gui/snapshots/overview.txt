@@ -55,16 +55,16 @@
           text: /Volumes/Backup
             text: Up to date
             text: ·
-              when: Last whole run 40 min ago
+              when: Last backup 40 min ago
             verify: Verify
               label: Verify
             back-up: Back up now
               label: Back up now
           text: share
           text: /Volumes/Share
-            text: 212 captures behind
+            text: 212 session updates not backed up yet
             text: ·
-              when: Last whole run yesterday
+              when: Last backup yesterday
             verify: Verify
               label: Verify
             back-up: Back up now

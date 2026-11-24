@@ -155,11 +155,8 @@ What moves opaque, encrypted objects to and from one kind of backup target, thro
 _Avoid_: Plug-in, driver, backend
 
 **Backup key**:
-The key that encrypts and names a home's backups. It is separate from the fingerprint key, and the target never sees it.
-
-**Recovery key**:
-The backup key as given to the owner at setup, to keep somewhere other than this machine. Without it or the home's copy, the backups cannot be opened.
-_Avoid_: Recovery phrase, password
+The key that encrypts and names a home's backups. It is separate from the fingerprint key, and the target never sees it. The home keeps it in `keys/backup.key`, and the owner is shown it at setup to keep a copy somewhere other than this machine. Without that copy or the home's, the backups cannot be opened.
+_Avoid_: Recovery key, recovery phrase, password
 
 **Backup log**:
 The record of each backup run, per backup target: when, what was sent and what failed.

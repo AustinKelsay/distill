@@ -300,7 +300,7 @@ pub fn verify(
 fn newest(store: &dyn Store, key: &BackupKey, present: &BTreeSet<String>) -> Result<RunRecord> {
     match last_run(key, present) {
         Some(n) => read_record(store, key, n),
-        None => bail!("this target holds no backup made with this recovery key"),
+        None => bail!("this target holds no backup made with this backup key"),
     }
 }
 
@@ -479,7 +479,7 @@ mod tests {
         let err = restore(&Home::new(dir.path().join("x")), &*store, &other, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("no backup made with this recovery key"),
+                .contains("no backup made with this backup key"),
             "{err}"
         );
         assert!(!dir.path().join("x").exists());

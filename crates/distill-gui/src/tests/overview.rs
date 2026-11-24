@@ -14,26 +14,6 @@ fn on(rt: &Runtime<State>, key: &str) -> bool {
     rt.find(key).is_some()
 }
 
-/// The text of the element with `key`, or of the first text inside it.
-fn text_of(rt: &Runtime<State>, key: &str) -> String {
-    let els = rt.elements();
-    let parts: Vec<&str> = key.split('/').collect();
-    let (last, outer) = parts.split_last().unwrap();
-    let at = els
-        .iter()
-        .position(|e| {
-            e.key.as_deref() == Some(*last)
-                && outer.iter().all(|o| e.path.split('/').any(|seg| seg == *o))
-        })
-        .unwrap_or_else(|| panic!("no {key}"));
-    let path = &els[at].path;
-    els[at..]
-        .iter()
-        .take_while(|e| e.path.starts_with(path.as_str()))
-        .find_map(|e| e.text.clone())
-        .unwrap_or_default()
-}
-
 #[test]
 fn the_overview_shows_sessions_and_capture_health_per_harness() {
     let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
@@ -285,6 +265,7 @@ fn temp_home(dir: &std::path::Path) -> (Core, Config) {
             install: Arc::new(|_, _| panic!("no test installs the timer here")),
             installed: Arc::new(|| false),
         },
+        places: Arc::new(Vec::new),
     };
     (core, config)
 }
@@ -388,7 +369,7 @@ fn back_up_now_starts_a_target_then_verify_checks_it_and_the_report_says_it_is_c
     rt.update(|s, _| crate::nav::go(s, Screen::Overview));
     run_jobs(&mut rt, &core);
     assert!(
-        shows(&rt, "Never backed up"),
+        shows(&rt, "Not backed up yet"),
         "a target with no run: {:?}",
         texts(&rt)
     );
@@ -449,6 +430,9 @@ fn the_overview_shows_where_each_backup_target_stands() {
     assert_eq!(text_of(&rt, "backup-share/state"), "Last run failed");
     assert!(shows(&rt, "/Volumes/Share does not exist"));
     let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
-    assert_eq!(text_of(&rt, "backup-share/state"), "212 captures behind");
+    assert_eq!(
+        text_of(&rt, "backup-share/state"),
+        "212 session updates not backed up yet"
+    );
     assert!(shows(&rt, "/Volumes/Backup"), "the target's folder");
 }

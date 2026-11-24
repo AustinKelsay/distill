@@ -2,8 +2,8 @@
 //! I/O and no call to the local runtime happens in the frame loop. A screen queues a job with
 //! [`State::ask`]; `poll` hands queued jobs to the worker and lands each result on the state.
 //!
-//! A job is a closure over [`Core`], what it may reach: the home, the local runtime and the
-//! timer installer. Each screen writes its own jobs in its own module, so adding a screen
+//! A job is a closure over [`Core`], what it may reach: the home, the local runtime, the
+//! timer installer and the folders a backup could go to. Each screen writes its own jobs in its own module, so adding a screen
 //! touches no shared list of requests. Tests run queued jobs in place with [`run_queued`]
 //! over a temporary home, the fake runtime and a stand-in installer.
 
@@ -12,6 +12,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use distill_core::backup::Place;
 use distill_core::runtime::LocalRuntime;
 use distill_core::{Config, Home};
 use rune::Waker;
@@ -36,6 +37,9 @@ pub struct Core {
     pub home: Home,
     pub runtime: LocalRuntime,
     pub timer: Timer,
+    /// The drives and cloud folders on this machine ([`distill_core::backup::places`]); tests
+    /// use stand-ins, so what Setup offers does not depend on the machine running them.
+    pub places: Arc<dyn Fn() -> Vec<Place> + Send + Sync>,
 }
 
 impl Core {
@@ -48,6 +52,7 @@ impl Core {
                 install: Arc::new(distill_core::setup::install_timer),
                 installed: Arc::new(distill_core::schedule::is_installed),
             },
+            places: Arc::new(distill_core::backup::places),
         }
     }
 }

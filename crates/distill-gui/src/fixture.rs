@@ -31,6 +31,7 @@ pub const SCENES: &[Scene] = &[
     ("setup-privacy", |s| setup_step(s, 4)),
     ("setup-backups", |s| setup_step(s, 5)),
     ("setup-backups-key", backups_key_shown),
+    ("setup-backups-empty", backups_empty),
     ("setup-schedule", |s| setup_step(s, 6)),
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
@@ -102,9 +103,12 @@ fn setup_step(s: &mut State, step: usize) {
     }
     if step == 5 {
         s.setup.draft.backups = backup_targets();
+        distill_core::backup::add_folder(&mut s.setup.draft, "Google Drive", GOOGLE_DRIVE)
+            .expect("valid target");
+        s.setup.places = Some(places());
         s.setup.tests.insert(
             "drive".into(),
-            Ok("drive can be written to. The first backup starts it.".into()),
+            Ok("Ready. Nothing is copied until the first backup.".into()),
         );
         s.setup.tests.insert(
             "share".into(),
@@ -112,6 +116,38 @@ fn setup_step(s: &mut State, step: usize) {
         );
         s.setup.has_key = Some(false);
     }
+}
+
+const GOOGLE_DRIVE: &str = "/Users/you/Library/CloudStorage/GoogleDrive-you@example.com/My Drive";
+
+/// What a Mac with an external drive, Google Drive and iCloud Drive offers as backup folders.
+fn places() -> Vec<distill_core::backup::Place> {
+    use distill_core::backup::Place;
+    vec![
+        Place {
+            name: "Backup".into(),
+            path: "/Volumes/Backup".into(),
+            cloud: false,
+        },
+        Place {
+            name: "Google Drive".into(),
+            path: GOOGLE_DRIVE.into(),
+            cloud: true,
+        },
+        Place {
+            name: "iCloud Drive".into(),
+            path: "/Users/you/Library/Mobile Documents/com~apple~CloudDocs".into(),
+            cloud: true,
+        },
+    ]
+}
+
+/// The backups step as a new owner first sees it: no folder and no backup key yet, with the
+/// places this machine offers.
+fn backups_empty(s: &mut State) {
+    setup_step(s, 5);
+    s.setup.draft.backups.clear();
+    s.setup.tests.clear();
 }
 
 /// Two folder targets: an external drive and a mounted share.
@@ -122,7 +158,7 @@ fn backup_targets() -> Vec<distill_core::config::BackupTarget> {
     c.backups
 }
 
-/// The backups step just after the backup key was made, its recovery key shown. The key is
+/// The backups step just after the backup key was made, the key shown. The key is
 /// made up and opens nothing.
 fn backups_key_shown(s: &mut State) {
     setup_step(s, 5);
@@ -475,7 +511,7 @@ pub fn troubled() -> State {
     st.warnings.push(Warning {
         kind: WarningKind::Backup,
         harness: None,
-        message: "The last backup to share failed, and its last whole run was 25 hours ago: the backup folder /Volumes/Share does not exist (is the drive connected?)".into(),
+        message: "The last backup to share failed, and its last backup was 25 hours ago: the backup folder /Volumes/Share does not exist (is the drive connected?)".into(),
     });
     let share = &mut st.backups[1];
     share.last_failed = Some(at(40));

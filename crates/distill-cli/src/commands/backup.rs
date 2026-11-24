@@ -18,7 +18,7 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Make this home's backup key and print its recovery key, once
+    /// Make this home's backup key and print it, once
     Init,
     /// Back up to every `[[backup]]` target in config.toml, or only the one named
     Run {
@@ -52,9 +52,9 @@ fn init(ctx: &Ctx) -> Result<()> {
     let recovery = distill_core::backup::expose(&recovery);
     out(
         ctx.json,
-        &serde_json::json!({ "recovery_key": recovery }),
+        &serde_json::json!({ "backup_key": recovery }),
         || {
-            println!("Made this home's backup key. Its recovery key:\n\n  {recovery}\n");
+            println!("Made this home's backup key:\n\n  {recovery}\n");
             println!(
                 "Keep it somewhere other than this machine (a password manager, or on paper). \
              Every backup is encrypted with it: without it, a lost disk means lost backups. \
