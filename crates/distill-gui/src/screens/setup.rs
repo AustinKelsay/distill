@@ -553,7 +553,8 @@ fn finish(s: &mut State) {
             Ok(Some(name)) => Err(format!(
                 "Backups: {name:?} was the name of another backup folder; give this one a new name"
             )),
-            _ => {
+            Err(e) => Err(jobs::line(e)),
+            Ok(None) => {
                 distill_core::setup::finish(&core.home, &config, |h, c| (core.timer.install)(h, c))
                     .map_err(jobs::line)
             }
