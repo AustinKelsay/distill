@@ -858,3 +858,32 @@ fn setup_copy_uses_scheduled_runs_while_keeping_the_literal_command() {
         texts(&rt)
     );
 }
+
+#[test]
+fn finish_refuses_two_backup_folders_of_one_name_and_saves_nothing() {
+    let t = temp(false);
+    let mut rt = fresh_window(&t);
+    run_jobs(&mut rt, &t.core);
+    distill_core::backup::BackupKey::create(&t.core.home).unwrap();
+    rt.update(|s, _| {
+        // As a hand-edited config.toml can have them.
+        backup::add_folder(&mut s.setup.draft, "drive", "/nowhere/a").unwrap();
+        let twin = s.setup.draft.backups[0].clone();
+        s.setup.draft.backups.push(twin);
+        s.setup.has_key = Some(true);
+    });
+    step(&mut rt, "Schedule");
+    press(&mut rt, "finish");
+    run_jobs(&mut rt, &t.core);
+    assert!(
+        rt.state
+            .setup
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("drive")),
+        "{:?}",
+        rt.state.setup.error
+    );
+    assert!(!t.core.home.config_path().exists(), "nothing saved");
+    assert!(t.installed.lock().unwrap().is_empty(), "no timer installed");
+}

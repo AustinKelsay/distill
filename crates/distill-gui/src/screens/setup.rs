@@ -548,30 +548,28 @@ fn finish(s: &mut State) {
     s.setup.finishing = true;
     s.setup.error = None;
     let config = s.setup.draft.clone();
-    s.ask(Job::new("finish setup", move |core| {
-        let r = match backup::reused_name(&core.home, &config) {
-            Ok(Some(name)) => Err(format!(
-                "Backups: {name:?} was the name of another backup folder; give this one a new name"
-            )),
-            Err(e) => Err(jobs::line(e)),
-            Ok(None) => {
-                distill_core::setup::finish(&core.home, &config, |h, c| (core.timer.install)(h, c))
-                    .map_err(jobs::line)
+    // On its own thread: the name check may look in a folder on a share that went away.
+    s.ask(Job::apart("finish setup", move |core| {
+        // Checked before anything is saved. The folders with no backup yet get their first one
+        // (the timer keeps the others current); a folder may not take another's runs by its name.
+        let r = jobs::caught(|| {
+            let first: Vec<String> = backup::status::status(&core.home, &config, 0)?
+                .into_iter()
+                .filter(|t| t.last_ok.is_none())
+                .map(|t| t.name)
+                .collect();
+            if let Some(name) = backup::reused_name(&core.home, &config)? {
+                anyhow::bail!(
+                    "Backups: {name:?} was the name of another backup folder; give this one a new name"
+                );
             }
-        };
-        // The folders with no backup yet; the timer keeps the others current.
-        let first: Vec<String> = backup::status::status(&core.home, &config, 0)
-            .map(|ts| {
-                ts.into_iter()
-                    .filter(|t| t.last_ok.is_none())
-                    .map(|t| t.name)
-                    .collect()
-            })
-            .unwrap_or_default();
+            distill_core::setup::finish(&core.home, &config, |h, c| (core.timer.install)(h, c))?;
+            Ok(first)
+        });
         Box::new(move |s: &mut State| {
             s.setup.finishing = false;
             match r {
-                Ok(_) => {
+                Ok(first) => {
                     s.config = Some(config);
                     s.config_error = None;
                     s.setup.fresh = false;
