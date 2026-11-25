@@ -47,8 +47,8 @@ use crate::util::{count, write_atomic};
 use segment::{Posting, Segment, Writer};
 
 /// The version of the index's format and of how it splits text into words. An index of another
-/// version is rebuilt.
-pub const INDEX_VERSION: u32 = 3;
+/// version is rebuilt. 4: a card's tags as shown, and [`MadeFrom::tags`] (#158).
+pub const INDEX_VERSION: u32 = 4;
 
 /// Words longer than this many characters are not indexed.
 pub const MAX_WORD: usize = 64;

@@ -1033,7 +1033,7 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
     aliased.insert("pal".into(), bearer.clone());
     config.tags.aliases = aliased;
     config.save(&home.config_path()).unwrap();
-    for t in ["javascript".to_string(), "pal".into(), bearer] {
+    for t in ["javascript".to_string(), "pal".into(), bearer.clone()] {
         assert!(ids(&t).is_empty(), "{t}");
     }
     let a = rows("rust").remove(0).card.unwrap();
@@ -1043,6 +1043,31 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
             .iter()
             .all(|(t, _)| t == "deploy" || t == "refactor" || t == "rust")
     );
+
+    // Two names for one tag in one edit count once: with `js` hidden, adding `js` and
+    // `javascript` shows it again and adds nothing.
+    std::fs::remove_file(home.owner_tags_path()).unwrap();
+    crate::tags::tag_session(&home, &config, "a", &[], &["js".into()]).unwrap();
+    let (_, edit) = crate::tags::tag_session(
+        &home,
+        &config,
+        "a",
+        &["js".into(), "javascript".into()],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(edit, crate::tags::Edit::default());
+
+    // A model tag shown as written, because its alias chain goes through a secret, is not found
+    // by the chain's end.
+    config.tags.aliases = [
+        ("refactor".into(), bearer.clone()),
+        (bearer.clone(), "releasework".into()),
+    ]
+    .into();
+    config.save(&home.config_path()).unwrap();
+    assert!(ids("releasework").is_empty());
+    assert_eq!(ids("refactor"), ["a"]);
 }
 
 #[test]

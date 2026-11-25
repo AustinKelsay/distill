@@ -92,13 +92,22 @@ pub fn tag_session(
         }
         Ok(s)
     };
-    let add = add.iter().map(clean).collect::<Result<Vec<_>>>()?;
-    let hide = hide.iter().map(clean).collect::<Result<Vec<_>>>()?;
+    // Tags are told apart as the view shows them, so `js` and an alias of it are one tag.
+    let same = |a: &str, b: &str| view(a, &config.tags) == view(b, &config.tags);
+    let once = |tags: &[String]| -> Result<Vec<String>> {
+        let mut out: Vec<String> = Vec::new();
+        for t in tags.iter().map(clean) {
+            let t = t?;
+            if !out.iter().any(|o| same(o, &t)) {
+                out.push(t);
+            }
+        }
+        Ok(out)
+    };
+    let (add, hide) = (once(add)?, once(hide)?);
     let _lock = home.lock("tags")?;
     let mut all = OwnerTags::load(home)?;
     let edit = all.sessions.entry(key.clone()).or_default();
-    // Tags are told apart as the view shows them, so `js` and an alias of it are one tag.
-    let same = |a: &str, b: &str| view(a, &config.tags) == view(b, &config.tags);
     for t in add {
         let hidden = edit.hide.len();
         edit.hide.retain(|h| !same(h, &t));

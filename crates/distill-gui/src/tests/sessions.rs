@@ -441,6 +441,63 @@ fn the_owner_adds_and_hides_a_tag_on_an_open_session() {
 }
 
 #[test]
+fn a_tag_edit_shows_nothing_of_a_card_rewritten_meanwhile_and_its_refresh_waits_for_a_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = archive(dir.path());
+    let mut rt = window(&core);
+    let row = rt
+        .state
+        .sessions
+        .results
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .position(|r| r.facts.session_id == "aaaa")
+        .unwrap();
+    rt.update(|s, _| sessions::open_row(s, row));
+    run_jobs(&mut rt, &core);
+    click_a_chip(&mut rt, "session-title").expect("the title's email is covered");
+
+    // The card is rewritten with another email while the session is open, then tagged.
+    let other = ["another.synthetic", "@", "example.com"].concat();
+    let said = other.clone();
+    let config = core.home.load_config().unwrap();
+    let fake = FakeRuntime::running()
+        .with_model("small:4b", Stored::Here)
+        .replying(move |_, _| format!(
+            r#"{{"title":"Contact {said}","summary":"Updated card.","tags":["deploy"],"outcome":"done"}}"#
+        ));
+    std::fs::remove_file(core.home.card_path(Harness::ClaudeCode, "aaaa")).unwrap();
+    let written = distill_core::cards::write(
+        &core.home,
+        &config,
+        &fake.runtime(),
+        distill_core::tick::Deadline::NONE,
+    )
+    .unwrap();
+    assert_eq!(written.written, 1);
+    rt.update(|s, _| sessions::retag(s, Some("rollout".into()), None));
+    run_jobs(&mut rt, &core);
+    assert!(
+        !everything(&rt).contains(&other),
+        "a reveal on the old card shows nothing on the new"
+    );
+
+    // Back and More before the edit lands: the list is read again once that page has.
+    rt.update(|s, _| {
+        sessions::retag(s, Some("cleanup".into()), None);
+        sessions::close(s);
+        let r = s.sessions.results.as_mut().unwrap();
+        r.rows.truncate(1);
+        r.next = Some(1);
+        sessions::more(s);
+    });
+    run_jobs(&mut rt, &core);
+    assert!(rt.state.sessions.tags.iter().any(|t| t.tag == "cleanup"));
+}
+
+#[test]
 fn every_filter_the_spec_names_is_on_the_screen() {
     let rt = runtime_sized(fixture::sessions_listed(), (1080.0, 1400.0));
     for key in [

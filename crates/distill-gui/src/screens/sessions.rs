@@ -57,6 +57,9 @@ pub struct SessionsState {
     pub tags_asked: u64,
     /// Whether that answer is still to come.
     pub tags_loading: bool,
+    /// Whether the list must be read again from the first page once the page being read lands:
+    /// a tag edit wrote while it was loading.
+    pub refresh: bool,
 }
 
 /// The filters as the owner writes them; turned into a [`Filter`] when a search runs.
@@ -237,6 +240,9 @@ fn ask_page(s: &mut State, offset: usize) {
                 Ok(Err(refused)) => st.error = Some(refused),
                 Err(e) => st.error = Some(e),
             }
+            if std::mem::take(&mut st.refresh) {
+                search(s);
+            }
         })
     }));
 }
@@ -310,13 +316,20 @@ pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
                         if adding {
                             o.new_tag = TextEdit::default();
                         }
+                        // A card's marks are named by place, so none shown on the old card
+                        // stays shown on the new one.
+                        o.revealed.retain(|id| !id.starts_with('c'));
                         o.row.card = card.clone();
                     }
                     Err(e) => o.tag_error = Some(e.clone()),
                 }
             }
             if r.is_ok() {
-                search(s);
+                if s.sessions.loading {
+                    s.sessions.refresh = true;
+                } else {
+                    search(s);
+                }
             }
         })
     }));
