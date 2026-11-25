@@ -306,6 +306,8 @@ fn run_into(
         Some(n) => Some(read_record(&*store, &key, n)?),
         None => None,
     };
+    // A rewrite a run here saw before, said again, even by a run that fails from here on.
+    r.read_log_rewritten = last.as_ref().and_then(|rec| rec.read_log_rewritten.clone());
     let scratch = Scratch::new(home)?;
 
     // The manifest's whole lines as they are now; lines appended later go in the next run.
@@ -494,7 +496,7 @@ fn run_into(
                 && earlier.is_none()
                 && stored.is_some_and(|f| f.object.is_empty())
             {
-                r.read_log_rewritten = Some(r.at.clone());
+                r.read_log_rewritten.get_or_insert_with(|| r.at.clone());
             }
             let (mut parts, from) =
                 earlier.map_or((Vec::new(), 0), |f| (f.parts.clone(), f.len as usize));
@@ -568,10 +570,7 @@ fn run_into(
             .and_then(|rec| rec.files.get("log/reads.jsonl"))
             .is_some_and(|f| f.object.is_empty() && f.len > 0)
     {
-        r.read_log_rewritten = Some(r.at.clone());
-    }
-    if let Some(seen) = last.as_ref().and_then(|rec| rec.read_log_rewritten.clone()) {
-        r.read_log_rewritten = Some(seen);
+        r.read_log_rewritten.get_or_insert_with(|| r.at.clone());
     }
 
     // 4. The record, last.

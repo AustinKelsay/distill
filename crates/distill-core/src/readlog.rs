@@ -194,7 +194,9 @@ pub fn verify(home: &Home) -> Result<Chain> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e.into()),
     };
-    let body = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+    // Only whole lines: a line being appended now is not yet one.
+    let whole = bytes.iter().rposition(|b| *b == b'\n').unwrap_or(0);
+    let body = &bytes[..whole];
     let mut chain = Chain::default();
     let mut before: &[u8] = &[];
     for line in body.split(|b| *b == b'\n').filter(|_| !body.is_empty()) {
@@ -504,6 +506,23 @@ mod tests {
         behind[4] = behind[4].replace("\"events\":1", "\"events\":9");
         put(&behind);
         assert_eq!(broken_at(), Some(7));
+
+        // A line still being appended is not a whole line yet, so not a break.
+        put(&lines());
+        let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(br#"{"prev":"ab"#).unwrap();
+        assert_eq!(broken_at(), Some(7), "only the edit above");
+        put(&whole);
+        let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(br#"{"prev":"ab"#).unwrap();
+        assert_eq!(
+            verify(&home).unwrap(),
+            Chain {
+                lines: 5,
+                chained: 3,
+                broken: None
+            }
+        );
     }
 
     #[test]
