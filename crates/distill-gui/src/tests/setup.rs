@@ -937,4 +937,17 @@ fn a_new_backup_key_is_confirmed_shown_once_and_starts_each_folder_over() {
         (1, true, 0, 0),
         "{log:?}"
     );
+
+    // A new key made while the owner left the step is not shown, but they are told to show it.
+    press(&mut rt, "hide-key");
+    press(&mut rt, "new-key");
+    press(&mut rt, "confirm-new-key");
+    press(&mut rt, "nav-overview");
+    run_jobs(&mut rt, &t.core);
+    press(&mut rt, "nav-setup");
+    assert!(rt.state.setup.recovery.is_none());
+    assert!(shows(&rt, "A new backup key was made"), "{:?}", texts(&rt));
+    press(&mut rt, "show-key");
+    run_jobs(&mut rt, &t.core);
+    assert!(shows(&rt, "This is the new backup key"), "{:?}", texts(&rt));
 }

@@ -125,8 +125,15 @@ impl BackupKey {
             // Logged first: a new key the log doesn't name would leave every target refusing
             // the tick (a target that had runs and holds none under the key), while a logged one
             // that didn't land only has the old key start its runs over, which finds them.
+            // On a line of its own, even after a run's line a crash cut short.
+            let log = home.backup_log_path();
+            if fs::read(&log).is_ok_and(|b| b.last().is_some_and(|c| *c != b'\n')) {
+                let mut f = private_file().append(true).open(&log)?;
+                f.write_all(b"\n")?;
+                f.sync_data()?;
+            }
             crate::util::append_jsonl(
-                &home.backup_log_path(),
+                &log,
                 &run::BackupReport {
                     at: crate::util::now_rfc3339(),
                     new_key: true,
@@ -139,7 +146,9 @@ impl BackupKey {
             let _ = fs::remove_file(&tmp);
         }
         placed?;
-        sync_dir(&dir)?;
+        // The new key is in place, so the owner must see it. A rename a crash loses brings the
+        // old key back, whose runs then start over from what the target holds.
+        let _ = sync_dir(&dir);
         Ok(key)
     }
 

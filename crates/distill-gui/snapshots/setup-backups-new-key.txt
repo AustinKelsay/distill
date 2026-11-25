@@ -70,7 +70,7 @@
               label: Add
           recovery-key: Backup key
               title: Backup key
-          text: A new key replaces this one, and every backup folder starts over: its next backup copies everything again, locked with the new key. What the folders hold now stays, and only the old key opens it, so keep the old key's copy until each folder has a backup under the new one.
+          text: A new key replaces this one, and every backup folder starts over: its next backup copies everything again, locked with the new key. What the folders hold now stays, and only the old key opens it, so keep the old key's copy for as long as you may want those backups.
             confirm-new-key: Make the new key
               label: Make the new key
             cancel-new-key: Cancel

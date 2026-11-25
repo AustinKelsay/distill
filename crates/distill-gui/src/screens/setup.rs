@@ -138,6 +138,8 @@ pub struct SetupState {
     pub confirm_new_key: bool,
     /// The key shown is the new one just made.
     pub new_key: bool,
+    /// A new key was made while the owner was away from the Backups step, and not shown yet.
+    pub new_key_unseen: bool,
     /// Counts the owner's visits to the Backups step (each opening of Setup, each step change, each
     /// Hide). A key read lands only in the visit that asked for it.
     pub visit: u64,
@@ -189,6 +191,7 @@ impl SetupState {
             copied: false,
             confirm_new_key: false,
             new_key: false,
+            new_key_unseen: false,
             visit: 0,
             fresh: config.is_none(),
         }
@@ -514,6 +517,7 @@ fn new_key(s: &mut State) {
                     s.setup.confirm_new_key = false;
                     s.show_recovery(text, visit);
                     s.setup.new_key = s.setup.recovery.is_some();
+                    s.setup.new_key_unseen = !s.setup.new_key;
                     s.setup.key_error = None;
                     let saved = s.config.as_ref().map_or(Vec::new(), |c| c.backups.clone());
                     for t in saved {
@@ -545,6 +549,10 @@ fn show_key(s: &mut State) {
             match r {
                 Ok(text) => {
                     s.show_recovery(text, visit);
+                    if s.setup.recovery.is_some() && s.setup.new_key_unseen {
+                        s.setup.new_key = true;
+                        s.setup.new_key_unseen = false;
+                    }
                     s.setup.key_error = None;
                 }
                 Err(e) => s.setup.key_error = Some(e),
@@ -1768,7 +1776,7 @@ fn recovery_key(d: &SetupState, p: &Paint) -> El {
                     "A new key replaces this one, and every backup folder starts over: its next \
                      backup copies everything again, locked with the new key. What the folders \
                      hold now stays, and only the old key opens it, so keep the old key's copy \
-                     until each folder has a backup under the new one.",
+                     for as long as you may want those backups.",
                 ))
                 .child(
                     row()
@@ -1797,10 +1805,13 @@ fn recovery_key(d: &SetupState, p: &Paint) -> El {
         }
         (Some(true), None) => {
             c = c
-                .child(p.note(
+                .child(p.note(if d.new_key_unseen {
+                    "A new backup key was made, and the backups under way are locked with it. \
+                     Show it and keep a copy beside the old one."
+                } else {
                     "This home has a backup key, in keys/backup.key. Keep a copy of it somewhere \
-                     other than this machine: without one, a lost disk means lost backups.",
-                ))
+                     other than this machine: without one, a lost disk means lost backups."
+                }))
                 .child(
                     row()
                         .gap(6.0)
@@ -1864,9 +1875,9 @@ fn recovery_key(d: &SetupState, p: &Paint) -> El {
                         .child(row().gap(6.0).child(copy).child(hide)),
                 )
                 .child(p.note(if d.new_key {
-                    "This is the new backup key: keep it too, in a password manager or on \
-                     paper. The backups starting now are locked with it. A copy leaves the \
-                     clipboard after two minutes."
+                    "This is the new backup key: keep it beside the old one, in a password \
+                     manager or on paper. The backups starting now are locked with it. A copy \
+                     leaves the clipboard after two minutes."
                 } else {
                     "Keep it in a password manager or on paper. Without it or this machine's \
                      copy, no one can open the backups, you included. A copy leaves the \

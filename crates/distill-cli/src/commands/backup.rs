@@ -77,10 +77,10 @@ fn new_key(ctx: &Ctx) -> Result<()> {
         || {
             println!("Made a new backup key for this home:\n\n  {recovery}\n");
             println!(
-                "Keep it somewhere other than this machine, as you did the old one. Every target \
+                "Keep it somewhere other than this machine, beside the old one. Every target \
              starts over: the next backup (`distill backup run`, or the next tick) sends \
-             everything again under the new key. Keep the old key's copy until each target has \
-             a backup under the new one: until then only the old key opens its backups."
+             everything again under the new key. Only the old key opens the backups made \
+             before now, so keep its copy for as long as you may want them."
             );
         },
     )

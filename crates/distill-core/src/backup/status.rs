@@ -103,7 +103,12 @@ pub fn tick(home: &Home, config: &Config, deadline: Deadline) -> Result<TickBack
     let mut done = TickBackups::default();
     for t in targets(config, None)? {
         let started = || super::store::open(&t, false).is_ok();
-        if log.iter().any(|l| l.ok && l.target == t.name) || started() {
+        // A target backed up to under an older key is sent everything again, and fails while
+        // its drive is away, as it did before.
+        if log.iter().any(|l| l.ok && l.target == t.name)
+            || super::run::backed_up_before(home, &t.name)?
+            || started()
+        {
             match run_scheduled(home, &t, deadline)? {
                 Some(r) => {
                     done.stopped_at_deadline |= r.stopped_at_deadline;
@@ -309,6 +314,14 @@ mod tests {
         assert!(err.contains("a backup is running"), "{err}");
         drop(held);
 
+        // A run's line a crash cut short does not swallow the new key's.
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(home.backup_log_path())
+            .unwrap()
+            .write_all(br#"{"at":"2026"#)
+            .unwrap();
         let new = BackupKey::replace(&home).unwrap();
         let again = BackupKey::existing(&home).unwrap().unwrap();
         assert_eq!(
@@ -320,6 +333,16 @@ mod tests {
             old.recovery().expose_secret()
         );
         assert_eq!(status(&home, &config, 1).unwrap()[0].last_ok, None);
+
+        // With the drive away and its mount point left empty, a backup by hand makes nothing
+        // there: the target was backed up to under the old key.
+        let drive = dir.path().join("drive");
+        std::fs::rename(&drive, dir.path().join("away")).unwrap();
+        std::fs::create_dir(&drive).unwrap();
+        assert!(!run(&home, &config.backups[0]).unwrap().ok);
+        assert!(!drive.join("distill-backup").exists());
+        std::fs::remove_dir(&drive).unwrap();
+        std::fs::rename(dir.path().join("away"), &drive).unwrap();
 
         // The tick sends everything again under the new key; the old run stays as it was.
         let t = tick(&home, &config, Deadline::NONE).unwrap();

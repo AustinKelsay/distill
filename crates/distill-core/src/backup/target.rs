@@ -79,9 +79,7 @@ fn expand(path: &str) -> PathBuf {
 /// what a run would do there; `Err` says why a run would fail or should not start.
 pub fn test(home: &Home, target: &BackupTarget) -> Result<String> {
     store::probe(target)?;
-    let used = super::run::log(home)?
-        .iter()
-        .any(|l| l.ok && l.target == target.name);
+    let used = super::run::backed_up_before(home, &target.name)?;
     let store = match store::open(target, false) {
         Ok(s) => s,
         // Never backed up to: the first run makes what `open` looks for.
