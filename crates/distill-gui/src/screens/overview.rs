@@ -633,15 +633,18 @@ fn reveals(st: &Status, p: &Paint) -> El {
 fn left(st: &Status, p: &Paint) -> El {
     use distill_core::readlog::{PlaceKind, Sent};
     let mut card = p.section("left", "What left this machine", None);
-    let w = [260.0, 220.0, 220.0];
     let read = |s: &Sent| {
         let mut t = count(s.times, "read");
         if s.sessions > 0 {
             t += &format!(", {}", count(s.sessions, "session"));
         }
+        if s.listed > 0 {
+            t += &format!(", {} listed", s.listed);
+        }
         t
     };
     let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));
+    let cell = |t: El, font, ink| t.font(font).color(ink).wrap().w(0.0).grow(1.0).min_w(0.0);
     let line = |key: String, name: String, day: String, week: String, head: bool| {
         let font = if head { p.caption() } else { p.text() };
         let ink = if head { p.muted() } else { p.ink() };
@@ -650,9 +653,11 @@ fn left(st: &Status, p: &Paint) -> El {
             .w_full()
             .gap(8.0)
             .center_y()
-            .child(text(name).key("name").font(font).color(ink).w(w[0]))
-            .child(text(day).key("day").font(font).color(ink).w(w[1]))
-            .child(text(week).key("week").font(font).color(ink).w(w[2]))
+            // Equal columns that share the card's width and wrap, so a long place name or count
+            // never runs past the card.
+            .child(cell(text(name).key("name"), font, ink))
+            .child(cell(text(day).key("day"), font, ink))
+            .child(cell(text(week).key("week"), font, ink))
     };
     card = card.child(line(
         "left-head".into(),

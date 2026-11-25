@@ -442,7 +442,7 @@ pub fn running() -> State {
             "left": {
                 "places": [
                     { "name": "example-cloud/qwen-large", "kind": "reader",
-                      "day": { "times": 48, "sessions": 24 }, "week": { "times": 410, "sessions": 205 } },
+                      "day": { "times": 48, "sessions": 24, "listed": 60 }, "week": { "times": 410, "sessions": 205, "listed": 340 } },
                     { "name": "drive", "kind": "backup",
                       "day": { "times": 24, "bytes": 3_100_000 }, "week": { "times": 168, "bytes": 41_000_000 } },
                     { "name": "example-agent/coder", "kind": "reader",

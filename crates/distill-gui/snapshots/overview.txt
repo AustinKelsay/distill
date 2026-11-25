@@ -110,8 +110,8 @@
             day: Last day
             week: Last 7 days
             name: example-cloud/qwen-large
-            day: 48 reads, 24 sessions
-            week: 410 reads, 205 sessions
+            day: 48 reads, 24 sessions, 60 listed
+            week: 410 reads, 205 sessions, 340 listed
             name: Backup drive
             day: 24 runs, 3.1 MB
             week: 168 runs, 41.0 MB

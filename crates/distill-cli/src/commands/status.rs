@@ -141,6 +141,9 @@ fn left_lines(left: &distill_core::readlog::Left) -> Vec<String> {
         if s.sessions > 0 {
             t += &format!(", {}", count(s.sessions, "session"));
         }
+        if s.listed > 0 {
+            t += &format!(", {} listed", s.listed);
+        }
         t
     };
     let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));

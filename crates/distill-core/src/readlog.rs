@@ -306,7 +306,8 @@ pub fn find(home: &Home, filter: &LogFilter, limit: usize) -> Result<Vec<ReadEnt
 
 /// What left this machine over the last day and the last 7 days, by where it went (issue #162):
 /// from the read log, each model at a provider other than Ollama on this machine that was served
-/// something, and from the backup log, each backup target. Counts only, never what was read.
+/// something (a model Ollama serves from a cloud reads as `ollama-cloud`, as the trust check
+/// places it), and from the backup log, each backup target. Counts only, never what was read.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Left {
     /// Where text went, most in the last 7 days first.
@@ -353,13 +354,18 @@ pub struct Sent {
     /// The sessions whose text, or revealed values, were served.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sessions: u64,
-    /// For a backup: the bytes stored at the target, encrypted.
+    /// Rows of lists and searches served, each a session's facts and its opening; a session
+    /// listed twice counts twice.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub listed: u64,
+    /// For a backup: the bytes stored at the target, encrypted, by every run, whole or not.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub bytes: u64,
 }
 
-/// [`Left`] as of `now`.
-pub fn left(home: &Home, now: DateTime<Utc>) -> Result<Left> {
+/// [`Left`] as of `now`. `stored_here` says whether Ollama has a model on this machine; one it
+/// hasn't, it serves from a cloud.
+pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool) -> Result<Left> {
     use std::collections::{BTreeMap, BTreeSet};
     let (day, week) = (
         now - chrono::Duration::days(1),
@@ -377,36 +383,48 @@ pub fn left(home: &Home, now: DateTime<Utc>) -> Result<Left> {
     let mut here: Tally = Default::default();
     for e in read_jsonl::<ReadEntry>(&home.read_log_path())? {
         let Some(t) = when(&e.at) else { continue };
+        let mut listed = 0;
         let session = match &e.result {
             ReadResult::Served { .. } | ReadResult::RevealCollected { .. } => e.session.clone(),
-            ReadResult::Listed { .. }
-            | ReadResult::Tags { .. }
-            | ReadResult::Findings { .. }
-            | ReadResult::Indexed { .. } => None,
+            ReadResult::Listed { sessions } => {
+                listed = *sessions;
+                None
+            }
+            ReadResult::Tags { .. } | ReadResult::Findings { .. } | ReadResult::Indexed { .. } => {
+                None
+            }
             _ => continue,
         };
         let tally = match &e.reader {
-            Reader::Model { provider, model }
-                if !provider
-                    .as_deref()
-                    .is_some_and(|p| p.trim().eq_ignore_ascii_case(crate::trust::OLLAMA)) =>
-            {
-                let p = provider
+            Reader::Model { provider, model } => {
+                let mut p = provider
                     .as_deref()
                     .unwrap_or("")
                     .trim()
                     .to_ascii_lowercase();
-                let name = match model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-                    Some(m) => format!("{p}/{m}"),
-                    None => p,
-                };
-                places.entry((name, false)).or_default()
+                let model = model.as_deref().map(str::trim).filter(|m| !m.is_empty());
+                if p == crate::trust::OLLAMA {
+                    match model {
+                        Some(m) if !stored_here(m) => p = crate::trust::OLLAMA_CLOUD.into(),
+                        _ => p.clear(),
+                    }
+                }
+                if p.is_empty() {
+                    &mut here
+                } else {
+                    let name = model.map_or(p.clone(), |m| format!("{p}/{m}"));
+                    places.entry((name, false)).or_default()
+                }
             }
             _ => &mut here,
         };
         let recent = t >= day;
         tally.0.week.times += 1;
-        tally.0.day.times += u64::from(recent);
+        tally.0.week.listed += listed;
+        if recent {
+            tally.0.day.times += 1;
+            tally.0.day.listed += listed;
+        }
         if let Some(s) = session {
             if recent {
                 tally.2.insert(s.clone());
@@ -415,12 +433,13 @@ pub fn left(home: &Home, now: DateTime<Utc>) -> Result<Left> {
         }
     }
     let backups: Vec<crate::backup::BackupReport> = read_jsonl(&home.backup_log_path())?;
-    for r in backups.iter().filter(|r| r.ok) {
+    // A run that failed may still have stored objects: its bytes count, but not as a run.
+    for r in backups.iter().filter(|r| r.ok || r.bytes_sent > 0) {
         let Some(t) = when(&r.at) else { continue };
         let tally = places.entry((r.target.clone(), true)).or_default();
         for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
             if inside {
-                sent.times += 1;
+                sent.times += u64::from(r.ok);
                 sent.bytes += r.bytes_sent;
             }
         }
@@ -719,6 +738,13 @@ mod tests {
             Some("codex/b"),
             served(),
         );
+        // A model Ollama doesn't have here, it serves from a cloud.
+        put(
+            8,
+            Reader::model(Some("ollama"), Some("big:cloud")),
+            Some("codex/b"),
+            served(),
+        );
         put(6, Reader::Owner, Some("codex/b"), served());
         put(
             7,
@@ -752,12 +778,13 @@ mod tests {
             .unwrap();
         }
 
-        let sent = |times, sessions, bytes| Sent {
+        let sent = |times, sessions, listed, bytes| Sent {
             times,
             sessions,
+            listed,
             bytes,
         };
-        let got = left(&home, now).unwrap();
+        let got = left(&home, now, &|m| m == "small:8b").unwrap();
         let places: Vec<(&str, PlaceKind, Sent, Sent)> = got
             .places
             .iter()
@@ -770,29 +797,37 @@ mod tests {
                 )
             })
             .collect();
+        let reader = PlaceKind::Reader;
         assert_eq!(
             places,
             [
                 (
                     "example-cloud/m",
-                    PlaceKind::Reader,
-                    sent(3, 1, 0),
-                    sent(4, 2, 0)
+                    reader,
+                    sent(3, 1, 5, 0),
+                    sent(4, 2, 5, 0)
                 ),
-                ("drive", PlaceKind::Backup, sent(1, 0, 100), sent(2, 0, 150)),
+                // The failed run's bytes count, but not as a run.
                 (
-                    "example-agent",
-                    PlaceKind::Reader,
-                    sent(0, 0, 0),
-                    sent(1, 1, 0)
+                    "drive",
+                    PlaceKind::Backup,
+                    sent(1, 0, 0, 107),
+                    sent(2, 0, 0, 157)
+                ),
+                ("example-agent", reader, sent(0, 0, 0, 0), sent(1, 1, 0, 0)),
+                (
+                    "ollama-cloud/big:cloud",
+                    reader,
+                    sent(1, 1, 0, 0),
+                    sent(1, 1, 0, 0)
                 ),
             ]
         );
         assert_eq!(
             got.here,
             Spans {
-                day: sent(3, 1, 0),
-                week: sent(3, 1, 0)
+                day: sent(3, 1, 0, 0),
+                week: sent(3, 1, 0, 0)
             },
             "Ollama on this machine, the owner and DISTILL itself"
         );

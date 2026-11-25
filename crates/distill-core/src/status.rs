@@ -280,7 +280,8 @@ pub fn status(home: &Home) -> Result<Status> {
             message: message.clone(),
         });
     }
-    let mut left = crate::readlog::left(home, chrono::Utc::now())?;
+    let ollama = crate::runtime::LocalRuntime::ollama();
+    let mut left = crate::readlog::left(home, chrono::Utc::now(), &|m| ollama.stored_here(m))?;
     left.maybe_short = edited.is_some();
 
     let exposure = exposure::check(home);
