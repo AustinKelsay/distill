@@ -97,10 +97,10 @@ fn serve(
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut sessions = 0;
     for m in all.iter().filter(|m| filter.matches(m, &originals)) {
-        if !filter.card_matches(home, &config, key.as_ref(), m) {
-            continue;
-        }
-        let Some((card, found)) = cards::stored_current(home, &config, key.as_ref(), m) else {
+        // The filter's tag and outcome are checked on the card that is counted.
+        let Some((card, found)) = cards::stored_current(home, &config, key.as_ref(), m)
+            .filter(|(card, _)| filter.fits(card, &config))
+        else {
             continue;
         };
         sessions += 1;

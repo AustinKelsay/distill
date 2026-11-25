@@ -354,12 +354,16 @@ impl Filter {
         if !self.wants_card() {
             return true;
         }
-        cards::stored_current(home, config, key, m).is_some_and(|(card, _)| {
-            self.tag
-                .as_deref()
-                .is_none_or(|t| card.has_tag(t, &config.tags))
-                && self.outcome.is_none_or(|o| card.outcome == o)
-        })
+        cards::stored_current(home, config, key, m)
+            .is_some_and(|(card, _)| self.fits(&card, config))
+    }
+
+    /// Whether `card` has the tag and outcome the filter names, if any.
+    pub(super) fn fits(&self, card: &cards::Card, config: &Config) -> bool {
+        self.tag
+            .as_deref()
+            .is_none_or(|t| card.has_tag(t, &config.tags))
+            && self.outcome.is_none_or(|o| card.outcome == o)
     }
 }
 
