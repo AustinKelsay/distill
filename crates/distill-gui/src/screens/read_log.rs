@@ -29,6 +29,8 @@ pub struct ReadLogState {
     pub error: Option<String>,
     /// Why the filters can't be used as written.
     pub filter_error: Option<String>,
+    /// That the log has been edited, when its chain or a backup says so (#161).
+    pub edited: Option<String>,
 }
 
 pub fn open(s: &mut State) {
@@ -67,9 +69,12 @@ fn ask(s: &mut State, limit: usize) {
     s.ask(Job::new("read log", move |core| {
         // One more than shown, to know whether there are more.
         let r = readlog::find(&core.home, &filter, limit + 1).map_err(jobs::line);
+        let edited = readlog::edited(&core.home)
+            .unwrap_or_else(|e| Some(format!("The read log can't be checked: {e:#}")));
         Box::new(move |s: &mut State| {
             let st = &mut s.read_log;
             st.loading = false;
+            st.edited = edited;
             match r {
                 Ok(mut lines) => {
                     st.more = lines.len() > limit;
@@ -180,7 +185,11 @@ fn header(st: &ReadLogState, p: &Paint) -> El {
                 )),
         )
         .child(filters);
-    for (key, e) in [("filter-error", &st.filter_error), ("error", &st.error)] {
+    for (key, e) in [
+        ("edited", &st.edited),
+        ("filter-error", &st.filter_error),
+        ("error", &st.error),
+    ] {
         if let Some(e) = e {
             c = c.child(
                 text(e.clone())

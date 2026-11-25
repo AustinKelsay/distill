@@ -141,6 +141,10 @@ pub struct BackupReport {
     /// starts over. The runs above it were made under an older key.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub new_key: bool,
+    /// The read log no longer started with what the run before stored of it: something
+    /// rewrote it in between (issue #161). The run stored it again from its start.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_log_rewritten: bool,
 }
 
 /// Whether `target` has had a whole run under any key: then a missing `distill-backup/` there
@@ -480,6 +484,13 @@ fn run_into(
                         && usize::try_from(f.len).is_ok_and(|n| n <= whole.len())
                         && hex::encode(Sha256::digest(&whole[..f.len as usize])) == f.sha256
                 });
+            let stored = last.as_ref().and_then(|rec| rec.files.get(&rel));
+            if rel == "log/reads.jsonl"
+                && earlier.is_none()
+                && stored.is_some_and(|f| f.object.is_empty())
+            {
+                r.read_log_rewritten = true;
+            }
             let (mut parts, from) =
                 earlier.map_or((Vec::new(), 0), |f| (f.parts.clone(), f.len as usize));
             if whole.len() > from {
@@ -811,14 +822,24 @@ mod tests {
             );
         }
 
-        // A log that no longer starts with what was stored is stored over from its start.
+        // A log that no longer starts with what was stored is stored over from its start, and
+        // the run says the read log was rewritten (#161), as status does from then on.
+        assert_eq!(crate::readlog::edited(&home).unwrap(), None);
         fs::write(home.read_log_path(), "{\"reader\":\"y\"}\n").unwrap();
-        assert!(run(&home, &target).unwrap().ok);
+        let rewritten = run(&home, &target).unwrap();
+        assert!(
+            rewritten.ok && rewritten.read_log_rewritten,
+            "{rewritten:?}"
+        );
+        let again = run(&home, &target).unwrap();
+        assert!(again.ok && !again.read_log_rewritten, "{again:?}");
+        let said = crate::readlog::edited(&home).unwrap().unwrap();
+        assert!(said.contains("the backup to drive at"), "{said}");
         let rec = read_record(&*store, &key, 43).unwrap();
         let reads = &rec.files["log/reads.jsonl"];
         assert_eq!(
-            (reads.parts.len(), reads.parts[0].from),
-            (1, 0),
+            (reads.parts.len(), reads.parts[0].from, reads.len),
+            (1, 0, 15),
             "{reads:?}"
         );
     }

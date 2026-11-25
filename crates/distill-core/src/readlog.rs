@@ -2,6 +2,17 @@
 //! saying when, which reader, which session and what it got, and one line for each step of a
 //! reveal request. It never holds session text or a secret's value. It cannot be rebuilt from
 //! the raw archive.
+//!
+//! Each line also carries `prev`, the SHA-256 of the line before it (of nothing, for the first),
+//! so an edit to a line, or a line taken out or put in, shows as a break ([`verify`]; issue #161).
+//! A line without `prev`, from an older build, is read as before and starts the chain again at
+//! the next line. A process running as the owner can still rewrite the whole log (ADR 0005): a
+//! backup run notices when the log no longer starts with what it stored before
+//! ([`crate::backup::BackupReport::read_log_rewritten`]).
+
+use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -9,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::home::Home;
 use crate::trust::Reader;
-use crate::util::{append_jsonl, count, create_dir_private, read_jsonl, set_private};
+use crate::util::{count, create_dir_private, private_file, read_jsonl, set_private};
 
 /// One line of the read log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,12 +100,135 @@ impl ReadEntry {
     }
 }
 
-/// Append one line. The read path serves nothing it could not log.
+/// Append one line, chained to the line before it. The read path serves nothing it could not
+/// log. Every process that reads appends here, so the last line is read and the new one written
+/// under the `reads` lock.
 pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
     let dir = home.log_dir();
     create_dir_private(&dir)?;
     set_private(&dir);
-    append_jsonl(&home.read_log_path(), entry)
+    let path = home.read_log_path();
+    let _lock = home.lock("reads")?;
+    let entry = serde_json::to_string(entry)?;
+    let Some(fields) = entry.strip_prefix('{') else {
+        anyhow::bail!("a read log line is a JSON object");
+    };
+    let line = format!("{{\"prev\":\"{}\",{fields}\n", sha256(&last_line(&path)?));
+    let mut f = private_file().create(true).append(true).open(&path)?;
+    f.write_all(line.as_bytes())?;
+    f.sync_data()?;
+    set_private(&path);
+    Ok(())
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+/// The last line of the file at `path`, without its newline; empty when there is none.
+fn last_line(path: &Path) -> Result<Vec<u8>> {
+    let mut f = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let len = f.metadata()?.len();
+    let mut want = 4096;
+    loop {
+        let from = len.saturating_sub(want);
+        f.seek(SeekFrom::Start(from))?;
+        let mut tail = Vec::new();
+        f.read_to_end(&mut tail)?;
+        let body = tail.strip_suffix(b"\n").unwrap_or(&tail);
+        if let Some(i) = body.iter().rposition(|b| *b == b'\n') {
+            return Ok(body[i + 1..].to_vec());
+        }
+        if from == 0 {
+            return Ok(body.to_vec());
+        }
+        want *= 4;
+    }
+}
+
+/// What [`verify`] found in the read log's chain.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Chain {
+    pub lines: u64,
+    /// The lines that carry `prev`.
+    pub chained: u64,
+    /// The first line whose `prev` is not the line before it, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broken: Option<Break>,
+}
+
+/// A line of the read log that doesn't follow the line before it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Break {
+    /// Its place in the log, from 1.
+    pub line: u64,
+    /// When it says it was written, if it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+}
+
+/// Walk the read log's chain from its first line, to the first break.
+pub fn verify(home: &Home) -> Result<Chain> {
+    let bytes = match fs::read(home.read_log_path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let body = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+    let mut chain = Chain::default();
+    let mut before: &[u8] = &[];
+    for line in body.split(|b| *b == b'\n').filter(|_| !body.is_empty()) {
+        chain.lines += 1;
+        let parsed: Option<serde_json::Value> = serde_json::from_slice(line).ok();
+        let prev = parsed.as_ref().and_then(|v| v.get("prev"));
+        if prev.is_some() {
+            chain.chained += 1;
+        }
+        let follows = match (&parsed, prev) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(_), Some(p)) => p.as_str() == Some(sha256(before).as_str()),
+        };
+        if !follows {
+            let at = parsed
+                .as_ref()
+                .and_then(|v| v["at"].as_str().map(str::to_string));
+            chain.broken = Some(Break {
+                line: chain.lines,
+                at,
+            });
+            break;
+        }
+        before = line;
+    }
+    Ok(chain)
+}
+
+/// What the owner should know about edits to the read log, in a sentence: a break in its chain,
+/// or a backup run that found it rewritten since the run before. None when neither is seen.
+pub fn edited(home: &Home) -> Result<Option<String>> {
+    if let Some(b) = verify(home)?.broken {
+        let when =
+            b.at.map(|at| format!(", written {at},"))
+                .unwrap_or_default();
+        return Ok(Some(format!(
+            "The read log has been edited: line {}{when} doesn't follow the line before it.",
+            b.line
+        )));
+    }
+    let backups: Vec<crate::backup::BackupReport> = read_jsonl(&home.backup_log_path())?;
+    Ok(backups.iter().rfind(|r| r.read_log_rewritten).map(|r| {
+        format!(
+            "The read log has been rewritten: the backup to {} at {} found it no longer starts \
+             with what the run before had stored.",
+            r.target, r.at
+        )
+    }))
 }
 
 /// The read log, newest first, only `who`'s lines when given (see [`ReadEntry::is_by`]), at
@@ -271,6 +405,99 @@ mod tests {
         };
         assert_eq!(find(&home, &f, 100).unwrap().len(), 1);
         assert_eq!(find(&home, &LogFilter::default(), 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn each_line_is_chained_to_the_one_before_and_an_edit_shows_as_a_break() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let path = home.read_log_path();
+        let served = |at: &str| {
+            line(&home, at, Reader::Owner, ReadResult::Served { events: 1 });
+        };
+        let lines = || -> Vec<String> {
+            fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        };
+        let put = |lines: &[String]| fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let broken_at = || verify(&home).unwrap().broken.map(|b| b.line);
+
+        // Lines an older build wrote, without `prev`, start the chain.
+        fs::create_dir_all(home.log_dir()).unwrap();
+        let old =
+            r#"{"at":"2026-11-01T00:00:00Z","reader":"owner","result":"listed","sessions":1}"#;
+        fs::write(&path, format!("{old}\n{old}\n")).unwrap();
+        for at in [
+            "2026-11-02T00:00:00Z",
+            "2026-11-03T00:00:00Z",
+            "2026-11-04T00:00:00Z",
+        ] {
+            served(at);
+        }
+        let chain = verify(&home).unwrap();
+        assert_eq!((chain.lines, chain.chained, chain.broken), (5, 3, None));
+        assert!(lines()[2].starts_with(r#"{"prev":""#), "{}", lines()[2]);
+        assert_eq!(find(&home, &LogFilter::default(), 10).unwrap().len(), 5);
+        assert_eq!(edited(&home).unwrap(), None);
+        let whole = lines();
+
+        // A line changed, taken out or put in shows at the line after it.
+        let mut changed = whole.clone();
+        changed[2] = changed[2].replace("\"events\":1", "\"events\":9");
+        put(&changed);
+        assert_eq!(broken_at(), Some(4));
+        let mut gone = whole.clone();
+        gone.remove(3);
+        put(&gone);
+        assert_eq!(broken_at(), Some(4));
+        let mut more = whole.clone();
+        more.insert(3, old.to_string());
+        put(&more);
+        assert_eq!(broken_at(), Some(5));
+        let message = edited(&home).unwrap().unwrap();
+        assert!(
+            message.contains("line 5, written 2026-11-03T00:00:00Z,"),
+            "{message}"
+        );
+        // So does a first line taken out of a chain that started on a new log.
+        fs::remove_file(&path).unwrap();
+        served("2026-11-05T00:00:00Z");
+        served("2026-11-06T00:00:00Z");
+        put(&lines()[1..]);
+        assert_eq!(broken_at(), Some(1));
+
+        // A line an older build still running appends (an MCP server started before an install)
+        // only starts the chain again.
+        put(&whole);
+        fs::write(&path, format!("{}{old}\n", whole.join("\n") + "\n")).unwrap();
+        served("2026-11-07T00:00:00Z");
+        let chain = verify(&home).unwrap();
+        assert_eq!((chain.lines, chain.broken), (7, None));
+    }
+
+    #[test]
+    fn readers_appending_at_once_keep_the_chain_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..25 {
+                        line(
+                            &home,
+                            "2026-11-01T00:00:00Z",
+                            Reader::Owner,
+                            ReadResult::Served { events: 1 },
+                        );
+                    }
+                });
+            }
+        });
+        let chain = verify(&home).unwrap();
+        assert_eq!((chain.lines, chain.chained, chain.broken), (200, 200, None));
     }
 
     #[test]

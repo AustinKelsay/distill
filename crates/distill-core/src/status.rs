@@ -92,6 +92,9 @@ pub enum WarningKind {
     Exposure,
     /// No backup target is set up, or one has not had a whole run lately.
     Backup,
+    /// The read log has been edited: its chain breaks, or a backup run found it rewritten
+    /// (`readlog::edited`, issue #161).
+    ReadLog,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,6 +266,20 @@ pub fn status(home: &Home) -> Result<Status> {
                 message: format!("Backups can't run: {e:#}"),
             }),
         }
+    }
+
+    match crate::readlog::edited(home) {
+        Ok(Some(message)) => warnings.push(Warning {
+            kind: WarningKind::ReadLog,
+            harness: None,
+            message,
+        }),
+        Ok(None) => {}
+        Err(e) => warnings.push(Warning {
+            kind: WarningKind::ReadLog,
+            harness: None,
+            message: format!("The read log can't be checked: {e:#}"),
+        }),
     }
 
     let exposure = exposure::check(home);

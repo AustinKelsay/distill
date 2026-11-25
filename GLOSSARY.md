@@ -101,7 +101,7 @@ Whoever asks DISTILL for session text: the owner, a model at a named provider, o
 _Avoid_: Client, caller, consumer
 
 **Read log**:
-The record of which reader read which sessions, and when.
+The record of which reader read which sessions, and when. Each line is chained to the one before by its hash, so an edit shows.
 _Avoid_: Audit trail, activity
 
 **Read path**:
