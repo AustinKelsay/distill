@@ -80,6 +80,9 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
                     .map_or(String::new(), |n| format!(", {n} captures behind"))
             );
         }
+        for line in left_lines(&s.left) {
+            println!("{line}");
+        }
         for h in &s.harnesses {
             println!(
                 "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",
@@ -127,6 +130,45 @@ fn stopped(after: Option<u64>) -> String {
             distill_core::util::count(n, "session")
         )
     })
+}
+
+/// What left this machine, a line per place, each span as "last day · last 7 days" (#162).
+fn left_lines(left: &distill_core::readlog::Left) -> Vec<String> {
+    use distill_core::readlog::{PlaceKind, Sent};
+    use distill_core::util::count;
+    let read = |s: &Sent| {
+        let mut t = count(s.times, "read");
+        if s.sessions > 0 {
+            t += &format!(", {}", count(s.sessions, "session"));
+        }
+        t
+    };
+    let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));
+    let mut lines = vec![if left.places.is_empty() {
+        "left this machine: nothing in the last 7 days".to_string()
+    } else {
+        "left this machine (last day · last 7 days):".to_string()
+    }];
+    for p in &left.places {
+        let (name, f): (String, &dyn Fn(&Sent) -> String) = match p.kind {
+            PlaceKind::Reader => (p.name.clone(), &read),
+            PlaceKind::Backup => (format!("backup {}", p.name), &ran),
+        };
+        lines.push(format!(
+            "  {name}: {} · {}",
+            f(&p.spans.day),
+            f(&p.spans.week)
+        ));
+    }
+    lines.push(format!(
+        "  stayed on this machine: {} · {}",
+        read(&left.here.day),
+        read(&left.here.week)
+    ));
+    if left.maybe_short {
+        lines.push("  the read log has been edited, so these counts may be short".into());
+    }
+    lines
 }
 
 #[cfg(test)]

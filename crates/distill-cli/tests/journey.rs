@@ -335,6 +335,8 @@ sweep_every_minutes = 60
             && printed.contains("last sweep")
             && printed.contains("scan: 3 of 3 sessions current")
             && printed.contains("word index: 3 of 3 sessions current")
+            && printed.contains("left this machine: nothing in the last 7 days")
+            && printed.contains("stayed on this machine: ")
             && printed.contains(
                 "vectors: skipped (no embedding_model is set) · 0 of 2 sessions have them"
             ),

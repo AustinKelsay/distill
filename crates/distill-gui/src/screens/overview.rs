@@ -299,6 +299,7 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
         .child(backups(s, st, p))
         .child(runs(s, st, p))
         .child(reveals(st, p))
+        .child(left(st, p))
         .child(harnesses(s, st, p))
         .child(exposure_section(s, &st.exposure, p))
 }
@@ -625,6 +626,76 @@ fn reveals(st: &Status, p: &Paint) -> El {
             );
     }
     p.section("reveals", "Reveal requests", None).child(line)
+}
+
+/// What left this machine (#162): each place text went, with the last day's and the last 7
+/// days' reads and sessions (runs and bytes for a backup), then what stayed here.
+fn left(st: &Status, p: &Paint) -> El {
+    use distill_core::readlog::{PlaceKind, Sent};
+    let mut card = p.section("left", "What left this machine", None);
+    let w = [260.0, 220.0, 220.0];
+    let read = |s: &Sent| {
+        let mut t = count(s.times, "read");
+        if s.sessions > 0 {
+            t += &format!(", {}", count(s.sessions, "session"));
+        }
+        t
+    };
+    let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));
+    let line = |key: String, name: String, day: String, week: String, head: bool| {
+        let font = if head { p.caption() } else { p.text() };
+        let ink = if head { p.muted() } else { p.ink() };
+        row()
+            .key(key)
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(text(name).key("name").font(font).color(ink).w(w[0]))
+            .child(text(day).key("day").font(font).color(ink).w(w[1]))
+            .child(text(week).key("week").font(font).color(ink).w(w[2]))
+    };
+    card = card.child(line(
+        "left-head".into(),
+        "Where".into(),
+        "Last day".into(),
+        "Last 7 days".into(),
+        true,
+    ));
+    if st.left.places.is_empty() {
+        card = card.child(
+            text("Nothing left this machine in the last 7 days.")
+                .key("left-none")
+                .font(p.text())
+                .color(p.muted()),
+        );
+    }
+    for (i, place) in st.left.places.iter().enumerate() {
+        let (name, f): (String, &dyn Fn(&Sent) -> String) = match place.kind {
+            PlaceKind::Reader => (place.name.clone(), &read),
+            PlaceKind::Backup => (format!("Backup {}", place.name), &ran),
+        };
+        card = card.child(line(
+            format!("left-{i}"),
+            name,
+            f(&place.spans.day),
+            f(&place.spans.week),
+            false,
+        ));
+    }
+    card = card.child(p.separator()).child(
+        line(
+            "left-here".into(),
+            "Stayed on this machine".into(),
+            read(&st.left.here.day),
+            read(&st.left.here.week),
+            false,
+        )
+        .opacity(0.8),
+    );
+    if st.left.maybe_short {
+        card = card.child(p.note("The read log has been edited, so these counts may be short."));
+    }
+    card
 }
 
 /// Each backup target: its last whole run, how far behind it is, its last failure, and buttons

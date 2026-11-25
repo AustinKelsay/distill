@@ -304,6 +304,158 @@ pub fn find(home: &Home, filter: &LogFilter, limit: usize) -> Result<Vec<ReadEnt
         .collect())
 }
 
+/// What left this machine over the last day and the last 7 days, by where it went (issue #162):
+/// from the read log, each model at a provider other than Ollama on this machine that was served
+/// something, and from the backup log, each backup target. Counts only, never what was read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Left {
+    /// Where text went, most in the last 7 days first.
+    pub places: Vec<Place>,
+    /// What stayed on this machine: reads by the owner, DISTILL itself and models in Ollama.
+    pub here: Spans,
+    /// The read log has been edited ([`edited`]), so these counts may be short.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub maybe_short: bool,
+}
+
+/// One place text went.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Place {
+    /// `provider/model` for a reader, the target's name for a backup.
+    pub name: String,
+    pub kind: PlaceKind,
+    #[serde(flatten)]
+    pub spans: Spans,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaceKind {
+    /// A model at a provider, reading through the read path.
+    Reader,
+    /// A backup target, which holds the backup set encrypted (ADR 0009).
+    Backup,
+}
+
+/// The last day's counts and the last 7 days'.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Spans {
+    pub day: Sent,
+    pub week: Sent,
+}
+
+/// How much went somewhere in a span of time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Sent {
+    /// Reads that served something (text, a list, tags, fingerprints, revealed values, an index
+    /// build), or whole backup runs.
+    pub times: u64,
+    /// The sessions whose text, or revealed values, were served.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub sessions: u64,
+    /// For a backup: the bytes stored at the target, encrypted.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bytes: u64,
+}
+
+/// [`Left`] as of `now`.
+pub fn left(home: &Home, now: DateTime<Utc>) -> Result<Left> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let (day, week) = (
+        now - chrono::Duration::days(1),
+        now - chrono::Duration::days(7),
+    );
+    let when = |at: &str| {
+        DateTime::parse_from_rfc3339(at)
+            .ok()
+            .map(|t| t.with_timezone(&Utc))
+            .filter(|t| *t >= week && *t <= now)
+    };
+    // Per place: the counts, and the sessions seen in each span.
+    type Tally = (Spans, BTreeSet<String>, BTreeSet<String>);
+    let mut places: BTreeMap<(String, bool), Tally> = BTreeMap::new();
+    let mut here: Tally = Default::default();
+    for e in read_jsonl::<ReadEntry>(&home.read_log_path())? {
+        let Some(t) = when(&e.at) else { continue };
+        let session = match &e.result {
+            ReadResult::Served { .. } | ReadResult::RevealCollected { .. } => e.session.clone(),
+            ReadResult::Listed { .. }
+            | ReadResult::Tags { .. }
+            | ReadResult::Findings { .. }
+            | ReadResult::Indexed { .. } => None,
+            _ => continue,
+        };
+        let tally = match &e.reader {
+            Reader::Model { provider, model }
+                if !provider
+                    .as_deref()
+                    .is_some_and(|p| p.trim().eq_ignore_ascii_case(crate::trust::OLLAMA)) =>
+            {
+                let p = provider
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                let name = match model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+                    Some(m) => format!("{p}/{m}"),
+                    None => p,
+                };
+                places.entry((name, false)).or_default()
+            }
+            _ => &mut here,
+        };
+        let recent = t >= day;
+        tally.0.week.times += 1;
+        tally.0.day.times += u64::from(recent);
+        if let Some(s) = session {
+            if recent {
+                tally.2.insert(s.clone());
+            }
+            tally.1.insert(s);
+        }
+    }
+    let backups: Vec<crate::backup::BackupReport> = read_jsonl(&home.backup_log_path())?;
+    for r in backups.iter().filter(|r| r.ok) {
+        let Some(t) = when(&r.at) else { continue };
+        let tally = places.entry((r.target.clone(), true)).or_default();
+        for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
+            if inside {
+                sent.times += 1;
+                sent.bytes += r.bytes_sent;
+            }
+        }
+    }
+    let spans = |(mut s, week, day): Tally| {
+        s.week.sessions = week.len() as u64;
+        s.day.sessions = day.len() as u64;
+        s
+    };
+    let mut places: Vec<Place> = places
+        .into_iter()
+        .map(|((name, backup), tally)| Place {
+            name,
+            kind: if backup {
+                PlaceKind::Backup
+            } else {
+                PlaceKind::Reader
+            },
+            spans: spans(tally),
+        })
+        .collect();
+    places.sort_by(|a, b| {
+        b.spans
+            .week
+            .times
+            .cmp(&a.spans.week.times)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(Left {
+        places,
+        here: spans(here),
+        maybe_short: false,
+    })
+}
+
 impl ReadResult {
     /// What the reader got, as one line: `served 3 events`, `reveal <id> approved by the owner`.
     pub fn text(&self) -> String {
@@ -523,6 +675,128 @@ mod tests {
                 broken: None
             }
         );
+    }
+
+    #[test]
+    fn what_left_this_machine_is_counted_by_place_for_a_day_and_a_week() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let now: DateTime<Utc> = "2026-11-20T12:00:00Z".parse().unwrap();
+        let ago = |hours: i64| {
+            (now - chrono::Duration::hours(hours))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        };
+        let put = |hours: i64, reader: Reader, session: Option<&str>, result: ReadResult| {
+            append(
+                &home,
+                &ReadEntry {
+                    at: ago(hours),
+                    reader,
+                    session: session.map(str::to_string),
+                    result,
+                },
+            )
+            .unwrap();
+        };
+        let cloud = || Reader::model(Some("Example-Cloud"), Some("m"));
+        let served = || ReadResult::Served { events: 3 };
+        put(2, cloud(), Some("claude-code/a"), served());
+        put(3, cloud(), Some("claude-code/a"), served());
+        put(50, cloud(), Some("codex/b"), served());
+        put(1, cloud(), None, ReadResult::Listed { sessions: 5 });
+        put(
+            4,
+            cloud(),
+            Some("claude-code/a"),
+            ReadResult::Refused {
+                reason: "no".into(),
+            },
+        );
+        put(200, cloud(), Some("codex/c"), served());
+        put(
+            5,
+            Reader::model(Some("ollama"), Some("small:8b")),
+            Some("codex/b"),
+            served(),
+        );
+        put(6, Reader::Owner, Some("codex/b"), served());
+        put(
+            7,
+            Reader::Distill,
+            None,
+            ReadResult::Indexed {
+                sessions: 9,
+                events: 90,
+            },
+        );
+        put(
+            30,
+            Reader::model(Some("example-agent"), None),
+            Some("codex/b"),
+            ReadResult::RevealCollected {
+                request: "ab".into(),
+                secrets: 1,
+            },
+        );
+        for (hours, ok, bytes) in [(1, true, 100), (2, false, 7), (80, true, 50)] {
+            crate::util::append_jsonl(
+                &home.backup_log_path(),
+                &crate::backup::BackupReport {
+                    at: ago(hours),
+                    target: "drive".into(),
+                    ok,
+                    bytes_sent: bytes,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        let sent = |times, sessions, bytes| Sent {
+            times,
+            sessions,
+            bytes,
+        };
+        let got = left(&home, now).unwrap();
+        let places: Vec<(&str, PlaceKind, Sent, Sent)> = got
+            .places
+            .iter()
+            .map(|p| {
+                (
+                    p.name.as_str(),
+                    p.kind,
+                    p.spans.day.clone(),
+                    p.spans.week.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            places,
+            [
+                (
+                    "example-cloud/m",
+                    PlaceKind::Reader,
+                    sent(3, 1, 0),
+                    sent(4, 2, 0)
+                ),
+                ("drive", PlaceKind::Backup, sent(1, 0, 100), sent(2, 0, 150)),
+                (
+                    "example-agent",
+                    PlaceKind::Reader,
+                    sent(0, 0, 0),
+                    sent(1, 1, 0)
+                ),
+            ]
+        );
+        assert_eq!(
+            got.here,
+            Spans {
+                day: sent(3, 1, 0),
+                week: sent(3, 1, 0)
+            },
+            "Ollama on this machine, the owner and DISTILL itself"
+        );
+        assert!(!got.maybe_short);
     }
 
     #[test]

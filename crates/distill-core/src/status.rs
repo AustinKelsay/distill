@@ -62,6 +62,9 @@ pub struct Status {
     pub backups: Vec<crate::backup::TargetStatus>,
     /// The exposure check's results. Each failing rule is also a warning.
     pub exposure: Exposure,
+    /// What left this machine over the last day and the last 7 days, by where it went (#162).
+    #[serde(default)]
+    pub left: crate::readlog::Left,
     /// The last [`HISTORY_RUNS`] runs, newest first, with runs in a row that came to the same
     /// results folded into one group (issue #160).
     #[serde(default)]
@@ -268,19 +271,17 @@ pub fn status(home: &Home) -> Result<Status> {
         }
     }
 
-    match crate::readlog::edited(home) {
-        Ok(Some(message)) => warnings.push(Warning {
+    let edited = crate::readlog::edited(home)
+        .unwrap_or_else(|e| Some(format!("The read log can't be checked: {e:#}")));
+    if let Some(message) = &edited {
+        warnings.push(Warning {
             kind: WarningKind::ReadLog,
             harness: None,
-            message,
-        }),
-        Ok(None) => {}
-        Err(e) => warnings.push(Warning {
-            kind: WarningKind::ReadLog,
-            harness: None,
-            message: format!("The read log can't be checked: {e:#}"),
-        }),
+            message: message.clone(),
+        });
     }
+    let mut left = crate::readlog::left(home, chrono::Utc::now())?;
+    left.maybe_short = edited.is_some();
 
     let exposure = exposure::check(home);
     warnings.extend(
@@ -310,6 +311,7 @@ pub fn status(home: &Home) -> Result<Status> {
         pending_reveals: crate::reveal::pending_count(home),
         backups,
         exposure,
+        left,
         runs: runlog::history(home, HISTORY_RUNS)?,
     })
 }
