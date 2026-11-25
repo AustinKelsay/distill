@@ -961,4 +961,10 @@ fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
     // A view the detector finds something in is not shown: the stored tag is.
     let (shown, _) = viewed(&tags, &[], &config, |v| v == "rust-lang");
     assert_eq!(shown, ["javascript", "alice-smith", "Rust Lang"]);
+    // Nor one whose alias destination, as the owner wrote it, holds one.
+    let config = crate::tags::TagsConfig {
+        aliases: [("js".into(), "Bearer xyz".into())].into(),
+    };
+    let (shown, _) = viewed(&tags, &[], &config, |v| v == "Bearer xyz");
+    assert_eq!(shown[0], "js");
 }

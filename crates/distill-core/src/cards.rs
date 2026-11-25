@@ -617,8 +617,8 @@ pub struct Shown {
 
 /// A card's tags as [`tags::view`] shows them, each once, and its findings with their places
 /// moved to match. A tag stays as written when it has a finding in it, so the finding's byte
-/// range still covers it, and when its view would show something `finds` finds (a secret or a
-/// personal detail the stored tag's scan never saw).
+/// range still covers it, and when its view, or an alias destination as the owner wrote it, holds
+/// something `finds` finds (a secret or a personal detail the stored tag's scan never saw).
 fn viewed(
     card_tags: &[String],
     found: &[CardFinding],
@@ -629,8 +629,12 @@ fn viewed(
     let mut to: Vec<usize> = Vec::new();
     for (i, t) in card_tags.iter().enumerate() {
         let field = format!("tags/{i}");
-        let view = tags::view(t, config);
-        let t = if view == *t || found.iter().any(|f| f.field == field) || finds(&view) {
+        let (view, through) = tags::view_through(t, config);
+        let t = if view == *t
+            || found.iter().any(|f| f.field == field)
+            || finds(&view)
+            || through.iter().any(|to| finds(to))
+        {
             t.clone()
         } else {
             view

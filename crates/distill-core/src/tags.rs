@@ -42,20 +42,27 @@ pub fn standard(tag: &str) -> String {
 /// The tag `tag` is shown and filtered as: its standard form, through the owner's aliases, to
 /// the end of a chain of them (`js` -> `javascript` -> `ecmascript`), stopping where one loops.
 pub fn view(tag: &str, config: &TagsConfig) -> String {
+    view_through(tag, config).0
+}
+
+/// [`view`], with each alias destination it went through as the owner wrote it.
+pub fn view_through<'a>(tag: &str, config: &'a TagsConfig) -> (String, Vec<&'a str>) {
     let mut tag = standard(tag);
     let mut seen = vec![tag.clone()];
+    let mut through = Vec::new();
     while let Some((_, to)) = config
         .aliases
         .iter()
         .find(|(from, _)| standard(from) == tag)
     {
+        through.push(to.as_str());
         tag = standard(to);
         if seen.contains(&tag) {
             break;
         }
         seen.push(tag.clone());
     }
-    tag
+    (tag, through)
 }
 
 #[cfg(test)]
