@@ -887,6 +887,108 @@ fn the_owners_aliases_merge_tags_where_they_are_shown_and_filtered() {
 }
 
 #[test]
+fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
+    let (_d, home, config) = carded_home();
+    let rt = FakeRuntime::not_installed().runtime();
+    let rows = |tag: &str| match crate::read::list(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &crate::read::Filter {
+            tag: Some(tag.into()),
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .unwrap()
+    {
+        crate::read::Listed::Rows(r) => r.rows,
+        other => panic!("{other:?}"),
+    };
+    let ids =
+        |tag: &str| -> Vec<String> { rows(tag).into_iter().map(|r| r.facts.session_id).collect() };
+    let counts = || match crate::read::tags(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &Default::default(),
+    )
+    .unwrap()
+    {
+        crate::read::Tagged::Counts(c) => c
+            .into_iter()
+            .map(|c| (c.tag, c.sessions))
+            .collect::<Vec<_>>(),
+        other => panic!("{other:?}"),
+    };
+
+    let (key, edit) =
+        crate::tags::tag_session(&home, &config, "a", &["Ship It".into()], &["RUST".into()])
+            .unwrap();
+    assert_eq!(key, "claude-code/a");
+    assert_eq!(
+        (&edit.add[..], &edit.hide[..]),
+        (&["ship-it".to_string()][..], &["rust".to_string()][..])
+    );
+    assert!(ids("rust").is_empty(), "a hidden tag is not there");
+    assert_eq!(ids("ship it"), ["a"], "an added one is");
+    let a = rows("ship-it").remove(0).card.unwrap();
+    assert_eq!(a.card.tags, ["refactor", "ship-it"]);
+    assert_eq!(
+        counts(),
+        [
+            ("deploy".into(), 1),
+            ("refactor".into(), 1),
+            ("ship-it".into(), 1)
+        ]
+    );
+    assert_eq!(
+        load(&home, &facts(&home, "a")).unwrap().tags,
+        ["refactor", "rust"],
+        "the card keeps what its model wrote"
+    );
+    assert_eq!(
+        crate::home::Home::keep("tags.json"),
+        Some(crate::home::Keep::Always),
+        "nothing rebuilds the owner's edits"
+    );
+
+    // Hiding an added tag takes it off and adding a hidden one shows it again.
+    let (_, edit) = crate::tags::tag_session(
+        &home,
+        &config,
+        "claude-code/a",
+        &["rust".into()],
+        &["ship-it".into()],
+    )
+    .unwrap();
+    assert_eq!(edit, crate::tags::Edit::default());
+    assert_eq!(ids("rust"), ["a"]);
+    assert!(ids("ship-it").is_empty());
+    assert!(
+        crate::tags::OwnerTags::load(&home)
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+
+    // No secret and no personal detail goes in, and only a session in the archive is tagged.
+    for bad in [fake_key(), "Avery Example".to_string()] {
+        let mut config = config.clone();
+        config.privacy.personal_terms.push("Avery Example".into());
+        let e = crate::tags::tag_session(&home, &config, "a", &[bad], &[]).unwrap_err();
+        assert!(e.to_string().contains("secret or a personal detail"), "{e}");
+    }
+    assert!(crate::tags::tag_session(&home, &config, "nope", &["x".into()], &[]).is_err());
+    assert!(
+        crate::tags::OwnerTags::load(&home)
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+}
+
+#[test]
 fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
     let (_d, home, config) = carded_home();
     let none = crate::read::Filter::default();
@@ -942,11 +1044,13 @@ fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
     };
     let config = crate::tags::TagsConfig {
         aliases: [("js".into(), "javascript".into())].into(),
+        ..Default::default()
     };
     let tags: Vec<String> = ["js", "javascript", "Alice Smith", "Rust Lang"]
         .map(String::from)
         .into();
     let (shown, found) = viewed(
+        "k",
         &tags,
         &[finding("tags/2"), finding("title")],
         &config,
@@ -959,14 +1063,38 @@ fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
     );
 
     // A view the detector finds something in is not shown: the stored tag is.
-    let (shown, _) = viewed(&tags, &[], &config, |v| v == "rust-lang");
+    let (shown, _) = viewed("k", &tags, &[], &config, |v| v == "rust-lang");
     assert_eq!(shown, ["javascript", "alice-smith", "Rust Lang"]);
     // Nor one whose alias destination, as the owner wrote it, holds one.
     let config = crate::tags::TagsConfig {
         aliases: [("js".into(), "Bearer xyz".into())].into(),
+        ..Default::default()
     };
-    let (shown, _) = viewed(&tags, &[], &config, |v| v == "Bearer xyz");
+    let (shown, _) = viewed("k", &tags, &[], &config, |v| v == "Bearer xyz");
     assert_eq!(shown[0], "js");
+
+    // The owner's edits come last: a hidden tag goes with its findings, and the places of the
+    // rest follow; an added tag joins unless the detector finds something in it.
+    let mut config = crate::tags::TagsConfig::default();
+    config.owner.sessions.insert(
+        "k".into(),
+        crate::tags::Edit {
+            add: vec!["ops".into(), "rust-lang".into(), "bob".into()],
+            hide: vec!["JS".into(), "alice smith".into()],
+        },
+    );
+    let (shown, found) = viewed(
+        "k",
+        &tags,
+        &[finding("tags/2"), finding("tags/3"), finding("title")],
+        &config,
+        |v| v == "bob",
+    );
+    assert_eq!(shown, ["javascript", "Rust Lang", "ops"]);
+    assert_eq!(
+        found.iter().map(|f| f.field.as_str()).collect::<Vec<_>>(),
+        ["tags/1", "title"]
+    );
 }
 
 #[test]

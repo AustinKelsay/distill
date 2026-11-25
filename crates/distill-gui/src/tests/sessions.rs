@@ -353,6 +353,94 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
 }
 
 #[test]
+fn the_owner_adds_and_hides_a_tag_on_an_open_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = archive(dir.path());
+    let mut rt = window(&core);
+    let row = rt
+        .state
+        .sessions
+        .results
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .position(|r| r.card.as_ref().is_some_and(|c| c.card.tags == ["deploy"]));
+    rt.update(|s, _| sessions::open_row(s, row.unwrap()));
+    run_jobs(&mut rt, &core);
+    let tags = |rt: &Runtime<State>| {
+        rt.state
+            .sessions
+            .open
+            .as_ref()
+            .unwrap()
+            .row
+            .card
+            .as_ref()
+            .unwrap()
+            .card
+            .tags
+            .clone()
+    };
+
+    rt.update(|s, _| {
+        s.sessions
+            .open
+            .as_mut()
+            .unwrap()
+            .new_tag
+            .replace_text("Ops Work")
+    });
+    settle(&mut rt);
+    press(&mut rt, "add-tag");
+    assert_eq!(
+        run_jobs(&mut rt, &core),
+        ["tag session", "tags", "sessions"],
+        "then the list and the chips again"
+    );
+    assert_eq!(tags(&rt), ["deploy", "ops-work"]);
+    assert_eq!(rt.state.sessions.open.as_ref().unwrap().new_tag.text, "");
+    run_jobs(&mut rt, &core);
+    assert!(
+        rt.state.sessions.tags.iter().any(|t| t.tag == "ops-work"),
+        "the chips follow"
+    );
+
+    press(&mut rt, "hide-tag-0");
+    run_jobs(&mut rt, &core);
+    assert_eq!(tags(&rt), ["ops-work"]);
+    let owner = distill_core::tags::OwnerTags::load(&core.home).unwrap();
+    let edit = owner.sessions.values().next().unwrap();
+    assert_eq!(
+        (&edit.add[..], &edit.hide[..]),
+        (&["ops-work".to_string()][..], &["deploy".to_string()][..])
+    );
+
+    // A secret is refused, and stays out of the file.
+    rt.update(|s, _| {
+        s.sessions
+            .open
+            .as_mut()
+            .unwrap()
+            .new_tag
+            .replace_text(fake_key())
+    });
+    settle(&mut rt);
+    press(&mut rt, "add-tag");
+    run_jobs(&mut rt, &core);
+    assert!(
+        shows(&rt, "a tag can't hold a secret or a personal detail"),
+        "{:?}",
+        texts(&rt)
+    );
+    assert!(
+        !std::fs::read_to_string(core.home.owner_tags_path())
+            .unwrap()
+            .contains(&fake_key())
+    );
+}
+
+#[test]
 fn every_filter_the_spec_names_is_on_the_screen() {
     let rt = runtime_sized(fixture::sessions_listed(), (1080.0, 1400.0));
     for key in [

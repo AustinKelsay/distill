@@ -54,6 +54,8 @@ Tags are shown and filtered in one standard form ("Rust Lang" and "rust_lang" ar
 "js" = "javascript"
 ```
 
+You can also add a tag to one session or hide one on it, in the window or with `distill tag <session> --add ops --hide misc`; your tags win over the model's and outlive a new card.
+
 With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 
 Backups (ADR 0009) go to `[[backup]]` targets, encrypted on this machine first. Run `distill backup init` once to make the key; keep a copy of the key it prints somewhere other than this machine.
@@ -77,6 +79,7 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
 | `distill tags` | The tags on the sessions' cards, most used first, with the usual filters, for a model at a named provider. |
+| `distill tag <session>` | Add a tag to a session (`--add`) or hide one (`--hide`), as its owner. |
 | `distill read <session>` | A session's events for a model at a named provider, with a placeholder for each secret. |
 | `distill findings` | The rotation list: each secret by fingerprint, where it appears and when; never a value. |
 | `distill reveal` | A model asks for specific secrets; the owner approves in the window; the model collects them once. |

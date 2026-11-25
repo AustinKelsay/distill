@@ -104,7 +104,7 @@ fn serve(
             continue;
         };
         sessions += 1;
-        let (shown, found) = cards::viewed(&card.tags, &found, &config.tags, finds);
+        let (shown, found) = cards::viewed(&card.session, &card.tags, &found, &config.tags, finds);
         for (i, t) in shown.into_iter().enumerate() {
             let field = format!("tags/{i}");
             if !found.iter().any(|f| f.field == field) {

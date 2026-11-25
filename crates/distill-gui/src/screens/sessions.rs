@@ -19,6 +19,7 @@ use distill_core::model::SessionMeta;
 use distill_core::read::{
     self, Filter, Listed, Opening, Page, Passage, Range, Read, Searched, TagCount, Tagged,
 };
+use distill_core::tags::{self, TagsConfig};
 use distill_core::trust::Reader;
 use rune::{El, TextEdit};
 
@@ -134,6 +135,12 @@ pub struct Open {
     pub revealed: BTreeSet<String>,
     /// The screen it was opened from, when not the list: Back returns there.
     pub from: Option<Screen>,
+    /// A tag the owner is adding to it (#158).
+    pub new_tag: TextEdit,
+    /// Why the last tag edit didn't take.
+    pub tag_error: Option<String>,
+    /// Whether a tag edit is being written.
+    pub tagging: bool,
 }
 
 impl Open {
@@ -273,6 +280,80 @@ pub fn pick_tag(s: &mut State, tag: &str) {
     search(s);
 }
 
+/// Add the tag `add` to the open session or hide `hide` on it, as its owner (#158). Core writes
+/// it; the open session shows it at once, and the list and the chips at the search it starts.
+pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
+    let Some(o) = s.sessions.open.as_mut().filter(|o| !o.tagging) else {
+        return;
+    };
+    o.tagging = true;
+    let key = o.key.clone();
+    s.ask(Job::new("tag session", move |core| {
+        let r = core
+            .home
+            .load_config()
+            .and_then(|config| {
+                let (add, hide): (Vec<String>, Vec<String>) = (
+                    add.iter().cloned().collect(),
+                    hide.iter().cloned().collect(),
+                );
+                tags::tag_session(&core.home, &config, &key, &add, &hide)?;
+                Ok(config.tags)
+            })
+            .map_err(jobs::line);
+        Box::new(move |s: &mut State| {
+            let Some(o) = s.sessions.open.as_mut().filter(|o| o.key == key) else {
+                return;
+            };
+            o.tagging = false;
+            match r {
+                Ok(config) => {
+                    o.tag_error = None;
+                    if add.is_some() {
+                        o.new_tag = TextEdit::default();
+                    }
+                    if let Some(c) = &mut o.row.card {
+                        retagged(c, add.as_deref(), hide.as_deref(), &config);
+                    }
+                    search(s);
+                }
+                Err(e) => o.tag_error = Some(e),
+            }
+        })
+    }));
+}
+
+/// `card` with `hide` gone, its findings' places following, and `add` after the rest, as core
+/// shows them once the edit is written.
+fn retagged(card: &mut Shown, add: Option<&str>, hide: Option<&str>, config: &TagsConfig) {
+    if let Some(h) = hide.map(|h| tags::view(h, config)) {
+        while let Some(j) = card
+            .card
+            .tags
+            .iter()
+            .position(|t| tags::view(t, config) == h)
+        {
+            card.card.tags.remove(j);
+            card.findings.retain(|f| f.field != format!("tags/{j}"));
+            for f in &mut card.findings {
+                if let Some(k) = f
+                    .field
+                    .strip_prefix("tags/")
+                    .and_then(|k| k.parse::<usize>().ok())
+                    && k > j
+                {
+                    f.field = format!("tags/{}", k - 1);
+                }
+            }
+        }
+    }
+    if let Some(a) = add.map(|a| tags::view(a, config))
+        && !card.card.tags.iter().any(|t| tags::view(t, config) == a)
+    {
+        card.card.tags.push(a);
+    }
+}
+
 /// A list or search as the owner. The inner error is a refusal.
 fn fetch(
     core: &jobs::Core,
@@ -368,6 +449,9 @@ pub fn open_row(s: &mut State, i: usize) {
         loaded: Loaded::Loading,
         revealed: BTreeSet::new(),
         from: None,
+        new_tag: TextEdit::default(),
+        tag_error: None,
+        tagging: false,
     });
     // Its tags are pressable only as the tags in use list them now, so one that became a
     // finding since the list was read can't be put in the Tag field.
@@ -448,6 +532,9 @@ pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, S
                     loaded,
                     revealed: BTreeSet::new(),
                     from: Some(from),
+                    new_tag: TextEdit::default(),
+                    tag_error: None,
+                    tagging: false,
                 });
                 nav::go(s, Screen::Sessions);
             }

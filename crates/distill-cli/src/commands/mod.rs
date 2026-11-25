@@ -18,6 +18,7 @@ pub mod schedule;
 pub mod search;
 pub mod status;
 pub mod sweep;
+pub mod tag;
 pub mod tags;
 pub mod tick;
 pub mod verify;

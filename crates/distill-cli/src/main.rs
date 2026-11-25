@@ -68,6 +68,8 @@ enum Cmd {
     /// The tags on the sessions' cards, with how many sessions carry each, as a model at a named
     /// provider
     Tags(tags::Args),
+    /// Add tags to a session or hide tags on it, as its owner
+    Tag(tag::Args),
     /// Ask for a secret's value as a model, and collect it once the owner approves in the GUI
     Reveal(reveal::Args),
     /// The timer that runs `distill tick`
@@ -113,6 +115,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Search(a) => search::run(&ctx, a),
         Cmd::Tags(a) => tags::run(&ctx, a),
+        Cmd::Tag(a) => tag::run(&ctx, a),
         Cmd::Reveal(a) => reveal::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Exposure(a) => exposure::run(&ctx, a),

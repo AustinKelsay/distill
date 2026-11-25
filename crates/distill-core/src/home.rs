@@ -33,6 +33,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///   reveals/                     reveals_dir: one file per reveal request (reveal_path)
 ///   keys/fingerprint.key         fingerprint_key_path
 ///   keys/backup.key              backup_key_path
+///   tags.json                    owner_tags_path: the owner's tag edits
 /// ```
 ///
 /// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. What a backup holds
@@ -189,6 +190,10 @@ impl Home {
     pub fn backup_log_path(&self) -> PathBuf {
         self.log_dir().join("backups.jsonl")
     }
+    /// The tags the owner added to or hid on sessions (issue #158): nothing rebuilds them.
+    pub fn owner_tags_path(&self) -> PathBuf {
+        self.root.join("tags.json")
+    }
 
     /// Whether a backup holds the file at `rel`, a path relative to the home's root with `/`
     /// between its parts (ADR 0009, issue #145): always, only when the target carries cards or
@@ -197,7 +202,7 @@ impl Home {
     pub fn keep(rel: &str) -> Option<Keep> {
         let parts: Vec<&str> = rel.split('/').collect();
         Some(match parts.as_slice() {
-            ["config.toml"] => Keep::Always,
+            ["config.toml" | "tags.json"] => Keep::Always,
             ["raw", _, ..] => Keep::Always,
             ["keys", "fingerprint.key"] => Keep::Always,
             ["keys", "backup.key"] => Keep::Never,
@@ -265,8 +270,12 @@ impl Home {
         lock_at(&self.findings_lock_path(harness, session_id), "findings")
     }
 
+    /// The config, with the owner's tag edits from `tags.json` (`crate::tags::OwnerTags`);
+    /// none when that file can't be read.
     pub fn load_config(&self) -> Result<Config> {
-        Config::load(&self.config_path())
+        let mut config = Config::load(&self.config_path())?;
+        config.tags.owner = crate::tags::OwnerTags::load(self).unwrap_or_default();
+        Ok(config)
     }
 
     /// Whether a path is this home or inside it. A session that worked inside the home was run

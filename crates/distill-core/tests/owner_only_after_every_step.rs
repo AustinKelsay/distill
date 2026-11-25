@@ -150,6 +150,9 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
     distill_core::reveal::approve(&home, &filed.id).unwrap();
     owner_only("approving it");
     distill_core::reveal::collect(&home, &stopped, &reader, &filed.id).unwrap();
+    let config = home.load_config().unwrap();
+    distill_core::tags::tag_session(&home, &config, "claude-code/s1", &["ops".into()], &[])
+        .unwrap();
 
     for made in [
         home.card_path(Harness::ClaudeCode, "s1"),
@@ -157,10 +160,11 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
         home.card_failures_path(),
         home.detail_failures_path(),
         home.reveal_path(&filed.id),
+        home.owner_tags_path(),
     ] {
         assert!(made.exists(), "{} was not made", made.display());
     }
-    owner_only("collecting it");
+    owner_only("collecting it, and tagging the session");
     let check = exposure::check(&home);
     let owner_only = check
         .rules
