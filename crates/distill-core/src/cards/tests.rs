@@ -946,10 +946,19 @@ fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
     let tags: Vec<String> = ["js", "javascript", "Alice Smith", "Rust Lang"]
         .map(String::from)
         .into();
-    let (shown, found) = viewed(&tags, &[finding("tags/2"), finding("title")], &config);
+    let (shown, found) = viewed(
+        &tags,
+        &[finding("tags/2"), finding("title")],
+        &config,
+        |_| false,
+    );
     assert_eq!(shown, ["javascript", "Alice Smith", "rust-lang"]);
     assert_eq!(
         found.iter().map(|f| f.field.as_str()).collect::<Vec<_>>(),
         ["tags/1", "title"]
     );
+
+    // A view the detector finds something in is not shown: the stored tag is.
+    let (shown, _) = viewed(&tags, &[], &config, |v| v == "rust-lang");
+    assert_eq!(shown, ["javascript", "alice-smith", "Rust Lang"]);
 }

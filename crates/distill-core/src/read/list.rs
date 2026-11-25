@@ -217,13 +217,7 @@ fn opening(
             return (None, (Opening::Withheld(why), Vec::new()));
         }
     };
-    let card = Shown::of(
-        home,
-        facts,
-        &scan,
-        matches!(reader, Reader::Owner),
-        &config.tags,
-    );
+    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner), config);
     (card, first_opening(events, &scan, reader, facts))
 }
 

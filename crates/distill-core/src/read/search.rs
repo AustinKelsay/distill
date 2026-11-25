@@ -343,13 +343,7 @@ fn hit(
         Ok(Err(why)) => return withheld(why),
         Err(e) => return withheld(format!("{} could not be read: {e:#}", facts.key())),
     };
-    let card = Shown::of(
-        home,
-        facts,
-        &scan,
-        matches!(reader, Reader::Owner),
-        &config.tags,
-    );
+    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner), config);
     let (events, owner_findings) = match reader {
         Reader::Owner => (events, Some(&scan)),
         Reader::Model { .. } | Reader::Distill => match mask(events, &scan) {

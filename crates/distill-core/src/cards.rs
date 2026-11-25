@@ -616,21 +616,24 @@ pub struct Shown {
 }
 
 /// A card's tags as [`tags::view`] shows them, each once, and its findings with their places
-/// moved to match. A tag with a finding in it stays as written, so the finding's byte range still
-/// covers it.
+/// moved to match. A tag stays as written when it has a finding in it, so the finding's byte
+/// range still covers it, and when its view would show something `finds` finds (a secret or a
+/// personal detail the stored tag's scan never saw).
 fn viewed(
     card_tags: &[String],
     found: &[CardFinding],
     config: &TagsConfig,
+    finds: impl Fn(&str) -> bool,
 ) -> (Vec<String>, Vec<CardFinding>) {
     let mut shown: Vec<String> = Vec::new();
     let mut to: Vec<usize> = Vec::new();
     for (i, t) in card_tags.iter().enumerate() {
         let field = format!("tags/{i}");
-        let t = if found.iter().any(|f| f.field == field) {
+        let view = tags::view(t, config);
+        let t = if view == *t || found.iter().any(|f| f.field == field) || finds(&view) {
             t.clone()
         } else {
-            tags::view(t, config)
+            view
         };
         match shown.iter().position(|s| *s == t) {
             Some(j) => to.push(j),
@@ -665,14 +668,21 @@ impl Shown {
         facts: &SessionMeta,
         findings: &Findings,
         for_owner: bool,
-        config: &TagsConfig,
+        config: &Config,
     ) -> Option<Shown> {
         let mut card = current(home, facts, findings)?;
         let all = findings
             .card
             .as_ref()
             .map_or(&[][..], |c| c.findings.as_slice());
-        let (shown, found) = viewed(&card.tags, all, config);
+        let detector = std::cell::OnceCell::new();
+        let finds = |view: &str| {
+            !detector
+                .get_or_init(|| Detector::new(&findings::owner(config)))
+                .detect(view)
+                .is_empty()
+        };
+        let (shown, found) = viewed(&card.tags, all, &config.tags, finds);
         card.tags = shown;
         Some(Shown {
             card,
