@@ -204,7 +204,11 @@ fn a_reply_is_parsed_strictly() {
     let good = r#"{"title":"T","summary":"S.","tags":["A"," b ","a","Rust Lang","rust_lang"],"outcome":"partly_done"}"#;
     let r = parse_reply(good).unwrap();
     assert_eq!((r.title.as_str(), r.outcome), ("T", Outcome::PartlyDone));
-    assert_eq!(r.tags, ["a", "b", "rust-lang"]);
+    assert_eq!(
+        r.tags,
+        ["a", "b", "rust lang", "rust_lang"],
+        "stored as written, lowercase"
+    );
     assert_eq!(parse_reply(&format!("```json\n{good}\n```")).unwrap(), r);
     for bad in [
         "",

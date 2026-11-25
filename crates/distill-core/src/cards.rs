@@ -180,8 +180,9 @@ const TAG_MAX: usize = 40;
 /// The card in a model's answer, or why it is not a usable card. The answer must be one JSON
 /// object with exactly the four fields ([`Reply`]), alone or inside a single code fence. The
 /// title must be one line of at most 100 characters, the summary at most 1,200, and there may be
-/// at most 8 tags of at most 40 characters, each one line; tags are stored in their standard form
-/// ([`tags::standard`]), each once.
+/// at most 8 tags of at most 40 characters, each one line; tags are stored lowercase, each once.
+/// Not in their standard form ([`tags::view`] shows that): the card's scan reads what is stored,
+/// and turning `_` into `-` could hide a secret from it.
 pub fn parse_reply(answer: &str) -> std::result::Result<Reply, String> {
     let mut body = answer.trim();
     if let Some(rest) = body.strip_prefix("```") {
@@ -213,7 +214,7 @@ pub fn parse_reply(answer: &str) -> std::result::Result<Reply, String> {
     }
     let mut tags: Vec<String> = Vec::new();
     for t in &r.tags {
-        let t = tags::standard(t);
+        let t = t.trim().to_lowercase();
         if t.is_empty() || t.contains('\n') || t.chars().count() > TAG_MAX {
             return Err(format!(
                 "a tag must be one line of 1 to {TAG_MAX} characters"

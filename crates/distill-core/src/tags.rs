@@ -39,14 +39,23 @@ pub fn standard(tag: &str) -> String {
     out
 }
 
-/// The tag `tag` is shown and filtered as: its standard form, through the owner's aliases.
+/// The tag `tag` is shown and filtered as: its standard form, through the owner's aliases, to
+/// the end of a chain of them (`js` -> `javascript` -> `ecmascript`), stopping where one loops.
 pub fn view(tag: &str, config: &TagsConfig) -> String {
-    let tag = standard(tag);
-    config
+    let mut tag = standard(tag);
+    let mut seen = vec![tag.clone()];
+    while let Some((_, to)) = config
         .aliases
         .iter()
         .find(|(from, _)| standard(from) == tag)
-        .map_or(tag, |(_, to)| standard(to))
+    {
+        tag = standard(to);
+        if seen.contains(&tag) {
+            break;
+        }
+        seen.push(tag.clone());
+    }
+    tag
 }
 
 #[cfg(test)]
@@ -75,5 +84,19 @@ mod tests {
         assert_eq!(view("rust lang", &config), "rust");
         assert_eq!(view("JS", &config), "javascript");
         assert_eq!(view("python", &config), "python");
+
+        let chain = TagsConfig {
+            aliases: [
+                ("js".into(), "javascript".into()),
+                ("javascript".into(), "ecmascript".into()),
+                ("a".into(), "b".into()),
+                ("b".into(), "a".into()),
+            ]
+            .into(),
+        };
+        assert_eq!(view("js", &chain), "ecmascript");
+        assert_eq!(view("javascript", &chain), "ecmascript");
+        assert_eq!(view("a", &chain), "a", "a loop stops where it comes back");
+        assert_eq!(view("b", &chain), "b");
     }
 }
