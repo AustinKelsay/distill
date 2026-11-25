@@ -65,12 +65,14 @@ if [[ -n "$MAC" ]]; then
   plist="$HOME/Library/LaunchAgents/dev.distill.tick.plist"
   job="gui/$(id -u)/dev.distill.tick"
   if [[ -f "$plist" ]]; then
+    # Best effort: a tick the timer starts between this check and `bootout` is stopped, and the
+    # catch-up tick goes on from it.
     if ticking; then
       echo "A distill tick started; the timer was left as it was, and may skip its next run." >&2
     else
       launchctl bootout "$job" 2>/dev/null || true
       if ! launchctl bootstrap "gui/$(id -u)" "$plist"; then
-        echo "The timer could not be loaded again; load it with: launchctl bootstrap gui/$(id -u) $plist" >&2
+        echo "The timer could not be loaded again; load it with: launchctl bootstrap gui/$(id -u) $(printf '%q' "$plist")" >&2
         exit 1
       fi
       echo "Reloaded the timer; it runs a tick now."
