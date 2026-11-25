@@ -194,7 +194,7 @@ fn a_search_shows_the_matching_passage_with_its_findings_covered() {
     let mut rt = window(&core);
     rt.update(|s, _| s.sessions.query.replace_text("failed"));
     press(&mut rt, "search-button");
-    assert_eq!(run_jobs(&mut rt, &core), ["sessions"]);
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "sessions"]);
     let all = everything(&rt);
     assert!(all.contains("1 session matches"), "{all}");
     assert!(all.contains("1 failed"), "{all}");
@@ -261,8 +261,8 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
     press(&mut rt, &format!("top-tag-{notes}"));
     assert_eq!(
         run_jobs(&mut rt, &core),
-        ["sessions"],
-        "the chips stay as they are"
+        ["tags", "sessions"],
+        "the chips are asked for again"
     );
     assert_eq!(rt.state.sessions.filters.tag.text, "notes");
     let all = everything(&rt);
@@ -295,6 +295,23 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
     assert!(rt.state.sessions.open.is_none(), "back on the list");
     assert_eq!(rt.state.sessions.filters.tag.text, tag);
     assert_eq!(rt.state.sessions.results.as_ref().unwrap().total, 1);
+
+    // While a search runs a chip can't be pressed, so the results never land under a filter
+    // they didn't apply.
+    press(&mut rt, "clear");
+    assert!(rt.state.sessions.loading);
+    press(&mut rt, &format!("top-tag-{notes}"));
+    assert_eq!(rt.state.sessions.filters.tag.text, "");
+    run_jobs(&mut rt, &core);
+
+    // A tag that becomes a personal term leaves the chips at the next search.
+    let mut config = core.home.load_config().unwrap();
+    config.privacy.personal_terms.push("notes".into());
+    config.save(&core.home.config_path()).unwrap();
+    press(&mut rt, "search-button");
+    run_jobs(&mut rt, &core);
+    assert!(rt.state.sessions.tags.iter().all(|t| t.tag != "notes"));
+    assert!(!everything(&rt).contains("#notes · 1"));
 }
 
 #[test]

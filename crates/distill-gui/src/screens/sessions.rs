@@ -50,7 +50,7 @@ pub struct SessionsState {
     pub open: Option<Open>,
     /// The tags in use on the sessions the other filters match, most used first (#157).
     pub tags: Vec<TagCount>,
-    /// The filter `tags` was asked for, without its tag; asked again only when it changes.
+    /// The filter `tags` was last asked for, without its tag: only its answer lands.
     pub tags_for: Option<Filter>,
 }
 
@@ -230,16 +230,14 @@ fn ask_page(s: &mut State, offset: usize) {
     }));
 }
 
-/// The tags in use on the sessions `filter` matches whatever its tag, unless they are asked for
-/// already. A refusal or failure leaves no chips; the list says what went wrong.
+/// The tags in use on the sessions `filter` matches whatever its tag, asked again with every
+/// first page so a chip never outlives a finding. A refusal or failure leaves no chips; the list
+/// says what went wrong.
 fn ask_tags(s: &mut State, filter: &Filter) {
     let all = Filter {
         tag: None,
         ..filter.clone()
     };
-    if s.sessions.tags_for.as_ref() == Some(&all) {
-        return;
-    }
     s.sessions.tags_for = Some(all.clone());
     s.ask(Job::new("tags", move |core| {
         let r = read::tags(&core.home, &core.runtime, &Reader::Owner, &all);

@@ -99,6 +99,7 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
                 Button::new(format!("#{t}"))
                     .variant(ButtonVariant::Outline)
                     .control_size(ControlSize::Small)
+                    .disabled(s.sessions.loading)
                     .on_press(move |s: &mut State| super::pick_tag(s, &tag))
                     .build(&p.k)
                     .key(format!("session-tag-{n}"))

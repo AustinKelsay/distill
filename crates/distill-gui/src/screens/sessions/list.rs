@@ -199,6 +199,7 @@ fn top_tags(st: &SessionsState, p: &Paint) -> El {
                     ButtonVariant::Outline
                 })
                 .control_size(ControlSize::Small)
+                .disabled(st.loading)
                 .on_press(move |s: &mut State| super::pick_tag(s, &tag))
                 .build(&p.k)
                 .key(format!("top-tag-{i}")),
