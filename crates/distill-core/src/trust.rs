@@ -233,6 +233,13 @@ impl Trust {
         self.provider(&name)
     }
 
+    /// Where Ollama serves `reader` from when it reads as Ollama: [`OLLAMA`] for a model stored on
+    /// this machine, [`OLLAMA_CLOUD`] for one served from a cloud. `None` for any other reader.
+    pub fn ollama_via(reader: &Reader, runtime: &LocalRuntime) -> Option<&'static str> {
+        let (name, _) = Self::resolve(reader, runtime)?;
+        [OLLAMA, OLLAMA_CLOUD].into_iter().find(|n| *n == name)
+    }
+
     /// The provider a model reader reads as, with why when that is not the one it named.
     fn resolve(reader: &Reader, runtime: &LocalRuntime) -> Option<(String, String)> {
         let Reader::Model { provider, model } = reader else {

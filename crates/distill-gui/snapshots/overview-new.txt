@@ -55,6 +55,15 @@
         reveals: Reveal requests
             title: Reveal requests
             message: No reveal requests are waiting.
+        left: What left this machine
+            title: What left this machine
+            name: Where
+            day: Last day
+            week: Last 7 days
+          left-none: Nothing left this machine in the last 7 days.
+            name: Stayed on this machine
+            day: 0 reads
+            week: 0 reads
         harnesses: Harnesses
             title: Harnesses
             drift: No format drift

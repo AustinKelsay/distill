@@ -439,6 +439,17 @@ pub fn running() -> State {
                 { "name": "drive", "kind": "folder", "last_ok": at(40), "captures_behind": 0 },
                 { "name": "share", "kind": "folder", "last_ok": at(1_500), "captures_behind": 212 },
             ],
+            "left": {
+                "places": [
+                    { "name": "example-cloud/qwen-large", "kind": "reader",
+                      "day": { "times": 48, "sessions": 24, "listed": 60 }, "week": { "times": 410, "sessions": 205, "listed": 340 } },
+                    { "name": "drive", "kind": "backup",
+                      "day": { "times": 24, "bytes": 3_100_000 }, "week": { "times": 168, "bytes": 41_000_000 } },
+                    { "name": "example-agent/coder", "kind": "reader",
+                      "day": { "times": 0 }, "week": { "times": 6, "sessions": 2 } },
+                ],
+                "here": { "day": { "times": 96, "sessions": 30 }, "week": { "times": 702, "sessions": 260 } },
+            },
         }),
         exposure(true),
     ));

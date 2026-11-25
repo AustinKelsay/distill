@@ -119,6 +119,23 @@
             message: 2 reveal requests wait for you
             open-approvals: Open approvals
               label: Open approvals
+        left: What left this machine
+            title: What left this machine
+            name: Where
+            day: Last day
+            week: Last 7 days
+            name: example-cloud/qwen-large
+            day: 48 reads, 24 sessions, 60 listed
+            week: 410 reads, 205 sessions, 340 listed
+            name: Backup drive
+            day: 24 runs, 3.1 MB
+            week: 168 runs, 41.0 MB
+            name: example-agent/coder
+            day: 0 reads
+            week: 6 reads, 2 sessions
+            name: Stayed on this machine
+            day: 96 reads, 30 sessions
+            week: 702 reads, 260 sessions
         harnesses: Harnesses
             title: Harnesses
             drift: 12 captures look like format drift

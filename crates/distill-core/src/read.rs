@@ -136,6 +136,7 @@ fn read_events(
     };
     readlog::append(
         home,
+        Some(runtime),
         &ReadEntry {
             at: now_rfc3339(),
             reader: reader.clone(),
@@ -340,6 +341,7 @@ fn masked_for(
     let outcome = run();
     readlog::append(
         home,
+        None,
         &ReadEntry {
             at: now_rfc3339(),
             reader,
