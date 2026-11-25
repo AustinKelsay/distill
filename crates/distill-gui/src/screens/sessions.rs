@@ -290,7 +290,7 @@ pub fn pick_tag(s: &mut State, tag: &str) {
     let len = tags.len();
     tags.retain(|t| tags::standard(t) != tags::standard(tag));
     if tags.len() == len {
-        tags.push(tag.to_string());
+        tags.push(tags::standard(tag));
     }
     let f = &mut s.sessions.filters.tag;
     if tags.is_empty() {
@@ -305,7 +305,7 @@ pub fn pick_tag(s: &mut State, tag: &str) {
 /// Filter by `tag` alone, as a tag pressed on a session asks: back on the list, from the first
 /// page.
 pub fn only_tag(s: &mut State, tag: &str) {
-    s.sessions.filters.tag.replace_text(tag);
+    s.sessions.filters.tag.replace_text(tags::standard(tag));
     s.sessions.open = None;
     search(s);
 }
