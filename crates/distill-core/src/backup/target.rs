@@ -46,7 +46,8 @@ pub fn add_folder(config: &mut Config, name: &str, path: &str) -> Result<()> {
 /// removed and added back may keep its name). A target's backups go by its name, so such a
 /// target would take the other folder's runs as its own.
 pub fn reused_name(home: &Home, config: &Config) -> Result<Option<String>> {
-    let log = super::run::log(home)?;
+    // Under any key: a backup never makes the folder of a target backed up to before.
+    let log: Vec<super::run::BackupReport> = crate::util::read_jsonl(&home.backup_log_path())?;
     let saved = match home.load_config() {
         Ok(c) => c.backups,
         Err(_) => Vec::new(),
