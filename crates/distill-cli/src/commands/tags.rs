@@ -73,6 +73,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 })
             })
             .transpose()?,
+        session: None,
     };
     match read::tags(&ctx.home, &LocalRuntime::ollama(), &reader, &filter)? {
         Tagged::Text(text) => out(ctx.json, &serde_json::json!({ "text": text }), || {

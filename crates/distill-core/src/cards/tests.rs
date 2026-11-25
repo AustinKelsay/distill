@@ -947,6 +947,19 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         ["refactor", "rust"],
         "the card keeps what its model wrote"
     );
+    // The word index holds the tags as shown: the edit put a's entry out of date.
+    let none = crate::read::Filter::default();
+    let found = |q: &str| -> Vec<String> {
+        owner_hits(&home, q, &none)
+            .into_iter()
+            .map(|h| h.facts.session_id)
+            .collect()
+    };
+    assert_eq!(found("rust"), ["a"], "until the index is built again");
+    assert_eq!(crate::index::progress(&home).unwrap().pending, 1);
+    crate::index::build(&home).unwrap();
+    assert!(found("rust").is_empty());
+    assert!(found("ship-it").contains(&"a".to_string()));
     assert_eq!(
         crate::home::Home::keep("tags.json"),
         Some(crate::home::Keep::Always),
@@ -985,6 +998,50 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
             .unwrap()
             .sessions
             .is_empty()
+    );
+    crate::index::build(&home).unwrap();
+    assert_eq!(
+        found("rust"),
+        ["a"],
+        "an undone edit leaves the index as it was"
+    );
+
+    // Tags are told apart through the aliases: with `js` shown as `javascript`, adding
+    // `javascript` undoes hiding `js`.
+    let mut config = config.clone();
+    config.tags.aliases = [("js".into(), "javascript".into())].into();
+    config.save(&home.config_path()).unwrap();
+    crate::tags::tag_session(&home, &config, "a", &[], &["js".into()]).unwrap();
+    let (_, edit) =
+        crate::tags::tag_session(&home, &config, "a", &["javascript".into()], &[]).unwrap();
+    assert_eq!(edit, crate::tags::Edit::default());
+    // Should both stand, as when an alias came later, the hide wins wherever tags are read; and
+    // an added tag whose alias destination, as written, holds a secret is not shown or found.
+    let both = crate::tags::OwnerTags {
+        sessions: [(
+            "claude-code/a".into(),
+            crate::tags::Edit {
+                add: vec!["javascript".into(), "pal".into()],
+                hide: vec!["js".into()],
+            },
+        )]
+        .into(),
+    };
+    std::fs::write(home.owner_tags_path(), serde_json::to_vec(&both).unwrap()).unwrap();
+    let mut aliased = config.tags.aliases.clone();
+    let bearer = ["Bearer ", &"Zq9xW7".repeat(6)].concat();
+    aliased.insert("pal".into(), bearer.clone());
+    config.tags.aliases = aliased;
+    config.save(&home.config_path()).unwrap();
+    for t in ["javascript".to_string(), "pal".into(), bearer] {
+        assert!(ids(&t).is_empty(), "{t}");
+    }
+    let a = rows("rust").remove(0).card.unwrap();
+    assert_eq!(a.card.tags, ["refactor", "rust"]);
+    assert!(
+        counts()
+            .iter()
+            .all(|(t, _)| t == "deploy" || t == "refactor" || t == "rust")
     );
 }
 

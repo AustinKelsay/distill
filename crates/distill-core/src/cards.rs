@@ -153,17 +153,6 @@ impl Card {
     pub fn stale(&self, card_model: &str) -> bool {
         self.prompt_version != PROMPT_VERSION || self.model != card_model
     }
-
-    /// Whether the card has `tag`, both as [`tags::view`] shows them, after the owner's edits on
-    /// the session: a tag the owner hid isn't there, and one the owner added is.
-    pub fn has_tag(&self, tag: &str, config: &TagsConfig) -> bool {
-        if tags::hidden(tag, &self.session, config) {
-            return false;
-        }
-        let tag = tags::view(tag, config);
-        tags::added(&self.session, config).any(|a| a == tag)
-            || self.tags.iter().any(|t| tags::view(t, config) == tag)
-    }
 }
 
 /// The fields a model writes.
@@ -625,7 +614,8 @@ pub struct Shown {
 /// so the finding's byte range still covers it, and when its view, or an alias destination as the
 /// owner wrote it, holds something `finds` finds (a secret or a personal detail the stored tag's
 /// scan never saw). Then the owner's edits: a tag the owner hid goes, with its findings, and the
-/// tags the owner added follow, but for one `finds` finds something in.
+/// tags the owner added follow, but for one hidden too, and one whose view or alias destination
+/// `finds` finds something in.
 pub(crate) fn viewed(
     key: &str,
     card_tags: &[String],
@@ -683,12 +673,29 @@ pub(crate) fn viewed(
             Some(f)
         })
         .collect();
-    for a in tags::added(key, config) {
-        if !kept.iter().any(|k| tags::view(k, config) == a) && !finds(&a) {
+    for a in config.owner.of(key).into_iter().flat_map(|e| &e.add) {
+        let (a, through) = tags::view_through(a, config);
+        if !kept.iter().any(|k| tags::view(k, config) == a)
+            && !tags::hidden(&a, key, config)
+            && !finds(&a)
+            && !through.iter().any(|to| finds(to))
+        {
             kept.push(a);
         }
     }
     (kept, found)
+}
+
+/// Whether the owner's detector finds a secret or a personal detail in a piece of text, for
+/// [`viewed`]; the detector is built the first time it is asked.
+pub(crate) fn finder(config: &Config) -> impl Fn(&str) -> bool + '_ {
+    let detector = std::cell::OnceCell::new();
+    move |text| {
+        !detector
+            .get_or_init(|| Detector::new(&findings::owner(config)))
+            .detect(text)
+            .is_empty()
+    }
 }
 
 impl Shown {
@@ -706,14 +713,7 @@ impl Shown {
             .card
             .as_ref()
             .map_or(&[][..], |c| c.findings.as_slice());
-        let detector = std::cell::OnceCell::new();
-        let finds = |view: &str| {
-            !detector
-                .get_or_init(|| Detector::new(&findings::owner(config)))
-                .detect(view)
-                .is_empty()
-        };
-        let (shown, found) = viewed(&card.session, &card.tags, all, &config.tags, finds);
+        let (shown, found) = viewed(&card.session, &card.tags, all, &config.tags, finder(config));
         card.tags = shown;
         Some(Shown {
             card,

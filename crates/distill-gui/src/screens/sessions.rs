@@ -19,7 +19,7 @@ use distill_core::model::SessionMeta;
 use distill_core::read::{
     self, Filter, Listed, Opening, Page, Passage, Range, Read, Searched, TagCount, Tagged,
 };
-use distill_core::tags::{self, TagsConfig};
+use distill_core::tags;
 use distill_core::trust::Reader;
 use rune::{El, TextEdit};
 
@@ -281,77 +281,67 @@ pub fn pick_tag(s: &mut State, tag: &str) {
 }
 
 /// Add the tag `add` to the open session or hide `hide` on it, as its owner (#158). Core writes
-/// it; the open session shows it at once, and the list and the chips at the search it starts.
+/// it, then the session's row is read again through the read path, so its card shows the tags as
+/// core does; the list and the chips follow at the search it starts.
 pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
     let Some(o) = s.sessions.open.as_mut().filter(|o| !o.tagging) else {
         return;
     };
     o.tagging = true;
     let key = o.key.clone();
+    let adding = add.is_some();
     s.ask(Job::new("tag session", move |core| {
         let r = core
             .home
             .load_config()
             .and_then(|config| {
-                let (add, hide): (Vec<String>, Vec<String>) = (
-                    add.iter().cloned().collect(),
-                    hide.iter().cloned().collect(),
-                );
+                let (add, hide): (Vec<String>, Vec<String>) =
+                    (add.into_iter().collect(), hide.into_iter().collect());
                 tags::tag_session(&core.home, &config, &key, &add, &hide)?;
-                Ok(config.tags)
+                row_of(core, &key)
             })
             .map_err(jobs::line);
         Box::new(move |s: &mut State| {
-            let Some(o) = s.sessions.open.as_mut().filter(|o| o.key == key) else {
-                return;
-            };
-            o.tagging = false;
-            match r {
-                Ok(config) => {
-                    o.tag_error = None;
-                    if add.is_some() {
-                        o.new_tag = TextEdit::default();
+            if let Some(o) = s.sessions.open.as_mut().filter(|o| o.key == key) {
+                o.tagging = false;
+                match &r {
+                    Ok(card) => {
+                        o.tag_error = None;
+                        if adding {
+                            o.new_tag = TextEdit::default();
+                        }
+                        o.row.card = card.clone();
                     }
-                    if let Some(c) = &mut o.row.card {
-                        retagged(c, add.as_deref(), hide.as_deref(), &config);
-                    }
-                    search(s);
+                    Err(e) => o.tag_error = Some(e.clone()),
                 }
-                Err(e) => o.tag_error = Some(e),
+            }
+            if r.is_ok() {
+                search(s);
             }
         })
     }));
 }
 
-/// `card` with `hide` gone, its findings' places following, and `add` after the rest, as core
-/// shows them once the edit is written.
-fn retagged(card: &mut Shown, add: Option<&str>, hide: Option<&str>, config: &TagsConfig) {
-    if let Some(h) = hide.map(|h| tags::view(h, config)) {
-        while let Some(j) = card
-            .card
-            .tags
-            .iter()
-            .position(|t| tags::view(t, config) == h)
-        {
-            card.card.tags.remove(j);
-            card.findings.retain(|f| f.field != format!("tags/{j}"));
-            for f in &mut card.findings {
-                if let Some(k) = f
-                    .field
-                    .strip_prefix("tags/")
-                    .and_then(|k| k.parse::<usize>().ok())
-                    && k > j
-                {
-                    f.field = format!("tags/{}", k - 1);
-                }
-            }
-        }
-    }
-    if let Some(a) = add.map(|a| tags::view(a, config))
-        && !card.card.tags.iter().any(|t| tags::view(t, config) == a)
-    {
-        card.card.tags.push(a);
-    }
+/// The current card of the session `key`, as the read path shows it to the owner.
+fn row_of(core: &jobs::Core, key: &str) -> anyhow::Result<Option<Shown>> {
+    let filter = Filter {
+        session: Some(key.to_string()),
+        mirrors: true,
+        steward: true,
+        ..Filter::default()
+    };
+    Ok(
+        match read::list(
+            &core.home,
+            &core.runtime,
+            &Reader::Owner,
+            &filter,
+            Page::default(),
+        )? {
+            Listed::Rows(r) => r.rows.into_iter().next().and_then(|r| r.card),
+            _ => None,
+        },
+    )
 }
 
 /// A list or search as the owner. The inner error is a refusal.
@@ -511,7 +501,7 @@ pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, S
             Ok(Read::Events(x)) => {
                 let row = ResultRow {
                     facts: x.facts.clone(),
-                    card: None,
+                    card: row_of(core, &x.facts.key()).ok().flatten(),
                     opening: Opening::None,
                     opening_findings: Vec::new(),
                     passage: None,

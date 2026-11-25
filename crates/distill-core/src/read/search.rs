@@ -280,10 +280,11 @@ fn serve(
     let key = crate::findings::FingerprintKey::existing(home)
         .ok()
         .flatten();
+    let finds = crate::cards::finder(&config);
     let candidates: HashMap<String, &SessionMeta> = all
         .iter()
         .filter(|m| filter.matches(m, &originals))
-        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m))
+        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m, &finds))
         .map(|m| (m.key(), m))
         .collect();
     let (lists, indexed, meaning) = found(home, &config, runtime, query, &words, &candidates)?;

@@ -97,17 +97,19 @@ pub fn tag_session(
     let _lock = home.lock("tags")?;
     let mut all = OwnerTags::load(home)?;
     let edit = all.sessions.entry(key.clone()).or_default();
+    // Tags are told apart as the view shows them, so `js` and an alias of it are one tag.
+    let same = |a: &str, b: &str| view(a, &config.tags) == view(b, &config.tags);
     for t in add {
         let hidden = edit.hide.len();
-        edit.hide.retain(|h| *h != t);
-        if edit.hide.len() == hidden && !edit.add.contains(&t) {
+        edit.hide.retain(|h| !same(h, &t));
+        if edit.hide.len() == hidden && !edit.add.iter().any(|a| same(a, &t)) {
             edit.add.push(t);
         }
     }
     for t in hide {
         let added = edit.add.len();
-        edit.add.retain(|a| *a != t);
-        if edit.add.len() == added && !edit.hide.contains(&t) {
+        edit.add.retain(|a| !same(a, &t));
+        if edit.add.len() == added && !edit.hide.iter().any(|h| same(h, &t)) {
             edit.hide.push(t);
         }
     }
@@ -176,16 +178,6 @@ pub(crate) fn hidden(tag: &str, key: &str, config: &TagsConfig) -> bool {
         .owner
         .of(key)
         .is_some_and(|e| e.hide.iter().any(|h| view(h, config) == tag))
-}
-
-/// The tags the owner added to the session `key`, as the view shows them.
-pub(crate) fn added<'a>(key: &str, config: &'a TagsConfig) -> impl Iterator<Item = String> + 'a {
-    config
-        .owner
-        .of(key)
-        .into_iter()
-        .flat_map(|e| e.add.iter())
-        .map(|a| view(a, config))
 }
 
 #[cfg(test)]

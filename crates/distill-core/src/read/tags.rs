@@ -3,7 +3,6 @@
 //! the tag filter is, never from events. Tags are written from session text, so this is a read:
 //! the reader's trust is checked and the read log gets a line with the counts.
 
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use anyhow::Result;
@@ -11,8 +10,7 @@ use anyhow::Result;
 use super::list::Filter;
 use super::{NOTICE_END, NOTICE_START, defuse};
 use crate::cards;
-use crate::detect::Detector;
-use crate::findings::{self, FingerprintKey};
+use crate::findings::FingerprintKey;
 use crate::home::Home;
 use crate::model::Originals;
 use crate::normalize;
@@ -87,24 +85,18 @@ fn serve(
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
-    let detector = OnceCell::new();
-    let finds = |view: &str| {
-        !detector
-            .get_or_init(|| Detector::new(&findings::owner(&config)))
-            .detect(view)
-            .is_empty()
-    };
+    let finds = cards::finder(&config);
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut sessions = 0;
     for m in all.iter().filter(|m| filter.matches(m, &originals)) {
         // The filter's tag and outcome are checked on the card that is counted.
         let Some((card, found)) = cards::stored_current(home, &config, key.as_ref(), m)
-            .filter(|(card, _)| filter.fits(card, &config))
+            .filter(|(card, found)| filter.fits(card, found, &config, &finds))
         else {
             continue;
         };
         sessions += 1;
-        let (shown, found) = cards::viewed(&card.session, &card.tags, &found, &config.tags, finds);
+        let (shown, found) = cards::viewed(&card.session, &card.tags, &found, &config.tags, &finds);
         for (i, t) in shown.into_iter().enumerate() {
             let field = format!("tags/{i}");
             if !found.iter().any(|f| f.field == field) {
