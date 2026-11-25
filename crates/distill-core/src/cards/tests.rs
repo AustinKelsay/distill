@@ -1068,6 +1068,16 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
     config.save(&home.config_path()).unwrap();
     assert!(ids("releasework").is_empty());
     assert_eq!(ids("refactor"), ["a"]);
+    // Nor is a tag found by a name whose own chain goes through one, and tags such a chain
+    // would join stay two tags to an edit.
+    config.tags.aliases.insert("zzz".into(), bearer.clone());
+    config.tags.aliases.insert(bearer.clone(), "deploy".into());
+    config.save(&home.config_path()).unwrap();
+    assert!(ids("zzz").is_empty());
+    let (_, edit) =
+        crate::tags::tag_session(&home, &config, "b", &[], &["zzz".into(), "deploy".into()])
+            .unwrap();
+    assert_eq!(edit.hide, ["zzz", "deploy"]);
 }
 
 #[test]

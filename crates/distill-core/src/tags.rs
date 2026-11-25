@@ -93,7 +93,9 @@ pub fn tag_session(
         Ok(s)
     };
     // Tags are told apart as the view shows them, so `js` and an alias of it are one tag.
-    let same = |a: &str, b: &str| view(a, &config.tags) == view(b, &config.tags);
+    let finds = |t: &str| !detector.detect(t).is_empty();
+    let same =
+        |a: &str, b: &str| screened(a, &config.tags, &finds) == screened(b, &config.tags, &finds);
     let once = |tags: &[String]| -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
         for t in tags.iter().map(clean) {
@@ -180,13 +182,30 @@ pub fn view_through<'a>(tag: &str, config: &'a TagsConfig) -> (String, Vec<&'a s
     (tag, through)
 }
 
-/// Whether the session `key`'s edits hide `tag`, compared through the view.
-pub(crate) fn hidden(tag: &str, key: &str, config: &TagsConfig) -> bool {
-    let tag = view(tag, config);
+/// The tag `tag` is told apart as: its [`view`], unless that or an alias destination on the way,
+/// as the owner wrote it, holds something `finds` finds (a secret or a personal detail), and then
+/// its standard form, as `cards::viewed` keeps such a tag as written.
+pub(crate) fn screened(tag: &str, config: &TagsConfig, finds: &dyn Fn(&str) -> bool) -> String {
+    let (v, through) = view_through(tag, config);
+    if finds(&v) || through.iter().any(|t| finds(t)) {
+        standard(tag)
+    } else {
+        v
+    }
+}
+
+/// Whether the session `key`'s edits hide `tag`, both told apart by [`screened`].
+pub(crate) fn hidden(
+    tag: &str,
+    key: &str,
+    config: &TagsConfig,
+    finds: &dyn Fn(&str) -> bool,
+) -> bool {
+    let tag = screened(tag, config, finds);
     config
         .owner
         .of(key)
-        .is_some_and(|e| e.hide.iter().any(|h| view(h, config) == tag))
+        .is_some_and(|e| e.hide.iter().any(|h| screened(h, config, finds) == tag))
 }
 
 #[cfg(test)]

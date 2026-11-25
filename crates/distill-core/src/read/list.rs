@@ -365,9 +365,8 @@ impl Filter {
     }
 
     /// Whether `card` (with its findings `found`) has the tag and outcome the filter names, if
-    /// any: the tag among the card's tags as they are shown (`cards::viewed`, which `finds`
-    /// screens), as the view of the tag asked for, or, for a tag shown as written, in the same
-    /// standard form; the aliases are not applied to a shown tag again.
+    /// any: the tag among the card's tags as they are shown (`cards::viewed`), both told apart by
+    /// `tags::screened` with `finds`.
     pub(super) fn fits(
         &self,
         card: &cards::Card,
@@ -377,12 +376,11 @@ impl Filter {
     ) -> bool {
         self.outcome.is_none_or(|o| card.outcome == o)
             && self.tag.as_deref().is_none_or(|t| {
-                let (view, standard) =
-                    (crate::tags::view(t, &config.tags), crate::tags::standard(t));
+                let t = crate::tags::screened(t, &config.tags, finds);
                 cards::viewed(&card.session, &card.tags, found, &config.tags, finds)
                     .0
                     .iter()
-                    .any(|s| *s == view || crate::tags::standard(s) == standard)
+                    .any(|s| crate::tags::screened(s, &config.tags, finds) == t)
             })
     }
 }

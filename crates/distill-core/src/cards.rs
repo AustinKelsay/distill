@@ -642,7 +642,7 @@ pub(crate) fn viewed(
             Some(j) => to.push(j),
             None => {
                 to.push(shown.len());
-                let hidden = tags::hidden(&t, key, config);
+                let hidden = tags::hidden(&t, key, config, &finds);
                 shown.push((!hidden).then_some(t));
             }
         }
@@ -676,7 +676,7 @@ pub(crate) fn viewed(
     for a in config.owner.of(key).into_iter().flat_map(|e| &e.add) {
         let (a, through) = tags::view_through(a, config);
         if !kept.iter().any(|k| tags::view(k, config) == a)
-            && !tags::hidden(&a, key, config)
+            && !tags::hidden(&a, key, config, &finds)
             && !finds(&a)
             && !through.iter().any(|to| finds(to))
         {
