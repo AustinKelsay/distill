@@ -20,6 +20,8 @@ pub struct Args {
 enum Cmd {
     /// Make this home's backup key and print it, once
     Init,
+    /// Replace the backup key with a new one and print it, once; every target starts over
+    NewKey,
     /// Back up to every `[[backup]]` target in config.toml, or only the one named
     Run {
         #[arg(long)]
@@ -40,6 +42,7 @@ enum Cmd {
 pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
     match a.cmd {
         Cmd::Init => init(ctx),
+        Cmd::NewKey => new_key(ctx),
         Cmd::Run { target } => run_targets(ctx, target.as_deref()),
         Cmd::Verify { target, full } => verify(ctx, target.as_deref(), full),
         Cmd::Status => status(ctx),
@@ -59,6 +62,25 @@ fn init(ctx: &Ctx) -> Result<()> {
                 "Keep it somewhere other than this machine (a password manager, or on paper). \
              Every backup is encrypted with it: without it, a lost disk means lost backups. \
              It is not shown again; it stays in keys/backup.key."
+            );
+        },
+    )
+}
+
+fn new_key(ctx: &Ctx) -> Result<()> {
+    let key = BackupKey::replace(&ctx.home)?;
+    let recovery = key.recovery();
+    let recovery = distill_core::backup::expose(&recovery);
+    out(
+        ctx.json,
+        &serde_json::json!({ "backup_key": recovery }),
+        || {
+            println!("Made a new backup key for this home:\n\n  {recovery}\n");
+            println!(
+                "Keep it somewhere other than this machine, beside the old one. Every target \
+             starts over: the next backup (`distill backup run`, or the next tick) sends \
+             everything again under the new key. Only the old key opens the backups made \
+             before now, so keep its copy for as long as you may want them."
             );
         },
     )

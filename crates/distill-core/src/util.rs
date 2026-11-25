@@ -123,20 +123,16 @@ pub fn sync_dir(dir: &Path) -> Result<()> {
 }
 
 pub fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
-    let Ok(text) = fs::read_to_string(path) else {
+    let Ok(bytes) = fs::read(path) else {
         return Ok(Vec::new());
     };
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        // A torn last line (crash mid-append) is skipped rather than failing every reader.
-        if let Ok(v) = serde_json::from_str(line) {
-            out.push(v);
-        }
-    }
-    Ok(out)
+    // By line as bytes: a torn line (crash mid-append), even one cut inside a character, is
+    // skipped rather than failing every reader or the lines around it.
+    Ok(bytes
+        .split(|b| *b == b'\n')
+        .filter(|line| !line.trim_ascii().is_empty())
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect())
 }
 
 #[cfg(unix)]
@@ -193,6 +189,21 @@ pub fn count(n: u64, noun: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_torn_line_even_inside_a_character_drops_only_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.jsonl");
+        let mut bytes = b"{\"n\":1}\n".to_vec();
+        bytes.extend_from_slice(&"{\"n\":\"é".as_bytes()[..7]);
+        bytes.extend_from_slice(b"\n{\"n\":2}\n");
+        fs::write(&path, bytes).unwrap();
+        let read: Vec<serde_json::Value> = read_jsonl(&path).unwrap();
+        assert_eq!(
+            read,
+            [serde_json::json!({"n": 1}), serde_json::json!({"n": 2})]
+        );
+    }
 
     #[test]
     fn safe_names_stay_unique() {

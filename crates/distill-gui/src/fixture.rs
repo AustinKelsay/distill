@@ -32,6 +32,7 @@ pub const SCENES: &[Scene] = &[
     ("setup-backups", |s| setup_step(s, 5)),
     ("setup-backups-key", backups_key_shown),
     ("setup-backups-empty", backups_empty),
+    ("setup-backups-new-key", backups_new_key),
     ("setup-schedule", |s| setup_step(s, 6)),
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
@@ -164,6 +165,13 @@ fn backups_key_shown(s: &mut State) {
     setup_step(s, 5);
     s.setup.has_key = Some(true);
     s.setup.recovery = Some(format!("AGE-SECRET-KEY-1{}", "EXAMPLE".repeat(9)));
+}
+
+/// The backups step with a backup key, asking before it makes a new one.
+fn backups_new_key(s: &mut State) {
+    setup_step(s, 5);
+    s.setup.has_key = Some(true);
+    s.setup.confirm_new_key = true;
 }
 
 /// The models step with cards and detection run at a trusted service that listed its models.

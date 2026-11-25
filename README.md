@@ -64,7 +64,7 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | Command | What it does |
 | --- | --- |
 | `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
-| `distill backup init` / `run` / `status` / `verify` | Make the backup key (printing it once), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
+| `distill backup init` / `new-key` / `run` / `status` / `verify` | Make the backup key (printing it once), replace it with a new one (every target starts over), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
 | `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the backup key from `--key-file` or a pipe. The next tick rebuilds the rest. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |

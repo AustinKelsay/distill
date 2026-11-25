@@ -10,7 +10,6 @@ use super::run::{BackupReport, run_scheduled};
 use crate::config::{BackupTarget, Config};
 use crate::home::Home;
 use crate::tick::Deadline;
-use crate::util::read_jsonl;
 
 /// The `[[backup]]` targets in `config`, or only the one named; refused when two share a name,
 /// since the backup log tells targets apart by name.
@@ -100,11 +99,16 @@ pub fn tick(home: &Home, config: &Config, deadline: Deadline) -> Result<TickBack
             ..Default::default()
         });
     }
-    let log: Vec<BackupReport> = read_jsonl(&home.backup_log_path())?;
+    let log = super::run::log(home)?;
     let mut done = TickBackups::default();
     for t in targets(config, None)? {
         let started = || super::store::open(&t, false).is_ok();
-        if log.iter().any(|l| l.ok && l.target == t.name) || started() {
+        // A target backed up to under an older key is sent everything again, and fails while
+        // its drive is away, as it did before.
+        if log.iter().any(|l| l.ok && l.target == t.name)
+            || super::run::backed_up_before(home, &t.name)?
+            || started()
+        {
             match run_scheduled(home, &t, deadline)? {
                 Some(r) => {
                     done.stopped_at_deadline |= r.stopped_at_deadline;
@@ -152,7 +156,7 @@ pub fn status(home: &Home, config: &Config, captures: u64) -> Result<Vec<TargetS
         return Ok(Vec::new());
     }
     let targets = targets(config, None)?;
-    let log: Vec<BackupReport> = read_jsonl(&home.backup_log_path())?;
+    let log = super::run::log(home)?;
     Ok(targets
         .iter()
         .map(|t| {
@@ -291,6 +295,72 @@ mod tests {
             0,
             "nothing was sent"
         );
+    }
+
+    #[test]
+    fn a_new_key_starts_every_target_over_and_the_old_key_still_opens_its_runs() {
+        use crate::backup::run::{last_run, read_record};
+        use crate::backup::store;
+        use age::secrecy::ExposeSecret;
+
+        let (dir, home, config) = setup(&[("drive", "drive")]);
+        std::fs::create_dir(dir.path().join("drive")).unwrap();
+        assert!(run(&home, &config.backups[0]).unwrap().ok);
+        let old = BackupKey::existing(&home).unwrap().unwrap();
+
+        // Refused while a backup runs.
+        let held = home.lock("backup").unwrap();
+        let err = BackupKey::replace(&home).err().unwrap().to_string();
+        assert!(err.contains("a backup is running"), "{err}");
+        drop(held);
+
+        // A run's line a crash cut short does not swallow the new key's.
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(home.backup_log_path())
+            .unwrap()
+            .write_all(br#"{"at":"2026"#)
+            .unwrap();
+        let new = BackupKey::replace(&home).unwrap();
+        let again = BackupKey::existing(&home).unwrap().unwrap();
+        assert_eq!(
+            again.recovery().expose_secret(),
+            new.recovery().expose_secret()
+        );
+        assert_ne!(
+            new.recovery().expose_secret(),
+            old.recovery().expose_secret()
+        );
+        assert_eq!(status(&home, &config, 1).unwrap()[0].last_ok, None);
+
+        // With the drive away and its mount point left empty, a backup by hand makes nothing
+        // there: the target was backed up to under the old key.
+        let drive = dir.path().join("drive");
+        std::fs::rename(&drive, dir.path().join("away")).unwrap();
+        std::fs::create_dir(&drive).unwrap();
+        assert!(!run(&home, &config.backups[0]).unwrap().ok);
+        assert!(!drive.join("distill-backup").exists());
+        std::fs::remove_dir(&drive).unwrap();
+        std::fs::rename(dir.path().join("away"), &drive).unwrap();
+
+        // The tick sends everything again under the new key; the old run stays as it was.
+        let t = tick(&home, &config, Deadline::NONE).unwrap();
+        assert!(t.ok(), "{t:?}");
+        assert_eq!(
+            (t.runs.len(), t.runs[0].run, t.runs[0].blobs_sent),
+            (1, 0, 1)
+        );
+        let present = store::open(&config.backups[0], false)
+            .unwrap()
+            .list()
+            .unwrap();
+        let target = store::open(&config.backups[0], false).unwrap();
+        for key in [&old, &new] {
+            assert_eq!(last_run(key, &present), Some(0));
+            assert!(read_record(&*target, key, 0).is_ok());
+        }
+        assert!(status(&home, &config, 1).unwrap()[0].last_ok.is_some());
     }
 
     #[test]
