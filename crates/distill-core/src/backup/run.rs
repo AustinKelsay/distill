@@ -43,6 +43,10 @@ pub struct RunRecord {
     pub lines_sha256: String,
     /// Each other file of the backup set, by its path in the home.
     pub files: BTreeMap<String, FileRef>,
+    /// When a run here first found the read log rewritten (issue #161), carried by every run
+    /// after it, so a backup log line that could not be written, or was taken out, is put back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_log_rewritten: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -141,10 +145,11 @@ pub struct BackupReport {
     /// starts over. The runs above it were made under an older key.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub new_key: bool,
-    /// The read log no longer started with what the run before stored of it: something
-    /// rewrote it in between (issue #161). The run stored it again from its start.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub read_log_rewritten: bool,
+    /// When a run to this target first found the read log no longer starting with what the run
+    /// before stored of it, or gone: something rewrote it in between (issue #161). That run
+    /// stored it again from its start; every run after it says so again ([`RunRecord`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_log_rewritten: Option<String>,
 }
 
 /// Whether `target` has had a whole run under any key: then a missing `distill-backup/` there
@@ -489,7 +494,7 @@ fn run_into(
                 && earlier.is_none()
                 && stored.is_some_and(|f| f.object.is_empty())
             {
-                r.read_log_rewritten = true;
+                r.read_log_rewritten = Some(r.at.clone());
             }
             let (mut parts, from) =
                 earlier.map_or((Vec::new(), 0), |f| (f.parts.clone(), f.len as usize));
@@ -563,7 +568,10 @@ fn run_into(
             .and_then(|rec| rec.files.get("log/reads.jsonl"))
             .is_some_and(|f| f.object.is_empty() && f.len > 0)
     {
-        r.read_log_rewritten = true;
+        r.read_log_rewritten = Some(r.at.clone());
+    }
+    if let Some(seen) = last.as_ref().and_then(|rec| rec.read_log_rewritten.clone()) {
+        r.read_log_rewritten = Some(seen);
     }
 
     // 4. The record, last.
@@ -576,6 +584,7 @@ fn run_into(
         lines,
         lines_sha256: hex::encode(Sha256::digest(manifest)),
         files,
+        read_log_rewritten: r.read_log_rewritten.clone(),
     };
     let mut sealed = scratch.file()?;
     key.seal(serde_json::to_vec(&record)?.as_slice(), &mut sealed)?;
@@ -839,18 +848,37 @@ mod tests {
         fs::write(home.read_log_path(), "{\"reader\":\"y\"}\n").unwrap();
         let rewritten = run(&home, &target).unwrap();
         assert!(
-            rewritten.ok && rewritten.read_log_rewritten,
+            rewritten.ok && rewritten.read_log_rewritten.as_ref() == Some(&rewritten.at),
             "{rewritten:?}"
         );
         let again = run(&home, &target).unwrap();
-        assert!(again.ok && !again.read_log_rewritten, "{again:?}");
+        // Every run after it says so again, from its record: a backup log line lost is put back.
+        assert_eq!(again.read_log_rewritten, rewritten.read_log_rewritten);
+        let log: Vec<String> = fs::read_to_string(home.backup_log_path())
+            .unwrap()
+            .lines()
+            .filter(|l| !l.contains("read_log_rewritten"))
+            .map(str::to_string)
+            .collect();
+        fs::write(home.backup_log_path(), log.join("\n") + "\n").unwrap();
+        assert_eq!(crate::readlog::edited(&home).unwrap(), None);
+        let after = run(&home, &target).unwrap();
+        assert!(after.ok, "{after:?}");
         let said = crate::readlog::edited(&home).unwrap().unwrap();
         assert!(said.contains("the backup to drive at"), "{said}");
-        // So does a read log taken away.
+        // So does a read log taken away, at a target that had seen nothing.
+        let other = BackupTarget {
+            name: "other".into(),
+            path: Some(_dir.path().join("other")),
+            ..target.clone()
+        };
+        fs::create_dir(other.path.as_ref().unwrap()).unwrap();
+        let first_there = run(&home, &other).unwrap();
+        assert!(first_there.ok && first_there.read_log_rewritten.is_none());
         let kept = fs::read(home.read_log_path()).unwrap();
         fs::remove_file(home.read_log_path()).unwrap();
-        let gone = run(&home, &target).unwrap();
-        assert!(gone.ok && gone.read_log_rewritten, "{gone:?}");
+        let gone = run(&home, &other).unwrap();
+        assert!(gone.ok && gone.read_log_rewritten.is_some(), "{gone:?}");
         fs::write(home.read_log_path(), kept).unwrap();
         let rec = read_record(&*store, &key, 43).unwrap();
         let reads = &rec.files["log/reads.jsonl"];

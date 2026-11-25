@@ -14,7 +14,7 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
     // And the read log's chain (#161): the first line that doesn't follow the one before it, or
     // a backup run that found the log rewritten.
     let chain = readlog::verify(&ctx.home)?;
-    let edited = readlog::edited(&ctx.home)?;
+    let edited = readlog::said(&ctx.home, &chain)?;
     let summary = format!(
         "Verified {} captures: {} missing, {} corrupt",
         r.checked,

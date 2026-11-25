@@ -3,10 +3,10 @@
 //! reveal request. It never holds session text or a secret's value. It cannot be rebuilt from
 //! the raw archive.
 //!
-//! Each line also carries `prev`, the SHA-256 of the line before it (of nothing, for the first),
-//! so a line changed or taken out shows as a break ([`verify`]; issue #161). A line without
-//! `prev`, from an older build, is read as before; the next chained line may name it or any line
-//! back to the last chained one, as an older build still running appends without the lock. A process running as the owner can still rewrite the whole log (ADR 0005): a
+//! Each line also carries `prev`, the SHA-256 of the chained line before it (of nothing, for the
+//! first), so a chained line changed or taken out shows as a break ([`verify`]; issue #161). A
+//! line without `prev`, from an older build (one still running appends without the lock), is read
+//! as before and is not in the chain. A process running as the owner can still rewrite the whole log (ADR 0005): a
 //! backup run notices when the log no longer starts with what it stored before
 //! ([`crate::backup::BackupReport::read_log_rewritten`]).
 
@@ -113,7 +113,10 @@ pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
     let Some(fields) = entry.strip_prefix('{') else {
         anyhow::bail!("a read log line is a JSON object");
     };
-    let line = format!("{{\"prev\":\"{}\",{fields}\n", sha256(&last_line(&path)?));
+    let line = format!(
+        "{{\"prev\":\"{}\",{fields}\n",
+        sha256(&last_chained(&path)?)
+    );
     let mut f = private_file().create(true).append(true).open(&path)?;
     f.write_all(line.as_bytes())?;
     f.sync_data()?;
@@ -126,8 +129,15 @@ fn sha256(bytes: &[u8]) -> String {
     hex::encode(sha2::Sha256::digest(bytes))
 }
 
-/// The last line of the file at `path`, without its newline; empty when there is none.
-fn last_line(path: &Path) -> Result<Vec<u8>> {
+/// Whether a line of the read log carries `prev`.
+fn chained(line: &[u8]) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_slice(line).ok()?;
+    Some(v.get("prev").is_some())
+}
+
+/// The last line of the file at `path` that carries `prev`, without its newline; empty when there
+/// is none.
+fn last_chained(path: &Path) -> Result<Vec<u8>> {
     let mut f = match fs::File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -141,11 +151,16 @@ fn last_line(path: &Path) -> Result<Vec<u8>> {
         let mut tail = Vec::new();
         f.read_to_end(&mut tail)?;
         let body = tail.strip_suffix(b"\n").unwrap_or(&tail);
-        if let Some(i) = body.iter().rposition(|b| *b == b'\n') {
-            return Ok(body[i + 1..].to_vec());
+        let mut lines: Vec<&[u8]> = body.split(|b| *b == b'\n').collect();
+        // The first piece is a whole line only when the tail starts the file.
+        if from > 0 {
+            lines.remove(0);
+        }
+        if let Some(line) = lines.into_iter().rev().find(|l| chained(l) == Some(true)) {
+            return Ok(line.to_vec());
         }
         if from == 0 {
-            return Ok(body.to_vec());
+            return Ok(Vec::new());
         }
         want *= 4;
     }
@@ -181,11 +196,7 @@ pub fn verify(home: &Home) -> Result<Chain> {
     };
     let body = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
     let mut chain = Chain::default();
-    // What a chained line's `prev` may name: the last chained line, or any line after it. Only
-    // a line without `prev` comes between a writer's read of the last line and its append (an
-    // older build appends without the lock), so the lines since the last chained one are all
-    // such lines.
-    let mut since = vec![sha256(b"")];
+    let mut before: &[u8] = &[];
     for line in body.split(|b| *b == b'\n').filter(|_| !body.is_empty()) {
         chain.lines += 1;
         let parsed: Option<serde_json::Value> = serde_json::from_slice(line).ok();
@@ -196,7 +207,7 @@ pub fn verify(home: &Home) -> Result<Chain> {
         let follows = match (&parsed, prev) {
             (None, _) => false,
             (Some(_), None) => true,
-            (Some(_), Some(p)) => p.as_str().is_some_and(|p| since.iter().any(|h| h == p)),
+            (Some(_), Some(p)) => p.as_str() == Some(sha256(before).as_str()),
         };
         if !follows {
             let at = parsed
@@ -209,9 +220,8 @@ pub fn verify(home: &Home) -> Result<Chain> {
             break;
         }
         if prev.is_some() {
-            since.clear();
+            before = line;
         }
-        since.push(sha256(line));
     }
     Ok(chain)
 }
@@ -219,22 +229,28 @@ pub fn verify(home: &Home) -> Result<Chain> {
 /// What the owner should know about edits to the read log, in a sentence: a break in its chain,
 /// or a backup run that found it rewritten since the run before. None when neither is seen.
 pub fn edited(home: &Home) -> Result<Option<String>> {
-    if let Some(b) = verify(home)?.broken {
+    said(home, &verify(home)?)
+}
+
+/// [`edited`], from a [`verify`] already made.
+pub fn said(home: &Home, chain: &Chain) -> Result<Option<String>> {
+    if let Some(b) = chain.broken.clone() {
         let when =
             b.at.map(|at| format!(", written {at},"))
                 .unwrap_or_default();
         return Ok(Some(format!(
-            "The read log has been edited: line {}{when} doesn't follow the line before it.",
+            "The read log has been edited: line {}{when} doesn't follow the chained line before it.",
             b.line
         )));
     }
     let backups: Vec<crate::backup::BackupReport> = read_jsonl(&home.backup_log_path())?;
-    Ok(backups.iter().rfind(|r| r.read_log_rewritten).map(|r| {
-        format!(
-            "The read log has been rewritten: the backup to {} at {} found it no longer starts \
-             with what the run before had stored.",
-            r.target, r.at
-        )
+    Ok(backups.iter().rev().find_map(|r| {
+        let seen = r.read_log_rewritten.as_ref()?;
+        Some(format!(
+            "The read log has been rewritten: the backup to {} at {seen} found it no longer \
+             started with what the run before had stored.",
+            r.target
+        ))
     }))
 }
 
@@ -477,23 +493,17 @@ mod tests {
         assert_eq!(broken_at(), Some(1));
 
         // A line an older build still running appends (an MCP server started before an install)
-        // only starts the chain again, even when it lands between a writer's read of the last
-        // line and its append, so the writer's `prev` names the line before it.
+        // is not in the chain: the next chained line names the chained line before it, so the
+        // older line can't hide an edit to that one.
         put(&whole);
         fs::write(&path, format!("{}{old}\n", whole.join("\n") + "\n")).unwrap();
         served("2026-11-07T00:00:00Z");
         let chain = verify(&home).unwrap();
-        assert_eq!((chain.lines, chain.broken), (7, None));
-        let mut raced = lines();
-        let late = raced.pop().unwrap();
-        let mut interleaved = whole.clone();
-        interleaved.push(old.to_string());
-        interleaved.push(late.replace(&sha256(old.as_bytes()), &sha256(whole[4].as_bytes())));
-        put(&interleaved);
-        assert_eq!(broken_at(), None);
-        raced.push(late);
-        put(&raced);
-        assert_eq!(broken_at(), None);
+        assert_eq!((chain.lines, chain.chained, chain.broken), (7, 4, None));
+        let mut behind = lines();
+        behind[4] = behind[4].replace("\"events\":1", "\"events\":9");
+        put(&behind);
+        assert_eq!(broken_at(), Some(7));
     }
 
     #[test]
