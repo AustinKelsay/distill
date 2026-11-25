@@ -787,8 +787,10 @@ fn a_cards_title_summary_and_tags_are_in_the_word_index_and_shown_in_search_resu
 #[test]
 fn search_and_list_filter_by_tag_and_outcome() {
     let (_d, home, _) = carded_home();
-    let by = |tag: Option<&str>, outcome: Option<Outcome>| crate::read::Filter {
-        tag: tag.map(str::to_string),
+    let by = |tags: Option<&str>, outcome: Option<Outcome>| crate::read::Filter {
+        tags: tags
+            .map(|t| t.split(',').map(str::to_string).collect())
+            .unwrap_or_default(),
         outcome,
         ..Default::default()
     };
@@ -835,6 +837,35 @@ fn search_and_list_filter_by_tag_and_outcome() {
     let rows = list(by(Some("refactor"), None));
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].facts.session_id, "a");
+
+    // Several tags mean all of them (#159): `a` has both of these, and no session has both
+    // `rust` and `deploy`.
+    let ids_of = |rows: Vec<crate::read::Row>| -> Vec<String> {
+        rows.into_iter().map(|r| r.facts.session_id).collect()
+    };
+    assert_eq!(ids_of(list(by(Some("rust,REFACTOR"), None))), ["a"]);
+    assert!(list(by(Some("rust,deploy"), None)).is_empty());
+    assert!(owner_hits(&home, "gadget", &by(Some("rust,deploy"), None)).is_empty());
+    assert_eq!(
+        ids(owner_hits(
+            &home,
+            "gadget",
+            &by(Some("refactor,rust"), None)
+        )),
+        ["a"]
+    );
+    let counted = match crate::read::tags(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &by(Some("rust,refactor"), None),
+    )
+    .unwrap()
+    {
+        crate::read::Tagged::Counts(t) => t.into_iter().map(|c| c.tag).collect::<Vec<_>>(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(counted, ["refactor", "rust"]);
 }
 
 #[test]
@@ -846,7 +877,7 @@ fn the_owners_aliases_merge_tags_where_they_are_shown_and_filtered() {
         &rt,
         &crate::trust::Reader::Owner,
         &crate::read::Filter {
-            tag: Some(tag.into()),
+            tags: vec![tag.into()],
             ..Default::default()
         },
         Default::default(),
@@ -895,7 +926,7 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         &rt,
         &crate::trust::Reader::Owner,
         &crate::read::Filter {
-            tag: Some(tag.into()),
+            tags: vec![tag.into()],
             ..Default::default()
         },
         Default::default(),

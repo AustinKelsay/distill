@@ -8,6 +8,7 @@ use distill_core::Harness;
 use distill_core::cards::Outcome;
 use distill_core::model::EventKind;
 use distill_core::read::Opening;
+use distill_core::tags;
 use rune::{El, GrowthSpec, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize, Select, SelectAppearance, TextInput};
 
@@ -140,7 +141,7 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
                     &f.until,
                     |s| &mut s.sessions.filters.until,
                 ))
-                .child(field(p, "filter-tag", "Tag", "any tag", &f.tag, |s| {
+                .child(field(p, "filter-tag", "Tags", "any tags", &f.tag, |s| {
                     &mut s.sessions.filters.tag
                 }))
                 .child(outcome),
@@ -184,16 +185,21 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
     c
 }
 
-/// The most used tags on the sessions the other filters match; a press filters by one, and a
+/// The most used tags on the sessions the other filters match; a press filters by one too, and a
 /// second press on it stops.
 fn top_tags(st: &SessionsState, p: &Paint) -> El {
-    let picked = st.filters.tag.text.trim();
+    let picked: Vec<String> = st
+        .filters
+        .tags()
+        .iter()
+        .map(|t| tags::standard(t))
+        .collect();
     let mut chips = row().key("top-tags").w_full().gap(6.0).flex_wrap();
     for (i, t) in st.tags.iter().take(TOP_TAGS).enumerate() {
         let tag = t.tag.clone();
         chips = chips.child(
             Button::new(format!("#{} · {}", t.tag, thousands(t.sessions)))
-                .variant(if t.tag == picked {
+                .variant(if picked.contains(&tags::standard(&t.tag)) {
                     ButtonVariant::Submit
                 } else {
                     ButtonVariant::Outline

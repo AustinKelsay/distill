@@ -83,10 +83,20 @@ impl Filters {
             model: words(&self.model),
             since: parse_day(&self.since, "from")?,
             until: parse_day(&self.until, "to")?,
-            tag: words(&self.tag),
+            tags: self.tags(),
             outcome: self.outcome,
             ..Filter::default()
         })
+    }
+
+    /// The tags in the tag field, which holds several with spaces between them (#159): a tag
+    /// as shown, in its standard form, has none.
+    pub fn tags(&self) -> Vec<String> {
+        self.tag
+            .text
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
     }
 
     fn any(&self) -> bool {
@@ -252,7 +262,7 @@ fn ask_page(s: &mut State, offset: usize) {
 /// says what went wrong.
 fn ask_tags(s: &mut State, filter: &Filter) {
     let all = Filter {
-        tag: None,
+        tags: Vec::new(),
         ..filter.clone()
     };
     s.sessions.tags_for = Some(all.clone());
@@ -273,15 +283,29 @@ fn ask_tags(s: &mut State, filter: &Filter) {
     }));
 }
 
-/// Filter by `tag`, or stop filtering by it when it is the tag filtered by: back on the list,
-/// from the first page.
+/// Filter by `tag` too, or stop filtering by it when it is among the tags filtered by: back on
+/// the list, from the first page.
 pub fn pick_tag(s: &mut State, tag: &str) {
+    let mut tags = s.sessions.filters.tags();
+    let len = tags.len();
+    tags.retain(|t| tags::standard(t) != tags::standard(tag));
+    if tags.len() == len {
+        tags.push(tags::standard(tag));
+    }
     let f = &mut s.sessions.filters.tag;
-    if f.text.trim() == tag {
+    if tags.is_empty() {
         *f = TextEdit::default();
     } else {
-        f.replace_text(tag);
+        f.replace_text(tags.join(" "));
     }
+    s.sessions.open = None;
+    search(s);
+}
+
+/// Filter by `tag` alone, as a tag pressed on a session asks: back on the list, from the first
+/// page.
+pub fn only_tag(s: &mut State, tag: &str) {
+    s.sessions.filters.tag.replace_text(tags::standard(tag));
     s.sessions.open = None;
     search(s);
 }

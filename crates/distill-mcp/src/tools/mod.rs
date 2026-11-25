@@ -64,6 +64,20 @@ fn string(args: &Value, name: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// The argument `name` as a list of strings: an array of them, or one string as a list of one.
+fn strings(args: &Value, name: &str) -> Result<Vec<String>, String> {
+    let one = |v: &Value| match v {
+        Value::String(s) => Ok(s.trim().to_string()),
+        other => Err(format!("{name} must be strings, not {other}")),
+    };
+    let all: Vec<String> = match args.get(name) {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(a)) => a.iter().map(one).collect::<Result<_, _>>()?,
+        Some(v) => vec![one(v)?],
+    };
+    Ok(all.into_iter().filter(|s| !s.is_empty()).collect())
+}
+
 /// The argument `name` as a whole number of at least zero, when given.
 fn number(args: &Value, name: &str) -> Result<Option<u64>, String> {
     match args.get(name) {

@@ -44,9 +44,9 @@ pub struct Args {
     /// Include sessions the previous build's steward ran
     #[arg(long)]
     steward: bool,
-    /// Only sessions whose card has this tag, ignoring case
-    #[arg(long)]
-    tag: Option<String>,
+    /// Only sessions whose card has this tag, ignoring case; repeat for sessions with all of them
+    #[arg(long = "tag")]
+    tags: Vec<String>,
     /// Only sessions whose card has this outcome: done, partly_done, failed or unknown
     #[arg(long)]
     outcome: Option<String>,
@@ -73,7 +73,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         until: day(&a.until)?,
         mirrors: a.mirrors,
         steward: a.steward,
-        tag: a.tag,
+        tags: a.tags,
         outcome: a
             .outcome
             .as_deref()
