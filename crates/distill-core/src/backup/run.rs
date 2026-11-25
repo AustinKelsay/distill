@@ -191,7 +191,8 @@ pub fn run(home: &Home, target: &BackupTarget) -> Result<BackupReport> {
     run_locked(home, target, None, (backup, archive))
 }
 
-/// Back up as the tick does: only to a target that holds a run of this home's already, starting
+/// Back up as the tick does: never making a target's folder, nor starting over at one that had a
+/// run of this home's, starting
 /// nothing once `deadline` has passed and sending no more blobs after it (the blobs sent stay,
 /// and the next run goes on from them). A run stopped so wrote no record and is not logged.
 /// `None` when another run or a sweep holds a lock it needs.
@@ -260,9 +261,9 @@ fn run_into(
     let store = store::open(target, scheduled.is_none() && !used)?;
     let present = store.list()?;
     let last_run = last_run(&key, &present);
-    if scheduled.is_some() && last_run.is_none() {
-        // Another folder under the same name, or a target that lost its runs: a first run is
-        // the owner's to start.
+    if scheduled.is_some() && used && last_run.is_none() {
+        // Another folder under the same name, or a target that lost its runs: starting over is
+        // the owner's to do.
         bail!(
             "backup target {:?} holds no run of this home's: run `distill backup run --target {}` to start it",
             target.name,
