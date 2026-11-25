@@ -555,6 +555,17 @@ fn run_into(
         );
     }
 
+    // A read log the run before stored and that is gone now was taken away, not rewritten in
+    // place, and the next run would compare with nothing.
+    if !files.contains_key("log/reads.jsonl")
+        && last
+            .as_ref()
+            .and_then(|rec| rec.files.get("log/reads.jsonl"))
+            .is_some_and(|f| f.object.is_empty() && f.len > 0)
+    {
+        r.read_log_rewritten = true;
+    }
+
     // 4. The record, last.
     stop_if_late!();
     let record = RunRecord {
@@ -835,6 +846,12 @@ mod tests {
         assert!(again.ok && !again.read_log_rewritten, "{again:?}");
         let said = crate::readlog::edited(&home).unwrap().unwrap();
         assert!(said.contains("the backup to drive at"), "{said}");
+        // So does a read log taken away.
+        let kept = fs::read(home.read_log_path()).unwrap();
+        fs::remove_file(home.read_log_path()).unwrap();
+        let gone = run(&home, &target).unwrap();
+        assert!(gone.ok && gone.read_log_rewritten, "{gone:?}");
+        fs::write(home.read_log_path(), kept).unwrap();
         let rec = read_record(&*store, &key, 43).unwrap();
         let reads = &rec.files["log/reads.jsonl"];
         assert_eq!(

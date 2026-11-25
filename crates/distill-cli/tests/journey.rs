@@ -393,6 +393,8 @@ sweep_every_minutes = 60
         .iter()
         .any(|w| w["kind"] == "read_log");
     assert!(edited, "{st}");
+    let (ok, _, err) = distill(&user, &home, &["verify"]);
+    assert!(!ok && err.contains("the read log has been edited"), "{err}");
     std::fs::write(&reads, log).unwrap();
     let (ok, _, err) = distill(&user, &home, &["tag", "nope", "--add", "x"]);
     assert!(!ok && err.contains("no session nope"), "{err}");

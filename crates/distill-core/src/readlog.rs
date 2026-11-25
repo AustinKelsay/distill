@@ -4,9 +4,9 @@
 //! the raw archive.
 //!
 //! Each line also carries `prev`, the SHA-256 of the line before it (of nothing, for the first),
-//! so an edit to a line, or a line taken out or put in, shows as a break ([`verify`]; issue #161).
-//! A line without `prev`, from an older build, is read as before and starts the chain again at
-//! the next line. A process running as the owner can still rewrite the whole log (ADR 0005): a
+//! so a line changed or taken out shows as a break ([`verify`]; issue #161). A line without
+//! `prev`, from an older build, is read as before; the next chained line may name it or any line
+//! back to the last chained one, as an older build still running appends without the lock. A process running as the owner can still rewrite the whole log (ADR 0005): a
 //! backup run notices when the log no longer starts with what it stored before
 //! ([`crate::backup::BackupReport::read_log_rewritten`]).
 
@@ -181,7 +181,11 @@ pub fn verify(home: &Home) -> Result<Chain> {
     };
     let body = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
     let mut chain = Chain::default();
-    let mut before: &[u8] = &[];
+    // What a chained line's `prev` may name: the last chained line, or any line after it. Only
+    // a line without `prev` comes between a writer's read of the last line and its append (an
+    // older build appends without the lock), so the lines since the last chained one are all
+    // such lines.
+    let mut since = vec![sha256(b"")];
     for line in body.split(|b| *b == b'\n').filter(|_| !body.is_empty()) {
         chain.lines += 1;
         let parsed: Option<serde_json::Value> = serde_json::from_slice(line).ok();
@@ -192,7 +196,7 @@ pub fn verify(home: &Home) -> Result<Chain> {
         let follows = match (&parsed, prev) {
             (None, _) => false,
             (Some(_), None) => true,
-            (Some(_), Some(p)) => p.as_str() == Some(sha256(before).as_str()),
+            (Some(_), Some(p)) => p.as_str().is_some_and(|p| since.iter().any(|h| h == p)),
         };
         if !follows {
             let at = parsed
@@ -204,7 +208,10 @@ pub fn verify(home: &Home) -> Result<Chain> {
             });
             break;
         }
-        before = line;
+        if prev.is_some() {
+            since.clear();
+        }
+        since.push(sha256(line));
     }
     Ok(chain)
 }
@@ -444,7 +451,7 @@ mod tests {
         assert_eq!(edited(&home).unwrap(), None);
         let whole = lines();
 
-        // A line changed, taken out or put in shows at the line after it.
+        // A line changed, taken out or copied in shows at the line after it.
         let mut changed = whole.clone();
         changed[2] = changed[2].replace("\"events\":1", "\"events\":9");
         put(&changed);
@@ -454,12 +461,12 @@ mod tests {
         put(&gone);
         assert_eq!(broken_at(), Some(4));
         let mut more = whole.clone();
-        more.insert(3, old.to_string());
+        more.insert(3, whole[2].clone());
         put(&more);
-        assert_eq!(broken_at(), Some(5));
+        assert_eq!(broken_at(), Some(4));
         let message = edited(&home).unwrap().unwrap();
         assert!(
-            message.contains("line 5, written 2026-11-03T00:00:00Z,"),
+            message.contains("line 4, written 2026-11-02T00:00:00Z,"),
             "{message}"
         );
         // So does a first line taken out of a chain that started on a new log.
@@ -470,12 +477,23 @@ mod tests {
         assert_eq!(broken_at(), Some(1));
 
         // A line an older build still running appends (an MCP server started before an install)
-        // only starts the chain again.
+        // only starts the chain again, even when it lands between a writer's read of the last
+        // line and its append, so the writer's `prev` names the line before it.
         put(&whole);
         fs::write(&path, format!("{}{old}\n", whole.join("\n") + "\n")).unwrap();
         served("2026-11-07T00:00:00Z");
         let chain = verify(&home).unwrap();
         assert_eq!((chain.lines, chain.broken), (7, None));
+        let mut raced = lines();
+        let late = raced.pop().unwrap();
+        let mut interleaved = whole.clone();
+        interleaved.push(old.to_string());
+        interleaved.push(late.replace(&sha256(old.as_bytes()), &sha256(whole[4].as_bytes())));
+        put(&interleaved);
+        assert_eq!(broken_at(), None);
+        raced.push(late);
+        put(&raced);
+        assert_eq!(broken_at(), None);
     }
 
     #[test]
