@@ -46,6 +46,14 @@ base_url = "https://…/v1" # OpenAI-compatible: lists models at /models, takes 
 api_key_file = "/…/key"   # an absolute path; the first line is the key
 ```
 
+Tags are shown and filtered in one standard form ("Rust Lang" and "rust_lang" are both `rust-lang`), and aliases you set merge the rest; a card keeps what its model wrote:
+
+```toml
+[tags.aliases]
+"rust-lang" = "rust"
+"js" = "javascript"
+```
+
 With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 
 Backups (ADR 0009) go to `[[backup]]` targets, encrypted on this machine first. Run `distill backup init` once to make the key; keep a copy of the key it prints somewhere other than this machine.

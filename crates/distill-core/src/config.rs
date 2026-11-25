@@ -27,6 +27,9 @@ pub struct Config {
     /// Where backups go (ADR 0009): `[[backup]]` tables.
     #[serde(default, rename = "backup", skip_serializing_if = "Vec::is_empty")]
     pub backups: Vec<BackupTarget>,
+    /// `[tags]`: the owner's tag aliases (`crate::tags`).
+    #[serde(default, skip_serializing_if = "crate::tags::TagsConfig::is_empty")]
+    pub tags: crate::tags::TagsConfig,
 }
 
 /// One backup target: a `[[backup]]` table.
@@ -171,6 +174,7 @@ impl Default for Config {
             steward: StewardConfig::default(),
             schedule: Schedule::default(),
             backups: Vec::new(),
+            tags: Default::default(),
         }
     }
 }
