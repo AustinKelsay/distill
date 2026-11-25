@@ -90,8 +90,9 @@ impl TickBackups {
     }
 }
 
-/// Back up to every target that has had a whole run, or whose first run made its folder and
-/// stopped early, as the tick does, sending no more blobs once `deadline` passes.
+/// Back up to every target that has had a whole run, or whose folder holds `distill-backup/`
+/// already (a first run made it and stopped early, or another home backs up there), as the tick
+/// does, sending no more blobs once `deadline` passes.
 pub fn tick(home: &Home, config: &Config, deadline: Deadline) -> Result<TickBackups> {
     if config.backups.is_empty() {
         return Ok(TickBackups {

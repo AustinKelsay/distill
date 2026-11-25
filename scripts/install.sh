@@ -64,12 +64,15 @@ if [[ -n "$MAC" ]]; then
   # once (#175). Loading the job again clears it; RunAtLoad then runs the catch-up tick.
   plist="$HOME/Library/LaunchAgents/dev.distill.tick.plist"
   job="gui/$(id -u)/dev.distill.tick"
-  if [[ -f "$plist" ]] && launchctl print "$job" >/dev/null 2>&1; then
+  if [[ -f "$plist" ]]; then
     if ticking; then
       echo "A distill tick started; the timer was left as it was, and may skip its next run." >&2
     else
       launchctl bootout "$job" 2>/dev/null || true
-      launchctl bootstrap "gui/$(id -u)" "$plist"
+      if ! launchctl bootstrap "gui/$(id -u)" "$plist"; then
+        echo "The timer could not be loaded again; load it with: launchctl bootstrap gui/$(id -u) $plist" >&2
+        exit 1
+      fi
       echo "Reloaded the timer; it runs a tick now."
     fi
   fi
