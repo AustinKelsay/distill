@@ -7,11 +7,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 
 use super::BackupKey;
-use super::run::{BackupReport, last_run, read_record};
+use super::run::{last_run, read_record};
 use super::store;
 use crate::config::{BackupTarget, Config};
 use crate::home::Home;
-use crate::util::read_jsonl;
 
 /// Add a `folder` target named `name` at `path` to `config`. The path may start with `~/`; it
 /// must be absolute once that is expanded, since the timer runs from no particular folder. The
@@ -47,7 +46,7 @@ pub fn add_folder(config: &mut Config, name: &str, path: &str) -> Result<()> {
 /// removed and added back may keep its name). A target's backups go by its name, so such a
 /// target would take the other folder's runs as its own.
 pub fn reused_name(home: &Home, config: &Config) -> Result<Option<String>> {
-    let log: Vec<BackupReport> = read_jsonl(&home.backup_log_path())?;
+    let log = super::run::log(home)?;
     let saved = match home.load_config() {
         Ok(c) => c.backups,
         Err(_) => Vec::new(),
@@ -80,7 +79,7 @@ fn expand(path: &str) -> PathBuf {
 /// what a run would do there; `Err` says why a run would fail or should not start.
 pub fn test(home: &Home, target: &BackupTarget) -> Result<String> {
     store::probe(target)?;
-    let used = read_jsonl::<BackupReport>(&home.backup_log_path())?
+    let used = super::run::log(home)?
         .iter()
         .any(|l| l.ok && l.target == target.name);
     let store = match store::open(target, false) {

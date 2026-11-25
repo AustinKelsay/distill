@@ -137,6 +137,19 @@ pub struct BackupReport {
     /// sent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stopped_at_deadline: bool,
+    /// Not a run: the owner made a new backup key ([`BackupKey::replace`]), so every target
+    /// starts over. The runs above it were made under an older key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_key: bool,
+}
+
+/// The backup log's runs under this home's backup key: the lines after the last new key.
+pub fn log(home: &Home) -> Result<Vec<BackupReport>> {
+    let mut log: Vec<BackupReport> = crate::util::read_jsonl(&home.backup_log_path())?;
+    if let Some(i) = log.iter().rposition(|l| l.new_key) {
+        log.drain(..=i);
+    }
+    Ok(log)
 }
 
 impl BackupReport {
@@ -255,9 +268,7 @@ fn run_into(
 ) -> Result<()> {
     let key = BackupKey::existing(home)?
         .context("this home has no backup key yet: run `distill backup init` first")?;
-    let used = crate::util::read_jsonl::<BackupReport>(&home.backup_log_path())?
-        .iter()
-        .any(|l| l.ok && l.target == target.name);
+    let used = log(home)?.iter().any(|l| l.ok && l.target == target.name);
     let store = store::open(target, scheduled.is_none() && !used)?;
     let present = store.list()?;
     let last_run = last_run(&key, &present);

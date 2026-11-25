@@ -1,0 +1,82 @@
+        title: DISTILL
+      text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Trusted AI
+          text: 3 Trusted AI
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Backups
+          text: 6 Backups
+          step-6: Schedule
+          text: 7 Schedule
+        text: Step 6 of 7
+          step-title: Backups
+        text: Where encrypted copies of the archive go
+        text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive, a mounted share, or a cloud folder that syncs (Google Drive, iCloud, Dropbox). Everything is encrypted on this machine first, so the folder, and the cloud behind it, only ever sees scrambled files.
+          backup-targets: Backup folders
+              title: Backup folders
+            text: drive
+            text: /Volumes/Backup
+              tested: Ready. Nothing is copied until the first backup.
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+            text: share
+            text: /Volumes/Share
+              tested: the backup folder /Volumes/Share does not exist (is the drive connected?)
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+            text: Google Drive
+            text: /Users/you/Library/CloudStorage/GoogleDrive-you@example.com/My Drive
+              synced: Verify checks the copy on this machine; your sync app uploads it.
+              test: Test
+                label: Test
+              remove: Remove
+                label: Remove
+            text: Found on this machine: press one to add it, or type a folder below.
+                place-0: Backup · added
+                  label: Backup · added
+                place-1: Google Drive · added
+                  label: Google Drive · added
+                place-2: iCloud Drive · cloud folder
+                  label: iCloud Drive · cloud folder
+                input: 
+                input: 
+            add-backup: Add
+              label: Add
+          recovery-key: Backup key
+              title: Backup key
+          text: A new key replaces this one, and every backup folder starts over: its next backup copies everything again, locked with the new key. What the folders hold now stays, and only the old key opens it, so keep the old key's copy until each folder has a backup under the new one.
+            confirm-new-key: Make the new key
+              label: Make the new key
+            cancel-new-key: Cancel
+              label: Cancel
+          backups-next: Finish makes the first backup to each folder; after that every scheduled run keeps it current.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

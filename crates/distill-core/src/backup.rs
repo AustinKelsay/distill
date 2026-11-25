@@ -3,8 +3,9 @@
 //! #147): it encrypts every object with age and names it by a keyed hash, so a target learns only
 //! how many objects it holds, their sizes and when they arrive.
 //!
-//! - **The key** is an age X25519 identity in `keys/backup.key`, owner-only. It is made once, at
-//!   backup setup, and never replaced silently: a new key starts every target over.
+//! - **The key** is an age X25519 identity in `keys/backup.key`, owner-only. It is made at backup
+//!   setup and replaced only when the owner asks ([`BackupKey::replace`]): a new key starts every
+//!   target over.
 //! - **The owner's copy** is the same key as text, shown to the owner to keep somewhere other
 //!   than this machine. Without it or the home's copy, no one can open the backups.
 //! - **Object names** are an HMAC-SHA256, under a key derived from the backup key, of what the
@@ -95,6 +96,51 @@ impl BackupKey {
             sync_dir(parent)?;
         }
         Ok(())
+    }
+
+    /// Replace this home's backup key with a new one, and log it, so every target starts over
+    /// under the new key: its runs are named and sealed with it. What a target holds already
+    /// stays, and the old key's copy still opens it; the home keeps no old key. Refused while a
+    /// backup runs, and when the home has no key to replace.
+    pub fn replace(home: &Home) -> Result<Self> {
+        let _backup = home
+            .try_lock("backup")?
+            .context("a backup is running; make a new key when it has finished")?;
+        if Self::existing(home)?.is_none() {
+            bail!("this home has no backup key to replace: make one first");
+        }
+        let key = Self::from_identity(age::x25519::Identity::generate());
+        let dir = home.keys_dir();
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).map_err(|e| anyhow!("generate a file name: {e}"))?;
+        let tmp = dir.join(format!(".backup.key.{}", hex::encode(nonce)));
+        let placed = (|| -> Result<()> {
+            let mut f = private_file()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .with_context(|| format!("create {}", tmp.display()))?;
+            f.write_all(key.recovery().expose_secret().as_bytes())?;
+            f.sync_all()?;
+            // Logged first: a new key the log doesn't name would leave every target refusing
+            // the tick (a target that had runs and holds none under the key), while a logged one
+            // that didn't land only has the old key start its runs over, which finds them.
+            crate::util::append_jsonl(
+                &home.backup_log_path(),
+                &run::BackupReport {
+                    at: crate::util::now_rfc3339(),
+                    new_key: true,
+                    ..Default::default()
+                },
+            )?;
+            fs::rename(&tmp, home.backup_key_path()).context("put the new backup key in place")
+        })();
+        if placed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        placed?;
+        sync_dir(&dir)?;
+        Ok(key)
     }
 
     /// This home's backup key, if it has one.

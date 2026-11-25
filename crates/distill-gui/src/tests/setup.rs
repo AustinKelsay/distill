@@ -887,3 +887,54 @@ fn finish_refuses_two_backup_folders_of_one_name_and_saves_nothing() {
     assert!(!t.core.home.config_path().exists(), "nothing saved");
     assert!(t.installed.lock().unwrap().is_empty(), "no timer installed");
 }
+
+#[test]
+fn a_new_backup_key_is_confirmed_shown_once_and_starts_each_folder_over() {
+    use distill_core::backup::BackupKey;
+    let t = temp(false);
+    let home = &t.core.home;
+    home.ensure().unwrap();
+    let old = BackupKey::create(home).unwrap();
+    let drive = home.root.parent().unwrap().join("drive");
+    std::fs::create_dir(&drive).unwrap();
+    let mut config = Config::default();
+    backup::add_folder(&mut config, "drive", &drive.display().to_string()).unwrap();
+    config.save(&home.config_path()).unwrap();
+    assert!(backup::run(home, &config.backups[0]).unwrap().ok);
+
+    let mut s = State::new(home.clone(), Some(config));
+    s.fixture = true;
+    let mut rt = runtime_sized(s, (1080.0, 1600.0));
+    rt.update(|s, _| crate::nav::go(s, Screen::Setup));
+    run_jobs(&mut rt, &t.core);
+    step(&mut rt, "Backups");
+
+    // Asked first; Cancel keeps the key.
+    press(&mut rt, "new-key");
+    assert!(
+        shows(&rt, "every backup folder starts over"),
+        "{:?}",
+        texts(&rt)
+    );
+    press(&mut rt, "cancel-new-key");
+    assert!(on(&rt, "new-key"));
+
+    press(&mut rt, "new-key");
+    press(&mut rt, "confirm-new-key");
+    let ran = run_jobs(&mut rt, &t.core);
+    assert!(ran.contains(&"new backup key"), "{ran:?}");
+    let new = BackupKey::existing(home).unwrap().unwrap();
+    let new = backup::expose(&new.recovery()).to_string();
+    assert_ne!(new, backup::expose(&old.recovery()));
+    assert_eq!(rt.state.setup.recovery.as_deref(), Some(new.as_str()));
+    assert!(shows(&rt, "This is the new backup key"), "{:?}", texts(&rt));
+
+    // The saved folder's backup started over under the new key.
+    assert!(ran.contains(&"back up"), "{ran:?}");
+    let log = distill_core::backup::run::log(home).unwrap();
+    assert_eq!(
+        (log.len(), log[0].ok, log[0].run, log[0].blobs_sent),
+        (1, true, 0, 0),
+        "{log:?}"
+    );
+}
