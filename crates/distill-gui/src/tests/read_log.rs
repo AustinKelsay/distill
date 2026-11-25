@@ -88,7 +88,25 @@ fn the_read_log_lists_reads_refusals_and_reveal_activity() {
         assert!(all.contains(want), "{want:?} in {all}");
     }
     assert!(rt.find("entry-0").is_some());
+    assert!(rt.find("edited").is_none(), "a whole chain says nothing");
     assert_no_value(&rt, "read log");
+}
+
+#[test]
+fn an_edited_read_log_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = busy_home(dir.path());
+    let path = core.home.read_log_path();
+    let log = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<&str> = log.lines().collect();
+    lines.remove(1);
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    let rt = on_read_log(&core);
+    let all = everything(&rt);
+    assert!(
+        rt.find("edited").is_some() && all.contains("The read log has been edited: line 2"),
+        "{all}"
+    );
 }
 
 #[test]

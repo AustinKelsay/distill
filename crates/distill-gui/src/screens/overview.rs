@@ -345,6 +345,7 @@ fn warnings(shown: &[&Warning], p: &Paint) -> El {
             WarningKind::PrunesSooner => "Prunes sooner",
             WarningKind::Exposure => "Exposure",
             WarningKind::Backup => "Backup",
+            WarningKind::ReadLog => "Read log",
         };
         if i > 0 {
             card = card.child(p.separator());

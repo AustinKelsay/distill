@@ -379,6 +379,23 @@ sweep_every_minutes = 60
         assert!(ok, "{cmd:?}: {err}");
         assert!(out.starts_with("No "), "{cmd:?}: {out}");
     }
+    // A line taken out of the read log shows as a warning from then on (#161).
+    let reads = home.join("log/reads.jsonl");
+    let log = std::fs::read_to_string(&reads).unwrap();
+    let kept: Vec<&str> = log.lines().filter(|l| !l.is_empty()).collect();
+    assert!(kept.len() >= 2, "{log}");
+    let edited = [&kept[..kept.len() - 2], &kept[kept.len() - 1..]].concat();
+    std::fs::write(&reads, edited.join("\n") + "\n").unwrap();
+    let st = json(&user, &home, &["status"]);
+    let edited = st["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w["kind"] == "read_log");
+    assert!(edited, "{st}");
+    let (ok, _, err) = distill(&user, &home, &["verify"]);
+    assert!(!ok && err.contains("the read log has been edited"), "{err}");
+    std::fs::write(&reads, log).unwrap();
     let (ok, _, err) = distill(&user, &home, &["tag", "nope", "--add", "x"]);
     assert!(!ok && err.contains("no session nope"), "{err}");
 
