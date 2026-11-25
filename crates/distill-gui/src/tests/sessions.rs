@@ -304,6 +304,29 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
     assert_eq!(rt.state.sessions.filters.tag.text, "");
     run_jobs(&mut rt, &core);
 
+    // A tag that becomes a personal term after the list was read can't be pressed in the session.
+    let mut config = core.home.load_config().unwrap();
+    config.privacy.personal_terms.push("deploy".into());
+    config.save(&core.home.config_path()).unwrap();
+    let deploy = rt
+        .state
+        .sessions
+        .results
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .position(|r| {
+            r.card
+                .as_ref()
+                .is_some_and(|c| c.card.tags.iter().any(|t| t == "deploy"))
+        });
+    rt.update(|s, _| sessions::open_row(s, deploy.unwrap()));
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "read session"]);
+    assert!(rt.find("session-tag-0").is_none(), "{:?}", texts(&rt));
+    press(&mut rt, "back");
+    run_jobs(&mut rt, &core);
+
     // A tag that becomes a personal term leaves the chips at the next search.
     let mut config = core.home.load_config().unwrap();
     config.privacy.personal_terms.push("notes".into());
@@ -347,7 +370,7 @@ fn opening_a_result_shows_its_events_in_order_told_apart_and_is_in_the_read_log(
         .position(|r| r.facts.session_id == "aaaa")
         .unwrap();
     press(&mut rt, &format!("result-{row}"));
-    assert_eq!(run_jobs(&mut rt, &core), ["read session"]);
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "read session"]);
     let heads: Vec<String> = rt
         .elements()
         .into_iter()

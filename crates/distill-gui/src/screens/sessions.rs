@@ -52,6 +52,8 @@ pub struct SessionsState {
     pub tags: Vec<TagCount>,
     /// The filter `tags` was last asked for, without its tag: only its answer lands.
     pub tags_for: Option<Filter>,
+    /// Whether that answer is still to come.
+    pub tags_loading: bool,
 }
 
 /// The filters as the owner writes them; turned into a [`Filter`] when a search runs.
@@ -239,10 +241,12 @@ fn ask_tags(s: &mut State, filter: &Filter) {
         ..filter.clone()
     };
     s.sessions.tags_for = Some(all.clone());
+    s.sessions.tags_loading = true;
     s.ask(Job::new("tags", move |core| {
         let r = read::tags(&core.home, &core.runtime, &Reader::Owner, &all);
         Box::new(move |s: &mut State| {
             if s.sessions.tags_for.as_ref() == Some(&all) {
+                s.sessions.tags_loading = false;
                 s.sessions.tags = match r {
                     Ok(Tagged::Counts(c)) => c,
                     _ => Vec::new(),
@@ -361,6 +365,11 @@ pub fn open_row(s: &mut State, i: usize) {
         revealed: BTreeSet::new(),
         from: None,
     });
+    // Its tags are pressable only as the tags in use list them now, so one that became a
+    // finding since the list was read can't be put in the Tag field.
+    if let Some(f) = s.sessions.tags_for.clone() {
+        ask_tags(s, &f);
+    }
     s.ask(Job::new("read session", move |core| {
         let r = read::read(
             &core.home,

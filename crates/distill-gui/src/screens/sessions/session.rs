@@ -81,7 +81,8 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
             .selectable(true)
             .on_link(on_chip),
         );
-        // A tag with a finding stays covered and can't be pressed; any other filters the list.
+        // A tag filters the list when pressed if the tags in use, asked again on opening, list it;
+        // one with a finding stays covered.
         let mut tags = row()
             .key("session-tags")
             .gap(6.0)
@@ -94,12 +95,13 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
             );
         for (n, t) in c.card.tags.iter().enumerate() {
             let ms = card_marks(c, &format!("tags/{n}"));
-            tags = tags.child(if ms.is_empty() {
+            let st = &s.sessions;
+            tags = tags.child(if ms.is_empty() && st.tags.iter().any(|c| c.tag == *t) {
                 let tag = t.clone();
                 Button::new(format!("#{t}"))
                     .variant(ButtonVariant::Outline)
                     .control_size(ControlSize::Small)
-                    .disabled(s.sessions.loading)
+                    .disabled(st.loading || st.tags_loading)
                     .on_press(move |s: &mut State| super::pick_tag(s, &tag))
                     .build(&p.k)
                     .key(format!("session-tag-{n}"))
