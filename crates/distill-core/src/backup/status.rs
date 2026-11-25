@@ -1,7 +1,7 @@
 //! Backups on the timer, and where each target stands (issue #150). The tick keeps current only
-//! the targets the owner has already backed up to once with `distill backup run`: a first run can
-//! take long, and only the owner can say that a folder target is its drive and not an empty mount
-//! point. So the tick never makes a target's folder.
+//! the targets the owner has started backing up to with `distill backup run` (or the window): only
+//! the owner can say that a folder target is its drive and not an empty mount point. So the tick
+//! never makes a target's folder, but it finishes a first run that stopped early.
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub fn targets(config: &Config, only: Option<&str>) -> Result<Vec<BackupTarget>>
 pub struct TickBackups {
     /// One report per target the step backed up to.
     pub runs: Vec<BackupReport>,
-    /// Targets that wait for their first run by hand.
+    /// Targets that wait for a first run by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waiting: Vec<String>,
     /// Targets passed over because another backup run or a sweep held a lock the run needs.
@@ -90,8 +90,8 @@ impl TickBackups {
     }
 }
 
-/// Back up to every target that has had a whole run, as the tick does, sending no more blobs once
-/// `deadline` passes.
+/// Back up to every target that has had a whole run, or whose first run made its folder and
+/// stopped early, as the tick does, sending no more blobs once `deadline` passes.
 pub fn tick(home: &Home, config: &Config, deadline: Deadline) -> Result<TickBackups> {
     if config.backups.is_empty() {
         return Ok(TickBackups {
@@ -102,7 +102,8 @@ pub fn tick(home: &Home, config: &Config, deadline: Deadline) -> Result<TickBack
     let log: Vec<BackupReport> = read_jsonl(&home.backup_log_path())?;
     let mut done = TickBackups::default();
     for t in targets(config, None)? {
-        if log.iter().any(|l| l.ok && l.target == t.name) {
+        let started = || super::store::open(&t, false).is_ok();
+        if log.iter().any(|l| l.ok && l.target == t.name) || started() {
             match run_scheduled(home, &t, deadline)? {
                 Some(r) => {
                     done.stopped_at_deadline |= r.stopped_at_deadline;
@@ -289,6 +290,17 @@ mod tests {
             0,
             "nothing was sent"
         );
+    }
+
+    #[test]
+    fn the_tick_finishes_a_first_run_that_stopped_early() {
+        let (dir, home, config) = setup(&[("drive", "drive")]);
+        // A first run made `distill-backup/` and stopped before its record (the window closed).
+        std::fs::create_dir_all(dir.path().join("drive/distill-backup")).unwrap();
+        let t = tick(&home, &config, Deadline::NONE).unwrap();
+        assert!(t.ok() && t.waiting.is_empty(), "{t:?}");
+        assert_eq!((t.runs.len(), t.runs[0].run), (1, 0));
+        assert!(status(&home, &config, 1).unwrap()[0].last_ok.is_some());
     }
 
     #[test]
