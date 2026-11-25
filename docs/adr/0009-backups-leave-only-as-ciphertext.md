@@ -6,7 +6,7 @@ A backup is not a read. No reader gets session text from it, because only the ow
 
 ## The backup set
 
-Only what cannot be rebuilt: `raw/` (blobs and manifest), `config.toml` (which holds the trust list and the targets), the fingerprint key, the read log, the backup log, the reveal requests with their approvals and denials, and the owner's tags once they exist. Cards and vectors can be rebuilt but cost model time, so a target may include them (`cards = true`, `vectors = true`); restored vectors are used only if the home's embedding model is the one in their header. Everything else stays out: sessions, findings (the model's personal details included), the word index, `state/` and the run log. `Home` lists the set, and a test fails when a path in the home is neither in it nor marked rebuildable.
+Only what cannot be rebuilt: `raw/` (blobs and manifest), `config.toml` (which holds the trust list and the targets), the fingerprint key, the read log, the backup log, the reveal requests with their approvals and denials, and the owner's tags (`tags.json`). Cards and vectors can be rebuilt but cost model time, so a target may include them (`cards = true`, `vectors = true`); restored vectors are used only if the home's embedding model is the one in their header. Everything else stays out: sessions, findings (the model's personal details included), the word index, `state/` and the run log. `Home` lists the set, and a test fails when a path in the home is neither in it nor marked rebuildable.
 
 A run is incremental by content. It puts the blobs the target lacks, then the manifest lines the target lacks as one new object, then each other file of the set whose content changed. Nothing is diffed, and nothing on the target is locked or rewritten.
 

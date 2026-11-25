@@ -569,7 +569,7 @@ fn replace(s: &str, found: &[&Finding]) -> Result<String> {
 }
 
 /// A session by its key (`harness/id`), or by its id alone when only one harness has it.
-fn find(home: &Home, session: &str) -> Result<Option<SessionMeta>> {
+pub(crate) fn find(home: &Home, session: &str) -> Result<Option<SessionMeta>> {
     let list = normalize::read_session_list(home)?;
     if let Some(m) = list.iter().find(|m| m.key() == session) {
         return Ok(Some(m.clone()));

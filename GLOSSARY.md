@@ -56,7 +56,7 @@ A short model-written description of a session: title, summary, tags and outcome
 _Avoid_: Summary (one field of a card), label, annotation
 
 **Tag**:
-A short topic on a card. A card keeps the tags its model wrote (lowercase); every face shows and filters each in its standard form (lowercase, with spaces and `_` as `-`), through the owner's aliases (`[tags.aliases]` in `config.toml`).
+A short topic on a card. A card keeps the tags its model wrote (lowercase); every face shows and filters each in its standard form (lowercase, with spaces and `_` as `-`), through the owner's aliases (`[tags.aliases]` in `config.toml`), and last with the tags the owner added to or hid on that session (`tags.json`).
 _Avoid_: Label, keyword, category
 
 **Stale card**:

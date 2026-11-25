@@ -24,8 +24,15 @@
         text: Outcome: Done
           session-tag-0: #deploy
             label: #deploy
+          hide-tag-0: Hide #deploy
+            label: ×
           session-tag-1: #staging
             label: #staging
+          hide-tag-1: Hide #staging
+            label: ×
+              input: 
+          add-tag: Add
+            label: Add
         findings-note: 1 shown. 6 findings covered (2 secrets). Click one to show it; closing the session covers it again.
             event-head: Event 0, you
             text: You

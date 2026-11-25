@@ -341,6 +341,36 @@ sweep_every_minutes = 60
         "{printed}"
     );
 
+    // The owner tags a session: kept in tags.json, and a later add or hide of a tag replaces the
+    // earlier one.
+    let t = json(
+        &user,
+        &home,
+        &["tag", "aaaa", "--add", "Ops Work", "--hide", "misc"],
+    );
+    assert_eq!(t["session"], "claude-code/aaaa", "{t}");
+    assert_eq!(t["add"], serde_json::json!(["ops-work"]), "{t}");
+    assert_eq!(t["hide"], serde_json::json!(["misc"]), "{t}");
+    assert!(home.join("tags.json").exists());
+    let printed = human(
+        &user,
+        &home,
+        &[
+            "tag",
+            "claude-code/aaaa",
+            "--hide",
+            "ops work",
+            "--add",
+            "misc",
+        ],
+    );
+    assert!(
+        printed.contains("added #misc") && printed.contains("hidden #ops-work"),
+        "{printed}"
+    );
+    let (ok, _, err) = distill(&user, &home, &["tag", "nope", "--add", "x"]);
+    assert!(!ok && err.contains("no session nope"), "{err}");
+
     // Gone with the previous build.
     for gone in [
         "sessions",

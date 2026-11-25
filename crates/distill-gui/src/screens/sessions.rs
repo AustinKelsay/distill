@@ -19,6 +19,7 @@ use distill_core::model::SessionMeta;
 use distill_core::read::{
     self, Filter, Listed, Opening, Page, Passage, Range, Read, Searched, TagCount, Tagged,
 };
+use distill_core::tags;
 use distill_core::trust::Reader;
 use rune::{El, TextEdit};
 
@@ -56,6 +57,9 @@ pub struct SessionsState {
     pub tags_asked: u64,
     /// Whether that answer is still to come.
     pub tags_loading: bool,
+    /// Whether the list must be read again from the first page once the page being read lands:
+    /// a tag edit wrote while it was loading.
+    pub refresh: bool,
 }
 
 /// The filters as the owner writes them; turned into a [`Filter`] when a search runs.
@@ -134,6 +138,12 @@ pub struct Open {
     pub revealed: BTreeSet<String>,
     /// The screen it was opened from, when not the list: Back returns there.
     pub from: Option<Screen>,
+    /// A tag the owner is adding to it (#158).
+    pub new_tag: TextEdit,
+    /// Why the last tag edit didn't take.
+    pub tag_error: Option<String>,
+    /// Whether a tag edit is being written.
+    pub tagging: bool,
 }
 
 impl Open {
@@ -230,6 +240,9 @@ fn ask_page(s: &mut State, offset: usize) {
                 Ok(Err(refused)) => st.error = Some(refused),
                 Err(e) => st.error = Some(e),
             }
+            if std::mem::take(&mut st.refresh) {
+                search(s);
+            }
         })
     }));
 }
@@ -271,6 +284,76 @@ pub fn pick_tag(s: &mut State, tag: &str) {
     }
     s.sessions.open = None;
     search(s);
+}
+
+/// Add the tag `add` to the open session or hide `hide` on it, as its owner (#158). Core writes
+/// it, then the session's row is read again through the read path, so its card shows the tags as
+/// core does; the list and the chips follow at the search it starts.
+pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
+    let Some(o) = s.sessions.open.as_mut().filter(|o| !o.tagging) else {
+        return;
+    };
+    o.tagging = true;
+    let key = o.key.clone();
+    let draft = add.clone();
+    s.ask(Job::new("tag session", move |core| {
+        let wrote = core.home.load_config().and_then(|config| {
+            let (add, hide): (Vec<String>, Vec<String>) =
+                (add.into_iter().collect(), hide.into_iter().collect());
+            tags::tag_session(&core.home, &config, &key, &add, &hide)
+        });
+        let wrote_ok = wrote.is_ok();
+        let r = wrote.and_then(|_| row_of(core, &key)).map_err(jobs::line);
+        Box::new(move |s: &mut State| {
+            if let Some(o) = s.sessions.open.as_mut().filter(|o| o.key == key) {
+                o.tagging = false;
+                match &r {
+                    Ok(card) => {
+                        o.tag_error = None;
+                        // Only the tag sent goes; anything typed since stays.
+                        if draft.as_deref() == Some(o.new_tag.text.trim()) {
+                            o.new_tag = TextEdit::default();
+                        }
+                        // A card's marks are named by place, so none shown on the old card
+                        // stays shown on the new one.
+                        o.revealed.retain(|id| !id.starts_with('c'));
+                        o.row.card = card.clone();
+                    }
+                    Err(e) => o.tag_error = Some(e.clone()),
+                }
+            }
+            // A saved edit refreshes the list and chips even when the card couldn't be read again.
+            if wrote_ok {
+                if s.sessions.loading {
+                    s.sessions.refresh = true;
+                } else {
+                    search(s);
+                }
+            }
+        })
+    }));
+}
+
+/// The current card of the session `key`, as the read path shows it to the owner.
+fn row_of(core: &jobs::Core, key: &str) -> anyhow::Result<Option<Shown>> {
+    let filter = Filter {
+        session: Some(key.to_string()),
+        mirrors: true,
+        steward: true,
+        ..Filter::default()
+    };
+    Ok(
+        match read::list(
+            &core.home,
+            &core.runtime,
+            &Reader::Owner,
+            &filter,
+            Page::default(),
+        )? {
+            Listed::Rows(r) => r.rows.into_iter().next().and_then(|r| r.card),
+            _ => None,
+        },
+    )
 }
 
 /// A list or search as the owner. The inner error is a refusal.
@@ -368,6 +451,9 @@ pub fn open_row(s: &mut State, i: usize) {
         loaded: Loaded::Loading,
         revealed: BTreeSet::new(),
         from: None,
+        new_tag: TextEdit::default(),
+        tag_error: None,
+        tagging: false,
     });
     // Its tags are pressable only as the tags in use list them now, so one that became a
     // finding since the list was read can't be put in the Tag field.
@@ -427,7 +513,7 @@ pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, S
             Ok(Read::Events(x)) => {
                 let row = ResultRow {
                     facts: x.facts.clone(),
-                    card: None,
+                    card: row_of(core, &x.facts.key()).ok().flatten(),
                     opening: Opening::None,
                     opening_findings: Vec::new(),
                     passage: None,
@@ -448,6 +534,9 @@ pub fn open_key(s: &mut State, key: &str, from: Screen, failed: fn(&mut State, S
                     loaded,
                     revealed: BTreeSet::new(),
                     from: Some(from),
+                    new_tag: TextEdit::default(),
+                    tag_error: None,
+                    tagging: false,
                 });
                 nav::go(s, Screen::Sessions);
             }

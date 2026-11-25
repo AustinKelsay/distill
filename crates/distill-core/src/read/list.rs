@@ -43,6 +43,9 @@ pub struct Filter {
     pub tag: Option<String>,
     /// Only sessions whose current card has this outcome.
     pub outcome: Option<Outcome>,
+    /// Only the session with this key (`harness/id`): the window reads one session's row with
+    /// it, after the owner tags it.
+    pub session: Option<String>,
 }
 
 /// Which rows of the matching sessions, newest first.
@@ -163,10 +166,11 @@ fn serve(
     let all = normalize::read_session_list(home)?;
     let originals = Originals::of(&all);
     let key = FingerprintKey::existing(home).ok().flatten();
+    let finds = cards::finder(&config);
     let matching: Vec<SessionMeta> = all
         .iter()
         .filter(|m| filter.matches(m, &originals))
-        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m))
+        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m, &finds))
         .cloned()
         .collect();
     let total = matching.len() as u64;
@@ -324,6 +328,7 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
+            && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
                 m.cwd
                     .as_deref()
@@ -350,20 +355,33 @@ impl Filter {
         config: &Config,
         key: Option<&FingerprintKey>,
         m: &SessionMeta,
+        finds: &dyn Fn(&str) -> bool,
     ) -> bool {
         if !self.wants_card() {
             return true;
         }
         cards::stored_current(home, config, key, m)
-            .is_some_and(|(card, _)| self.fits(&card, config))
+            .is_some_and(|(card, found)| self.fits(&card, &found, config, finds))
     }
 
-    /// Whether `card` has the tag and outcome the filter names, if any.
-    pub(super) fn fits(&self, card: &cards::Card, config: &Config) -> bool {
-        self.tag
-            .as_deref()
-            .is_none_or(|t| card.has_tag(t, &config.tags))
-            && self.outcome.is_none_or(|o| card.outcome == o)
+    /// Whether `card` (with its findings `found`) has the tag and outcome the filter names, if
+    /// any: the tag among the card's tags as they are shown (`cards::viewed`), both told apart by
+    /// `tags::screened` with `finds`.
+    pub(super) fn fits(
+        &self,
+        card: &cards::Card,
+        found: &[crate::findings::CardFinding],
+        config: &Config,
+        finds: &dyn Fn(&str) -> bool,
+    ) -> bool {
+        self.outcome.is_none_or(|o| card.outcome == o)
+            && self.tag.as_deref().is_none_or(|t| {
+                let t = crate::tags::screened(t, &config.tags, finds);
+                cards::viewed(&card.session, &card.tags, found, &config.tags, finds)
+                    .0
+                    .iter()
+                    .any(|s| crate::tags::screened(s, &config.tags, finds) == t)
+            })
     }
 }
 

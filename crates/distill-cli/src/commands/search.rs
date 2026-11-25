@@ -83,6 +83,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 })
             })
             .transpose()?,
+        session: None,
     };
     if a.limit == 0 || a.limit > PAGE_MAX {
         bail!("--limit is from 1 to {PAGE_MAX}");

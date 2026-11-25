@@ -5,11 +5,12 @@
 //!
 //! - **Entries.** The manifest (`manifest.json`) holds one entry per indexed session, recording
 //!   what it was built from ([`MadeFrom`]: the session's capture hash and parser version, which
-//!   name its events, a digest of its secret findings, and its current card). An entry whose
-//!   session's events, secret findings or card have changed is out of date, and the tick indexes
-//!   the session again.
+//!   name its events, a digest of its secret findings, its current card, and its card's tags as
+//!   shown when they differ from the card's). An entry whose session's events, secret findings,
+//!   card or shown tags have changed is out of date, and the tick indexes the session again.
 //! - **Cards.** A session's current card (`crate::cards`) is indexed with its events: its title,
-//!   summary and tags. Their words point at no event.
+//!   summary and tags, the tags as they are shown (aliases and the owner's edits). Their words
+//!   point at no event.
 //! - **Segments.** The words themselves are in immutable segment files ([`segment`]), each holding
 //!   some sessions. Indexing a session again writes it to a new segment and points its entry
 //!   there; the old copy is dead and is dropped when segments are merged.
@@ -46,8 +47,8 @@ use crate::util::{count, write_atomic};
 use segment::{Posting, Segment, Writer};
 
 /// The version of the index's format and of how it splits text into words. An index of another
-/// version is rebuilt.
-pub const INDEX_VERSION: u32 = 3;
+/// version is rebuilt. 4: a card's tags as shown, and [`MadeFrom::tags`] (#158).
+pub const INDEX_VERSION: u32 = 4;
 
 /// Words longer than this many characters are not indexed.
 pub const MAX_WORD: usize = 64;
@@ -112,6 +113,11 @@ pub struct MadeFrom {
     /// The [`hash`](Card::hash) of the session's current card, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<String>,
+    /// For the word index only: the card's tags as they are shown, when that differs from what
+    /// the card holds (aliases, the owner's edits; [`as_shown`]), so a change to them puts the
+    /// entry out of date. Never set for the vectors, which hold no tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 impl MadeFrom {
@@ -119,6 +125,7 @@ impl MadeFrom {
         Self {
             session: BuiltFrom::of(facts, findings),
             card: card.map(Card::hash),
+            tags: None,
         }
     }
 
@@ -176,14 +183,39 @@ fn load(home: &Home) -> Manifest {
         })
 }
 
-/// Whether `entry` was built from `facts`'s current events and secret findings. With no key or
-/// no current findings, nothing is current: the read path would scan the session first.
+/// `card` as the word index holds it, with its tags as they are shown and filtered
+/// (`cards::viewed`), and those tags for [`MadeFrom::tags`] when they differ from the card's.
+fn as_shown(
+    card: Option<Card>,
+    findings: &Findings,
+    config: &Config,
+    finds: &dyn Fn(&str) -> bool,
+) -> (Option<Card>, Option<Vec<String>>) {
+    let Some(mut card) = card else {
+        return (None, None);
+    };
+    let found = findings
+        .card
+        .as_ref()
+        .map_or(&[][..], |c| c.findings.as_slice());
+    let (shown, _) = cards::viewed(&card.session, &card.tags, found, &config.tags, finds);
+    if shown == card.tags {
+        return (Some(card), None);
+    }
+    card.tags = shown.clone();
+    (Some(card), Some(shown))
+}
+
+/// Whether `entry` was built from `facts`'s current events and secret findings, and its card's
+/// tags as they are shown now. With no key or no current findings, nothing is current: the read
+/// path would scan the session first.
 fn is_current(
     home: &Home,
     config: &Config,
     key: Option<&FingerprintKey>,
     facts: &SessionMeta,
     entry: Option<&Entry>,
+    finds: &dyn Fn(&str) -> bool,
 ) -> bool {
     let (Some(key), Some(entry)) = (key, entry) else {
         return false;
@@ -197,7 +229,9 @@ fn is_current(
         .filter(|f| f.is_current(facts, key, config))
         .is_some_and(|f| {
             let card = cards::current(home, facts, &f);
-            MadeFrom::of(facts, &f, card.as_ref()) == entry.made_from
+            let mut made_from = MadeFrom::of(facts, &f, card.as_ref());
+            made_from.tags = as_shown(card, &f, config, finds).1;
+            made_from == entry.made_from
         })
 }
 
@@ -285,9 +319,19 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
 
     let config = home.load_config().unwrap_or_default();
     let key = FingerprintKey::existing(home).ok().flatten();
+    let finds = cards::finder(&config);
     let pending: Vec<SessionMeta> = sessions
         .into_iter()
-        .filter(|f| !is_current(home, &config, key.as_ref(), f, m.entries.get(&f.key())))
+        .filter(|f| {
+            !is_current(
+                home,
+                &config,
+                key.as_ref(),
+                f,
+                m.entries.get(&f.key()),
+                &finds,
+            )
+        })
         .collect();
     r.current = r.sessions - pending.len() as u64;
 
@@ -295,7 +339,9 @@ fn build_within(home: &Home, limits: Limits) -> Result<IndexReport> {
     read::for_index(home, &pending, |facts, served| {
         match served {
             Ok((events, findings, card)) => {
-                let made_from = MadeFrom::of(facts, findings, card.as_ref());
+                let mut made_from = MadeFrom::of(facts, findings, card.as_ref());
+                let (card, tags) = as_shown(card, findings, &config, &finds);
+                made_from.tags = tags;
                 if text_bytes(&events, card.as_ref()) > limits.giant {
                     batch.flush(home, &mut m)?;
                     write_alone(
@@ -930,9 +976,19 @@ pub fn progress(home: &Home) -> Result<IndexProgress> {
     let m = load(home);
     let config = home.load_config().unwrap_or_default();
     let key = FingerprintKey::existing(home).ok().flatten();
+    let finds = cards::finder(&config);
     let current = sessions
         .iter()
-        .filter(|f| is_current(home, &config, key.as_ref(), f, m.entries.get(&f.key())))
+        .filter(|f| {
+            is_current(
+                home,
+                &config,
+                key.as_ref(),
+                f,
+                m.entries.get(&f.key()),
+                &finds,
+            )
+        })
         .count() as u64;
     Ok(IndexProgress {
         sessions: sessions.len() as u64,

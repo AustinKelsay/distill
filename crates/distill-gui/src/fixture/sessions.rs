@@ -340,6 +340,9 @@ pub fn session_with(x: Excerpt) -> State {
     s.outbox.clear();
     sessions::open_row(&mut s, 0);
     s.outbox.clear();
+    // As if the list and the tags it asked for again had landed.
+    s.sessions.loading = false;
+    s.sessions.tags_loading = false;
     let key = s.sessions.open.as_ref().expect("open").key.clone();
     sessions::land(
         &mut s,

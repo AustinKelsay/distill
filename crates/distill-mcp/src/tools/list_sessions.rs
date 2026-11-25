@@ -114,6 +114,7 @@ pub(super) fn filter(args: &Value) -> Result<Filter, String> {
             })?),
             None => None,
         },
+        session: None,
     })
 }
 

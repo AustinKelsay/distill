@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use distill_core::model::EventKind;
 use distill_core::read::Opening;
 use rune::{Color, El, GrowthSpec, ScrollSpec, Tx, col, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize};
+use rune_kit::{Button, ButtonVariant, ControlSize, TextInput};
 
 use super::doc::SessionDoc;
 use super::list::{facts_line, outcome_label};
@@ -82,7 +82,7 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
             .on_link(on_chip),
         );
         // A tag filters the list when pressed if the tags in use, asked again on opening, list it;
-        // one with a finding stays covered.
+        // one with a finding stays covered. Any other the owner can hide, and add one (#158).
         let mut tags = row()
             .key("session-tags")
             .gap(6.0)
@@ -113,8 +113,47 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
                 .font(p.caption())
                 .color(p.muted())
             });
+            if ms.is_empty() {
+                let tag = t.clone();
+                tags = tags.child(
+                    Button::new("×")
+                        .variant(ButtonVariant::GhostMuted)
+                        .control_size(ControlSize::Small)
+                        .disabled(o.tagging)
+                        .on_press(move |s: &mut State| super::retag(s, None, Some(tag.clone())))
+                        .build(&p.k)
+                        .key(format!("hide-tag-{n}"))
+                        .label(format!("Hide #{t}")),
+                );
+            }
         }
+        let add = TextInput::new(&o.new_tag)
+            .placeholder("Add a tag")
+            .width(Some(160.0))
+            .on_edit(|s: &mut State| {
+                &mut s.sessions.open.as_mut().expect("an open session").new_tag
+            })
+            .on_submit(|s: &mut State, _: &mut Tx| add_tag(s))
+            .build(&p.k)
+            .key("new-tag");
+        tags = tags.child(add).child(
+            Button::new("Add")
+                .control_size(ControlSize::Small)
+                .disabled(o.tagging || o.new_tag.text.trim().is_empty())
+                .on_press(add_tag)
+                .build(&p.k)
+                .key("add-tag"),
+        );
         about = about.child(tags);
+        if let Some(e) = &o.tag_error {
+            about = about.child(
+                text(e.clone())
+                    .key("tag-error")
+                    .font(p.caption())
+                    .color(p.bad())
+                    .wrap(),
+            );
+        }
     }
     if let Some(d) = o.doc() {
         let note = if d.findings == 0 {
@@ -335,4 +374,19 @@ fn time_of(ts: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(ts)
         .map(|t| t.with_timezone(&chrono::Utc).format("%H:%M:%S").to_string())
         .unwrap_or_else(|_| ts.to_string())
+}
+
+/// Add the tag written in the open session's field.
+fn add_tag(s: &mut State) {
+    let Some(t) = s
+        .sessions
+        .open
+        .as_ref()
+        .map(|o| o.new_tag.text.trim().to_string())
+    else {
+        return;
+    };
+    if !t.is_empty() {
+        super::retag(s, Some(t), None);
+    }
 }
