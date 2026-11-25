@@ -58,6 +58,7 @@ pub fn tags(
     };
     readlog::append(
         home,
+        Some(runtime),
         &ReadEntry {
             at: now_rfc3339(),
             reader: reader.clone(),

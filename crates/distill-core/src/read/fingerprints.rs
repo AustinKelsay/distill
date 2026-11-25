@@ -200,7 +200,7 @@ pub fn fingerprints(
             pending: stored.pending,
         })
     });
-    log(home, reader, &answer, |f| (f.rows.len() as u64, 0))?;
+    log(home, runtime, reader, &answer, |f| (f.rows.len() as u64, 0))?;
     answer
 }
 
@@ -376,7 +376,7 @@ pub fn where_found(
             pending: stored.pending,
         })
     });
-    log(home, reader, &answer, |l| {
+    log(home, runtime, reader, &answer, |l| {
         (
             l.found.len() as u64,
             l.found.iter().map(|f| f.sessions.len() as u64).sum(),
@@ -440,6 +440,7 @@ fn gate<T>(
 /// Append the call's line to the read log: `counts` gives the fingerprints and sessions served.
 fn log<T>(
     home: &Home,
+    runtime: &LocalRuntime,
     reader: &Reader,
     answer: &Result<Answer<T>>,
     counts: impl Fn(&T) -> (u64, u64),
@@ -461,6 +462,7 @@ fn log<T>(
     };
     readlog::append(
         home,
+        Some(runtime),
         &ReadEntry {
             at: now_rfc3339(),
             reader: reader.clone(),

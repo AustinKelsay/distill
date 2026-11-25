@@ -250,7 +250,7 @@ fn request_at(
             error: format!("{e:#}"),
         },
     };
-    if let Err(e) = log(home, reader, Some(logged), result, now) {
+    if let Err(e) = log(home, Some(runtime), reader, Some(logged), result, now) {
         // A request that could not be logged is not filed.
         if let Ok(Filed::Filed(r)) = &filed {
             let _ = std::fs::remove_file(home.reveal_path(&r.id));
@@ -423,7 +423,7 @@ fn answer(home: &Home, id: &str, approved: bool, now: DateTime<Utc>) -> Result<R
         )
     };
     save(home, &r)?;
-    log(home, &r.reader, Some(r.session.clone()), result, now)?;
+    log(home, None, &r.reader, Some(r.session.clone()), result, now)?;
     Ok(r)
 }
 
@@ -462,7 +462,7 @@ fn collect_at(
         },
     };
     // Nothing is released that could not be logged.
-    log(home, reader, session, result, now)?;
+    log(home, Some(runtime), reader, session, result, now)?;
     collected
 }
 
@@ -551,6 +551,7 @@ fn expire_due(home: &Home, now: DateTime<Utc>) -> Result<Vec<Request>> {
             save(home, r)?;
             log(
                 home,
+                None,
                 &r.reader,
                 Some(r.session.clone()),
                 ReadResult::RevealExpired {
@@ -619,6 +620,7 @@ fn loggable(asked: &str) -> String {
 
 fn log(
     home: &Home,
+    runtime: Option<&LocalRuntime>,
     reader: &Reader,
     session: Option<String>,
     result: ReadResult,
@@ -626,6 +628,7 @@ fn log(
 ) -> Result<()> {
     readlog::append(
         home,
+        runtime,
         &ReadEntry {
             at: stamp(now),
             reader: reader.clone(),

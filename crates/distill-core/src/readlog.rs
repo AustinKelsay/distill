@@ -19,7 +19,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::home::Home;
-use crate::trust::Reader;
+use crate::runtime::LocalRuntime;
+use crate::trust::{Reader, Trust};
 use crate::util::{count, create_dir_private, private_file, read_jsonl, set_private};
 
 /// One line of the read log.
@@ -100,16 +101,32 @@ impl ReadEntry {
     }
 }
 
-/// Append one line, chained to the line before it. The read path serves nothing it could not
-/// log. Every process that reads appends here, so the last line is read and the new one written
-/// under the `reads` lock.
-pub(crate) fn append(home: &Home, entry: &ReadEntry) -> Result<()> {
+/// A line of the read log as written: the entry, and for a reader that reads as Ollama, where
+/// Ollama served it from when it read ([`Trust::ollama_via`]). Lines from before #162 have none.
+#[derive(Serialize, Deserialize)]
+struct Logged {
+    #[serde(flatten)]
+    entry: ReadEntry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
+}
+
+/// Append one line, chained to the line before it, with where Ollama served the reader from
+/// when `runtime` is given. The read path serves nothing it could not log. Every process that
+/// reads appends here, so the last line is read and the new one written under the `reads` lock.
+pub(crate) fn append(home: &Home, runtime: Option<&LocalRuntime>, entry: &ReadEntry) -> Result<()> {
+    let via = runtime
+        .and_then(|rt| Trust::ollama_via(&entry.reader, rt))
+        .map(str::to_string);
     let dir = home.log_dir();
     create_dir_private(&dir)?;
     set_private(&dir);
     let path = home.read_log_path();
     let _lock = home.lock("reads")?;
-    let entry = serde_json::to_string(entry)?;
+    let entry = serde_json::to_string(&Logged {
+        entry: entry.clone(),
+        via,
+    })?;
     let Some(fields) = entry.strip_prefix('{') else {
         anyhow::bail!("a read log line is a JSON object");
     };
@@ -358,13 +375,15 @@ pub struct Sent {
     /// listed twice counts twice.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub listed: u64,
-    /// For a backup: the bytes stored at the target, encrypted, by every run, whole or not.
+    /// For a backup: the bytes stored at the target, encrypted, by the runs in the backup log,
+    /// whole or not (a scheduled run stopped at its deadline is not logged).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub bytes: u64,
 }
 
-/// [`Left`] as of `now`. `stored_here` says whether Ollama has a model on this machine; one it
-/// hasn't, it serves from a cloud.
+/// [`Left`] as of `now`. A read by a model in Ollama counts where its line says Ollama served it
+/// from; a line from before that was logged is judged by `stored_here`, whether Ollama has the
+/// model on this machine now (one it hasn't, it serves from a cloud).
 pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool) -> Result<Left> {
     use std::collections::{BTreeMap, BTreeSet};
     let (day, week) = (
@@ -381,7 +400,7 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
     type Tally = (Spans, BTreeSet<String>, BTreeSet<String>);
     let mut places: BTreeMap<(String, bool), Tally> = BTreeMap::new();
     let mut here: Tally = Default::default();
-    for e in read_jsonl::<ReadEntry>(&home.read_log_path())? {
+    for Logged { entry: e, via } in read_jsonl::<Logged>(&home.read_log_path())? {
         let Some(t) = when(&e.at) else { continue };
         let mut listed = 0;
         let session = match &e.result {
@@ -404,9 +423,17 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
                     .to_ascii_lowercase();
                 let model = model.as_deref().map(str::trim).filter(|m| !m.is_empty());
                 if p == crate::trust::OLLAMA {
-                    match model {
-                        Some(m) if !stored_here(m) => p = crate::trust::OLLAMA_CLOUD.into(),
-                        _ => p.clear(),
+                    // Where Ollama served it from as logged; for an older line, a guess from
+                    // what Ollama has on this machine now.
+                    let cloud = match (via.as_deref(), model) {
+                        (Some(v), _) => v == crate::trust::OLLAMA_CLOUD,
+                        (None, Some(m)) => !stored_here(m),
+                        (None, None) => false,
+                    };
+                    if cloud {
+                        p = crate::trust::OLLAMA_CLOUD.into();
+                    } else {
+                        p.clear();
                     }
                 }
                 if p.is_empty() {
@@ -526,6 +553,7 @@ mod tests {
     fn line(home: &Home, at: &str, reader: Reader, result: ReadResult) {
         append(
             home,
+            None,
             &ReadEntry {
                 at: at.into(),
                 reader,
@@ -705,9 +733,19 @@ mod tests {
             (now - chrono::Duration::hours(hours))
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         };
-        let put = |hours: i64, reader: Reader, session: Option<&str>, result: ReadResult| {
+        // Ollama has `small:8b` on this machine and serves `big:cloud` from a cloud.
+        let fake = crate::runtime::FakeRuntime::running()
+            .with_model("small:8b", crate::runtime::Stored::Here)
+            .with_model("big:cloud", crate::runtime::Stored::Cloud);
+        let rt = fake.runtime();
+        let put_by = |rt: Option<&LocalRuntime>,
+                      hours: i64,
+                      reader: Reader,
+                      session: Option<&str>,
+                      result: ReadResult| {
             append(
                 &home,
+                rt,
                 &ReadEntry {
                     at: ago(hours),
                     reader,
@@ -717,6 +755,8 @@ mod tests {
             )
             .unwrap();
         };
+        let put =
+            |hours, reader, session, result| put_by(Some(&rt), hours, reader, session, result);
         let cloud = || Reader::model(Some("Example-Cloud"), Some("m"));
         let served = || ReadResult::Served { events: 3 };
         put(2, cloud(), Some("claude-code/a"), served());
@@ -742,6 +782,14 @@ mod tests {
         put(
             8,
             Reader::model(Some("ollama"), Some("big:cloud")),
+            Some("codex/b"),
+            served(),
+        );
+        // A line from before where Ollama served it from was logged.
+        put_by(
+            None,
+            30,
+            Reader::model(Some("ollama"), Some("old:7b")),
             Some("codex/b"),
             served(),
         );
@@ -784,7 +832,9 @@ mod tests {
             listed,
             bytes,
         };
-        let got = left(&home, now, &|m| m == "small:8b").unwrap();
+        // What Ollama has now is the other way round from when the reads were logged: the lines
+        // that say where Ollama served them from go by that, an older line by what it has now.
+        let got = left(&home, now, &|m| m == "big:cloud").unwrap();
         let places: Vec<(&str, PlaceKind, Sent, Sent)> = got
             .places
             .iter()
@@ -819,6 +869,12 @@ mod tests {
                     "ollama-cloud/big:cloud",
                     reader,
                     sent(1, 1, 0, 0),
+                    sent(1, 1, 0, 0)
+                ),
+                (
+                    "ollama-cloud/old:7b",
+                    reader,
+                    sent(0, 0, 0, 0),
                     sent(1, 1, 0, 0)
                 ),
             ]
