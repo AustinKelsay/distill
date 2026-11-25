@@ -50,8 +50,10 @@ pub struct SessionsState {
     pub open: Option<Open>,
     /// The tags in use on the sessions the other filters match, most used first (#157).
     pub tags: Vec<TagCount>,
-    /// The filter `tags` was last asked for, without its tag: only its answer lands.
+    /// The filter `tags` was last asked for, without its tag.
     pub tags_for: Option<Filter>,
+    /// Bumped with each ask for `tags`; only the answer to the latest lands.
+    pub tags_asked: u64,
     /// Whether that answer is still to come.
     pub tags_loading: bool,
 }
@@ -242,10 +244,12 @@ fn ask_tags(s: &mut State, filter: &Filter) {
     };
     s.sessions.tags_for = Some(all.clone());
     s.sessions.tags_loading = true;
+    s.sessions.tags_asked += 1;
+    let asked = s.sessions.tags_asked;
     s.ask(Job::new("tags", move |core| {
         let r = read::tags(&core.home, &core.runtime, &Reader::Owner, &all);
         Box::new(move |s: &mut State| {
-            if s.sessions.tags_for.as_ref() == Some(&all) {
+            if s.sessions.tags_asked == asked {
                 s.sessions.tags_loading = false;
                 s.sessions.tags = match r {
                     Ok(Tagged::Counts(c)) => c,

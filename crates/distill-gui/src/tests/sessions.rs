@@ -304,6 +304,21 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
     assert_eq!(rt.state.sessions.filters.tag.text, "");
     run_jobs(&mut rt, &core);
 
+    // Back before the tags asked on opening land: the chips wait for them.
+    rt.update(|s, _| sessions::open_row(s, 0));
+    settle(&mut rt);
+    press(&mut rt, "back");
+    let stale = rt
+        .state
+        .sessions
+        .tags
+        .iter()
+        .position(|t| t.tag == "notes")
+        .unwrap();
+    press(&mut rt, &format!("top-tag-{stale}"));
+    assert_eq!(rt.state.sessions.filters.tag.text, "");
+    run_jobs(&mut rt, &core);
+
     // A tag that becomes a personal term after the list was read can't be pressed in the session.
     let mut config = core.home.load_config().unwrap();
     config.privacy.personal_terms.push("deploy".into());
