@@ -87,10 +87,6 @@ pub fn tag_session(
         if s.is_empty() || s.chars().count() > TAG_MAX {
             bail!("a tag must be 1 to {TAG_MAX} characters");
         }
-        // The window's tag filter holds several tags with commas between them (#159).
-        if s.contains(',') {
-            bail!("a tag can't hold a comma");
-        }
         if !detector.detect(t).is_empty() || !detector.detect(&s).is_empty() {
             bail!("a tag can't hold a secret or a personal detail");
         }

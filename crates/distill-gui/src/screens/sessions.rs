@@ -89,13 +89,13 @@ impl Filters {
         })
     }
 
-    /// The tags in the tag field, which holds several with commas between them (#159).
+    /// The tags in the tag field, which holds several with spaces between them (#159): a tag
+    /// as shown, in its standard form, has none.
     pub fn tags(&self) -> Vec<String> {
         self.tag
             .text
-            .split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
+            .split_whitespace()
+            .map(str::to_string)
             .collect()
     }
 
@@ -296,7 +296,7 @@ pub fn pick_tag(s: &mut State, tag: &str) {
     if tags.is_empty() {
         *f = TextEdit::default();
     } else {
-        f.replace_text(tags.join(", "));
+        f.replace_text(tags.join(" "));
     }
     s.sessions.open = None;
     search(s);

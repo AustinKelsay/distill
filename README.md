@@ -54,7 +54,7 @@ Tags are shown and filtered in one standard form ("Rust Lang" and "rust_lang" ar
 "js" = "javascript"
 ```
 
-You can also add a tag to one session or hide one on it, in the window or with `distill tag <session> --add ops --hide misc`; your tags win over the model's and outlive a new card. To filter by several tags at once, repeat `--tag` (`distill search deploy --tag rust --tag cli`), press several chips in the window, or write them with commas between; a session must have all of them.
+You can also add a tag to one session or hide one on it, in the window or with `distill tag <session> --add ops --hide misc`; your tags win over the model's and outlive a new card. To filter by several tags at once, repeat `--tag` (`distill search deploy --tag rust --tag cli`), press several chips in the window, or write them with spaces between; a session must have all of them.
 
 With `[steward.generation]` set, `card_model` and `detail_model` name models that provider serves. Setup's Models step writes this section when you run models at a trusted service.
 

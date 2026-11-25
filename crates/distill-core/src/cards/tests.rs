@@ -1021,8 +1021,6 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         assert!(e.to_string().contains("secret or a personal detail"), "{e}");
     }
     assert!(crate::tags::tag_session(&home, &config, "nope", &["x".into()], &[]).is_err());
-    let e = crate::tags::tag_session(&home, &config, "a", &["ci,cd".into()], &[]).unwrap_err();
-    assert!(e.to_string().contains("comma"), "{e}");
     assert_eq!(
         crate::tags::OwnerTags::load(&home).unwrap().sessions.len(),
         1,
