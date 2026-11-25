@@ -275,6 +275,27 @@ fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_
         "a second press stops"
     );
 
+    // Several chips filter by all of their tags (#159), and a press on one of them drops it.
+    let chip = |rt: &mut Runtime<State>, tag: &str| {
+        let i = rt.state.sessions.tags.iter().position(|t| t.tag == tag);
+        press(rt, &format!("top-tag-{}", i.unwrap()));
+    };
+    for tag in ["notes", "deploy"] {
+        chip(&mut rt, tag);
+        run_jobs(&mut rt, &core);
+    }
+    assert_eq!(rt.state.sessions.filters.tag.text, "notes, deploy");
+    assert_eq!(rt.state.sessions.results.as_ref().unwrap().total, 0);
+    chip(&mut rt, "notes");
+    run_jobs(&mut rt, &core);
+    assert_eq!(rt.state.sessions.filters.tag.text, "deploy");
+    let all = everything(&rt);
+    assert!(all.contains("Deploy and mail"), "{all}");
+    assert!(!all.contains("Tidy the notes"), "{all}");
+    chip(&mut rt, "deploy");
+    run_jobs(&mut rt, &core);
+    assert_eq!(rt.state.sessions.filters.tag.text, "");
+
     rt.update(|s, _| sessions::open_row(s, 0));
     run_jobs(&mut rt, &core);
     let tag = rt

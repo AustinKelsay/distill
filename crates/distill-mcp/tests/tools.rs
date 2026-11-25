@@ -509,6 +509,23 @@ fn sessions_list_and_search_with_their_cards_filtered_by_tag_and_outcome() {
         t.contains("  Summary: Moved the module and its callers."),
         "{t}"
     );
+    // Several tags mean all of them (#159); one string is still one tag.
+    let (err, t) = call(
+        &s,
+        "list_sessions",
+        json!({"tag": ["Refactor", "refactor"]}),
+    );
+    assert!(!err && t.contains("claude-code/s1"), "{t}");
+    let (_, t) = call(&s, "list_sessions", json!({"tag": ["refactor", "deploy"]}));
+    assert!(t.starts_with("No sessions match."), "{t}");
+    let (_, t) = call(
+        &s,
+        "search_sessions",
+        json!({"query": "callers", "tag": ["refactor", "deploy"]}),
+    );
+    assert!(!t.contains("claude-code/s1"), "{t}");
+    let (err, t) = call(&s, "list_sessions", json!({"tag": ["refactor", 3]}));
+    assert!(err && t.contains("tag must be strings"), "{t}");
     let (_, t) = call(&s, "list_sessions", json!({"outcome": "failed"}));
     assert!(t.starts_with("No sessions match."), "{t}");
     let (_, t) = call(

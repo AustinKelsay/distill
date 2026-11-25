@@ -102,7 +102,7 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
                     .variant(ButtonVariant::Outline)
                     .control_size(ControlSize::Small)
                     .disabled(st.loading || st.tags_loading)
-                    .on_press(move |s: &mut State| super::pick_tag(s, &tag))
+                    .on_press(move |s: &mut State| super::only_tag(s, &tag))
                     .build(&p.k)
                     .key(format!("session-tag-{n}"))
             } else {

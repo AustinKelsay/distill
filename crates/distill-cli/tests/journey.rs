@@ -368,6 +368,17 @@ sweep_every_minutes = 60
         printed.contains("added #misc") && printed.contains("hidden #ops-work"),
         "{printed}"
     );
+    // The tag filter repeats, meaning all of them (#159); no session here has a card to match.
+    for cmd in [&["search", "widget"][..], &["tags"]] {
+        let args = [
+            cmd,
+            &["--provider", "ollama", "--tag", "ops-work", "--tag", "misc"],
+        ]
+        .concat();
+        let (ok, out, err) = distill(&user, &home, &args);
+        assert!(ok, "{cmd:?}: {err}");
+        assert!(out.starts_with("No "), "{cmd:?}: {out}");
+    }
     let (ok, _, err) = distill(&user, &home, &["tag", "nope", "--add", "x"]);
     assert!(!ok && err.contains("no session nope"), "{err}");
 

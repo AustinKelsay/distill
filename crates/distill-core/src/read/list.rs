@@ -39,8 +39,8 @@ pub struct Filter {
     pub mirrors: bool,
     /// Include sessions the previous build's steward ran.
     pub steward: bool,
-    /// Only sessions whose current card has this tag, ignoring case.
-    pub tag: Option<String>,
+    /// Only sessions whose current card has every one of these tags, ignoring case (#159).
+    pub tags: Vec<String>,
     /// Only sessions whose current card has this outcome.
     pub outcome: Option<Outcome>,
     /// Only the session with this key (`harness/id`): the window reads one session's row with
@@ -343,7 +343,7 @@ impl Filter {
 
     /// Whether the filter asks about cards: by tag or outcome.
     pub(super) fn wants_card(&self) -> bool {
-        self.tag.is_some() || self.outcome.is_some()
+        !self.tags.is_empty() || self.outcome.is_some()
     }
 
     /// Whether `m`'s current card matches the tag and outcome asked for; true when neither is.
@@ -364,8 +364,8 @@ impl Filter {
             .is_some_and(|(card, found)| self.fits(&card, &found, config, finds))
     }
 
-    /// Whether `card` (with its findings `found`) has the tag and outcome the filter names, if
-    /// any: the tag among the card's tags as they are shown (`cards::viewed`), both told apart by
+    /// Whether `card` (with its findings `found`) has the tags and outcome the filter names, if
+    /// any: each tag among the card's tags as they are shown (`cards::viewed`), all told apart by
     /// `tags::screened` with `finds`.
     pub(super) fn fits(
         &self,
@@ -374,14 +374,21 @@ impl Filter {
         config: &Config,
         finds: &dyn Fn(&str) -> bool,
     ) -> bool {
-        self.outcome.is_none_or(|o| card.outcome == o)
-            && self.tag.as_deref().is_none_or(|t| {
-                let t = crate::tags::screened(t, &config.tags, finds);
-                cards::viewed(&card.session, &card.tags, found, &config.tags, finds)
-                    .0
-                    .iter()
-                    .any(|s| crate::tags::screened(s, &config.tags, finds) == t)
-            })
+        if self.outcome.is_some_and(|o| card.outcome != o) {
+            return false;
+        }
+        if self.tags.is_empty() {
+            return true;
+        }
+        let shown: Vec<String> =
+            cards::viewed(&card.session, &card.tags, found, &config.tags, finds)
+                .0
+                .iter()
+                .map(|s| crate::tags::screened(s, &config.tags, finds))
+                .collect();
+        self.tags
+            .iter()
+            .all(|t| shown.contains(&crate::tags::screened(t, &config.tags, finds)))
     }
 }
 

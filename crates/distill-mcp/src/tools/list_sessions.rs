@@ -7,7 +7,7 @@ use distill_core::cards::Outcome;
 use distill_core::read::{self, Filter, Listed, PAGE_MAX, Page};
 use serde_json::{Value, json};
 
-use super::{ARCHIVED_DATA, Tool, flag, number, string};
+use super::{ARCHIVED_DATA, Tool, flag, number, string, strings};
 use crate::Server;
 
 pub struct ListSessions;
@@ -67,7 +67,7 @@ pub(super) fn filter_properties() -> serde_json::Map<String, Value> {
         "until": {"type": "string", "description": "Only sessions that started on or before this day, YYYY-MM-DD (UTC)."},
         "include_mirrors": {"type": "boolean", "description": "Include mirrors of sessions already in the archive."},
         "include_steward": {"type": "boolean", "description": "Include sessions the previous build's steward ran."},
-        "tag": {"type": "string", "description": "Only sessions whose card has this tag, ignoring case."},
+        "tag": {"type": "array", "items": {"type": "string"}, "description": "Only sessions whose card has every one of these tags, ignoring case."},
         "outcome": {"type": "string", "enum": outcomes, "description": "Only sessions whose card has this outcome."}
     }) else {
         unreachable!("an object literal")
@@ -106,7 +106,7 @@ pub(super) fn filter(args: &Value) -> Result<Filter, String> {
         until: day(args, "until")?,
         mirrors: flag(args, "include_mirrors")?,
         steward: flag(args, "include_steward")?,
-        tag: string(args, "tag")?,
+        tags: strings(args, "tag")?,
         outcome: match string(args, "outcome")? {
             Some(o) => Some(Outcome::parse(&o).ok_or_else(|| {
                 let ids: Vec<&str> = Outcome::ALL.iter().map(|o| o.id()).collect();
