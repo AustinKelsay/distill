@@ -43,6 +43,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 e.session.as_deref().unwrap_or(match e.result {
                     ReadResult::Listed { .. } => "(a list of sessions)",
                     ReadResult::Findings { .. } => "(findings)",
+                    ReadResult::Tags { .. } => "(tags)",
                     _ => "-",
                 }),
                 e.result.text()

@@ -619,7 +619,7 @@ pub struct Shown {
 /// moved to match. A tag stays as written when it has a finding in it, so the finding's byte
 /// range still covers it, and when its view, or an alias destination as the owner wrote it, holds
 /// something `finds` finds (a secret or a personal detail the stored tag's scan never saw).
-fn viewed(
+pub(crate) fn viewed(
     card_tags: &[String],
     found: &[CardFinding],
     config: &TagsConfig,

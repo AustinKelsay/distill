@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use distill_core::model::EventKind;
 use distill_core::read::Opening;
 use rune::{Color, El, GrowthSpec, ScrollSpec, Tx, col, row, text};
-use rune_kit::{Button, ButtonVariant};
+use rune_kit::{Button, ButtonVariant, ControlSize};
 
 use super::doc::SessionDoc;
 use super::list::{facts_line, outcome_label};
@@ -81,17 +81,37 @@ fn header(s: &State, o: &Open, p: &Paint) -> El {
             .selectable(true)
             .on_link(on_chip),
         );
-        let mut tags = format!("Outcome: {}", outcome_label(c.card.outcome));
+        // A tag with a finding stays covered and can't be pressed; any other filters the list.
+        let mut tags = row()
+            .key("session-tags")
+            .gap(6.0)
+            .center_y()
+            .flex_wrap()
+            .child(
+                text(format!("Outcome: {}", outcome_label(c.card.outcome)))
+                    .font(p.caption())
+                    .color(p.muted()),
+            );
         for (n, t) in c.card.tags.iter().enumerate() {
-            let shown = cover::cover(p, t, &card_marks(c, &format!("tags/{n}")), |_| false, false);
-            tags.push_str(&format!("  #{}", shown.text));
-        }
-        about = about.child(
-            text(tags)
-                .key("session-tags")
+            let ms = card_marks(c, &format!("tags/{n}"));
+            tags = tags.child(if ms.is_empty() {
+                let tag = t.clone();
+                Button::new(format!("#{t}"))
+                    .variant(ButtonVariant::Outline)
+                    .control_size(ControlSize::Small)
+                    .on_press(move |s: &mut State| super::pick_tag(s, &tag))
+                    .build(&p.k)
+                    .key(format!("session-tag-{n}"))
+            } else {
+                text(format!(
+                    "#{}",
+                    cover::cover(p, t, &ms, |_| false, false).text
+                ))
                 .font(p.caption())
-                .color(p.muted()),
-        );
+                .color(p.muted())
+            });
+        }
+        about = about.child(tags);
     }
     if let Some(d) = o.doc() {
         let note = if d.findings == 0 {

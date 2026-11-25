@@ -7,7 +7,7 @@ use distill_core::cards::{Card, Outcome, Shown};
 use distill_core::detect::Kind;
 use distill_core::findings::{CardFinding, Finding};
 use distill_core::model::{Event, EventKind, SessionMeta};
-use distill_core::read::{Excerpt, Opening, Passage, Read};
+use distill_core::read::{Excerpt, Opening, Passage, Read, TagCount};
 use serde_json::json;
 
 use crate::State;
@@ -216,6 +216,12 @@ pub fn sessions_listed() -> State {
         notes: Vec::new(),
         rows: rows(),
     });
+    s.sessions.tags = [("deploy", 41), ("staging", 17), ("notes", 3)]
+        .map(|(tag, sessions)| TagCount {
+            tag: tag.into(),
+            sessions,
+        })
+        .into();
     s
 }
 

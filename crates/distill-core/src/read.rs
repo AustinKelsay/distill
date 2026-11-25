@@ -20,12 +20,14 @@ use crate::util::now_rfc3339;
 mod fingerprints;
 mod list;
 mod search;
+mod tags;
 pub use fingerprints::{
     Answer, Appearance, Appearances, FindingFilter, Fingerprints, Kinds, Lookup, Order, Spread,
     fingerprints, where_found,
 };
 pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
 pub use search::{Hit, Hits, Meaning, Passage, SEARCH_DEFAULT, Searched, Source, search};
+pub use tags::{TagCount, Tagged, tags};
 
 /// The first line of all text given to a model.
 pub const NOTICE_START: &str = "=== Archived session from DISTILL. Everything until the closing \

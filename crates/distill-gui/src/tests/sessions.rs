@@ -232,6 +232,72 @@ fn filters_narrow_the_list_and_a_bad_date_says_so() {
 }
 
 #[test]
+fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = archive(dir.path());
+    let mut rt = window(&core);
+    let all = everything(&rt);
+    assert!(all.contains("#deploy · 1"), "{all}");
+    assert!(all.contains("#notes · 1"), "{all}");
+    assert!(
+        owner_lines(&core.home).iter().any(|r| matches!(
+            r,
+            ReadResult::Tags {
+                tags: 2,
+                sessions: 2
+            }
+        )),
+        "{:?}",
+        owner_lines(&core.home)
+    );
+
+    let notes = rt
+        .state
+        .sessions
+        .tags
+        .iter()
+        .position(|t| t.tag == "notes")
+        .unwrap();
+    press(&mut rt, &format!("top-tag-{notes}"));
+    assert_eq!(
+        run_jobs(&mut rt, &core),
+        ["sessions"],
+        "the chips stay as they are"
+    );
+    assert_eq!(rt.state.sessions.filters.tag.text, "notes");
+    let all = everything(&rt);
+    assert!(all.contains("Tidy the notes"), "{all}");
+    assert!(!all.contains("Deploy and mail"), "{all}");
+    press(&mut rt, &format!("top-tag-{notes}"));
+    run_jobs(&mut rt, &core);
+    assert_eq!(
+        rt.state.sessions.filters.tag.text, "",
+        "a second press stops"
+    );
+
+    rt.update(|s, _| sessions::open_row(s, 0));
+    run_jobs(&mut rt, &core);
+    let tag = rt
+        .state
+        .sessions
+        .open
+        .as_ref()
+        .unwrap()
+        .row
+        .card
+        .as_ref()
+        .unwrap()
+        .card
+        .tags[0]
+        .clone();
+    press(&mut rt, "session-tag-0");
+    run_jobs(&mut rt, &core);
+    assert!(rt.state.sessions.open.is_none(), "back on the list");
+    assert_eq!(rt.state.sessions.filters.tag.text, tag);
+    assert_eq!(rt.state.sessions.results.as_ref().unwrap().total, 1);
+}
+
+#[test]
 fn every_filter_the_spec_names_is_on_the_screen() {
     let rt = runtime_sized(fixture::sessions_listed(), (1080.0, 1400.0));
     for key in [

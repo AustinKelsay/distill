@@ -195,6 +195,7 @@ fn no_tool_serves_a_planted_secret() {
         for short in &shorts {
             calls.push(("list_findings", json!({"fingerprint": short})));
         }
+        calls.push(("list_tags", json!({})));
         // Searches for the words around the secrets, a placeholder's kind, and each value.
         for q in ["deploy", "anthropic_key", key.as_str(), password.as_str()] {
             calls.push(("search_sessions", json!({ "query": q })));

@@ -9,7 +9,7 @@ use distill_core::cards::Outcome;
 use distill_core::model::EventKind;
 use distill_core::read::Opening;
 use rune::{El, GrowthSpec, ScrollSpec, TextEdit, Tx, col, row, text};
-use rune_kit::{Button, ButtonVariant, Select, SelectAppearance, TextInput};
+use rune_kit::{Button, ButtonVariant, ControlSize, Select, SelectAppearance, TextInput};
 
 use super::{ResultRow, SessionsState, card_marks, marks};
 use crate::State;
@@ -18,6 +18,8 @@ use crate::ui::{Paint, ago, count, pill, thousands};
 
 const ANY_HARNESS: &str = "Any harness";
 const ANY_OUTCOME: &str = "Any outcome";
+/// How many of the tags in use the list shows as chips.
+const TOP_TAGS: usize = 12;
 
 pub fn view(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
     let st = &s.sessions;
@@ -167,6 +169,9 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
         )
         .child(bar)
         .child(filters);
+    if !st.tags.is_empty() {
+        c = c.child(top_tags(st, p));
+    }
     if let Some(e) = &st.filter_error {
         c = c.child(
             text(e.clone())
@@ -177,6 +182,29 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
         );
     }
     c
+}
+
+/// The most used tags on the sessions the other filters match; a press filters by one, and a
+/// second press on it stops.
+fn top_tags(st: &SessionsState, p: &Paint) -> El {
+    let picked = st.filters.tag.text.trim();
+    let mut chips = row().key("top-tags").w_full().gap(6.0).flex_wrap();
+    for (i, t) in st.tags.iter().take(TOP_TAGS).enumerate() {
+        let tag = t.tag.clone();
+        chips = chips.child(
+            Button::new(format!("#{} · {}", t.tag, thousands(t.sessions)))
+                .variant(if t.tag == picked {
+                    ButtonVariant::Submit
+                } else {
+                    ButtonVariant::Outline
+                })
+                .control_size(ControlSize::Small)
+                .on_press(move |s: &mut State| super::pick_tag(s, &tag))
+                .build(&p.k)
+                .key(format!("top-tag-{i}")),
+        );
+    }
+    chips
 }
 
 fn field(
