@@ -406,6 +406,20 @@ fn the_owner_adds_and_hides_a_tag_on_an_open_session() {
         "the chips follow"
     );
 
+    // What the owner types while an edit is saved stays typed.
+    let type_tag = |rt: &mut Runtime<State>, t: &str| {
+        rt.update(|s, _| s.sessions.open.as_mut().unwrap().new_tag.replace_text(t));
+        settle(rt);
+    };
+    type_tag(&mut rt, "ops-work");
+    press(&mut rt, "add-tag");
+    type_tag(&mut rt, "next");
+    run_jobs(&mut rt, &core);
+    assert_eq!(
+        rt.state.sessions.open.as_ref().unwrap().new_tag.text,
+        "next"
+    );
+
     press(&mut rt, "hide-tag-0");
     run_jobs(&mut rt, &core);
     assert_eq!(tags(&rt), ["ops-work"]);

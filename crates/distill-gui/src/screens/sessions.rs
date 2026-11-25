@@ -295,25 +295,23 @@ pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
     };
     o.tagging = true;
     let key = o.key.clone();
-    let adding = add.is_some();
+    let draft = add.clone();
     s.ask(Job::new("tag session", move |core| {
-        let r = core
-            .home
-            .load_config()
-            .and_then(|config| {
-                let (add, hide): (Vec<String>, Vec<String>) =
-                    (add.into_iter().collect(), hide.into_iter().collect());
-                tags::tag_session(&core.home, &config, &key, &add, &hide)?;
-                row_of(core, &key)
-            })
-            .map_err(jobs::line);
+        let wrote = core.home.load_config().and_then(|config| {
+            let (add, hide): (Vec<String>, Vec<String>) =
+                (add.into_iter().collect(), hide.into_iter().collect());
+            tags::tag_session(&core.home, &config, &key, &add, &hide)
+        });
+        let wrote_ok = wrote.is_ok();
+        let r = wrote.and_then(|_| row_of(core, &key)).map_err(jobs::line);
         Box::new(move |s: &mut State| {
             if let Some(o) = s.sessions.open.as_mut().filter(|o| o.key == key) {
                 o.tagging = false;
                 match &r {
                     Ok(card) => {
                         o.tag_error = None;
-                        if adding {
+                        // Only the tag sent goes; anything typed since stays.
+                        if draft.as_deref() == Some(o.new_tag.text.trim()) {
                             o.new_tag = TextEdit::default();
                         }
                         // A card's marks are named by place, so none shown on the old card
@@ -324,7 +322,8 @@ pub fn retag(s: &mut State, add: Option<String>, hide: Option<String>) {
                     Err(e) => o.tag_error = Some(e.clone()),
                 }
             }
-            if r.is_ok() {
+            // A saved edit refreshes the list and chips even when the card couldn't be read again.
+            if wrote_ok {
                 if s.sessions.loading {
                     s.sessions.refresh = true;
                 } else {

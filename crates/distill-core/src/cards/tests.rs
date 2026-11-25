@@ -966,7 +966,7 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         "nothing rebuilds the owner's edits"
     );
 
-    // Hiding an added tag takes it off and adding a hidden one shows it again.
+    // Hiding an added tag takes it off and adding a hidden one shows it again; each is kept.
     let (_, edit) = crate::tags::tag_session(
         &home,
         &config,
@@ -975,15 +975,12 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         &["ship-it".into()],
     )
     .unwrap();
-    assert_eq!(edit, crate::tags::Edit::default());
+    assert_eq!(
+        (&edit.add[..], &edit.hide[..]),
+        (&["rust".to_string()][..], &["ship-it".to_string()][..])
+    );
     assert_eq!(ids("rust"), ["a"]);
     assert!(ids("ship-it").is_empty());
-    assert!(
-        crate::tags::OwnerTags::load(&home)
-            .unwrap()
-            .sessions
-            .is_empty()
-    );
 
     // No secret and no personal detail goes in, and only a session in the archive is tagged.
     for bad in [fake_key(), "Avery Example".to_string()] {
@@ -993,28 +990,31 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         assert!(e.to_string().contains("secret or a personal detail"), "{e}");
     }
     assert!(crate::tags::tag_session(&home, &config, "nope", &["x".into()], &[]).is_err());
-    assert!(
-        crate::tags::OwnerTags::load(&home)
-            .unwrap()
-            .sessions
-            .is_empty()
+    assert_eq!(
+        crate::tags::OwnerTags::load(&home).unwrap().sessions.len(),
+        1,
+        "a refused edit changes nothing"
     );
     crate::index::build(&home).unwrap();
     assert_eq!(
         found("rust"),
         ["a"],
-        "an undone edit leaves the index as it was"
+        "edits that show the card as written leave the index as it was"
     );
 
     // Tags are told apart through the aliases: with `js` shown as `javascript`, adding
-    // `javascript` undoes hiding `js`.
+    // `javascript` replaces hiding `js`.
     let mut config = config.clone();
     config.tags.aliases = [("js".into(), "javascript".into())].into();
     config.save(&home.config_path()).unwrap();
+    std::fs::remove_file(home.owner_tags_path()).unwrap();
     crate::tags::tag_session(&home, &config, "a", &[], &["js".into()]).unwrap();
     let (_, edit) =
         crate::tags::tag_session(&home, &config, "a", &["javascript".into()], &[]).unwrap();
-    assert_eq!(edit, crate::tags::Edit::default());
+    assert_eq!(
+        (&edit.add[..], &edit.hide[..]),
+        (&["javascript".to_string()][..], &[][..])
+    );
     // Should both stand, as when an alias came later, the hide wins wherever tags are read; and
     // an added tag whose alias destination, as written, holds a secret is not shown or found.
     let both = crate::tags::OwnerTags {
@@ -1045,7 +1045,7 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
     );
 
     // Two names for one tag in one edit count once: with `js` hidden, adding `js` and
-    // `javascript` shows it again and adds nothing.
+    // `javascript` shows it again, as one tag.
     std::fs::remove_file(home.owner_tags_path()).unwrap();
     crate::tags::tag_session(&home, &config, "a", &[], &["js".into()]).unwrap();
     let (_, edit) = crate::tags::tag_session(
@@ -1056,7 +1056,10 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         &[],
     )
     .unwrap();
-    assert_eq!(edit, crate::tags::Edit::default());
+    assert_eq!(
+        (&edit.add[..], &edit.hide[..]),
+        (&["js".to_string()][..], &[][..])
+    );
 
     // A model tag shown as written, because its alias chain goes through a secret, is not found
     // by the chain's end.
@@ -1078,6 +1081,15 @@ fn the_owners_tag_edits_win_over_the_model_and_each_undoes_the_other() {
         crate::tags::tag_session(&home, &config, "b", &[], &["zzz".into(), "deploy".into()])
             .unwrap();
     assert_eq!(edit.hide, ["zzz", "deploy"]);
+    // And the owner adds the chain's end beside such a model tag.
+    crate::tags::tag_session(&home, &config, "a", &["deploy".into()], &[]).unwrap();
+    assert_eq!(ids("deploy"), ["a"]);
+
+    // An edit says what the owner wants shown, whatever card it lands on: hiding an added tag
+    // the model has since written too still hides it.
+    crate::tags::tag_session(&home, &config, "a", &["rust".into()], &[]).unwrap();
+    crate::tags::tag_session(&home, &config, "a", &[], &["rust".into()]).unwrap();
+    assert!(ids("rust").is_empty());
 }
 
 #[test]

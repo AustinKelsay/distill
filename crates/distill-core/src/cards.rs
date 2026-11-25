@@ -675,7 +675,9 @@ pub(crate) fn viewed(
         .collect();
     for a in config.owner.of(key).into_iter().flat_map(|e| &e.add) {
         let (a, through) = tags::view_through(a, config);
-        if !kept.iter().any(|k| tags::view(k, config) == a)
+        if !kept
+            .iter()
+            .any(|k| tags::screened(k, config, &finds) == tags::screened(&a, config, &finds))
             && !tags::hidden(&a, key, config, &finds)
             && !finds(&a)
             && !through.iter().any(|to| finds(to))

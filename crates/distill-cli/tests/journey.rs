@@ -341,7 +341,8 @@ sweep_every_minutes = 60
         "{printed}"
     );
 
-    // The owner tags a session: kept in tags.json, and each of add and hide undoes the other.
+    // The owner tags a session: kept in tags.json, and a later add or hide of a tag replaces the
+    // earlier one.
     let t = json(
         &user,
         &home,
@@ -363,7 +364,10 @@ sweep_every_minutes = 60
             "misc",
         ],
     );
-    assert!(printed.contains("no tags of yours"), "{printed}");
+    assert!(
+        printed.contains("added #misc") && printed.contains("hidden #ops-work"),
+        "{printed}"
+    );
     let (ok, _, err) = distill(&user, &home, &["tag", "nope", "--add", "x"]);
     assert!(!ok && err.contains("no session nope"), "{err}");
 

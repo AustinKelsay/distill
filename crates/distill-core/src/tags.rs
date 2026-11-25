@@ -67,7 +67,7 @@ const TAG_MAX: usize = 40;
 
 /// Add the tags `add` to the session `session` (its key, or its id when only one harness has it)
 /// and hide the tags `hide` on it. Adding a hidden tag shows it again and hiding an added one
-/// takes it off, so each undoes the other. A tag the detector finds a secret or personal detail
+/// takes it off: the later edit of a tag replaces the earlier. A tag the detector finds a secret or personal detail
 /// in is refused: `tags.json` holds no session text and no finding. Returns the session's key
 /// and its edits now.
 pub fn tag_session(
@@ -110,17 +110,17 @@ pub fn tag_session(
     let _lock = home.lock("tags")?;
     let mut all = OwnerTags::load(home)?;
     let edit = all.sessions.entry(key.clone()).or_default();
+    // Each edit is kept as the owner's word, not undone to nothing: the card it lands on can be
+    // rewritten later.
     for t in add {
-        let hidden = edit.hide.len();
         edit.hide.retain(|h| !same(h, &t));
-        if edit.hide.len() == hidden && !edit.add.iter().any(|a| same(a, &t)) {
+        if !edit.add.iter().any(|a| same(a, &t)) {
             edit.add.push(t);
         }
     }
     for t in hide {
-        let added = edit.add.len();
         edit.add.retain(|a| !same(a, &t));
-        if edit.add.len() == added && !edit.hide.iter().any(|h| same(h, &t)) {
+        if !edit.hide.iter().any(|h| same(h, &t)) {
             edit.hide.push(t);
         }
     }
