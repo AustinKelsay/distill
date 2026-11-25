@@ -414,8 +414,10 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
             }
             _ => continue,
         };
+        // An index build reads only for DISTILL itself or an embedding model stored here.
+        let built_here = matches!(e.result, ReadResult::Indexed { .. });
         let tally = match &e.reader {
-            Reader::Model { provider, model } => {
+            Reader::Model { provider, model } if !built_here => {
                 let mut p = provider
                     .as_deref()
                     .unwrap_or("")
@@ -785,6 +787,18 @@ mod tests {
             Some("codex/b"),
             served(),
         );
+        // An embedding build, by a model the caller checked is stored here, logged without
+        // where Ollama served it from.
+        put_by(
+            None,
+            9,
+            Reader::model(Some("ollama"), Some("embed:latest")),
+            None,
+            ReadResult::Indexed {
+                sessions: 2,
+                events: 20,
+            },
+        );
         // A line from before where Ollama served it from was logged.
         put_by(
             None,
@@ -882,10 +896,10 @@ mod tests {
         assert_eq!(
             got.here,
             Spans {
-                day: sent(3, 1, 0, 0),
-                week: sent(3, 1, 0, 0)
+                day: sent(4, 1, 0, 0),
+                week: sent(4, 1, 0, 0)
             },
-            "Ollama on this machine, the owner and DISTILL itself"
+            "Ollama on this machine, the owner, DISTILL itself and the embedding build"
         );
         assert!(!got.maybe_short);
     }
