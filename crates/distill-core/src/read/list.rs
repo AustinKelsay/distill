@@ -217,7 +217,7 @@ fn opening(
             return (None, (Opening::Withheld(why), Vec::new()));
         }
     };
-    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner));
+    let card = Shown::of(home, facts, &scan, matches!(reader, Reader::Owner), config);
     (card, first_opening(events, &scan, reader, facts))
 }
 
@@ -355,7 +355,9 @@ impl Filter {
             return true;
         }
         cards::stored_current(home, config, key, m).is_some_and(|(card, _)| {
-            self.tag.as_deref().is_none_or(|t| card.has_tag(t))
+            self.tag
+                .as_deref()
+                .is_none_or(|t| card.has_tag(t, &config.tags))
                 && self.outcome.is_none_or(|o| card.outcome == o)
         })
     }

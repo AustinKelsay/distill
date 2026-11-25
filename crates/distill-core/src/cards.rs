@@ -38,6 +38,7 @@ use crate::model_step::{self, Failed};
 use crate::normalize;
 use crate::read::{self, Range};
 use crate::runtime::LocalRuntime;
+use crate::tags::{self, TagsConfig};
 use crate::tick::Deadline;
 use crate::trust::Reader;
 use crate::util::{clip, count, now_rfc3339, sha256_hex, write_json_pretty};
@@ -153,10 +154,10 @@ impl Card {
         self.prompt_version != PROMPT_VERSION || self.model != card_model
     }
 
-    /// Whether the card has `tag`, ignoring case.
-    pub fn has_tag(&self, tag: &str) -> bool {
-        let tag = tag.trim().to_lowercase();
-        self.tags.contains(&tag)
+    /// Whether the card has `tag`, both as [`tags::view`] shows them.
+    pub fn has_tag(&self, tag: &str, config: &TagsConfig) -> bool {
+        let tag = tags::view(tag, config);
+        self.tags.iter().any(|t| tags::view(t, config) == tag)
     }
 }
 
@@ -180,6 +181,8 @@ const TAG_MAX: usize = 40;
 /// object with exactly the four fields ([`Reply`]), alone or inside a single code fence. The
 /// title must be one line of at most 100 characters, the summary at most 1,200, and there may be
 /// at most 8 tags of at most 40 characters, each one line; tags are stored lowercase, each once.
+/// Not in their standard form ([`tags::view`] shows that): the card's scan reads what is stored,
+/// and turning `_` into `-` could hide a secret from it.
 pub fn parse_reply(answer: &str) -> std::result::Result<Reply, String> {
     let mut body = answer.trim();
     if let Some(rest) = body.strip_prefix("```") {
@@ -612,23 +615,82 @@ pub struct Shown {
     pub findings: Vec<CardFinding>,
 }
 
+/// A card's tags as [`tags::view`] shows them, each once, and its findings with their places
+/// moved to match. A tag stays as written when it has a finding in it, so the finding's byte
+/// range still covers it, and when its view, or an alias destination as the owner wrote it, holds
+/// something `finds` finds (a secret or a personal detail the stored tag's scan never saw).
+fn viewed(
+    card_tags: &[String],
+    found: &[CardFinding],
+    config: &TagsConfig,
+    finds: impl Fn(&str) -> bool,
+) -> (Vec<String>, Vec<CardFinding>) {
+    let mut shown: Vec<String> = Vec::new();
+    let mut to: Vec<usize> = Vec::new();
+    for (i, t) in card_tags.iter().enumerate() {
+        let field = format!("tags/{i}");
+        let (view, through) = tags::view_through(t, config);
+        let t = if view == *t
+            || found.iter().any(|f| f.field == field)
+            || finds(&view)
+            || through.iter().any(|to| finds(to))
+        {
+            t.clone()
+        } else {
+            view
+        };
+        match shown.iter().position(|s| *s == t) {
+            Some(j) => to.push(j),
+            None => {
+                to.push(shown.len());
+                shown.push(t);
+            }
+        }
+    }
+    let found = found
+        .iter()
+        .cloned()
+        .map(|mut f| {
+            let n = f
+                .field
+                .strip_prefix("tags/")
+                .and_then(|n| n.parse::<usize>().ok());
+            if let Some(&j) = n.and_then(|n| to.get(n)) {
+                f.field = format!("tags/{j}");
+            }
+            f
+        })
+        .collect();
+    (shown, found)
+}
+
 impl Shown {
     /// The session's current card as `findings` (its current findings) allow, for the owner with
-    /// the card's findings and for anyone else without.
+    /// the card's findings and for anyone else without, its tags as [`tags::view`] shows them.
     pub(crate) fn of(
         home: &Home,
         facts: &SessionMeta,
         findings: &Findings,
         for_owner: bool,
+        config: &Config,
     ) -> Option<Shown> {
-        let card = current(home, facts, findings)?;
-        let found = match (&findings.card, for_owner) {
-            (Some(c), true) => c.findings.clone(),
-            _ => Vec::new(),
+        let mut card = current(home, facts, findings)?;
+        let all = findings
+            .card
+            .as_ref()
+            .map_or(&[][..], |c| c.findings.as_slice());
+        let detector = std::cell::OnceCell::new();
+        let finds = |view: &str| {
+            !detector
+                .get_or_init(|| Detector::new(&findings::owner(config)))
+                .detect(view)
+                .is_empty()
         };
+        let (shown, found) = viewed(&card.tags, all, &config.tags, finds);
+        card.tags = shown;
         Some(Shown {
             card,
-            findings: found,
+            findings: if for_owner { found } else { Vec::new() },
         })
     }
 

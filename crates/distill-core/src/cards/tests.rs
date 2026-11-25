@@ -201,10 +201,14 @@ fn an_answer_that_is_not_a_usable_card_is_a_failure_for_that_session_and_is_retr
 
 #[test]
 fn a_reply_is_parsed_strictly() {
-    let good = r#"{"title":"T","summary":"S.","tags":["A"," b ","a"],"outcome":"partly_done"}"#;
+    let good = r#"{"title":"T","summary":"S.","tags":["A"," b ","a","Rust Lang","rust_lang"],"outcome":"partly_done"}"#;
     let r = parse_reply(good).unwrap();
     assert_eq!((r.title.as_str(), r.outcome), ("T", Outcome::PartlyDone));
-    assert_eq!(r.tags, ["a", "b"]);
+    assert_eq!(
+        r.tags,
+        ["a", "b", "rust lang", "rust_lang"],
+        "stored as written, lowercase"
+    );
     assert_eq!(parse_reply(&format!("```json\n{good}\n```")).unwrap(), r);
     for bad in [
         "",
@@ -834,6 +838,55 @@ fn search_and_list_filter_by_tag_and_outcome() {
 }
 
 #[test]
+fn the_owners_aliases_merge_tags_where_they_are_shown_and_filtered() {
+    let (_d, home, mut config) = carded_home();
+    let rt = FakeRuntime::not_installed().runtime();
+    let rows = |tag: &str| match crate::read::list(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        &crate::read::Filter {
+            tag: Some(tag.into()),
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .unwrap()
+    {
+        crate::read::Listed::Rows(r) => r.rows,
+        other => panic!("{other:?}"),
+    };
+    let ids = |rows: Vec<crate::read::Row>| -> Vec<String> {
+        rows.into_iter().map(|r| r.facts.session_id).collect()
+    };
+    assert_eq!(ids(rows("rust")), ["a"]);
+
+    // Aliases change no card: "refactor" and "deploy" are now shown and filtered as "rust".
+    config.tags.aliases = [
+        ("Refactor".into(), "rust".into()),
+        ("deploy".into(), "Rust".into()),
+    ]
+    .into();
+    config.save(&home.config_path()).unwrap();
+    assert_eq!(ids(rows("rust")), ["b", "a"]);
+    assert_eq!(
+        ids(rows("REFACTOR")),
+        ["b", "a"],
+        "the query goes through them too"
+    );
+    let a = rows("rust")
+        .into_iter()
+        .find(|r| r.facts.session_id == "a")
+        .unwrap();
+    assert_eq!(a.card.unwrap().card.tags, ["rust"], "each tag once");
+    assert_eq!(
+        load(&home, &facts(&home, "a")).unwrap().tags,
+        ["refactor", "rust"],
+        "the card keeps what its model wrote"
+    );
+}
+
+#[test]
 fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
     let (_d, home, config) = carded_home();
     let none = crate::read::Filter::default();
@@ -875,4 +928,43 @@ fn a_long_session_is_cut_in_the_middle_keeping_its_start_and_its_closing_notice(
     assert!(session.contains("start here"));
     assert!(session.contains(" left out …]"));
     assert!(session.trim_end().ends_with(crate::read::NOTICE_END));
+}
+
+#[test]
+fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
+    use crate::findings::CardFinding;
+    let finding = |field: &str| CardFinding {
+        field: field.into(),
+        start: 0,
+        end: 5,
+        kind: crate::detect::Kind::PersonName,
+        fingerprint: serde_json::from_str("\"0123456789abcdef\"").unwrap(),
+    };
+    let config = crate::tags::TagsConfig {
+        aliases: [("js".into(), "javascript".into())].into(),
+    };
+    let tags: Vec<String> = ["js", "javascript", "Alice Smith", "Rust Lang"]
+        .map(String::from)
+        .into();
+    let (shown, found) = viewed(
+        &tags,
+        &[finding("tags/2"), finding("title")],
+        &config,
+        |_| false,
+    );
+    assert_eq!(shown, ["javascript", "Alice Smith", "rust-lang"]);
+    assert_eq!(
+        found.iter().map(|f| f.field.as_str()).collect::<Vec<_>>(),
+        ["tags/1", "title"]
+    );
+
+    // A view the detector finds something in is not shown: the stored tag is.
+    let (shown, _) = viewed(&tags, &[], &config, |v| v == "rust-lang");
+    assert_eq!(shown, ["javascript", "alice-smith", "Rust Lang"]);
+    // Nor one whose alias destination, as the owner wrote it, holds one.
+    let config = crate::tags::TagsConfig {
+        aliases: [("js".into(), "Bearer xyz".into())].into(),
+    };
+    let (shown, _) = viewed(&tags, &[], &config, |v| v == "Bearer xyz");
+    assert_eq!(shown[0], "js");
 }

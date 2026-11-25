@@ -32,6 +32,7 @@ pub mod schedule;
 pub mod setup;
 pub mod status;
 pub mod sweep;
+pub mod tags;
 pub mod tick;
 pub mod trust;
 pub mod util;
