@@ -30,6 +30,12 @@
               input: 
           filter-outcome-trigger: Outcome
             text: Any outcome
+          top-tag-0: #deploy · 41
+            label: #deploy · 41
+          top-tag-1: #staging · 17
+            label: #staging · 17
+          top-tag-2: #notes · 3
+            label: #notes · 3
         summary: 3 sessions, newest first
               title: Deploy the staging app to  ‹tailnet host› 
               outcome: Done

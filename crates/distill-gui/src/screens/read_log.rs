@@ -200,7 +200,8 @@ fn sort_of(r: &ReadResult) -> &'static str {
         ReadResult::Served { .. }
         | ReadResult::Listed { .. }
         | ReadResult::Indexed { .. }
-        | ReadResult::Findings { .. } => "Read",
+        | ReadResult::Findings { .. }
+        | ReadResult::Tags { .. } => "Read",
         ReadResult::Refused { .. } => "Refused",
         ReadResult::Failed { .. } => "Failed",
         ReadResult::RevealRequested { .. }
@@ -266,6 +267,7 @@ fn lines(s: &State, p: &Paint) -> El {
             match e.result {
                 ReadResult::Listed { .. } => "a list of sessions",
                 ReadResult::Findings { .. } => "findings",
+                ReadResult::Tags { .. } => "the tags in use",
                 ReadResult::Indexed { .. } => "the index",
                 _ => "no session",
             }

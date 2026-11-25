@@ -21,7 +21,11 @@
         session-title: Deploy the staging app to  ‹tailnet host› 
         session-facts: Claude Code · /work/app · claude-opus-5-5 · 40 min ago · 6 events
         session-summary: Rotated the staging deploy token, redeployed, and mailed  ‹email›  the release notes.
-        session-tags: Outcome: Done  #deploy  #staging
+        text: Outcome: Done
+          session-tag-0: #deploy
+            label: #deploy
+          session-tag-1: #staging
+            label: #staging
         findings-note: 1 shown. 6 findings covered (2 secrets). Click one to show it; closing the session covers it again.
             event-head: Event 0, you
             text: You

@@ -16,7 +16,9 @@ use distill_core::Harness;
 use distill_core::cards::{Outcome, Shown};
 use distill_core::findings::Finding;
 use distill_core::model::SessionMeta;
-use distill_core::read::{self, Filter, Listed, Opening, Page, Passage, Range, Read, Searched};
+use distill_core::read::{
+    self, Filter, Listed, Opening, Page, Passage, Range, Read, Searched, TagCount, Tagged,
+};
 use distill_core::trust::Reader;
 use rune::{El, TextEdit};
 
@@ -46,6 +48,14 @@ pub struct SessionsState {
     pub version: u64,
     /// The session being read, if one is open.
     pub open: Option<Open>,
+    /// The tags in use on the sessions the other filters match, most used first (#157).
+    pub tags: Vec<TagCount>,
+    /// The filter `tags` was last asked for, without its tag.
+    pub tags_for: Option<Filter>,
+    /// Bumped with each ask for `tags`; only the answer to the latest lands.
+    pub tags_asked: u64,
+    /// Whether that answer is still to come.
+    pub tags_loading: bool,
 }
 
 /// The filters as the owner writes them; turned into a [`Filter`] when a search runs.
@@ -189,6 +199,10 @@ fn ask_page(s: &mut State, offset: usize) {
     if st.loading {
         return;
     }
+    if offset == 0 {
+        ask_tags(s, &filter);
+    }
+    let st = &mut s.sessions;
     st.loading = true;
     let query = Some(st.query.text.trim().to_string()).filter(|q| !q.is_empty());
     let page = Page {
@@ -218,6 +232,45 @@ fn ask_page(s: &mut State, offset: usize) {
             }
         })
     }));
+}
+
+/// The tags in use on the sessions `filter` matches whatever its tag, asked again with every
+/// first page so a chip never outlives a finding. A refusal or failure leaves no chips; the list
+/// says what went wrong.
+fn ask_tags(s: &mut State, filter: &Filter) {
+    let all = Filter {
+        tag: None,
+        ..filter.clone()
+    };
+    s.sessions.tags_for = Some(all.clone());
+    s.sessions.tags_loading = true;
+    s.sessions.tags_asked += 1;
+    let asked = s.sessions.tags_asked;
+    s.ask(Job::new("tags", move |core| {
+        let r = read::tags(&core.home, &core.runtime, &Reader::Owner, &all);
+        Box::new(move |s: &mut State| {
+            if s.sessions.tags_asked == asked {
+                s.sessions.tags_loading = false;
+                s.sessions.tags = match r {
+                    Ok(Tagged::Counts(c)) => c,
+                    _ => Vec::new(),
+                };
+            }
+        })
+    }));
+}
+
+/// Filter by `tag`, or stop filtering by it when it is the tag filtered by: back on the list,
+/// from the first page.
+pub fn pick_tag(s: &mut State, tag: &str) {
+    let f = &mut s.sessions.filters.tag;
+    if f.text.trim() == tag {
+        *f = TextEdit::default();
+    } else {
+        f.replace_text(tag);
+    }
+    s.sessions.open = None;
+    search(s);
 }
 
 /// A list or search as the owner. The inner error is a refusal.
@@ -316,6 +369,11 @@ pub fn open_row(s: &mut State, i: usize) {
         revealed: BTreeSet::new(),
         from: None,
     });
+    // Its tags are pressable only as the tags in use list them now, so one that became a
+    // finding since the list was read can't be put in the Tag field.
+    if let Some(f) = s.sessions.tags_for.clone() {
+        ask_tags(s, &f);
+    }
     s.ask(Job::new("read session", move |core| {
         let r = read::read(
             &core.home,

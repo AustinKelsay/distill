@@ -76,6 +76,7 @@ fn it_offers_list_read_and_search_tools_whose_descriptions_say_session_text_is_d
         names,
         [
             "list_sessions",
+            "list_tags",
             "read_session",
             "search_sessions",
             "list_findings",
@@ -340,7 +341,7 @@ fn with_no_provider_or_an_untrusted_one_every_tool_returns_the_refusal_and_nothi
         let tmp = tempfile::tempdir().unwrap();
         let s = server(tmp.path(), reader.clone());
         let calls = every_tool(&s);
-        assert_eq!(calls.len(), 6);
+        assert_eq!(calls.len(), 7);
         for (tool, args) in calls {
             let (err, t) = call(&s, &tool, args);
             assert!(err, "{reader:?} {tool}: {t}");
@@ -516,6 +517,15 @@ fn sessions_list_and_search_with_their_cards_filtered_by_tag_and_outcome() {
         json!({"query": "callers", "outcome": "done"}),
     );
     assert!(t.contains("claude-code/s1"), "{t}");
+    let (err, t) = call(&s, "list_tags", json!({}));
+    assert!(!err, "{t}");
+    assert!(
+        t.starts_with("1 tags on 1 sessions with a current card, most used first:\n=== Archived session from DISTILL"),
+        "{t}"
+    );
+    assert!(t.contains("\nrefactor (1)\n"), "{t}");
+    let (_, t) = call(&s, "list_tags", json!({"outcome": "failed"}));
+    assert!(t.starts_with("No tags on the 0 matching sessions"), "{t}");
     let (err, t) = call(&s, "list_sessions", json!({"outcome": "great"}));
     assert!(
         err && t.contains("done, partly_done, failed, unknown"),

@@ -76,6 +76,7 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the backup key from `--key-file` or a pipe. The next tick rebuilds the rest. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
+| `distill tags` | The tags on the sessions' cards, most used first, with the usual filters, for a model at a named provider. |
 | `distill read <session>` | A session's events for a model at a named provider, with a placeholder for each secret. |
 | `distill findings` | The rotation list: each secret by fingerprint, where it appears and when; never a value. |
 | `distill reveal` | A model asks for specific secrets; the owner approves in the window; the model collects them once. |
@@ -84,11 +85,11 @@ vectors = false             # also carry vectors, which cost embedding time to r
 | `distill reads`, `distill runs` | The read log (every read, refusal and reveal) and the run log. |
 | `distill init`, `harnesses`, `sweep`, `parse`, `scan`, `verify`, `schedule`, `gui` | Setup, and each step on its own. |
 
-`distill <command> --help` lists every flag. `search` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave DISTILL only through the read path: `read`, `search`, `reveal collect`, the window, the MCP tools, and the tick's model steps.
+`distill <command> --help` lists every flag. `search`, `tags` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave DISTILL only through the read path: `read`, `search`, `tags`, `reveal collect`, the window, the MCP tools, and the tick's model steps.
 
 ## The MCP server
 
-`distill-mcp` speaks MCP over stdio, opens no network port, and reads the home from `DISTILL_HOME` or `~/distill`. Its tools are `search_sessions`, `list_sessions`, `read_session`, `list_findings`, `request_reveal` and `collect_reveal`.
+`distill-mcp` speaks MCP over stdio, opens no network port, and reads the home from `DISTILL_HOME` or `~/distill`. Its tools are `search_sessions`, `list_sessions`, `list_tags`, `read_session`, `list_findings`, `request_reveal` and `collect_reveal`.
 
 Every tool answers as a model at the provider named when the harness registers the server (`--provider` or `DISTILL_PROVIDER`, and `--model` or `DISTILL_MODEL` when known). A trusted provider gets text with a placeholder for each secret, between a notice that it is archived data and not instructions; only `collect_reveal` returns values, and only ones the owner approved. Any other provider gets a refusal that says how the owner can trust it. Every read, refusal and reveal is in the read log.
 

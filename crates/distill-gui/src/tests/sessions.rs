@@ -194,7 +194,7 @@ fn a_search_shows_the_matching_passage_with_its_findings_covered() {
     let mut rt = window(&core);
     rt.update(|s, _| s.sessions.query.replace_text("failed"));
     press(&mut rt, "search-button");
-    assert_eq!(run_jobs(&mut rt, &core), ["sessions"]);
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "sessions"]);
     let all = everything(&rt);
     assert!(all.contains("1 session matches"), "{all}");
     assert!(all.contains("1 failed"), "{all}");
@@ -232,6 +232,127 @@ fn filters_narrow_the_list_and_a_bad_date_says_so() {
 }
 
 #[test]
+fn the_tags_in_use_are_chips_and_a_press_on_one_or_on_a_sessions_tag_filters_by_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = archive(dir.path());
+    let mut rt = window(&core);
+    let all = everything(&rt);
+    assert!(all.contains("#deploy · 1"), "{all}");
+    assert!(all.contains("#notes · 1"), "{all}");
+    assert!(
+        owner_lines(&core.home).iter().any(|r| matches!(
+            r,
+            ReadResult::Tags {
+                tags: 2,
+                sessions: 2
+            }
+        )),
+        "{:?}",
+        owner_lines(&core.home)
+    );
+
+    let notes = rt
+        .state
+        .sessions
+        .tags
+        .iter()
+        .position(|t| t.tag == "notes")
+        .unwrap();
+    press(&mut rt, &format!("top-tag-{notes}"));
+    assert_eq!(
+        run_jobs(&mut rt, &core),
+        ["tags", "sessions"],
+        "the chips are asked for again"
+    );
+    assert_eq!(rt.state.sessions.filters.tag.text, "notes");
+    let all = everything(&rt);
+    assert!(all.contains("Tidy the notes"), "{all}");
+    assert!(!all.contains("Deploy and mail"), "{all}");
+    press(&mut rt, &format!("top-tag-{notes}"));
+    run_jobs(&mut rt, &core);
+    assert_eq!(
+        rt.state.sessions.filters.tag.text, "",
+        "a second press stops"
+    );
+
+    rt.update(|s, _| sessions::open_row(s, 0));
+    run_jobs(&mut rt, &core);
+    let tag = rt
+        .state
+        .sessions
+        .open
+        .as_ref()
+        .unwrap()
+        .row
+        .card
+        .as_ref()
+        .unwrap()
+        .card
+        .tags[0]
+        .clone();
+    press(&mut rt, "session-tag-0");
+    run_jobs(&mut rt, &core);
+    assert!(rt.state.sessions.open.is_none(), "back on the list");
+    assert_eq!(rt.state.sessions.filters.tag.text, tag);
+    assert_eq!(rt.state.sessions.results.as_ref().unwrap().total, 1);
+
+    // While a search runs a chip can't be pressed, so the results never land under a filter
+    // they didn't apply.
+    press(&mut rt, "clear");
+    assert!(rt.state.sessions.loading);
+    press(&mut rt, &format!("top-tag-{notes}"));
+    assert_eq!(rt.state.sessions.filters.tag.text, "");
+    run_jobs(&mut rt, &core);
+
+    // Back before the tags asked on opening land: the chips wait for them.
+    rt.update(|s, _| sessions::open_row(s, 0));
+    settle(&mut rt);
+    press(&mut rt, "back");
+    let stale = rt
+        .state
+        .sessions
+        .tags
+        .iter()
+        .position(|t| t.tag == "notes")
+        .unwrap();
+    press(&mut rt, &format!("top-tag-{stale}"));
+    assert_eq!(rt.state.sessions.filters.tag.text, "");
+    run_jobs(&mut rt, &core);
+
+    // A tag that becomes a personal term after the list was read can't be pressed in the session.
+    let mut config = core.home.load_config().unwrap();
+    config.privacy.personal_terms.push("deploy".into());
+    config.save(&core.home.config_path()).unwrap();
+    let deploy = rt
+        .state
+        .sessions
+        .results
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .position(|r| {
+            r.card
+                .as_ref()
+                .is_some_and(|c| c.card.tags.iter().any(|t| t == "deploy"))
+        });
+    rt.update(|s, _| sessions::open_row(s, deploy.unwrap()));
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "read session"]);
+    assert!(rt.find("session-tag-0").is_none(), "{:?}", texts(&rt));
+    press(&mut rt, "back");
+    run_jobs(&mut rt, &core);
+
+    // A tag that becomes a personal term leaves the chips at the next search.
+    let mut config = core.home.load_config().unwrap();
+    config.privacy.personal_terms.push("notes".into());
+    config.save(&core.home.config_path()).unwrap();
+    press(&mut rt, "search-button");
+    run_jobs(&mut rt, &core);
+    assert!(rt.state.sessions.tags.iter().all(|t| t.tag != "notes"));
+    assert!(!everything(&rt).contains("#notes · 1"));
+}
+
+#[test]
 fn every_filter_the_spec_names_is_on_the_screen() {
     let rt = runtime_sized(fixture::sessions_listed(), (1080.0, 1400.0));
     for key in [
@@ -264,7 +385,7 @@ fn opening_a_result_shows_its_events_in_order_told_apart_and_is_in_the_read_log(
         .position(|r| r.facts.session_id == "aaaa")
         .unwrap();
     press(&mut rt, &format!("result-{row}"));
-    assert_eq!(run_jobs(&mut rt, &core), ["read session"]);
+    assert_eq!(run_jobs(&mut rt, &core), ["tags", "read session"]);
     let heads: Vec<String> = rt
         .elements()
         .into_iter()

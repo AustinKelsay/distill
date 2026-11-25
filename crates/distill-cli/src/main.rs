@@ -1,6 +1,6 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
-//! logic of its own; the work is in distill-core. Only `read`, `search` and `reveal collect`
-//! print session text or secret values, and only through the read path.
+//! logic of its own; the work is in distill-core. Only `read`, `search`, `tags` and
+//! `reveal collect` print session text or secret values, and only through the read path.
 
 mod commands;
 mod output;
@@ -65,6 +65,9 @@ enum Cmd {
     Reads(reads::Args),
     /// Search sessions by words and by meaning as a model at a named provider
     Search(search::Args),
+    /// The tags on the sessions' cards, with how many sessions carry each, as a model at a named
+    /// provider
+    Tags(tags::Args),
     /// Ask for a secret's value as a model, and collect it once the owner approves in the GUI
     Reveal(reveal::Args),
     /// The timer that runs `distill tick`
@@ -109,6 +112,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Search(a) => search::run(&ctx, a),
+        Cmd::Tags(a) => tags::run(&ctx, a),
         Cmd::Reveal(a) => reveal::run(&ctx, a),
         Cmd::Schedule(a) => schedule::run(&ctx, a),
         Cmd::Exposure(a) => exposure::run(&ctx, a),

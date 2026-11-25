@@ -968,3 +968,81 @@ fn a_tag_with_a_finding_in_it_is_shown_as_written_and_its_finding_follows_it() {
     let (shown, _) = viewed(&tags, &[], &config, |v| v == "Bearer xyz");
     assert_eq!(shown[0], "js");
 }
+
+#[test]
+fn the_tags_in_use_are_counted_through_the_view_and_the_read_is_logged() {
+    use crate::read::{TagCount, Tagged};
+    let (_d, home, mut config) = carded_home();
+    let rt = FakeRuntime::not_installed().runtime();
+    let counts = |filter: &crate::read::Filter| match crate::read::tags(
+        &home,
+        &rt,
+        &crate::trust::Reader::Owner,
+        filter,
+    )
+    .unwrap()
+    {
+        Tagged::Counts(c) => c,
+        other => panic!("{other:?}"),
+    };
+    let t = |tag: &str, sessions| TagCount {
+        tag: tag.into(),
+        sessions,
+    };
+    let all = crate::read::Filter::default();
+    assert_eq!(
+        counts(&all),
+        [t("deploy", 1), t("refactor", 1), t("rust", 1)]
+    );
+
+    // Through the owner's aliases: `a`'s two tags are one, counted once.
+    config.tags.aliases = [
+        ("refactor".into(), "rust".into()),
+        ("deploy".into(), "rust".into()),
+    ]
+    .into();
+    config.save(&home.config_path()).unwrap();
+    assert_eq!(counts(&all), [t("rust", 2)]);
+    let only_a = crate::read::Filter {
+        outcome: Some(Outcome::Done),
+        ..Default::default()
+    };
+    assert_eq!(counts(&only_a), [t("rust", 1)]);
+
+    // A model gets text between the notices; each call is one read log line with the counts.
+    let model = crate::trust::Reader::model(Some("ollama"), Some(MODEL));
+    let model_rt = FakeRuntime::stopped()
+        .with_model(MODEL, Stored::Here)
+        .runtime();
+    let Tagged::Text(text) = crate::read::tags(&home, &model_rt, &model, &all).unwrap() else {
+        panic!("a model gets text")
+    };
+    assert_eq!(
+        text,
+        format!(
+            "1 tags on 2 sessions with a current card, most used first:\n{NOTICE_START}\nrust (2)\n{}\n",
+            crate::read::NOTICE_END
+        )
+    );
+    let log = crate::readlog::list(&home, None, 1).unwrap();
+    let last = &log[0];
+    assert_eq!(
+        last.result,
+        crate::readlog::ReadResult::Tags {
+            tags: 1,
+            sessions: 2
+        }
+    );
+    assert_eq!(last.result.text(), "listed 1 tag on 2 sessions");
+
+    // A reader the owner has not trusted gets a refusal, logged as one.
+    let untrusted = crate::trust::Reader::model(Some("unheard-of"), Some("m"));
+    assert!(matches!(
+        crate::read::tags(&home, &model_rt, &untrusted, &all).unwrap(),
+        Tagged::Refused(_)
+    ));
+    assert!(matches!(
+        crate::readlog::list(&home, None, 1).unwrap()[0].result,
+        crate::readlog::ReadResult::Refused { .. }
+    ));
+}

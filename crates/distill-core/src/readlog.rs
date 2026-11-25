@@ -58,6 +58,8 @@ pub enum ReadResult {
         #[serde(default, skip_serializing_if = "is_zero")]
         sessions: u64,
     },
+    /// The tags in use: this many tags, counted on this many sessions' cards.
+    Tags { tags: u64, sessions: u64 },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.
@@ -176,6 +178,11 @@ impl ReadResult {
                 }
                 s
             }
+            ReadResult::Tags { tags, sessions } => format!(
+                "listed {} on {}",
+                count(*tags, "tag"),
+                count(*sessions, "session")
+            ),
             ReadResult::Refused { reason } => format!("refused: {reason}"),
             ReadResult::Failed { error } => format!("failed: {error}"),
         }
