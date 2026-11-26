@@ -1,7 +1,8 @@
 #!/bin/sh
 # distill-backup-rclone: a DISTILL backup adapter (docs/backup-adapters.md) that hands objects to
 # rclone, so any of its backends works: an S3-compatible store (AWS, Backblaze B2, MinIO and
-# other self-hosted ones), SFTP, WebDAV, and the rest.
+# other self-hosted ones), WebDAV, and the rest. For a machine reached over SSH, use
+# distill-backup-ssh: rclone's SFTP backend can't make the other machine write its disk out.
 #
 #   [[backup]]
 #   name = "offsite"
