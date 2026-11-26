@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::BackupKey;
-use super::run::{RunRecord, Scratch, last_run, read_record};
+use super::run::{FileRef, RunRecord, Scratch, last_run, read_record};
 use super::store::Store;
 use crate::archive;
 use crate::config::BackupTarget;
@@ -140,14 +140,39 @@ pub fn restore(
     {
         let scratch = Scratch::new(&stage)?;
         let manifest = manifest(store, key, &scratch, &rec)?;
-        let missing = archive::restore(&stage, &manifest, |sha, to| {
+        let blob = |sha: &str, to: &mut dyn Write| -> Result<bool> {
             let name = key.name(&format!("blob/{sha}"));
             if !present.contains(&name) {
                 return Ok(false);
             }
             fetch(store, key, &scratch, &name, to)?;
             Ok(true)
-        })?;
+        };
+        let mut missing = archive::restore(&stage, &manifest, &blob)?;
+        let mut expected = archive::expected_blobs(&archive::parse_manifest(&manifest)).len();
+        // A spoke's raw archive is rebuilt from its manifest as this home's is (ADR 0010).
+        let mut spokes = Vec::new();
+        for (rel, f) in &rec.files {
+            if !restorable(rel) {
+                bail!(
+                    "run {}'s record names {rel:?}, which is not restorable",
+                    rec.number
+                );
+            }
+            let bytes = file_bytes(store, key, &scratch, rel, f, rec.number)?;
+            report.files += 1;
+            if let Some(machine) = Home::spoke_manifest(rel) {
+                spokes.push((machine, bytes));
+                continue;
+            }
+            let path = stage.root.join(rel);
+            create_dir_private(path.parent().expect("a file has a folder"))?;
+            write_atomic(&path, &bytes)?;
+        }
+        for (machine, lines) in &spokes {
+            missing.extend(archive::restore_of(&stage, Some(machine), lines, &blob)?);
+            expected += archive::expected_blobs(&archive::parse_manifest(lines)).len();
+        }
         report.blobs_missing = missing.len() as u64;
         if !missing.is_empty() && !allow_missing {
             bail!(
@@ -157,37 +182,7 @@ pub fn restore(
                 count(report.blobs_missing, "blob")
             );
         }
-        report.blobs = archive::expected_blobs(&archive::parse_manifest(&manifest)).len() as u64
-            - report.blobs_missing;
-        for (rel, f) in &rec.files {
-            if !restorable(rel) {
-                bail!(
-                    "run {}'s record names {rel:?}, which is not restorable",
-                    rec.number
-                );
-            }
-            let mut bytes = Vec::new();
-            if f.object.is_empty() {
-                // A log, from its parts in order.
-                for part in &f.parts {
-                    if part.from != bytes.len() as u64 {
-                        bail!("run {}'s record has a gap in {rel}", rec.number);
-                    }
-                    fetch(store, key, &scratch, &part.object, &mut bytes)
-                        .with_context(|| format!("restore {rel}"))?;
-                }
-            } else {
-                fetch(store, key, &scratch, &f.object, &mut bytes)
-                    .with_context(|| format!("restore {rel}"))?;
-            }
-            if hex::encode(Sha256::digest(&bytes)) != f.sha256 {
-                bail!("the backup's copy of {rel} does not match its record");
-            }
-            let path = stage.root.join(rel);
-            create_dir_private(path.parent().expect("a file has a folder"))?;
-            write_atomic(&path, &bytes)?;
-            report.files += 1;
-        }
+        report.blobs = expected as u64 - report.blobs_missing;
     }
     key.install(&stage)?;
     // Every folder's entries are durable before the home appears, so a crash after a restore
@@ -324,6 +319,24 @@ pub fn verify(
     for (sha, size) in archive::expected_blobs(&archive::parse_manifest(&manifest)) {
         check(&key.name(&format!("blob/{sha}")), Some((&sha, size)))?;
     }
+    // Each spoke's manifest is opened too, for the blobs its archive should hold (ADR 0010).
+    // One the target can't hand back whole is counted below, with the other files.
+    for (rel, f) in &rec.files {
+        if Home::spoke_manifest(rel).is_none()
+            || f.parts.iter().any(|p| !present.contains(&p.object))
+        {
+            continue;
+        }
+        match file_bytes(store, key, &scratch, rel, f, rec.number) {
+            Ok(lines) => {
+                for (sha, size) in archive::expected_blobs(&archive::parse_manifest(&lines)) {
+                    check(&key.name(&format!("blob/{sha}")), Some((&sha, size)))?;
+                }
+            }
+            Err(e) if unreadable(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
     for f in rec.files.values() {
         if f.object.is_empty() {
             for part in &f.parts {
@@ -378,6 +391,34 @@ fn manifest(
 }
 
 /// Fetch the object `name` and decrypt it into `to`.
+/// A file of a run record: one object, or a log's parts in order, checked against the record.
+fn file_bytes(
+    store: &dyn Store,
+    key: &BackupKey,
+    scratch: &Scratch,
+    rel: &str,
+    f: &FileRef,
+    run: u64,
+) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if f.object.is_empty() {
+        for part in &f.parts {
+            if part.from != bytes.len() as u64 {
+                bail!("run {run}'s record has a gap in {rel}");
+            }
+            fetch(store, key, scratch, &part.object, &mut bytes)
+                .with_context(|| format!("restore {rel}"))?;
+        }
+    } else {
+        fetch(store, key, scratch, &f.object, &mut bytes)
+            .with_context(|| format!("restore {rel}"))?;
+    }
+    if hex::encode(Sha256::digest(&bytes)) != f.sha256 {
+        bail!("the backup's copy of {rel} does not match its record");
+    }
+    Ok(bytes)
+}
+
 fn fetch(
     store: &dyn Store,
     key: &BackupKey,
@@ -653,13 +694,26 @@ mod tests {
             "a spoke's manifest goes as what each run appended: {manifest:?}"
         );
 
+        // A spoke's blob lost here after a backup took it: the next run doesn't count the copy
+        // it lacks as the archive's, and a full check and a restore still find the good one.
+        let whole = files(&home.raw_dir_of(Some("nas")));
+        let blob = whole.keys().find(|rel| *rel != "manifest.jsonl").unwrap();
+        fs::remove_file(home.raw_dir_of(Some("nas")).join(blob)).unwrap();
+        assert!(run(&home, &target).unwrap().ok);
+        let check = verify(&home, "drive", &*store, &key, true).unwrap();
+        assert_eq!((check.missing, check.corrupt), (0, 0), "{check:?}");
         let restored = Home::new(dir.path().join("restored"));
-        restore(&restored, &*store, &key, false).unwrap();
-        assert_eq!(
-            files(&restored.raw_dir_of(Some("nas"))),
-            files(&home.raw_dir_of(Some("nas")))
-        );
-        crate::normalize::normalize(&home, false).unwrap();
+        let r = restore(&restored, &*store, &key, false).unwrap();
+        assert_eq!(r.blobs_missing, 0, "{r:?}");
+        assert_eq!(files(&restored.raw_dir_of(Some("nas"))), whole);
+        // And a spoke's blob the target lost fails a restore, as one of this home's does.
+        let name = key.name(&format!("blob/{}", blob.rsplit('/').next().unwrap()));
+        let objects = target.path.as_ref().unwrap().join("distill-backup");
+        fs::remove_file(objects.join(&name[..2]).join(&name)).unwrap();
+        let check = verify(&home, "drive", &*store, &key, false).unwrap();
+        assert_eq!(check.missing, 1, "{check:?}");
+        let err = restore(&Home::new(dir.path().join("again")), &*store, &key, false).unwrap_err();
+        assert!(err.to_string().contains("lacks 1 blob"), "{err}");
         crate::normalize::normalize(&restored, false).unwrap();
         let keys = |h: &Home| -> Vec<String> {
             let mut k: Vec<String> = crate::normalize::read_session_list(h)
@@ -670,8 +724,11 @@ mod tests {
             k.sort();
             k
         };
-        assert_eq!(keys(&restored), keys(&home));
-        assert!(keys(&home).contains(&"nas:claude-code/s1".to_string()));
+        // The restored home has the session this home lost the capture of.
+        assert_eq!(
+            keys(&restored),
+            ["claude-code/s1", "claude-code/s2", "nas:claude-code/s1"]
+        );
     }
 
     #[test]

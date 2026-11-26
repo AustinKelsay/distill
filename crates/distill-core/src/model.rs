@@ -297,8 +297,10 @@ impl Roots {
         // database's record wins over a file's.
         // Only a session of the same machine: ids are each machine's own.
         let resolve = |named: &str, harness: Harness, machine: &Option<String>| -> Option<String> {
-            if named.contains('/') {
-                return keys.contains(named).then(|| named.to_string());
+            if let Some((front, _)) = named.split_once('/') {
+                let on = front.rsplit_once(':').map(|(m, _)| m);
+                return (on == machine.as_deref() && keys.contains(named))
+                    .then(|| named.to_string());
             }
             let db = format!("db-{named}");
             let here = |id: &str| -> Option<Vec<&SessionMeta>> {
@@ -634,11 +636,14 @@ mod tests {
             &format!(r#"{},"parent_session":"s-1""#, on("nas")),
         );
         assert_eq!(spoke.key(), "nas:claude-code/s-1");
-        let roots = Roots::of(&[hub.clone(), spoke, agent]);
+        // A hub session naming a spoke's by its key reaches no other machine.
+        let across = session("droid", "d-1", r#","parent_session":"nas:claude-code/s-1""#);
+        let roots = Roots::of(&[hub.clone(), spoke, agent, across]);
         assert_eq!(
             roots.of_session("nas:claude-code/agent-a1"),
             Some("nas:claude-code/s-1")
         );
+        assert_eq!(roots.of_session("droid/d-1"), None);
 
         // A spoke's mirror of a harness only the hub has sessions of is the only copy.
         let thread = session(

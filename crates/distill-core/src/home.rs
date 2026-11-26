@@ -295,6 +295,23 @@ impl Home {
         })
     }
 
+    /// The machine whose raw archive's manifest is at `rel` (`machines/<machine>/raw/
+    /// manifest.jsonl`), a path as [`Home::keep`] takes it.
+    pub fn spoke_manifest(rel: &str) -> Option<&str> {
+        match rel.split('/').collect::<Vec<_>>().as_slice() {
+            ["machines", m, "raw", "manifest.jsonl"] => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Whether `rel` is in a spoke's raw archive (`machines/<machine>/raw/`).
+    pub fn in_spoke_raw(rel: &str) -> bool {
+        matches!(
+            rel.split('/').collect::<Vec<_>>().as_slice(),
+            ["machines", _, "raw", _, ..]
+        )
+    }
+
     /// The sessions whose last card attempt failed, so they are retried after the rest.
     pub fn card_failures_path(&self) -> PathBuf {
         self.state_dir().join("cards.json")
