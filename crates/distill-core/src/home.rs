@@ -388,8 +388,7 @@ impl Home {
         if !self.has_config() {
             return Ok(None);
         }
-        Ok(self
-            .load_config()
+        Ok(Config::load(&self.config_path())
             .context("can't tell whether this home is a spoke")?
             .spoke)
     }
