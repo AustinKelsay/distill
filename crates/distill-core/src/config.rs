@@ -34,6 +34,21 @@ pub struct Config {
     /// `[spoke]`: this home only captures, for the hub that pulls from it (ADR 0010).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoke: Option<Spoke>,
+    /// `[[machines]]`: the spokes this hub pulls from (ADR 0010, `crate::machines`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machines: Vec<MachineConfig>,
+}
+
+/// One spoke a hub pulls from: a `[[machines]]` table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MachineConfig {
+    /// Its name, as its own `[spoke]` gives it: its sessions are keyed `<name>:<harness>/<id>`.
+    pub name: String,
+    /// Where `ssh` reaches it: a host, `user@host`, or a `Host` in the owner's SSH config.
+    pub host: String,
+    /// The `distill` command there, when `distill` is not on the `PATH` SSH gives it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// A spoke's `[spoke]` table: the name its hub knows it by. A spoke's tick only sweeps, and its
@@ -191,6 +206,7 @@ impl Default for Config {
             backups: Vec::new(),
             tags: Default::default(),
             spoke: None,
+            machines: Vec::new(),
         }
     }
 }
@@ -219,6 +235,19 @@ impl Config {
         if let Some(spoke) = &config.spoke {
             crate::home::machine_name(&spoke.machine)
                 .with_context(|| format!("[spoke] in {}", path.display()))?;
+        }
+        let mut names = std::collections::HashSet::new();
+        for m in &config.machines {
+            let at = || format!("[[machines]] {:?} in {}", m.name, path.display());
+            crate::home::machine_name(&m.name).with_context(at)?;
+            if !names.insert(&m.name) {
+                return Err(anyhow::anyhow!("two machines are named {:?}", m.name))
+                    .with_context(at);
+            }
+            // `ssh` would take a host that starts with `-` as an option.
+            if m.host.trim().is_empty() || m.host.starts_with('-') {
+                return Err(anyhow::anyhow!("{:?} is not a host", m.host)).with_context(at);
+            }
         }
         Ok(config)
     }

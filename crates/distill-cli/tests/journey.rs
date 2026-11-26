@@ -257,25 +257,25 @@ sweep_every_minutes = 60
     assert_eq!(
         names,
         [
-            "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
+            "sweep", "pull", "parse", "scan", "index", "backup", "cards", "vectors", "details"
         ],
         "{t}"
     );
-    assert_eq!(t["steps"][3]["report"]["indexed"], 3, "{t}");
+    assert_eq!(t["steps"][4]["report"]["indexed"], 3, "{t}");
     assert_eq!(
-        t["steps"][4]["report"]["skipped"], "no [[backup]] target is set up",
+        t["steps"][5]["report"]["skipped"], "no [[backup]] target is set up",
         "{t}"
     );
     assert_eq!(
-        t["steps"][5]["report"]["skipped"], "no card_model is set",
+        t["steps"][6]["report"]["skipped"], "no card_model is set",
         "{t}"
     );
     assert_eq!(
-        t["steps"][6]["report"]["skipped"], "no embedding_model is set",
+        t["steps"][7]["report"]["skipped"], "no embedding_model is set",
         "{t}"
     );
     assert_eq!(
-        t["steps"][7]["report"]["skipped"], "no detail_model or card_model is set",
+        t["steps"][8]["report"]["skipped"], "no detail_model or card_model is set",
         "{t}"
     );
     let runs = json(&user, &home, &["runs", "--limit", "100"]);

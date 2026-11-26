@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::util::{
-    append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private,
+    append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private, sync_dir,
+    write_atomic_with,
 };
 
 /// A blob file read as a stream that hashes what passes through it.
@@ -272,13 +273,7 @@ impl Archive {
 
     /// Remove a blob that only a superseded append referred to.
     fn drop_if_unreferenced(&self, sha: &str) -> Result<()> {
-        // Still the latest for some origin, or kept as the older side of a rewrite.
-        let in_use = self.latest.values().any(|r| r.capture_hash == sha)
-            || self
-                .records
-                .iter()
-                .any(|r| r.kind == CaptureKind::Rewrite && r.previous.as_deref() == Some(sha));
-        if !in_use {
+        if !in_use(&self.latest, &self.records, sha) {
             let path = self.blob_path(sha);
             if path.exists() {
                 fs::remove_file(path)?;
@@ -308,6 +303,15 @@ impl Archive {
         }
         Ok(report)
     }
+}
+
+/// Whether an archive with these records still needs blob `sha`: the latest capture of some
+/// origin, or the older side of a rewrite.
+fn in_use(latest: &BTreeMap<String, CaptureRecord>, records: &[CaptureRecord], sha: &str) -> bool {
+    latest.values().any(|r| r.capture_hash == sha)
+        || records
+            .iter()
+            .any(|r| r.kind == CaptureKind::Rewrite && r.previous.as_deref() == Some(sha))
 }
 
 /// The blobs an archive with these records should hold, with their sizes: the latest capture
@@ -459,6 +463,402 @@ pub fn verify_all(home: &Home) -> Result<VerifyReport> {
     Ok(all)
 }
 
+/// The first line of an export (ADR 0010): what follows is one spoke's new captures.
+const EXPORT_START: &str = "distill-export 1";
+
+/// The line after [`EXPORT_START`]: which machine this is, and where its new captures start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ExportHeader {
+    machine: String,
+    /// The byte of its manifest the export starts at: the length of the hub's copy.
+    since: u64,
+    /// The SHA-256 of its manifest's first `since` bytes, which the hub's copy must match.
+    prefix: String,
+    /// The length of its manifest's whole lines when the export started.
+    end: u64,
+}
+
+/// What an export sent, or a pull took.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Transfer {
+    /// Where in the spoke's manifest it started and ended, in bytes.
+    pub since: u64,
+    pub to: u64,
+    /// Manifest lines, and the blobs that came with them.
+    pub lines: u64,
+    pub blobs: u64,
+    /// Blobs the hub already held, which it checked and skipped.
+    #[serde(default)]
+    pub present: u64,
+    /// Blob bytes.
+    pub bytes: u64,
+    /// The pull stopped at the tick's end, between two captures; the next one goes on from there.
+    #[serde(default)]
+    pub stopped: bool,
+}
+
+/// Export this home's own captures from byte `since` of its manifest to `out`, as `machine`
+/// (ADR 0010): each manifest line after it, in order and as it is, with the blob it names just
+/// before it while this archive still holds that blob. A blob a later append superseded is gone,
+/// so only its line goes. `t` counts what was sent as it goes, so a caller has it also when the
+/// export stops short.
+pub fn export(
+    home: &Home,
+    machine: &str,
+    since: u64,
+    out: &mut dyn Write,
+    t: &mut Transfer,
+) -> Result<()> {
+    *t = Transfer {
+        since,
+        to: since,
+        ..Default::default()
+    };
+    let manifest = match fs::read(home.manifest_path()) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).context("read the manifest"),
+    };
+    let end = manifest
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1);
+    let at = usize::try_from(since).unwrap_or(usize::MAX);
+    if at > end || (at > 0 && manifest[at - 1] != b'\n') {
+        bail!(
+            "no capture of {machine} ends at byte {since}: the hub's copy is not of this machine's \
+             archive"
+        );
+    }
+    let header = ExportHeader {
+        machine: machine.to_string(),
+        since,
+        prefix: hex::encode(Sha256::digest(&manifest[..at])),
+        end: end as u64,
+    };
+    writeln!(out, "{EXPORT_START}")?;
+    writeln!(out, "{}", serde_json::to_string(&header)?)?;
+    let archive = Archive::open(home)?;
+    let held = expected_blobs(archive.records());
+    // What the hub's copy holds as each line goes in, dropping as `take` drops: a blob goes
+    // whenever the copy lacks it, also when an append there dropped it and a later line needs
+    // it again.
+    let mut records = parse_manifest(&manifest[..at]);
+    let mut latest: BTreeMap<String, CaptureRecord> = BTreeMap::new();
+    for r in &records {
+        latest.insert(r.origin.clone(), r.clone());
+    }
+    let mut there: HashSet<String> = expected_blobs(&records).into_keys().collect();
+    for line in manifest[at..end].split_inclusive(|b| *b == b'\n') {
+        let line = &line[..line.len() - 1];
+        let rec = serde_json::from_slice::<CaptureRecord>(line).ok();
+        if let Some(rec) = &rec
+            && held.contains_key(&rec.capture_hash)
+            && there.insert(rec.capture_hash.clone())
+        {
+            let path = archive.blob_path(&rec.capture_hash);
+            match fs::File::open(&path) {
+                Ok(mut f) => {
+                    let len = f.metadata()?.len();
+                    writeln!(out, "blob {} {len}", rec.capture_hash)?;
+                    let n = std::io::copy(&mut (&mut f).take(len), out)?;
+                    if n != len {
+                        bail!("blob {} changed while it was read", rec.capture_hash);
+                    }
+                    t.blobs += 1;
+                    t.bytes += len;
+                }
+                // Missing here too: the hub's copy will miss it as this one does.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("read blob {}", rec.capture_hash)),
+            }
+        }
+        writeln!(out, "line {}", line.len())?;
+        out.write_all(line)?;
+        if let Some(rec) = rec {
+            let previous = latest.insert(rec.origin.clone(), rec.clone());
+            records.push(rec.clone());
+            if rec.kind == CaptureKind::Append
+                && let Some(p) = previous
+                && p.capture_hash != rec.capture_hash
+                && !in_use(&latest, &records, &p.capture_hash)
+            {
+                there.remove(&p.capture_hash);
+            }
+        }
+        t.lines += 1;
+        t.to += line.len() as u64 + 1;
+    }
+    writeln!(out, "end")?;
+    out.flush()?;
+    Ok(())
+}
+
+/// The length of the whole lines of `machine`'s manifest here: where its next pull starts.
+pub fn copy_length(home: &Home, machine: &str) -> Result<u64> {
+    let ours = match fs::read(home.manifest_path_of(Some(machine))) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+    };
+    Ok(whole_lines(&ours) as u64)
+}
+
+/// The length of `bytes` up to the end of its last line.
+fn whole_lines(bytes: &[u8]) -> usize {
+    bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
+}
+
+/// How [`take`] says the stream stopped before its end.
+pub const ENDED_EARLY: &str = "the export ended early";
+
+/// The longest frame [`take`] reads, a header's included, and the longest manifest line.
+const MAX_FRAME: u64 = 4096;
+const MAX_LINE: usize = 1 << 20;
+
+fn is_blob_name(sha: &str) -> bool {
+    sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Take `machine`'s export from `input` into its raw archive here (ADR 0010), which it must
+/// continue: the export starts where this copy ends, and from the same bytes. Each blob is
+/// checked against its name, and one already here is skipped, before the line that names it is
+/// appended, so a pull that stops keeps every capture it took and the next one goes on from there.
+/// `stop` is asked after each line.
+pub fn take(
+    home: &Home,
+    machine: &str,
+    input: &mut dyn std::io::BufRead,
+    stop: &dyn Fn() -> bool,
+) -> Result<Transfer> {
+    let mut t = Transfer::default();
+    take_into(home, machine, input, stop, &mut t).map(|()| t)
+}
+
+/// [`take`], counting into `t` what went in, so a pull that fails partway reports what it kept.
+pub fn take_into(
+    home: &Home,
+    machine: &str,
+    input: &mut dyn std::io::BufRead,
+    stop: &dyn Fn() -> bool,
+    t: &mut Transfer,
+) -> Result<()> {
+    use std::io::BufRead;
+    crate::home::machine_name(machine)?;
+    let mut frame = String::new();
+    let next = |frame: &mut String, input: &mut dyn std::io::BufRead| -> Result<()> {
+        frame.clear();
+        if Read::take(&mut *input, MAX_FRAME).read_line(frame)? == 0 {
+            bail!(ENDED_EARLY);
+        }
+        if frame.pop() != Some('\n') {
+            bail!(ENDED_EARLY);
+        }
+        Ok(())
+    };
+    next(&mut frame, input)?;
+    if frame != EXPORT_START {
+        bail!(
+            "not an export from DISTILL: {:?}",
+            frame.chars().take(80).collect::<String>()
+        );
+    }
+    next(&mut frame, input)?;
+    let header: ExportHeader = serde_json::from_str(&frame).context("read the export's header")?;
+    if header.machine != machine {
+        bail!(
+            "the machine there is \"{}\", not \"{machine}\"",
+            header.machine
+        );
+    }
+    let path = home.manifest_path_of(Some(machine));
+    let ours = match fs::read(&path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+    };
+    let whole = whole_lines(&ours);
+    if header.since != whole as u64 || header.prefix != hex::encode(Sha256::digest(&ours[..whole]))
+    {
+        bail!(
+            "\"{machine}\"'s archive there does not continue its copy here: is another machine \
+             using the name \"{machine}\"?"
+        );
+    }
+    // A line cut short by a write that failed here (a full disk) is dropped: the export sends it
+    // again whole.
+    if whole < ours.len() {
+        let f = fs::OpenOptions::new().write(true).open(&path)?;
+        f.set_len(whole as u64)?;
+        f.sync_all()?;
+    }
+    let mut archive = Archive::open_of(home, Some(machine))?;
+    create_dir_private(&archive.raw)?;
+    let tmp = archive.raw.join(format!(".pulling-{}", std::process::id()));
+    *t = Transfer {
+        since: header.since,
+        to: header.since,
+        ..Default::default()
+    };
+    // Lines are held back while a capture they make the latest has no blob here yet (the spoke
+    // sent no blob for an append a later one superseded), and go in together once a later line
+    // brings one: so what an append drops is dropped only once what replaces it is in place, and
+    // a pull stops only there.
+    let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut waiting: BTreeSet<String> = BTreeSet::new();
+    let commit = |archive: &mut Archive, pending: &mut Vec<Vec<u8>>, t: &mut Transfer| {
+        archive.append_lines(pending)?;
+        for line in pending.drain(..) {
+            t.lines += 1;
+            t.to += line.len() as u64 + 1;
+        }
+        anyhow::Ok(())
+    };
+    let result = (|| -> Result<()> {
+        loop {
+            next(&mut frame, input)?;
+            let words: Vec<&str> = frame.split(' ').collect();
+            match words.as_slice() {
+                ["blob", sha, len] => {
+                    let len: u64 = len.parse().context("a blob's length")?;
+                    if !is_blob_name(sha) {
+                        bail!("not a blob name: {sha:?}");
+                    }
+                    let mut out = Hashing {
+                        file: private_file()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(&tmp)?,
+                        hasher: Sha256::new(),
+                        bytes: 0,
+                    };
+                    let n = std::io::copy(&mut input.take(len), &mut out)?;
+                    if n != len {
+                        bail!(ENDED_EARLY);
+                    }
+                    if hex::encode(out.hasher.finalize()) != *sha {
+                        bail!("blob {sha} came changed: it does not hash to its name");
+                    }
+                    let dest = archive.blob_path(sha);
+                    if dest.exists() {
+                        t.present += 1;
+                        continue;
+                    }
+                    out.file.sync_all()?;
+                    let shard = dest.parent().expect("blob has parent");
+                    create_dir_private(shard)?;
+                    fs::rename(&tmp, &dest)?;
+                    crate::util::sync_dir(shard)?;
+                    crate::util::sync_dir(&archive.raw)?;
+                    t.blobs += 1;
+                    t.bytes += len;
+                }
+                ["line", len] => {
+                    let len: usize = len.parse().context("a line's length")?;
+                    if len > MAX_LINE {
+                        bail!("a manifest line of {len} bytes is longer than any capture's");
+                    }
+                    let mut line = vec![0; len];
+                    input.read_exact(&mut line).context(ENDED_EARLY)?;
+                    if line.contains(&b'\n') {
+                        bail!("a manifest line holds a line break");
+                    }
+                    if let Ok(rec) = serde_json::from_slice::<CaptureRecord>(&line) {
+                        if !is_blob_name(&rec.capture_hash) {
+                            bail!("not a blob name: {:?}", rec.capture_hash);
+                        }
+                        if archive.blob_path(&rec.capture_hash).exists() {
+                            waiting.remove(&rec.origin);
+                        } else {
+                            waiting.insert(rec.origin);
+                        }
+                    }
+                    pending.push(line);
+                    if waiting.is_empty() {
+                        commit(&mut archive, &mut pending, t)?;
+                        if stop() {
+                            t.stopped = true;
+                            return Ok(());
+                        }
+                    }
+                }
+                // What the spoke lacks too stays lacking: the copy is as the spoke's is.
+                ["end"] => return commit(&mut archive, &mut pending, t),
+                _ => bail!(
+                    "not part of an export: {:?}",
+                    frame.chars().take(80).collect::<String>()
+                ),
+            }
+        }
+    })();
+    let _ = fs::remove_file(&tmp);
+    result
+}
+
+impl Archive {
+    /// Append `lines` as they are, all of them or none, then drop each blob an append among them
+    /// superseded that nothing here needs once they are all in.
+    fn append_lines(&mut self, lines: &[Vec<u8>]) -> Result<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let mut batch = Vec::new();
+        for line in lines {
+            batch.extend_from_slice(line);
+            batch.push(b'\n');
+        }
+        if lines.len() > 1 {
+            // Lines that wait on a later one's blob go in by one rename, so even a crash leaves
+            // all of them or none.
+            let ours = match fs::read(&self.manifest) {
+                Ok(m) => m,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(e).context("read the copy's manifest"),
+            };
+            write_atomic_with(&self.manifest, |w| {
+                w.write_all(&ours)?;
+                w.write_all(&batch)?;
+                Ok(())
+            })?;
+            sync_dir(&self.raw)?;
+        } else {
+            let created = !self.manifest.exists();
+            let mut f = private_file()
+                .create(true)
+                .append(true)
+                .open(&self.manifest)?;
+            let before = f.metadata()?.len();
+            if let Err(e) = f.write_all(&batch).and_then(|()| f.sync_data()) {
+                let _ = f.set_len(before).and_then(|()| f.sync_data());
+                return Err(e).context("append to the copy's manifest");
+            }
+            set_private(&self.manifest);
+            if created {
+                sync_dir(&self.raw)?;
+            }
+        }
+        let mut superseded = Vec::new();
+        for line in lines {
+            let Ok(rec) = serde_json::from_slice::<CaptureRecord>(line) else {
+                continue;
+            };
+            let previous = self.latest.insert(rec.origin.clone(), rec.clone());
+            if rec.kind == CaptureKind::Append
+                && let Some(p) = previous
+                && p.capture_hash != rec.capture_hash
+            {
+                superseded.push(p.capture_hash);
+            }
+            self.records.push(rec);
+        }
+        for sha in superseded {
+            self.drop_if_unreferenced(&sha)?;
+        }
+        Ok(())
+    }
+}
+
 impl VerifyReport {
     pub fn ok(&self) -> bool {
         self.missing.is_empty() && self.corrupt.is_empty()
@@ -515,6 +915,268 @@ mod tests {
         let home = Home::new(dir.path());
         home.ensure().unwrap();
         (dir, home)
+    }
+
+    /// What `export` writes from `spoke` for the hub's copy of `nas` as it is now.
+    fn export_for(spoke: &Home, hub: &Home) -> Vec<u8> {
+        let since = copy_length(hub, "nas").unwrap();
+        let mut out = Vec::new();
+        export(spoke, "nas", since, &mut out, &mut Transfer::default()).unwrap();
+        out
+    }
+
+    fn pull(spoke: &Home, hub: &Home) -> Transfer {
+        let bytes = export_for(spoke, hub);
+        take(hub, "nas", &mut &bytes[..], &|| false).unwrap()
+    }
+
+    /// Every file under `dir`, by its path there, with its bytes.
+    fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        let mut all = BTreeMap::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let rel = p.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
+                    all.insert(rel, fs::read(&p).unwrap());
+                }
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn a_pull_copies_a_spokes_new_captures_and_the_next_takes_only_whats_new() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        let k = Harness::Pi;
+        a.put(k, "s", "1", &b"one\n"[..]).unwrap();
+        a.put(k, "t", "1", &b"other\n"[..]).unwrap();
+        let first = pull(&spoke, &hub);
+        assert_eq!((first.lines, first.blobs), (2, 2), "{first:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+
+        // Two appends and a rewrite between pulls: the first append's blob is gone on the spoke,
+        // so only its line comes, and the hub drops what the appends supersede.
+        a.put(k, "s", "2", &b"one\ntwo\n"[..]).unwrap();
+        a.put(k, "s", "3", &b"one\ntwo\nthree\n"[..]).unwrap();
+        a.put(k, "t", "2", &b"compacted\n"[..]).unwrap();
+        let second = pull(&spoke, &hub);
+        assert_eq!((second.lines, second.blobs), (3, 2), "{second:?}");
+        assert_eq!(second.since, first.to);
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok() && nas.checked == 3, "{nas:?}");
+
+        // Nothing new: nothing comes.
+        let third = pull(&spoke, &hub);
+        assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn a_blob_an_append_dropped_and_another_origin_brought_back_comes_again() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        // `x` holds the bytes, grows past them (they are dropped), then `y` holds them again.
+        a.put(Harness::Pi, "x", "1", &b"same\n"[..]).unwrap();
+        a.put(Harness::Pi, "x", "2", &b"same\nmore\n"[..]).unwrap();
+        a.put(Harness::Pi, "y", "1", &b"same\n"[..]).unwrap();
+        // Unchanged bytes with a new change signal: the same blob named again, not sent again.
+        a.put(Harness::Pi, "y", "2", &b"same\n"[..]).unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!((t.lines, t.blobs), (4, 3), "{t:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+    }
+
+    #[test]
+    fn a_blob_another_origin_names_again_within_one_pull_is_kept() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "x", "1", &b"same\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        // `x` grows past the bytes the hub has, `y` holds them again, and `x` grows once more.
+        a.put(Harness::Pi, "x", "2", &b"same\nmore\n"[..]).unwrap();
+        a.put(Harness::Pi, "y", "1", &b"same\n"[..]).unwrap();
+        a.put(Harness::Pi, "x", "3", &b"same\nmore\nagain\n"[..])
+            .unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!(t.lines, 3, "{t:?}");
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn what_an_append_drops_here_is_dropped_only_once_its_replacement_is_in_place() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"a\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        // Two appends: the first one's blob is gone on the spoke, so its line comes alone.
+        a.put(Harness::Pi, "s", "2", &b"a\nb\n"[..]).unwrap();
+        a.put(Harness::Pi, "s", "3", &b"a\nb\nc\n"[..]).unwrap();
+        let before = fs::read(hub.manifest_path_of(Some("nas"))).unwrap();
+        // Cut after the lone line: nothing of it goes in, and the old capture stays readable.
+        let bytes = export_for(&spoke, &hub);
+        let cut = bytes.windows(5).position(|w| w == b"blob ").unwrap();
+        let err = take(&hub, "nas", &mut &bytes[..cut], &|| false).unwrap_err();
+        assert!(format!("{err:#}").contains("ended early"), "{err:#}");
+        assert_eq!(fs::read(hub.manifest_path_of(Some("nas"))).unwrap(), before);
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        // A pull told to stop at once stops only after both lines, with the newest in place.
+        let bytes = export_for(&spoke, &hub);
+        let t = take(&hub, "nas", &mut &bytes[..], &|| true).unwrap();
+        assert!(t.stopped && t.lines == 2, "{t:?}");
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn a_pull_counts_what_it_kept_before_a_frame_it_refuses() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        let mut bytes = export_for(&spoke, &hub);
+        assert!(bytes.ends_with(b"end\n"));
+        bytes.truncate(bytes.len() - 4);
+        let good = bytes.clone();
+        // A line naming a blob by a hash too short to be one.
+        let line = fs::read_to_string(spoke.manifest_path_of(None)).unwrap();
+        let mut rec: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        rec["sha256"] = "a".into();
+        let rec = serde_json::to_vec(&rec).unwrap();
+        let short = [format!("line {}\n", rec.len()).into_bytes(), rec].concat();
+        for (bad, why) in [
+            (b"line 4294967296\n".to_vec(), "longer than any capture"),
+            (short, "not a blob name"),
+        ] {
+            let mut stream = good.clone();
+            stream.extend_from_slice(&bad);
+            let (_h2, fresh) = home();
+            let mut t = Transfer::default();
+            let err = take_into(&fresh, "nas", &mut &stream[..], &|| false, &mut t).unwrap_err();
+            assert!(format!("{err:#}").contains(why), "{why}: {err:#}");
+            assert_eq!((t.lines, t.blobs), (1, 1), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn a_line_cut_short_here_is_dropped_and_sent_again_whole() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        a.put(Harness::Pi, "t", "1", &b"two\n"[..]).unwrap();
+        // A write that failed partway (a full disk) left half a line.
+        let manifest = hub.manifest_path_of(Some("nas"));
+        let mut f = fs::OpenOptions::new().append(true).open(&manifest).unwrap();
+        f.write_all(b"{\"source\":\"pi\",\"ori").unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!(t.lines, 1, "{t:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn a_pull_that_stops_or_is_cut_keeps_what_it_took_and_the_next_goes_on() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        for (origin, said) in [("s", "one\n"), ("t", "two\n"), ("u", "three\n")] {
+            a.put(Harness::Pi, origin, "1", said.as_bytes()).unwrap();
+        }
+        // Stopped after its first line.
+        let bytes = export_for(&spoke, &hub);
+        let t = take(&hub, "nas", &mut &bytes[..], &|| true).unwrap();
+        assert!(t.stopped && t.lines == 1, "{t:?}");
+        // Cut in the middle of the last line, after its blob: the one before it is taken.
+        let bytes = export_for(&spoke, &hub);
+        let cut = bytes.len() - b"end\n".len() - 20;
+        let err = take(&hub, "nas", &mut &bytes[..cut], &|| false).unwrap_err();
+        assert!(format!("{err:#}").contains("ended early"), "{err:#}");
+        // The next pull resends what wasn't taken, and skips the blob already in place.
+        let t = pull(&spoke, &hub);
+        assert!(t.present == 1 && t.blobs == 0 && t.lines == 1, "{t:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn a_pull_refuses_another_machine_a_copy_it_does_not_continue_and_a_changed_blob() {
+        let (_s, spoke) = home();
+        let (_o, other) = home();
+        let (_h, hub) = home();
+        Archive::open(&spoke)
+            .unwrap()
+            .put(Harness::Pi, "s", "1", &b"one\n"[..])
+            .unwrap();
+        Archive::open(&other)
+            .unwrap()
+            .put(Harness::Pi, "x", "1", &b"elsewhere\n"[..])
+            .unwrap();
+        let mut bytes = Vec::new();
+        export(&spoke, "box", 0, &mut bytes, &mut Transfer::default()).unwrap();
+        let err = take(&hub, "nas", &mut &bytes[..], &|| false).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("is \"box\", not \"nas\""),
+            "{err:#}"
+        );
+
+        pull(&spoke, &hub);
+        // Another archive that also calls itself nas, at the same length or not.
+        let since = fs::metadata(hub.manifest_path_of(Some("nas")))
+            .unwrap()
+            .len();
+        let mut bytes = Vec::new();
+        match export(&other, "nas", since, &mut bytes, &mut Transfer::default()) {
+            Ok(_) => {
+                let err = take(&hub, "nas", &mut &bytes[..], &|| false).unwrap_err();
+                assert!(format!("{err:#}").contains("does not continue"), "{err:#}");
+            }
+            Err(e) => assert!(format!("{e:#}").contains("not of this machine's archive")),
+        }
+
+        // A blob changed on the way is refused, and its line is not taken.
+        Archive::open(&spoke)
+            .unwrap()
+            .put(Harness::Pi, "s", "2", &b"one\ntwo\n"[..])
+            .unwrap();
+        let mut bytes = export_for(&spoke, &hub);
+        let at = bytes.windows(8).position(|w| w == b"one\ntwo\n").unwrap();
+        bytes[at] = b'O';
+        let before = fs::read(hub.manifest_path_of(Some("nas"))).unwrap();
+        let err = take(&hub, "nas", &mut &bytes[..], &|| false).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("does not hash to its name"),
+            "{err:#}"
+        );
+        assert_eq!(fs::read(hub.manifest_path_of(Some("nas"))).unwrap(), before);
     }
 
     #[test]

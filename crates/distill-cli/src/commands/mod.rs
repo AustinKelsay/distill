@@ -1,6 +1,7 @@
 //! One module per command. Each has an `Args` and a `run`.
 
 pub mod backup;
+pub mod export;
 pub mod exposure;
 pub mod findings;
 pub mod gui;
@@ -8,6 +9,7 @@ pub mod harnesses;
 pub mod init;
 pub mod parse;
 pub mod providers;
+pub mod pull;
 pub mod read;
 pub mod reads;
 pub mod restore;

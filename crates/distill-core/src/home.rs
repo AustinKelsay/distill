@@ -32,6 +32,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///   state/machines/<machine>/    state_dir_of: a spoke's archive's progress markers
 ///   log/reads.jsonl              read_log_path
 ///   log/backups.jsonl            backup_log_path
+///   log/exports.jsonl            export_log_path: on a spoke, what each pull took
 ///   runs/                        runs_dir: the run log
 ///   reveals/                     reveals_dir: one file per reveal request (reveal_path)
 ///   keys/fingerprint.key         fingerprint_key_path
@@ -275,6 +276,10 @@ impl Home {
     pub fn backup_log_path(&self) -> PathBuf {
         self.log_dir().join("backups.jsonl")
     }
+    /// On a spoke, one line per export: what each pull of the hub took, and when (ADR 0010).
+    pub fn export_log_path(&self) -> PathBuf {
+        self.log_dir().join("exports.jsonl")
+    }
     /// The tags the owner added to or hid on sessions (issue #158): nothing rebuilds them.
     pub fn owner_tags_path(&self) -> PathBuf {
         self.root.join("tags.json")
@@ -291,7 +296,7 @@ impl Home {
             ["raw", _, ..] | ["machines", _, "raw", _, ..] => Keep::Always,
             ["keys", "fingerprint.key"] => Keep::Always,
             ["keys", "backup.key"] => Keep::Never,
-            ["log", "reads.jsonl" | "backups.jsonl"] => Keep::Always,
+            ["log", "reads.jsonl" | "backups.jsonl" | "exports.jsonl"] => Keep::Always,
             ["reveals", _] => Keep::Always,
             ["sessions", "machines", _, _, _, "card.json"] => Keep::Cards,
             ["sessions", _, _, "card.json"] => Keep::Cards,
@@ -484,6 +489,7 @@ mod tests {
         assert_eq!(p(h.detail_failures_path()), "/h/state/details.json");
         assert_eq!(p(h.state_dir()), "/h/state");
         assert_eq!(p(h.read_log_path()), "/h/log/reads.jsonl");
+        assert_eq!(p(h.export_log_path()), "/h/log/exports.jsonl");
         assert_eq!(p(h.runs_dir()), "/h/runs");
         assert_eq!(p(h.reveals_dir()), "/h/reveals");
         assert_eq!(p(h.reveal_path("0a1b")), "/h/reveals/0a1b.json");
@@ -533,6 +539,7 @@ mod tests {
             ("keys/backup.key", Some(Never)),
             ("log/reads.jsonl", Some(Always)),
             ("log/backups.jsonl", Some(Always)),
+            ("log/exports.jsonl", Some(Always)),
             ("reveals/r1.json", Some(Always)),
             ("machines/nas/raw/ab/abcdef", Some(Always)),
             ("machines/nas/raw/manifest.jsonl", Some(Always)),
