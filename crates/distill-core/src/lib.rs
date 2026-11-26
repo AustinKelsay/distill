@@ -19,6 +19,7 @@ pub mod findings;
 pub mod harness;
 pub mod home;
 pub mod index;
+pub mod machines;
 pub mod model;
 mod model_step;
 pub mod normalize;

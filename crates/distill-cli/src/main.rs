@@ -1,6 +1,7 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
 //! logic of its own; the work is in distill-core. Only `read`, `search`, `tags` and
-//! `reveal collect` print session text or secret values, and only through the read path.
+//! `reveal collect` print session text or secret values, and only through the read path; and
+//! `export`, on a spoke, writes its captures for the hub's pull (ADR 0010).
 
 mod commands;
 mod output;
@@ -41,6 +42,10 @@ enum Cmd {
     Sweep(sweep::Args),
     /// Check every capture in the raw archive against its hash
     Verify(verify::Args),
+    /// On a hub: take each spoke's new captures over SSH
+    Pull(pull::Args),
+    /// On a spoke: write its captures after a point, for the hub's pull (run by the hub over SSH)
+    Export(export::Args),
     /// Turn captures into events and session facts
     Parse(parse::Args),
     /// Scan every session whose findings are missing or out of date for secrets and personal details
@@ -102,6 +107,8 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Harnesses(a) => harnesses::run(&ctx, a),
         Cmd::Sweep(a) => sweep::run(&ctx, a),
         Cmd::Verify(a) => verify::run(&ctx, a),
+        Cmd::Pull(a) => pull::run(&ctx, a),
+        Cmd::Export(a) => export::run(&ctx, a),
         Cmd::Parse(a) => parse::run(&ctx, a),
         Cmd::Scan(a) => scan::run(&ctx, a),
         Cmd::Findings(a) => findings::run(&ctx, a),

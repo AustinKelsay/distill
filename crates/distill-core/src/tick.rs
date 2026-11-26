@@ -1,5 +1,5 @@
 //! A tick: one scheduled run of the steward's steps, in the order [`STEPS`] declares them. Each
-//! tick writes one entry to the run log. Today the steps are sweep, parse, scan, the word index,
+//! tick writes one entry to the run log. Today the steps are sweep, pull, parse, scan, the word index,
 //! backups, cards, vectors and the model detection pass (`details`), which stays last. A step that calls a
 //! model gets the runtime for that step, and the steps before it never wait on one.
 //!
@@ -97,6 +97,13 @@ pub const STEPS: &[Step] = &[
         generation: false,
         spoke: true,
         run: sweep_step,
+    },
+    Step {
+        name: "pull",
+        model: false,
+        generation: false,
+        spoke: false,
+        run: pull_step,
     },
     Step {
         name: "parse",
@@ -225,6 +232,28 @@ pub fn index_step(
 
 /// Back up to every `[[backup]]` target that has had a first run by hand (issue #150), sending
 /// no more blobs once the tick's budget is over; the model steps get what is left of it.
+/// Pull each spoke's new captures (ADR 0010), until the tick's end; skipped with no
+/// `[[machines]]`.
+pub fn pull_step(
+    home: &Home,
+    config: &Config,
+    _: &LocalRuntime,
+    deadline: Deadline,
+) -> Result<StepOutcome> {
+    pull_outcome(&crate::machines::pull(home, config, None, deadline)?)
+}
+
+/// A pull's run-log step, as the tick and `distill pull` record it.
+pub fn pull_outcome(r: &crate::machines::PullReport) -> Result<StepOutcome> {
+    Ok(StepOutcome {
+        name: "pull".into(),
+        ok: r.ok(),
+        summary: r.summary(),
+        errors: r.machines.iter().filter_map(|p| p.error.clone()).collect(),
+        report: serde_json::to_value(r)?,
+    })
+}
+
 pub fn backup_step(
     home: &Home,
     config: &Config,
@@ -411,12 +440,12 @@ mod tests {
     use crate::harness::Harness;
 
     #[test]
-    fn the_steps_are_sweep_parse_scan_index_backup_cards_vectors_then_details() {
+    fn the_steps_are_sweep_pull_parse_scan_index_backup_cards_vectors_then_details() {
         let names: Vec<_> = STEPS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
             [
-                "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
+                "sweep", "pull", "parse", "scan", "index", "backup", "cards", "vectors", "details"
             ]
         );
     }
@@ -639,14 +668,14 @@ mod tests {
         assert_eq!(
             names,
             [
-                "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
+                "sweep", "pull", "parse", "scan", "index", "backup", "cards", "vectors", "details"
             ]
         );
         assert!(r.steps.iter().all(|s| s.ok), "{r:?}");
         assert_eq!(r.steps[0].report["new"], 1);
-        assert_eq!(r.steps[1].report["sessions"], 1);
-        assert_eq!(r.steps[2].report["scanned"], 1);
-        assert_eq!(r.steps[3].report["indexed"], 1);
+        assert_eq!(r.steps[2].report["sessions"], 1);
+        assert_eq!(r.steps[3].report["scanned"], 1);
+        assert_eq!(r.steps[4].report["indexed"], 1);
         assert!(home.meta_path(None, Harness::Pi, "p1").exists());
         assert!(home.findings_path(None, Harness::Pi, "p1").exists());
 
@@ -673,16 +702,16 @@ mod tests {
         }
         assert!(!home.card_path(None, Harness::Pi, "p1").exists());
         // With no card_model, the card step is skipped, and the run log says why.
-        assert_eq!(r.steps[5].summary, "cards skipped: no card_model is set");
-        assert_eq!(r.steps[5].report["skipped"], "no card_model is set");
+        assert_eq!(r.steps[6].summary, "cards skipped: no card_model is set");
+        assert_eq!(r.steps[6].report["skipped"], "no card_model is set");
         // So is the vectors step, with no embedding_model, and nothing is written for it.
         assert_eq!(
-            r.steps[6].summary,
+            r.steps[7].summary,
             "vectors skipped: no embedding_model is set"
         );
         assert!(!home.vectors_path().exists());
         assert_eq!(
-            r.steps[7].summary,
+            r.steps[8].summary,
             "model detection skipped: no detail_model or card_model is set"
         );
     }
@@ -727,7 +756,7 @@ mod tests {
             });
 
         let r = tick_with(&home, &config, &fake.runtime()).unwrap();
-        let cards = &r.steps[5];
+        let cards = &r.steps[6];
         assert_eq!(cards.name, "cards");
         // One card written and one to retry: the step did its work.
         assert!(cards.ok, "{cards:?}");
@@ -739,9 +768,9 @@ mod tests {
         );
         assert!(home.card_path(None, Harness::Pi, "p1").exists());
         // The steps before it all ran and succeeded.
-        assert!(r.steps[..4].iter().all(|s| s.ok), "{r:?}");
-        assert_eq!(r.steps[6].name, "vectors");
-        assert_eq!(r.steps[7].name, "details");
+        assert!(r.steps[..5].iter().all(|s| s.ok), "{r:?}");
+        assert_eq!(r.steps[7].name, "vectors");
+        assert_eq!(r.steps[8].name, "details");
         let runs = runlog::recent(&home, 10).unwrap();
         assert_eq!(runs[0].steps, r.steps);
     }
@@ -803,10 +832,10 @@ mod tests {
         // Twelve cards take three seconds; the tick's budget is under one.
         let r = tick_within(&home, &config, &slow.runtime(), Duration::from_millis(900)).unwrap();
         assert!(
-            r.steps[..4].iter().all(|s| s.ok),
+            r.steps[..5].iter().all(|s| s.ok),
             "capture ran first: {r:?}"
         );
-        let cards = &r.steps[5];
+        let cards = &r.steps[6];
         let written = cards.report["written"].as_u64().unwrap();
         assert!(written < SESSIONS, "{cards:?}");
         assert_eq!(cards.report["stopped_at_deadline"], true, "{cards:?}");
@@ -844,7 +873,7 @@ mod tests {
             .replying(answer(false));
         let r = tick_with(&home, &config, &fast.runtime()).unwrap();
         assert_eq!(r.steps[0].report["new"], 1, "{r:?}");
-        let cards = &r.steps[5];
+        let cards = &r.steps[6];
         assert_eq!(
             cards.report["written"].as_u64().unwrap(),
             SESSIONS - written + 1,
