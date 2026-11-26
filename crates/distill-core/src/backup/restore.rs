@@ -319,8 +319,10 @@ pub fn verify(
     for (sha, size) in archive::expected_blobs(&archive::parse_manifest(&manifest)) {
         check(&key.name(&format!("blob/{sha}")), Some((&sha, size)))?;
     }
-    // Each spoke's manifest is opened too, for the blobs its archive should hold (ADR 0010).
-    // One the target can't hand back whole is counted below, with the other files.
+    let mut undecrypted = 0;
+    // Each spoke's manifest is opened too, for the blobs its archive should hold (ADR 0010). One
+    // the target lacks a part of is counted below, with the other files; one that doesn't
+    // decrypt is corrupt, as this home's is (the full check below counts it again by part).
     for (rel, f) in &rec.files {
         if Home::spoke_manifest(rel).is_none()
             || f.parts.iter().any(|p| !present.contains(&p.object))
@@ -334,6 +336,7 @@ pub fn verify(
                 }
             }
             Err(e) if unreadable(&e) => return Err(e),
+            Err(_) if !full => undecrypted += 1,
             Err(_) => {}
         }
     }
@@ -349,6 +352,7 @@ pub fn verify(
             check(&f.object, Some((&f.sha256, u64::MAX)))?;
         }
     }
+    c.corrupt += undecrypted;
     Ok(c)
 }
 
@@ -659,6 +663,31 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_two_archives_hold_goes_from_the_copy_that_is_whole() {
+        let (dir, home, target) = backed_up();
+        let bytes = session("s3", &["count the files"]);
+        let mut put = |machine: Option<&str>| {
+            Archive::open_of(&home, machine)
+                .unwrap()
+                .put(Harness::ClaudeCode, "/u/s3.jsonl", "1", bytes.as_bytes())
+                .unwrap()
+                .unwrap()
+                .capture_hash
+        };
+        let sha = put(None);
+        assert_eq!(put(Some("nas")), sha);
+        // This home's copy changed; the spoke's is whole.
+        fs::write(home.raw_dir().join(&sha[..2]).join(&sha), "changed").unwrap();
+        let r = run(&home, &target).unwrap();
+        assert!(r.ok && r.blobs_sent == 1, "{r:?}");
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, false).unwrap();
+        let check = verify(&home, "drive", &*store, &key, true).unwrap();
+        assert_eq!((check.missing, check.corrupt), (0, 0), "{check:?}");
+        drop(dir);
+    }
+
+    #[test]
     fn a_spokes_raw_archive_is_backed_up_by_its_appends_and_restored() {
         let (dir, home, target) = backed_up();
         let origin = "/u/.claude/projects/-w-app/s1.jsonl";
@@ -714,6 +743,12 @@ mod tests {
         assert_eq!(check.missing, 1, "{check:?}");
         let err = restore(&Home::new(dir.path().join("again")), &*store, &key, false).unwrap_err();
         assert!(err.to_string().contains("lacks 1 blob"), "{err}");
+        // A spoke's manifest that doesn't decrypt is corrupt even to a check by name.
+        let rec = crate::backup::run::read_record(&*store, &key, check.run).unwrap();
+        let part = &rec.files["machines/nas/raw/manifest.jsonl"].parts[0].object;
+        fs::write(objects.join(&part[..2]).join(part), "not sealed").unwrap();
+        let check = verify(&home, "drive", &*store, &key, false).unwrap();
+        assert_eq!(check.corrupt, 1, "{check:?}");
         crate::normalize::normalize(&restored, false).unwrap();
         let keys = |h: &Home| -> Vec<String> {
             let mut k: Vec<String> = crate::normalize::read_session_list(h)

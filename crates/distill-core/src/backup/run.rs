@@ -380,32 +380,57 @@ fn run_into(
     let own = Archive::open(home)?;
     let mut archives: Vec<(&Archive, &[u8])> = vec![(&own, manifest)];
     archives.extend(spokes.iter().map(|(a, lines)| (a, lines.as_slice())));
+    // Each blob once, from the first archive whose copy is whole: two archives can hold the
+    // same capture.
+    let mut holders: BTreeMap<String, Vec<&Archive>> = BTreeMap::new();
     for (archive, lines) in &archives {
-        for sha in expected_blobs(&parse_manifest(lines)).keys() {
-            let name = key.name(&format!("blob/{sha}"));
-            if present.contains(&name) {
-                continue;
-            }
-            stop_if_late!();
+        for sha in expected_blobs(&parse_manifest(lines)).into_keys() {
+            holders.entry(sha).or_default().push(*archive);
+        }
+    }
+    for (sha, holders) in &holders {
+        let name = key.name(&format!("blob/{sha}"));
+        if present.contains(&name) {
+            continue;
+        }
+        stop_if_late!();
+        let mut failed = None;
+        let mut sealed = None;
+        for archive in holders {
             let mut blob = match archive.open_blob(sha) {
                 Ok(b) => b,
                 Err(e)
                     if e.downcast_ref::<std::io::Error>()
                         .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
                 {
-                    r.blobs_missing += 1;
                     continue;
                 }
                 Err(e) => return Err(e),
             };
-            let mut sealed = scratch.file()?;
-            key.seal(&mut blob, &mut sealed)?;
-            // A blob that doesn't hash to its name is corrupt here; don't send it as if it were good.
-            blob.finish()?;
-            stop_if_late!();
-            r.bytes_sent += put(&*store, &name, &mut sealed)?;
-            r.blobs_sent += 1;
+            let mut out = scratch.file()?;
+            key.seal(&mut blob, &mut out)?;
+            // A blob that doesn't hash to its name is corrupt here; don't send it as if it were
+            // good.
+            match blob.finish() {
+                Ok(()) => {
+                    sealed = Some(out);
+                    break;
+                }
+                Err(e) => failed = Some(e),
+            }
         }
+        let Some(mut sealed) = sealed else {
+            match failed {
+                Some(e) => return Err(e),
+                None => {
+                    r.blobs_missing += 1;
+                    continue;
+                }
+            }
+        };
+        stop_if_late!();
+        r.bytes_sent += put(&*store, &name, &mut sealed)?;
+        r.blobs_sent += 1;
     }
 
     // 2. The manifest lines the target lacks, as one more part, merged with the parts before it
