@@ -52,5 +52,15 @@ of it. An adapter takes its credentials from where its tool keeps them (an SSH k
 CLI's profile, rclone's config), and a restore names the target with `--kind` and `--set`
 alone.
 
+## Adapters that ship
+
+`scripts/install.sh` installs these from `adapters/`. Each script's header shows its settings.
+
+- `distill-backup-ssh`: a folder on another machine the owner reaches over SSH (`host`, `dir`).
+  It uses the owner's SSH keys and config as they are, never asks for a password, and shares one
+  connection across a use.
+- `distill-backup-rclone`: any rclone remote (`remote`), which covers S3-compatible stores,
+  self-hosted ones included, and rclone's other backends. Set the remote up with `rclone config`.
+
 `crates/distill-core/tests/fixtures/distill-backup-reference` is a reference adapter in `sh`
 that keeps objects in a folder. The tests use it.

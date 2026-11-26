@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build and install distill and distill-mcp into Cargo's bin directory ($CARGO_INSTALL_ROOT,
-# else $CARGO_HOME, else ~/.cargo, plus /bin), and the window: on macOS as DISTILL.app in
+# Build and install distill, distill-mcp and the backup adapters (adapters/) into Cargo's bin
+# directory ($CARGO_INSTALL_ROOT, else $CARGO_HOME, else ~/.cargo, plus /bin), and the window: on macOS as DISTILL.app in
 # ~/Applications (scripts/mac-app.sh builds it; `distill gui` opens it), elsewhere as
 # distill-gui beside the others.
 #
@@ -50,6 +50,10 @@ if ticking; then
 fi
 for bin in "${BINS[@]}"; do
   mv -f "$stage/bin/$bin" "$ROOT/bin/$bin"
+done
+for adapter in adapters/distill-backup-*; do
+  install -m 755 "$adapter" "$stage/${adapter##*/}"
+  mv -f "$stage/${adapter##*/}" "$ROOT/bin/${adapter##*/}"
 done
 if [[ -n "$MAC" ]]; then
   # One copy of the window: the app. `distill gui` opens it.

@@ -1,0 +1,108 @@
+#!/bin/sh
+# distill-backup-rclone: a DISTILL backup adapter (docs/backup-adapters.md) that hands objects to
+# rclone, so any of its backends works: an S3-compatible store (AWS, Backblaze B2, MinIO and
+# other self-hosted ones), SFTP, WebDAV, and the rest.
+#
+#   [[backup]]
+#   name = "offsite"
+#   kind = "rclone"
+#   remote = "b2:my-bucket/distill"   # an rclone path; objects go in <remote>/objects/
+#
+# The remote and its credentials are set up with `rclone config`, outside DISTILL. A put checks
+# whether the object is there and then uploads it with --immutable. Two puts of one name can both
+# upload on a store with no conditional write, and the later one wins.
+set -u
+
+remote=""
+
+reply() { printf '%s\n' "$*"; }
+
+setting() {
+    printf '%s' "$2" | sed -n "s/.*\"$1\":\"\\([^\"\\\\]*\\)\".*/\\1/p"
+}
+
+valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
+
+# Whether the remote holds the object `$1`.
+holds() { rclone lsjson --stat "$remote/objects/$1" >/dev/null 2>&1 </dev/null; }
+
+while IFS= read -r line; do
+    cmd=${line%% *}
+    rest=${line#"$cmd"}
+    rest=${rest# }
+    case "$cmd" in
+    hello)
+        version=${rest%% *}
+        rest=${rest#"$version" }
+        open=${rest%% *}
+        json=${rest#"$open" }
+        [ "$version" = 1 ] || { reply "error unsupported protocol version $version"; continue; }
+        remote=$(setting remote "$json")
+        remote=${remote%/}
+        if [ -z "$remote" ]; then
+            reply "error the target needs a remote"
+            continue
+        fi
+        command -v rclone >/dev/null || { reply "error no rclone on PATH"; continue; }
+        case "$open" in
+        probe)
+            probe="$remote/.distill-probe-$$"
+            if out=$(printf 'distill' | rclone rcat "$probe" 2>&1) && rclone deletefile "$probe" </dev/null 2>/dev/null; then
+                reply ok
+            else
+                reply "error $remote can't be written to${out:+ ($out)}"
+            fi
+            ;;
+        first)
+            if out=$(rclone mkdir "$remote/objects" </dev/null 2>&1); then reply ok; else reply "error can't set up $remote ($out)"; fi
+            ;;
+        *)
+            if out=$(rclone lsf --max-depth 1 "$remote/objects" </dev/null 2>&1); then reply ok; else reply "error $remote/objects is not there ($out)"; fi
+            ;;
+        esac
+        ;;
+    list)
+        if names=$(rclone lsf --files-only --max-depth 1 "$remote/objects" </dev/null); then
+            names=$(printf '%s\n' "$names" | grep -E '^[0-9a-fA-F]{64}$')
+            n=$(printf '%s' "$names" | grep -c .)
+            reply "ok $n"
+            [ "$n" -gt 0 ] && printf '%s\n' "$names"
+        else
+            reply "error can't list $remote/objects"
+        fi
+        ;;
+    put)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        valid "$name" || { reply "error not an object name"; continue; }
+        if holds "$name"; then
+            reply "ok present"
+        elif rclone copyto --immutable "$file" "$remote/objects/$name" </dev/null; then
+            reply "ok stored"
+        else
+            reply "error can't store $name at $remote"
+        fi
+        ;;
+    get)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        valid "$name" || { reply "error not an object name"; continue; }
+        if rclone copyto "$remote/objects/$name" "$file" </dev/null; then reply ok; else reply "error can't read $name at $remote"; fi
+        ;;
+    has)
+        valid "$rest" || { reply "error not an object name"; continue; }
+        if holds "$rest"; then reply "ok yes"; else reply "ok no"; fi
+        ;;
+    delete)
+        valid "$rest" || { reply "error not an object name"; continue; }
+        if ! holds "$rest" || rclone deletefile "$remote/objects/$rest" </dev/null; then reply ok; else reply "error can't delete $rest at $remote"; fi
+        ;;
+    sync)
+        # An upload is stored when rclone returns.
+        reply ok
+        ;;
+    *)
+        reply "error unknown command $cmd"
+        ;;
+    esac
+done

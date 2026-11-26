@@ -1,0 +1,130 @@
+#!/bin/sh
+# distill-backup-ssh: a DISTILL backup adapter (docs/backup-adapters.md) that keeps objects in a
+# folder on another machine the owner reaches over SSH.
+#
+#   [[backup]]
+#   name = "nas"
+#   kind = "ssh"
+#   host = "me@nas"          # anything `ssh` takes: user@host, or a Host from ~/.ssh/config
+#   dir = "/srv/backups"     # a folder there that exists; objects go in <dir>/objects/
+#
+# It uses the owner's SSH setup as it is (keys, agent, ~/.ssh/config) and never asks for a
+# password, so the timer can run it. One connection is shared by every command of a use. The
+# other machine needs a POSIX shell, and `ln`, `mktemp` and `sync`.
+set -u
+
+host=""
+dir=""
+ctl=""
+
+reply() { printf '%s\n' "$*"; }
+
+# A JSON string setting, as plain text; empty when it's missing or holds an escape.
+setting() {
+    printf '%s' "$2" | sed -n "s/.*\"$1\":\"\\([^\"\\\\]*\\)\".*/\\1/p"
+}
+
+# One word for the other machine's shell, single-quoted.
+q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# Run a command on the other machine through the shared connection.
+remote() {
+    ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPersist=60 \
+        -o ControlPath="$ctl/%C" "$host" "$1"
+}
+
+finish() {
+    if [ -n "$ctl" ]; then
+        ssh -o ControlPath="$ctl/%C" -O exit "$host" 2>/dev/null
+        rm -rf "$ctl"
+    fi
+}
+trap finish EXIT
+
+valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
+
+while IFS= read -r line; do
+    cmd=${line%% *}
+    rest=${line#"$cmd"}
+    rest=${rest# }
+    case "$cmd" in
+    hello)
+        version=${rest%% *}
+        rest=${rest#"$version" }
+        open=${rest%% *}
+        json=${rest#"$open" }
+        [ "$version" = 1 ] || { reply "error unsupported protocol version $version"; continue; }
+        host=$(setting host "$json")
+        dir=$(setting dir "$json")
+        if [ -z "$host" ] || [ -z "$dir" ]; then
+            reply "error the target needs a host and a dir"
+            continue
+        fi
+        ctl=$(mktemp -d "${TMPDIR:-/tmp}/distill-ssh.XXXXXX") || { reply "error can't make a folder for the connection"; continue; }
+        d=$(q "$dir")
+        case "$open" in
+        probe) check="test -d $d && t=$d/.distill-probe.\$\$ && : > \"\$t\" && rm -f \"\$t\"" ;;
+        first) check="test -d $d && mkdir -p $d/objects" ;;
+        *) check="test -d $d/objects" ;;
+        esac
+        if out=$(remote "$check" </dev/null 2>&1); then
+            reply ok
+        else
+            reply "error $host:$dir is not there or can't be written to${out:+ ($out)}"
+        fi
+        ;;
+    list)
+        if names=$(remote "ls $d/objects" </dev/null); then
+            # Only objects: anything else the owner left there isn't one.
+            names=$(printf '%s\n' "$names" | grep -E '^[0-9a-fA-F]{64}$')
+            n=$(printf '%s' "$names" | grep -c .)
+            reply "ok $n"
+            [ "$n" -gt 0 ] && printf '%s\n' "$names"
+        else
+            reply "error can't list $host:$dir/objects"
+        fi
+        ;;
+    put)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        valid "$name" || { reply "error not an object name"; continue; }
+        # Staged in a folder of its own inside objects/, then linked into place: a link never
+        # replaces, so of two puts of one name one stores.
+        said=$(remote "o=$d/objects/$name
+if test -f \"\$o\"; then echo present; exit 0; fi
+s=\$(mktemp -d $d/objects/.stage.XXXXXX) || exit 1
+if cat > \"\$s/$name\" && ln \"\$s/$name\" $d/objects/ 2>/dev/null; then r=stored
+elif test -f \"\$o\"; then r=present; fi
+rm -rf \"\$s\"
+echo \"\${r:-failed}\"" <"$file")
+        case "$said" in
+        stored | present) reply "ok $said" ;;
+        *) reply "error can't store $name at $host" ;;
+        esac
+        ;;
+    get)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        valid "$name" || { reply "error not an object name"; continue; }
+        if remote "cat $d/objects/$name" </dev/null >"$file"; then
+            reply ok
+        else
+            reply "error can't read $name at $host"
+        fi
+        ;;
+    has)
+        valid "$rest" || { reply "error not an object name"; continue; }
+        if remote "test -f $d/objects/$rest" </dev/null; then reply "ok yes"; else reply "ok no"; fi
+        ;;
+    delete)
+        valid "$rest" || { reply "error not an object name"; continue; }
+        if remote "rm -f $d/objects/$rest" </dev/null; then reply ok; else reply "error can't delete $rest at $host"; fi
+        ;;
+    sync)
+        if remote "sync" </dev/null; then reply ok; else reply "error can't sync at $host"; fi
+        ;;
+    *)
+        reply "error unknown command $cmd"
+        ;;
+    esac
+done

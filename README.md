@@ -69,13 +69,15 @@ cards = false               # also carry cards, which cost model time to rebuild
 vectors = false             # also carry vectors, which cost embedding time to rebuild
 ```
 
+Any other kind runs an adapter, `distill-backup-<kind>` on `PATH` (`docs/backup-adapters.md`). Two are installed with DISTILL: `ssh`, to a folder on another machine you reach over SSH (`host`, `dir`), and `rclone`, to any rclone remote, such as an S3-compatible store (`remote`). Each script's header shows its settings.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `distill tick` | What the timer runs: sweep, parse, scan, the word index, cards, vectors, personal details. Writes one run log entry. |
 | `distill backup init` / `new-key` / `run` / `status` / `verify` | Make the backup key (printing it once), replace it with a new one (every target starts over), back up to every `[[backup]]` target now, show each target's last whole run and the captures it is behind, or check that each holds its newest run (`--full` decrypts every object). After a target's first run, the tick keeps it current. |
-| `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the backup key from `--key-file` or a pipe. The next tick rebuilds the rest. |
+| `distill restore --folder PATH` | Bring a folder target's newest run back into an empty home, with the backup key from `--key-file` or a pipe. The next tick rebuilds the rest. For an adapter target: `--kind KIND --set key=value ...`, its settings as in its `[[backup]]` table. |
 | `distill status` | Sessions and capture health per harness, the last sweep, each step's progress, pending reveal requests, the exposure check. |
 | `distill search <words>` | Sessions that match by words or by meaning, best first, for a model at a named provider. |
 | `distill tags` | The tags on the sessions' cards, most used first, with the usual filters, for a model at a named provider. |
