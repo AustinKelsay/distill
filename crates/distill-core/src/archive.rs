@@ -609,6 +609,9 @@ fn whole_lines(bytes: &[u8]) -> usize {
     bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
 }
 
+/// How [`take`] says the stream stopped before its end.
+pub const ENDED_EARLY: &str = "the export ended early";
+
 /// Take `machine`'s export from `input` into its raw archive here (ADR 0010), which it must
 /// continue: the export starts where this copy ends, and from the same bytes. Each blob is
 /// checked against its name, and one already here is skipped, before the line that names it is
@@ -625,10 +628,10 @@ pub fn take(
     let next = |frame: &mut String, input: &mut dyn std::io::BufRead| -> Result<()> {
         frame.clear();
         if input.read_line(frame)? == 0 {
-            bail!("the export ended early");
+            bail!(ENDED_EARLY);
         }
         if frame.pop() != Some('\n') {
-            bail!("the export ended early");
+            bail!(ENDED_EARLY);
         }
         Ok(())
     };
@@ -711,7 +714,7 @@ pub fn take(
                     };
                     let n = std::io::copy(&mut input.take(len), &mut out)?;
                     if n != len {
-                        bail!("the export ended early");
+                        bail!(ENDED_EARLY);
                     }
                     if hex::encode(out.hasher.finalize()) != *sha {
                         bail!("blob {sha} came changed: it does not hash to its name");
@@ -733,9 +736,7 @@ pub fn take(
                 ["line", len] => {
                     let len: usize = len.parse().context("a line's length")?;
                     let mut line = vec![0; len];
-                    input
-                        .read_exact(&mut line)
-                        .context("the export ended early")?;
+                    input.read_exact(&mut line).context(ENDED_EARLY)?;
                     if line.contains(&b'\n') {
                         bail!("a manifest line holds a line break");
                     }

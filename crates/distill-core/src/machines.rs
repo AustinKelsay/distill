@@ -339,10 +339,12 @@ fn pull_one(
             }
             pulled.took = t;
         }
-        // What the other side said says more than a stream that ended early.
+        // What the other side said says more than a stream that ended early. When the pull
+        // refused what came, ssh only says how it was stopped.
         Err(e) => {
+            let ended = format!("{e:#}").starts_with(archive::ENDED_EARLY);
             pulled.error = Some(match last {
-                Some(l) if status.as_ref().is_ok_and(|s| !s.success()) => {
+                Some(l) if ended && status.as_ref().is_ok_and(|s| !s.success()) => {
                     format!("ssh {}: {l}", m.host)
                 }
                 _ => format!("{e:#}"),
