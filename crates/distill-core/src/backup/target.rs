@@ -37,6 +37,7 @@ pub fn add_folder(config: &mut Config, name: &str, path: &str) -> Result<()> {
         path: Some(path),
         cards: false,
         vectors: false,
+        settings: Default::default(),
     });
     Ok(())
 }

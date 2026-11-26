@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use super::BackupKey;
 use super::run::{RunRecord, Scratch, last_run, read_record};
 use super::store::Store;
 use crate::archive;
+use crate::config::BackupTarget;
 use crate::home::{Home, Keep};
 use crate::util::{count, create_dir_private, set_private, sync_dir, write_atomic};
 
@@ -56,6 +58,38 @@ impl RestoreReport {
         s.push_str(" The next `distill tick` rebuilds sessions, findings and the index.");
         s
     }
+}
+
+/// The target a restore reads, from what the owner gives without a home to read it from: a
+/// folder target's `folder`, or an adapter target's `kind` and its `settings`, each `key=value`
+/// as its `[[backup]]` table would have it (the value read as TOML, such as `22`, `true` or
+/// `"text"`, or else as text).
+pub fn restore_target(
+    folder: Option<PathBuf>,
+    kind: Option<&str>,
+    settings: &[String],
+) -> Result<BackupTarget> {
+    let settings = settings
+        .iter()
+        .map(|s| {
+            let Some((key, value)) = s.split_once('=') else {
+                bail!("give a setting as key=value, not {s:?}");
+            };
+            let value = toml::from_str::<toml::Table>(&format!("v = {value}"))
+                .ok()
+                .and_then(|mut t| t.remove("v"))
+                .unwrap_or_else(|| toml::Value::String(value.to_string()));
+            Ok((key.trim().to_string(), value))
+        })
+        .collect::<Result<_>>()?;
+    Ok(BackupTarget {
+        name: "restore".into(),
+        kind: kind.unwrap_or("folder").into(),
+        path: folder,
+        cards: false,
+        vectors: false,
+        settings,
+    })
 }
 
 /// Restore the newest backup run at `store` into `home`, which must be empty or not exist. The
@@ -246,19 +280,22 @@ pub fn verify(
     };
     // The manifest is always opened: it says which blobs the target should hold.
     c.objects += rec.manifest.len() as u64;
-    let manifest = match manifest(store, key, &scratch, &rec) {
-        Ok(m) => m,
-        Err(_) if rec.manifest.iter().any(|p| !present.contains(&p.object)) => {
-            c.missing += rec
-                .manifest
-                .iter()
-                .filter(|p| !present.contains(&p.object))
-                .count() as u64;
-            Vec::new()
-        }
-        Err(_) => {
-            c.corrupt += 1;
-            Vec::new()
+    let absent = rec
+        .manifest
+        .iter()
+        .filter(|p| !present.contains(&p.object))
+        .count() as u64;
+    let manifest = if absent > 0 {
+        c.missing += absent;
+        Vec::new()
+    } else {
+        match manifest(store, key, &scratch, &rec) {
+            Ok(m) => m,
+            Err(e) if unreadable(&e) => return Err(e),
+            Err(_) => {
+                c.corrupt += 1;
+                Vec::new()
+            }
         }
     };
     let mut check = |name: &str, want: Option<(&str, u64)>| -> Result<()> {
@@ -267,7 +304,13 @@ pub fn verify(
             c.missing += 1;
         } else if full {
             let mut h = Counted::default();
-            let good = fetch(store, key, &scratch, name, &mut h).is_ok()
+            let fetched = fetch(store, key, &scratch, name, &mut h);
+            if let Err(e) = fetched.as_ref()
+                && unreadable(e)
+            {
+                return Err(fetched.unwrap_err());
+            }
+            let good = fetched.is_ok()
                 && want.is_none_or(|(sha, size)| {
                     hex::encode(h.hasher.clone().finalize()) == sha
                         && (size == u64::MAX || h.bytes == size)
@@ -343,9 +386,24 @@ fn fetch(
     to: &mut dyn Write,
 ) -> Result<()> {
     let mut sealed = scratch.file()?;
-    store.get(name, &mut sealed)?;
+    store.get(name, &mut sealed).context(Unreadable)?;
     sealed.seek(SeekFrom::Start(0))?;
     key.open(&mut sealed as &mut dyn Read, to)
+}
+
+/// A target that could not be read, which a check reports as its error, apart from an object it
+/// handed back that does not decrypt, which it counts as corrupt.
+#[derive(Debug)]
+struct Unreadable;
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the target could not be read")
+    }
+}
+
+fn unreadable(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<Unreadable>().is_some()
 }
 
 /// Whether a record's path is one a restore writes: in the backup set, outside `raw/`, and with
@@ -463,9 +521,27 @@ mod tests {
             path: Some(dir.path().join("drive")),
             cards: false,
             vectors: false,
+            settings: Default::default(),
         };
         run(&home, &target).unwrap();
         (dir, home, target)
+    }
+
+    #[test]
+    fn a_restore_target_reads_each_setting_as_its_table_would_have_it() {
+        let settings = ["port=22", "tls=true", "dir=/mnt/a b", "bucket=\"22\""].map(String::from);
+        let t = restore_target(None, Some("s3"), &settings).unwrap();
+        assert_eq!(t.kind, "s3");
+        let v = |k: &str| t.settings[k].clone();
+        assert_eq!(v("port"), toml::Value::Integer(22));
+        assert_eq!(v("tls"), toml::Value::Boolean(true));
+        assert_eq!(v("dir"), toml::Value::String("/mnt/a b".into()));
+        assert_eq!(v("bucket"), toml::Value::String("22".into()));
+        assert!(restore_target(None, Some("s3"), &["dir".into()]).is_err());
+        assert_eq!(
+            restore_target(Some("/d".into()), None, &[]).unwrap().kind,
+            "folder"
+        );
     }
 
     #[test]

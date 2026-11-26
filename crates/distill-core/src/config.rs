@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,8 @@ pub struct Config {
 pub struct BackupTarget {
     /// How the owner names it; the backup log and status use it.
     pub name: String,
-    /// `folder` (built in); other kinds come as adapters later.
+    /// `folder` (built in), or any other kind, reached through its adapter
+    /// `distill-backup-<kind>` on `PATH` (`docs/backup-adapters.md`).
     pub kind: String,
     /// For a `folder` target: the folder, which must exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +50,9 @@ pub struct BackupTarget {
     /// Also carry vectors, which cost embedding time to rebuild.
     #[serde(default)]
     pub vectors: bool,
+    /// Every other key in the table: an adapter's own settings, handed to it as they are.
+    #[serde(flatten)]
+    pub settings: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -12,13 +12,14 @@
 //!   object is (a blob's capture hash, a file's path). A plain SHA-256 would let a target test
 //!   whether it holds a file it already knows.
 
+mod adapter;
 pub mod restore;
 pub mod run;
 pub mod status;
 pub mod store;
 pub mod target;
 
-pub use restore::{BackupCheck, RestoreReport, restore, verify};
+pub use restore::{BackupCheck, RestoreReport, restore, restore_target, verify};
 pub use run::{BackupReport, run};
 pub use status::{TargetStatus, TickBackups, targets};
 pub use target::{Place, add_folder, places, reused_name, synced, test};

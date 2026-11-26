@@ -1,0 +1,94 @@
+#!/bin/sh
+# A reference backup adapter (docs/backup-adapters.md), for tests: it keeps each object as a file
+# in `<dir>/objects/`, where `dir` is a setting in the target's `[[backup]]` table. It answers
+# `error ...` to anything it doesn't know.
+set -u
+dir=""
+reply() { printf '%s\n' "$*"; }
+while IFS= read -r line; do
+    cmd=${line%% *}
+    rest=${line#"$cmd"}
+    rest=${rest# }
+    case "$cmd" in
+    hello)
+        version=${rest%% *}
+        rest=${rest#"$version" }
+        open=${rest%% *}
+        json=${rest#"$open" }
+        if [ "$version" != 1 ]; then
+            reply "error unsupported protocol version $version"
+            continue
+        fi
+        dir=$(printf '%s' "$json" | sed -n 's/.*"dir":"\([^"]*\)".*/\1/p')
+        if [ -z "$dir" ]; then
+            reply "error the target needs a dir"
+        elif [ ! -d "$dir" ]; then
+            reply "error $dir is not there"
+        elif [ "$open" = probe ]; then
+            if : >"$dir/.probe" 2>/dev/null; then
+                rm -f "$dir/.probe"
+                reply ok
+            else
+                reply "error $dir can't be written to"
+            fi
+        elif [ "$open" = first ]; then
+            mkdir -p "$dir/objects" && reply ok || reply "error can't make $dir/objects"
+        elif [ -d "$dir/objects" ]; then
+            reply ok
+        else
+            reply "error $dir/objects is not there"
+        fi
+        ;;
+    list)
+        n=$(ls "$dir/objects" | wc -l | tr -d ' ')
+        reply "ok $n"
+        ls "$dir/objects"
+        ;;
+    put)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        if [ -f "$dir/objects/$name" ]; then
+            reply "ok present"
+            continue
+        fi
+        # Staged under its own name in a folder of its own, then linked into objects/: a link
+        # never replaces, so of two puts of one name one stores, and anything already in the
+        # way fails the link rather than taking the object inside it.
+        if ! stage=$(mktemp -d "$dir/objects/.stage.XXXXXX"); then
+            reply "error can't store $name"
+            continue
+        fi
+        if ! cp "$file" "$stage/$name"; then
+            reply "error can't store $name"
+        elif ln "$stage/$name" "$dir/objects/" 2>/dev/null; then
+            reply "ok stored"
+        elif [ -f "$dir/objects/$name" ]; then
+            reply "ok present"
+        else
+            reply "error can't store $name"
+        fi
+        rm -rf "$stage"
+        ;;
+    has)
+        if [ -e "$dir/objects/$rest" ]; then reply "ok yes"; else reply "ok no"; fi
+        ;;
+    delete)
+        rm -f "$dir/objects/$rest" && reply ok || reply "error can't delete $rest"
+        ;;
+    get)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        if cp "$dir/objects/$name" "$file" 2>/dev/null; then
+            reply ok
+        else
+            reply "error no object $name"
+        fi
+        ;;
+    sync)
+        reply ok
+        ;;
+    *)
+        reply "error unknown command $cmd"
+        ;;
+    esac
+done

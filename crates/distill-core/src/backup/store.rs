@@ -1,7 +1,8 @@
 //! The store contract (ADR 0009, issue #146): what moves opaque, encrypted objects to and from
 //! one backup target. A store never sees a key or knows what DISTILL is, and `put` never
 //! overwrites, so a half-finished run is safe to repeat. The `folder` kind is built in (issue
-//! #148): a local path, which covers external drives and mounted shares.
+//! #148): a local path, which covers external drives and mounted shares. Any other kind is an
+//! adapter, `distill-backup-<kind>` on `PATH` (issue #177, [`super::adapter`]).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use super::adapter::{Adapter, Open};
 use crate::config::BackupTarget;
 use crate::util::{private_file, sync_dir};
 
@@ -37,10 +39,10 @@ pub fn open(target: &BackupTarget, first: bool) -> Result<Box<dyn Store>> {
                 .with_context(|| format!("backup target {:?} needs a path", target.name))?;
             Ok(Box::new(Folder::open(path, first)?))
         }
-        other => bail!(
-            "backup target {:?} has kind {other:?}; only \"folder\" is supported so far",
-            target.name
-        ),
+        _ => {
+            let open = if first { Open::First } else { Open::Again };
+            Ok(Box::new(Adapter::open(target, open)?))
+        }
     }
 }
 
@@ -55,7 +57,7 @@ pub fn probe(target: &BackupTarget) -> Result<()> {
                 .with_context(|| format!("backup target {:?} needs a path", target.name))?;
             Folder::probe(path)
         }
-        _ => open(target, false).map(|_| ()),
+        _ => Adapter::open(target, Open::Probe).map(|_| ()),
     }
 }
 
@@ -113,12 +115,17 @@ impl Folder {
     }
 
     fn path(&self, name: &str) -> Result<PathBuf> {
-        // Names are keyed hashes; anything else is refused before it becomes a path.
-        if name.len() != 64 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(anyhow!("not a backup object name: {name:?}"));
-        }
+        object_name(name)?;
         Ok(self.objects.join(&name[..2]).join(name))
     }
+}
+
+/// Refuse anything but an object's name, a keyed hash, before it becomes a path or a line.
+pub(super) fn object_name(name: &str) -> Result<()> {
+    if name.len() != 64 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("not a backup object name: {name:?}");
+    }
+    Ok(())
 }
 
 impl Store for Folder {

@@ -598,6 +598,9 @@ fn run_into(
             target.name
         );
     }
+    // The record too: a target that makes objects durable only on a sync (an adapter's) could
+    // otherwise lose the one object a restore starts from.
+    store.sync()?;
     // Everything else is stored, but the archive itself lost bytes: that is a failure to see.
     if r.blobs_missing > 0 {
         bail!(
@@ -744,6 +747,7 @@ mod tests {
             path: Some(dir.path().join("drive")),
             cards: false,
             vectors: false,
+            settings: Default::default(),
         };
         (dir, home, target)
     }

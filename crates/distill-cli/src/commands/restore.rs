@@ -4,7 +4,7 @@ use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use distill_core::backup::{self, BackupKey, store::Folder};
+use distill_core::backup::{self, BackupKey, store};
 
 use super::Ctx;
 use crate::output::out;
@@ -12,8 +12,14 @@ use crate::output::out;
 #[derive(clap::Args)]
 pub struct Args {
     /// The folder target to restore from: the `path` of its `[[backup]]` entry
+    #[arg(long, required_unless_present = "kind", conflicts_with = "kind")]
+    folder: Option<PathBuf>,
+    /// Or the kind of an adapter target to restore from: runs `distill-backup-<kind>`
     #[arg(long)]
-    folder: PathBuf,
+    kind: Option<String>,
+    /// An adapter target's setting, as its `[[backup]]` table has it (repeat for each)
+    #[arg(long = "set", value_name = "KEY=VALUE", requires = "kind")]
+    settings: Vec<String>,
     /// A file holding the backup key (default: read it from standard input, piped)
     #[arg(long)]
     key_file: Option<PathBuf>,
@@ -37,9 +43,10 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
         }
     };
     let key = BackupKey::from_recovery(&text)?;
-    // A restore reads a target; it never makes its folder.
-    let store = Folder::open(&a.folder, false)?;
-    let report = backup::restore(&ctx.home, &store, &key, a.allow_missing)?;
+    // A restore reads a target; it never makes its folder or sets up its place.
+    let target = backup::restore_target(a.folder.clone(), a.kind.as_deref(), &a.settings)?;
+    let store = store::open(&target, false)?;
+    let report = backup::restore(&ctx.home, &*store, &key, a.allow_missing)?;
     out(ctx.json, &report, || {
         println!("{}", report.summary());
         println!("Restored into {}.", ctx.home.root.display());
