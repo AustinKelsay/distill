@@ -167,3 +167,21 @@ The record of each backup run, per backup target: when, what was sent and what f
 
 **Restore**:
 Rebuilding a home from a backup, into an empty home only. The only way a backup comes back in.
+
+### Machines
+
+**Machine**:
+One computer the owner runs harnesses on, named once by the owner. A session's identity includes its machine.
+_Avoid_: Host, device, node
+
+**Hub**:
+The machine that holds the archive, the index, the cards and the read path, and pulls captures from the spokes.
+_Avoid_: Server, primary, master
+
+**Spoke**:
+A machine that only captures, keeping its own raw archive, and that the hub pulls from over SSH. It reads nothing and runs no model.
+_Avoid_: Client, agent, satellite
+
+**Pull**:
+The hub taking a spoke's new captures over SSH, into that machine's raw archive on the hub.
+_Avoid_: Sync, push, export (the spoke's half)
