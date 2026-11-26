@@ -79,8 +79,8 @@ fn serve(
         tags: 0,
         sessions: 0,
     };
-    let config = home.load_config().unwrap_or_default();
-    if let Access::Refused(why) = Trust::new(&config).check(reader, runtime) {
+    let (config, trust) = Trust::of(home);
+    if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok((Tagged::Refused(why), none));
     }
     let all = normalize::read_session_list(home)?;

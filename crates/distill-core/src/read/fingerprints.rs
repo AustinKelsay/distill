@@ -422,15 +422,14 @@ fn stored(home: &Home) -> Result<Stored> {
     Ok(out)
 }
 
-/// Run `serve` if `reader` may read; otherwise refuse. With no config, or one that can't be read,
-/// only the built-in providers count: that trusts less, never more.
+/// Run `serve` if `reader` may read; otherwise refuse (`Trust::of`).
 fn gate<T>(
     home: &Home,
     runtime: &LocalRuntime,
     reader: &Reader,
     serve: impl FnOnce() -> Result<T>,
 ) -> Result<Answer<T>> {
-    let trust = Trust::new(&home.load_config().unwrap_or_default());
+    let (_, trust) = Trust::of(home);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Answer::Refused(why));
     }

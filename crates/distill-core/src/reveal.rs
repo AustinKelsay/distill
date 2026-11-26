@@ -567,7 +567,7 @@ fn expire_due(home: &Home, now: DateTime<Utc>) -> Result<Vec<Request>> {
 fn trust(home: &Home) -> Trust {
     // With no config, or one that can't be read, only the built-in providers count: that trusts
     // less, never more.
-    Trust::new(&home.load_config().unwrap_or_default())
+    Trust::of(home).1
 }
 
 /// The same model reader: the provider whatever its case, and the same model or none.

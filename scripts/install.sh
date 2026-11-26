@@ -4,6 +4,9 @@
 # on macOS as DISTILL.app in ~/Applications (scripts/mac-app.sh builds it; `distill gui` opens
 # it), elsewhere as distill-gui beside the others.
 #
+# `--spoke` installs only `distill`, for a machine that only captures (ADR 0010): no window, no
+# MCP server, no backup adapters, and it removes the window and MCP server an earlier install left.
+#
 # Everything is built in a staging folder first; the installed files are replaced only once all
 # of them are ready, so a failed build leaves the old ones in place.
 set -euo pipefail
@@ -11,7 +14,14 @@ cd "$(dirname "$0")/.."
 
 ROOT="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
 BINS=(distill distill-mcp distill-gui)
+CRATES=(distill-cli distill-mcp distill-gui)
 MAC=$([[ "$(uname)" == Darwin ]] && echo 1 || true)
+SPOKE=
+case "${1:-}" in
+  "") ;;
+  --spoke) SPOKE=1 BINS=(distill) CRATES=(distill-cli) ;;
+  *) echo "usage: $0 [--spoke]" >&2; exit 2 ;;
+esac
 APPS="$HOME/Applications"
 
 # Whether a tick is running. `pgrep` exits 1 for no match; anything else is an error, not "no".
@@ -36,10 +46,10 @@ mkdir -p "$ROOT/bin"
 stage=$(mktemp -d "$ROOT/.distill-install.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 
-for crate in distill-cli distill-mcp distill-gui; do
+for crate in "${CRATES[@]}"; do
   cargo install --path "crates/$crate" --locked --quiet --root "$stage" --no-track
 done
-if [[ -n "$MAC" ]]; then
+if [[ -n "$MAC" && -z "$SPOKE" ]]; then
   BINS=(distill distill-mcp)
   scripts/mac-app.sh "$stage/bin/distill-gui" "$stage" "$ROOT/bin/distill"
 fi
@@ -51,19 +61,27 @@ fi
 for bin in "${BINS[@]}"; do
   mv -f "$stage/bin/$bin" "$ROOT/bin/$bin"
 done
-for adapter in adapters/distill-backup-*; do
-  install -m 755 "$adapter" "$stage/${adapter##*/}"
-  mv -f "$stage/${adapter##*/}" "$ROOT/bin/${adapter##*/}"
-done
+if [[ -z "$SPOKE" ]]; then
+  for adapter in adapters/distill-backup-*; do
+    install -m 755 "$adapter" "$stage/${adapter##*/}"
+    mv -f "$stage/${adapter##*/}" "$ROOT/bin/${adapter##*/}"
+  done
+else
+  # A spoke serves no reader: an earlier full install's MCP server and window would read it.
+  rm -f "$ROOT/bin/distill-mcp" "$ROOT/bin/distill-gui"
+  if [[ -n "$MAC" && -e "$APPS/DISTILL.app" ]]; then mv "$APPS/DISTILL.app" "$stage/previous.app"; fi
+fi
 if [[ -n "$MAC" ]]; then
-  # One copy of the window: the app. `distill gui` opens it.
-  rm -f "$ROOT/bin/distill-gui"
-  mkdir -p "$APPS"
-  # The old app moves into the staging folder (removed on exit); an open window keeps running.
-  if [[ -e "$APPS/DISTILL.app" ]]; then mv "$APPS/DISTILL.app" "$stage/previous.app"; fi
-  mv "$stage/DISTILL.app" "$APPS/DISTILL.app"
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-    -f "$APPS/DISTILL.app" || true
+  if [[ -z "$SPOKE" ]]; then
+    # One copy of the window: the app. `distill gui` opens it.
+    rm -f "$ROOT/bin/distill-gui"
+    mkdir -p "$APPS"
+    # The old app moves into the staging folder (removed on exit); an open window keeps running.
+    if [[ -e "$APPS/DISTILL.app" ]]; then mv "$APPS/DISTILL.app" "$stage/previous.app"; fi
+    mv "$stage/DISTILL.app" "$APPS/DISTILL.app"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+      -f "$APPS/DISTILL.app" || true
+  fi
   # The timer's job is pinned to the binary it last launched, and a new build fails that pin
   # once (#175). Loading the job again clears it; RunAtLoad then runs the catch-up tick.
   plist="$HOME/Library/LaunchAgents/dev.distill.tick.plist"
@@ -82,7 +100,11 @@ if [[ -n "$MAC" ]]; then
       echo "Reloaded the timer; it runs a tick now."
     fi
   fi
-  echo "Installed into $ROOT/bin and $APPS/DISTILL.app."
+  if [[ -z "$SPOKE" ]]; then
+    echo "Installed into $ROOT/bin and $APPS/DISTILL.app."
+  else
+    echo "Installed into $ROOT/bin."
+  fi
 else
   echo "Installed into $ROOT/bin."
 fi

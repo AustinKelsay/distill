@@ -28,6 +28,17 @@ pub fn initialize(home: &Home, config: &Config, force: bool) -> Result<()> {
             home.config_path().display()
         );
     }
+    // A spoke keeps its name and stays a spoke: its hub knows its sessions by that name
+    // (ADR 0010).
+    if let Some(was) = home.spoke()?
+        && config.spoke.as_ref() != Some(&was)
+    {
+        bail!(
+            "this home is the spoke \"{0}\", and a machine keeps its name: run it again with \
+             --spoke {0}",
+            was.machine
+        );
+    }
     home.ensure()?;
     config.save(&home.config_path())
 }

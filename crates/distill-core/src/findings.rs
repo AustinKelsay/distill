@@ -695,6 +695,13 @@ impl ScanReport {
 
 /// Scan every session whose findings are missing or out of date with `config`, with no limit.
 pub fn scan_all(home: &Home, config: &Config) -> Result<ScanReport> {
+    // A spoke scans nothing: the hub scans what it pulls (ADR 0010).
+    if let Some(spoke) = home.spoke()? {
+        bail!(
+            "this home is the spoke \"{}\": it only captures, and the hub scans what it pulls",
+            spoke.machine
+        );
+    }
     let sessions = normalize::read_session_list(home)?;
     let mut r = ScanReport {
         sessions: sessions.len() as u64,

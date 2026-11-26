@@ -165,10 +165,7 @@ fn serve(
     which: Events,
     seen: &mut Seen,
 ) -> Result<Read> {
-    // With no config, or one that can't be read, only the built-in providers count: that trusts
-    // less, never more.
-    let config = home.load_config().unwrap_or_default();
-    let trust = Trust::new(&config);
+    let (config, trust) = Trust::of(home);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Read::Refused(why));
     }
@@ -253,7 +250,8 @@ pub(crate) fn for_index(
     sessions: &[SessionMeta],
     mut visit: impl FnMut(&SessionMeta, ForIndex) -> Result<()>,
 ) -> Result<()> {
-    // DISTILL itself is always allowed (`Trust::check`); what it gets is decided here.
+    // DISTILL itself is allowed wherever the home serves readers at all (`Trust::check`); what
+    // it gets is decided here.
     masked_for(
         home,
         Reader::Distill,
@@ -298,7 +296,24 @@ fn masked_for(
     if sessions.is_empty() {
         return Ok(false);
     }
-    let config = home.load_config().unwrap_or_default();
+    // DISTILL itself reads only where the home serves readers at all.
+    let (config, trust) = Trust::of(home);
+    if let Some(why) = trust.refused() {
+        let reason = why.to_string();
+        readlog::append(
+            home,
+            None,
+            &ReadEntry {
+                at: now_rfc3339(),
+                reader,
+                session: None,
+                result: ReadResult::Refused {
+                    reason: reason.clone(),
+                },
+            },
+        )?;
+        bail!("refused: {reason}");
+    }
     let (mut served, mut events) = (0u64, 0u64);
     let mut run = || -> Result<bool> {
         for facts in sessions {
@@ -738,6 +753,60 @@ mod tests {
         ] {
             assert!(t.contains(said), "{said:?} missing from {t}");
         }
+    }
+
+    #[test]
+    fn a_spoke_or_a_config_that_cannot_be_read_serves_no_reader_distill_included() {
+        let (_d, home) = home_with_session();
+        let sessions = normalize::read_session_list(&home).unwrap();
+        // `Build Box` stands for whatever the broken line holds.
+        for (config, says) in [
+            (
+                "[spoke]\nmachine = \"nas\"\n",
+                "this home is the spoke \"nas\"",
+            ),
+            (
+                "[spoke]\nmachine = \"Build Box\"\n",
+                "the config can't be read",
+            ),
+        ] {
+            std::fs::write(home.config_path(), config).unwrap();
+            for reader in [
+                Reader::Owner,
+                Reader::Distill,
+                Reader::model(Some("ollama"), Some("small:8b")),
+            ] {
+                let why = refused(
+                    read(&home, &local(), &reader, "claude-code/s1", Range::default()).unwrap(),
+                );
+                assert!(why.contains(says), "{why}");
+            }
+            let err = for_index(&home, &sessions, |_, _| panic!("served")).unwrap_err();
+            assert!(format!("{err:#}").contains(says), "{err:#}");
+        }
+        // A config link whose target is gone is a config that can't be read, not none.
+        std::fs::remove_file(home.config_path()).unwrap();
+        std::os::unix::fs::symlink(home.root.join("gone.toml"), home.config_path()).unwrap();
+        let why = refused(
+            read(
+                &home,
+                &local(),
+                &Reader::Owner,
+                "claude-code/s1",
+                Range::default(),
+            )
+            .unwrap(),
+        );
+        assert!(why.contains("the config can't be read"), "{why}");
+        let log = readlog::list(&home, None, usize::MAX).unwrap();
+        assert!(
+            log.iter()
+                .all(|e| matches!(e.result, ReadResult::Refused { .. })),
+            "{log:?}"
+        );
+        // The refusal doesn't quote the config: its lines can hold what the owner keeps private.
+        let text = std::fs::read_to_string(home.root.join("log/reads.jsonl")).unwrap();
+        assert!(!text.contains("Build Box"), "{text}");
     }
 
     fn refused(r: Read) -> String {

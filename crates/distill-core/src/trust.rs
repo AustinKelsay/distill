@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, ProviderConfig, ProviderKind};
+use crate::home::Home;
 use crate::runtime::{LocalRuntime, RuntimeState};
 
 /// The local runtime, built in and always trusted. In this version the only local provider.
@@ -114,6 +115,9 @@ pub struct ListedProvider {
 pub struct Trust {
     providers: Vec<Provider>,
     warnings: Vec<String>,
+    /// Why no reader is served at all: on a spoke, since nothing reads there (ADR 0010), or
+    /// when the config is there but can't be read, since it may name a spoke.
+    refused: Option<String>,
 }
 
 impl Trust {
@@ -166,7 +170,48 @@ impl Trust {
         Self {
             providers,
             warnings,
+            refused: config.spoke.as_ref().map(|s| {
+                format!(
+                    "this home is the spoke \"{}\": it only captures, and its sessions are \
+                     read on the hub that pulls from it.",
+                    s.machine
+                )
+            }),
         }
+    }
+
+    /// The home's config, and the trust it sets: what every read starts from. With no config,
+    /// only the built-in providers count. A config that is there but can't be read serves no
+    /// reader, since what it says can't be told.
+    pub fn of(home: &Home) -> (Config, Self) {
+        if !home.has_config() {
+            let config = Config::default();
+            let trust = Self::new(&config);
+            return (config, trust);
+        }
+        match home.load_config() {
+            Ok(config) => {
+                let trust = Self::new(&config);
+                (config, trust)
+            }
+            // Not why: the parser's message can quote the config's lines, which a reader and
+            // the read log must not get. `distill tick` shows the owner why.
+            Err(_) => {
+                let config = Config::default();
+                let mut trust = Self::new(&config);
+                trust.refused = Some(
+                    "the config can't be read, so no reader is served until the owner fixes it \
+                     (`distill tick` says why)."
+                        .into(),
+                );
+                (config, trust)
+            }
+        }
+    }
+
+    /// Why no reader is served at all, if none is.
+    pub fn refused(&self) -> Option<&str> {
+        self.refused.as_deref()
     }
 
     /// Config entries that were ignored, and why.
@@ -201,6 +246,9 @@ impl Trust {
     /// Whether `reader` may read session text. `runtime` tells a model stored on this machine
     /// from one Ollama serves from a cloud; it need not be running.
     pub fn check(&self, reader: &Reader, runtime: &LocalRuntime) -> Access {
+        if let Some(why) = &self.refused {
+            return Access::Refused(why.clone());
+        }
         let Some((provider, via)) = Self::resolve(reader, runtime) else {
             return match reader {
                 Reader::Owner | Reader::Distill => Access::Allowed,
@@ -392,6 +440,26 @@ mod tests {
         match access {
             Access::Refused(why) => why,
             Access::Allowed => panic!("allowed"),
+        }
+    }
+
+    #[test]
+    fn on_a_spoke_no_reader_may_read() {
+        let c = Config {
+            spoke: Some(crate::config::Spoke {
+                machine: "nas".into(),
+            }),
+            ..Config::default()
+        };
+        let t = Trust::new(&c);
+        let rt = FakeRuntime::not_installed().runtime();
+        for reader in [
+            Reader::Owner,
+            Reader::Distill,
+            model(Some("ollama"), Some("m")),
+        ] {
+            let why = refused(t.check(&reader, &rt));
+            assert!(why.contains("spoke \"nas\""), "{why}");
         }
     }
 

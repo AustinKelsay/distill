@@ -83,6 +83,9 @@ pub struct Step {
     /// The step calls a model, so it gets a share of the tick's [`model_budget`].
     pub model: bool,
     generation: bool,
+    /// A spoke's tick runs it too: a spoke only captures, and the hub parses what it pulls
+    /// (ADR 0010).
+    pub spoke: bool,
     pub run: fn(&Home, &Config, &LocalRuntime, Deadline) -> Result<StepOutcome>,
 }
 
@@ -92,48 +95,56 @@ pub const STEPS: &[Step] = &[
         name: "sweep",
         model: false,
         generation: false,
+        spoke: true,
         run: sweep_step,
     },
     Step {
         name: "parse",
         model: false,
         generation: false,
+        spoke: false,
         run: parse_step,
     },
     Step {
         name: "scan",
         model: false,
         generation: false,
+        spoke: false,
         run: scan_step,
     },
     Step {
         name: "index",
         model: false,
         generation: false,
+        spoke: false,
         run: index_step,
     },
     Step {
         name: "backup",
         model: false,
         generation: false,
+        spoke: false,
         run: backup_step,
     },
     Step {
         name: "cards",
         model: true,
         generation: true,
+        spoke: false,
         run: cards_step,
     },
     Step {
         name: "vectors",
         model: true,
         generation: false,
+        spoke: false,
         run: vectors_step,
     },
     Step {
         name: "details",
         model: true,
         generation: true,
+        spoke: false,
         run: details_step,
     },
 ];
@@ -365,6 +376,9 @@ fn tick_with_runtimes(
     home.ensure()?;
     let mut steps = Vec::with_capacity(STEPS.len());
     for (i, s) in STEPS.iter().enumerate() {
+        if config.spoke.is_some() && !s.spoke {
+            continue;
+        }
         let deadline = match end {
             Some(end) if s.model => {
                 let sharing = STEPS[i..].iter().filter(|s| s.model).count() as u32;
@@ -405,6 +419,39 @@ mod tests {
                 "sweep", "parse", "scan", "index", "backup", "cards", "vectors", "details"
             ]
         );
+    }
+
+    #[test]
+    fn a_spokes_tick_only_sweeps() {
+        let dir = tempfile::tempdir().unwrap();
+        let pi = dir.path().join("pi");
+        std::fs::create_dir_all(&pi).unwrap();
+        std::fs::write(
+            pi.join("2026-11-01_p1.jsonl"),
+            r#"{"type":"session","id":"p1","cwd":"/r","version":3}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"rename the widget"}],"timestamp":1794436930000}}
+"#,
+        )
+        .unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let mut config = Config {
+            harnesses: vec![],
+            spoke: Some(crate::config::Spoke {
+                machine: "nas".into(),
+            }),
+            ..Default::default()
+        };
+        let h = config.harness_mut(Harness::Pi);
+        h.enabled = true;
+        h.roots = vec![pi];
+        let r = tick(&home, &config).unwrap();
+        let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["sweep"]);
+        assert!(r.steps[0].ok && r.steps[0].report["new"] == 1, "{r:?}");
+        // Captured, and nothing parsed.
+        assert!(home.manifest_path().exists());
+        assert!(normalize::read_session_list(&home).unwrap().is_empty());
+        assert_eq!(runlog::recent(&home, 9).unwrap().len(), 1);
     }
 
     #[test]
