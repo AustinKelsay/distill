@@ -385,8 +385,9 @@ fn machines(
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    // Each one's newest pull, and the newest that took without an error.
-    let mut newest: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // Each one's newest pull, and the newest that took without an error, by when each ended: a
+    // tick logs its pulls only at its end, after a pull by hand that ran meanwhile.
+    let mut newest: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
     let mut last_ok: BTreeMap<String, String> = BTreeMap::new();
     for e in runlog::recent(home, 500)? {
         let Some(o) = e.outcome("pull") else { continue };
@@ -394,12 +395,13 @@ fn machines(
             continue;
         };
         for p in r.machines {
-            if p.error.is_none() {
-                last_ok
-                    .entry(p.machine.clone())
-                    .or_insert_with(|| e.at.clone());
+            let at = p.at.unwrap_or_else(|| e.at.clone());
+            if p.error.is_none() && last_ok.get(&p.machine).is_none_or(|t| *t < at) {
+                last_ok.insert(p.machine.clone(), at.clone());
             }
-            newest.entry(p.machine).or_insert(p.error);
+            if newest.get(&p.machine).is_none_or(|(t, _)| *t < at) {
+                newest.insert(p.machine, (at, p.error));
+            }
         }
     }
     let mut out = Vec::new();
@@ -443,7 +445,7 @@ fn machines(
                 note,
             });
         }
-        let pull_error = newest.get(&machine).cloned().flatten();
+        let pull_error = newest.get(&machine).and_then(|(_, e)| e.clone());
         let last_pull = last_ok.get(&machine).cloned();
         let warned = harnesses.iter().find(|h| h.health == Health::Warn);
         let (health, note) = if let Some(e) = &pull_error {
@@ -751,17 +753,26 @@ mod tests {
     }
 
     pub(super) fn pulled(home: &Home, machine: &str, minutes_ago: i64, error: Option<&str>) {
+        pulled_at(home, machine, None, minutes_ago, error);
+    }
+
+    /// A run that logged, `logged` minutes ago, a pull of `machine` that ended `ended` minutes ago.
+    fn pulled_at(home: &Home, machine: &str, ended: Option<i64>, logged: i64, error: Option<&str>) {
+        let ago = |m: i64| {
+            (chrono::Utc::now() - chrono::Duration::minutes(m))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        };
         let report = crate::machines::PullReport {
             machines: vec![crate::machines::Pulled {
                 machine: machine.into(),
+                at: ended.map(ago),
                 took: Default::default(),
                 error: error.map(Into::into),
             }],
             skipped: None,
         };
         let mut e = runlog::RunEntry::of("tick", vec![crate::tick::pull_outcome(&report).unwrap()]);
-        e.at = (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        e.at = ago(logged);
         runlog::record(home, &e).unwrap();
     }
 
@@ -825,6 +836,12 @@ mod tests {
         );
         assert_eq!(nas.health, Health::Warn);
         assert!(nas.note.as_deref().unwrap().contains("Connection refused"));
+
+        // A tick whose pull ended before that one, logged once the tick was done, is older.
+        pulled_at(&home, "nas", Some(8), 1, None);
+        let nas = &status(&home).unwrap().machines[0];
+        assert_eq!(nas.health, Health::Warn, "{nas:?}");
+        assert!(nas.pull_error.is_some(), "{nas:?}");
     }
 
     #[test]

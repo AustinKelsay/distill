@@ -562,16 +562,13 @@ pub fn export(
                     let len = f.metadata()?.len();
                     writeln!(out, "blob {} {len}", rec.capture_hash)?;
                     // Counted as it goes, so an export cut off inside a blob logs what left.
-                    let (mut left, mut buf) = (len, vec![0; 64 * 1024]);
-                    while left > 0 {
-                        let chunk = left.min(buf.len() as u64) as usize;
-                        let n = f.read(&mut buf[..chunk])?;
-                        if n == 0 {
-                            bail!("blob {} changed while it was read", rec.capture_hash);
-                        }
-                        out.write_all(&buf[..n])?;
-                        t.bytes += n as u64;
-                        left -= n as u64;
+                    let mut counted = Tally {
+                        out: &mut *out,
+                        bytes: &mut t.bytes,
+                    };
+                    let n = std::io::copy(&mut (&mut f).take(len), &mut counted)?;
+                    if n != len {
+                        bail!("blob {} changed while it was read", rec.capture_hash);
                     }
                     t.blobs += 1;
                 }
@@ -614,6 +611,23 @@ pub fn copy_length(home: &Home, machine: &str) -> Result<u64> {
 /// The length of `bytes` up to the end of its last line.
 fn whole_lines(bytes: &[u8]) -> usize {
     bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
+}
+
+/// A writer that adds what each write took to `bytes`.
+struct Tally<'a> {
+    out: &'a mut dyn Write,
+    bytes: &'a mut u64,
+}
+
+impl Write for Tally<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.out.write(buf)?;
+        *self.bytes += n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.flush()
+    }
 }
 
 /// How [`take`] says the stream stopped before its end.

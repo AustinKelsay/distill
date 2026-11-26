@@ -69,6 +69,9 @@ pub fn forced_since(original: Option<&str>) -> Result<u64> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pulled {
     pub machine: String,
+    /// When this machine's pull ended: a tick logs it only once all its steps are done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
     #[serde(flatten)]
     pub took: Transfer,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,9 +163,10 @@ pub fn pull(
         if deadline.passed() {
             break;
         }
-        report
-            .machines
-            .push(pull_one(home, m, deadline, "ssh", QUIET));
+        report.machines.push(Pulled {
+            at: Some(now_rfc3339()),
+            ..pull_one(home, m, deadline, "ssh", QUIET)
+        });
     }
     Ok(report)
 }
@@ -218,6 +222,7 @@ fn pull_one(
 ) -> Pulled {
     let mut pulled = Pulled {
         machine: m.name.clone(),
+        at: None,
         took: Transfer::default(),
         error: None,
     };
@@ -482,11 +487,16 @@ mod tests {
         let mut whole = Vec::new();
         export(&home, 0, &mut whole).unwrap();
         let at = whole.windows(5).rposition(|w| w == b"blob ").unwrap();
+        let payload = at + whole[at..].iter().position(|b| *b == b'\n').unwrap() + 1;
         assert!(export(&home, 0, &mut HungUp { room: at + 80_000 }).is_err());
         let log = fs::read_to_string(home.export_log_path()).unwrap();
         let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
         assert_eq!(last.sent.blobs, 2, "{last:?}");
-        assert_eq!(last.sent.bytes, 8 + 64 * 1024, "{last:?}");
+        assert_eq!(
+            last.sent.bytes,
+            (8 + at + 80_000 - payload) as u64,
+            "{last:?}"
+        );
     }
 
     #[test]
