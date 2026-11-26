@@ -405,13 +405,15 @@ fn run_into(
                 {
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    failed = Some(e);
+                    continue;
+                }
             };
             let mut out = scratch.file()?;
-            key.seal(&mut blob, &mut out)?;
-            // A blob that doesn't hash to its name is corrupt here; don't send it as if it were
-            // good.
-            match blob.finish() {
+            // A copy that can't be read, or doesn't hash to its name, is bad here; don't send it
+            // as if it were good, and try the next archive's.
+            match key.seal(&mut blob, &mut out).and_then(|_| blob.finish()) {
                 Ok(()) => {
                     sealed = Some(out);
                     break;

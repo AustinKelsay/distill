@@ -664,27 +664,34 @@ mod tests {
 
     #[test]
     fn a_capture_two_archives_hold_goes_from_the_copy_that_is_whole() {
-        let (dir, home, target) = backed_up();
-        let bytes = session("s3", &["count the files"]);
-        let put = |machine: Option<&str>| {
-            Archive::open_of(&home, machine)
-                .unwrap()
-                .put(Harness::ClaudeCode, "/u/s3.jsonl", "1", bytes.as_bytes())
-                .unwrap()
-                .unwrap()
-                .capture_hash
+        // This home's copy changed, or can't be read at all; the spoke's is whole.
+        let changed = |p: &Path| fs::write(p, "changed").unwrap();
+        let unreadable = |p: &Path| {
+            fs::remove_file(p).unwrap();
+            fs::create_dir(p).unwrap();
         };
-        let sha = put(None);
-        assert_eq!(put(Some("nas")), sha);
-        // This home's copy changed; the spoke's is whole.
-        fs::write(home.raw_dir().join(&sha[..2]).join(&sha), "changed").unwrap();
-        let r = run(&home, &target).unwrap();
-        assert!(r.ok && r.blobs_sent == 1, "{r:?}");
-        let key = BackupKey::existing(&home).unwrap().unwrap();
-        let store = store::open(&target, false).unwrap();
-        let check = verify(&home, "drive", &*store, &key, true).unwrap();
-        assert_eq!((check.missing, check.corrupt), (0, 0), "{check:?}");
-        drop(dir);
+        for damage in [&changed as &dyn Fn(&Path), &unreadable] {
+            let (dir, home, target) = backed_up();
+            let bytes = session("s3", &["count the files"]);
+            let put = |machine: Option<&str>| {
+                Archive::open_of(&home, machine)
+                    .unwrap()
+                    .put(Harness::ClaudeCode, "/u/s3.jsonl", "1", bytes.as_bytes())
+                    .unwrap()
+                    .unwrap()
+                    .capture_hash
+            };
+            let sha = put(None);
+            assert_eq!(put(Some("nas")), sha);
+            damage(&home.raw_dir().join(&sha[..2]).join(&sha));
+            let r = run(&home, &target).unwrap();
+            assert!(r.ok && r.blobs_sent == 1, "{r:?}");
+            let key = BackupKey::existing(&home).unwrap().unwrap();
+            let store = store::open(&target, false).unwrap();
+            let check = verify(&home, "drive", &*store, &key, true).unwrap();
+            assert_eq!((check.missing, check.corrupt), (0, 0), "{check:?}");
+            drop(dir);
+        }
     }
 
     #[test]
