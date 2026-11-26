@@ -34,10 +34,10 @@ SSH runs with `BatchMode`, so it never asks for a password: the hub's key must b
 On the spoke, the hub's key can run nothing but the export. Prefix its line in `~/.ssh/authorized_keys`:
 
 ```text
-command="distill export --ssh",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… hub
+command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 ```
 
-With `--ssh`, the export takes where to start from what the hub asked to run (`SSH_ORIGINAL_COMMAND`), which must end `export --since <bytes>`; whatever else it asks for, only the export runs. Use the full path to `distill` if it isn't on SSH's `PATH`.
+`restrict` turns off a terminal, forwarding and `~/.ssh/rc`, whose output would break the export. With `--ssh`, the export takes where to start from what the hub asked to run (`SSH_ORIGINAL_COMMAND`), which must end `export --since <bytes>`; whatever else it asks for, only the export runs. Use the full path to `distill` if it isn't on SSH's `PATH`.
 
 ## What leaves the spoke
 

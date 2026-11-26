@@ -39,6 +39,8 @@ pub fn export(home: &Home, since: u64, out: &mut dyn Write) -> Result<Transfer> 
              --spoke <machine>`"
         );
     };
+    // A sweep here waits, so the manifest and the blobs it names stay as they were read.
+    let _lock = home.lock_archive()?;
     // What went before an export stopped short (the hub hung up) is logged too.
     let mut sent = Transfer::default();
     let result = archive::export(home, &spoke.machine, since, out, &mut sent);
@@ -214,16 +216,20 @@ fn pull_one(
     ssh: &str,
     quiet: Duration,
 ) -> Pulled {
-    let since = archive::copy_length(home, &m.name).unwrap_or(0);
     let mut pulled = Pulled {
         machine: m.name.clone(),
-        took: Transfer {
-            since,
-            to: since,
-            ..Default::default()
-        },
+        took: Transfer::default(),
         error: None,
     };
+    let since = match archive::copy_length(home, &m.name) {
+        Ok(n) => n,
+        Err(e) => {
+            pulled.error = Some(format!("{e:#}"));
+            return pulled;
+        }
+    };
+    pulled.took.since = since;
+    pulled.took.to = since;
     let command = m.command.as_deref().unwrap_or("distill");
     let spawned = Command::new(ssh)
         // No prompt, so the timer can run it; and a connection that goes quiet is dropped
@@ -291,8 +297,14 @@ fn pull_one(
             }
         })
     };
-    let took = archive::take(home, &m.name, &mut stdout, &|| deadline.passed());
-    if !matches!(&took, Ok(t) if !t.stopped) {
+    let took = archive::take_into(
+        home,
+        &m.name,
+        &mut stdout,
+        &|| deadline.passed(),
+        &mut pulled.took,
+    );
+    if took.is_err() || pulled.took.stopped {
         let _ = child.lock().map(|mut c| c.kill());
     }
     drop(stdout);
@@ -312,15 +324,12 @@ fn pull_one(
     }
     let said =
         String::from_utf8_lossy(&said.lock().map(|s| s.clone()).unwrap_or_default()).into_owned();
-    if gave_up.load(Ordering::Relaxed) {
+    if took.is_err() && gave_up.load(Ordering::Relaxed) {
         pulled.error = Some(format!(
             "{} sent nothing for {}s, so the pull stopped",
             m.host,
             quiet.as_secs()
         ));
-        if let Ok(t) = took {
-            pulled.took = t;
-        }
         return pulled;
     }
     let last = said
@@ -329,15 +338,14 @@ fn pull_one(
         .find(|l| !l.trim().is_empty())
         .map(str::trim);
     match took {
-        Ok(t) => {
+        Ok(()) => {
             let failed = status.as_ref().map_or(true, |s| !s.success());
-            if failed && !t.stopped {
+            if failed && !pulled.took.stopped {
                 pulled.error = Some(match last {
                     Some(l) => format!("ssh {}: {l}", m.host),
                     None => format!("ssh {} failed", m.host),
                 });
             }
-            pulled.took = t;
         }
         // What the other side said says more than a stream that ended early. When the pull
         // refused what came, ssh only says how it was stopped.

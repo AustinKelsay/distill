@@ -612,6 +612,14 @@ fn whole_lines(bytes: &[u8]) -> usize {
 /// How [`take`] says the stream stopped before its end.
 pub const ENDED_EARLY: &str = "the export ended early";
 
+/// The longest frame [`take`] reads, a header's included, and the longest manifest line.
+const MAX_FRAME: u64 = 4096;
+const MAX_LINE: usize = 1 << 20;
+
+fn is_blob_name(sha: &str) -> bool {
+    sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Take `machine`'s export from `input` into its raw archive here (ADR 0010), which it must
 /// continue: the export starts where this copy ends, and from the same bytes. Each blob is
 /// checked against its name, and one already here is skipped, before the line that names it is
@@ -623,11 +631,24 @@ pub fn take(
     input: &mut dyn std::io::BufRead,
     stop: &dyn Fn() -> bool,
 ) -> Result<Transfer> {
+    let mut t = Transfer::default();
+    take_into(home, machine, input, stop, &mut t).map(|()| t)
+}
+
+/// [`take`], counting into `t` what went in, so a pull that fails partway reports what it kept.
+pub fn take_into(
+    home: &Home,
+    machine: &str,
+    input: &mut dyn std::io::BufRead,
+    stop: &dyn Fn() -> bool,
+    t: &mut Transfer,
+) -> Result<()> {
+    use std::io::BufRead;
     crate::home::machine_name(machine)?;
     let mut frame = String::new();
     let next = |frame: &mut String, input: &mut dyn std::io::BufRead| -> Result<()> {
         frame.clear();
-        if input.read_line(frame)? == 0 {
+        if Read::take(&mut *input, MAX_FRAME).read_line(frame)? == 0 {
             bail!(ENDED_EARLY);
         }
         if frame.pop() != Some('\n') {
@@ -674,7 +695,7 @@ pub fn take(
     let mut archive = Archive::open_of(home, Some(machine))?;
     create_dir_private(&archive.raw)?;
     let tmp = archive.raw.join(format!(".pulling-{}", std::process::id()));
-    let mut t = Transfer {
+    *t = Transfer {
         since: header.since,
         to: header.since,
         ..Default::default()
@@ -700,7 +721,7 @@ pub fn take(
             match words.as_slice() {
                 ["blob", sha, len] => {
                     let len: u64 = len.parse().context("a blob's length")?;
-                    if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    if !is_blob_name(sha) {
                         bail!("not a blob name: {sha:?}");
                     }
                     let mut out = Hashing {
@@ -735,12 +756,18 @@ pub fn take(
                 }
                 ["line", len] => {
                     let len: usize = len.parse().context("a line's length")?;
+                    if len > MAX_LINE {
+                        bail!("a manifest line of {len} bytes is longer than any capture's");
+                    }
                     let mut line = vec![0; len];
                     input.read_exact(&mut line).context(ENDED_EARLY)?;
                     if line.contains(&b'\n') {
                         bail!("a manifest line holds a line break");
                     }
                     if let Ok(rec) = serde_json::from_slice::<CaptureRecord>(&line) {
+                        if !is_blob_name(&rec.capture_hash) {
+                            bail!("not a blob name: {:?}", rec.capture_hash);
+                        }
                         if archive.blob_path(&rec.capture_hash).exists() {
                             waiting.remove(&rec.origin);
                         } else {
@@ -749,7 +776,7 @@ pub fn take(
                     }
                     pending.push(line);
                     if waiting.is_empty() {
-                        commit(&mut archive, &mut pending, &mut t)?;
+                        commit(&mut archive, &mut pending, t)?;
                         if stop() {
                             t.stopped = true;
                             return Ok(());
@@ -757,7 +784,7 @@ pub fn take(
                     }
                 }
                 // What the spoke lacks too stays lacking: the copy is as the spoke's is.
-                ["end"] => return commit(&mut archive, &mut pending, &mut t),
+                ["end"] => return commit(&mut archive, &mut pending, t),
                 _ => bail!(
                     "not part of an export: {:?}",
                     frame.chars().take(80).collect::<String>()
@@ -766,7 +793,7 @@ pub fn take(
         }
     })();
     let _ = fs::remove_file(&tmp);
-    result.map(|()| t)
+    result
 }
 
 impl Archive {
@@ -796,6 +823,7 @@ impl Archive {
             })?;
             sync_dir(&self.raw)?;
         } else {
+            let created = !self.manifest.exists();
             let mut f = private_file()
                 .create(true)
                 .append(true)
@@ -806,6 +834,9 @@ impl Archive {
                 return Err(e).context("append to the copy's manifest");
             }
             set_private(&self.manifest);
+            if created {
+                sync_dir(&self.raw)?;
+            }
         }
         let mut superseded = Vec::new();
         for line in lines {
@@ -1024,6 +1055,36 @@ mod tests {
             .unwrap();
         assert!(nas.ok(), "{nas:?}");
         assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn a_pull_counts_what_it_kept_before_a_frame_it_refuses() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        let mut bytes = export_for(&spoke, &hub);
+        assert!(bytes.ends_with(b"end\n"));
+        bytes.truncate(bytes.len() - 4);
+        let good = bytes.clone();
+        // A line naming a blob by a hash too short to be one.
+        let line = fs::read_to_string(spoke.manifest_path_of(None)).unwrap();
+        let mut rec: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        rec["sha256"] = "a".into();
+        let rec = serde_json::to_vec(&rec).unwrap();
+        let short = [format!("line {}\n", rec.len()).into_bytes(), rec].concat();
+        for (bad, why) in [
+            (b"line 4294967296\n".to_vec(), "longer than any capture"),
+            (short, "not a blob name"),
+        ] {
+            let mut stream = good.clone();
+            stream.extend_from_slice(&bad);
+            let (_h2, fresh) = home();
+            let mut t = Transfer::default();
+            let err = take_into(&fresh, "nas", &mut &stream[..], &|| false, &mut t).unwrap_err();
+            assert!(format!("{err:#}").contains(why), "{why}: {err:#}");
+            assert_eq!((t.lines, t.blobs), (1, 1), "{t:?}");
+        }
     }
 
     #[test]
