@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::util::{
-    append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private,
+    append_jsonl, create_dir_private, now_rfc3339, private_file, read_jsonl, set_private, sync_dir,
+    write_atomic_with,
 };
 
 /// A blob file read as a stream that hashes what passes through it.
@@ -779,16 +780,32 @@ impl Archive {
             batch.extend_from_slice(line);
             batch.push(b'\n');
         }
-        let mut f = private_file()
-            .create(true)
-            .append(true)
-            .open(&self.manifest)?;
-        let before = f.metadata()?.len();
-        if let Err(e) = f.write_all(&batch).and_then(|()| f.sync_data()) {
-            let _ = f.set_len(before).and_then(|()| f.sync_data());
-            return Err(e).context("append to the copy's manifest");
+        if lines.len() > 1 {
+            // Lines that wait on a later one's blob go in by one rename, so even a crash leaves
+            // all of them or none.
+            let ours = match fs::read(&self.manifest) {
+                Ok(m) => m,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(e).context("read the copy's manifest"),
+            };
+            write_atomic_with(&self.manifest, |w| {
+                w.write_all(&ours)?;
+                w.write_all(&batch)?;
+                Ok(())
+            })?;
+            sync_dir(&self.raw)?;
+        } else {
+            let mut f = private_file()
+                .create(true)
+                .append(true)
+                .open(&self.manifest)?;
+            let before = f.metadata()?.len();
+            if let Err(e) = f.write_all(&batch).and_then(|()| f.sync_data()) {
+                let _ = f.set_len(before).and_then(|()| f.sync_data());
+                return Err(e).context("append to the copy's manifest");
+            }
+            set_private(&self.manifest);
         }
-        set_private(&self.manifest);
         let mut superseded = Vec::new();
         for line in lines {
             let Ok(rec) = serde_json::from_slice::<CaptureRecord>(line) else {

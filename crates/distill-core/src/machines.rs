@@ -185,10 +185,20 @@ impl<R: Read + std::os::fd::AsRawFd> Read for Counted<R> {
             events: libc::POLLIN,
             revents: 0,
         };
-        // SAFETY: one valid pollfd, for a descriptor `inner` keeps open.
-        while unsafe { libc::poll(&mut ready, 1, 100) } == 0 {
+        loop {
             if self.gave_up.load(Ordering::Relaxed) {
                 return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            // SAFETY: one valid pollfd, for a descriptor `inner` keeps open.
+            match unsafe { libc::poll(&mut ready, 1, 100) } {
+                0 => {}
+                -1 => {
+                    let e = std::io::Error::last_os_error();
+                    if e.kind() != std::io::ErrorKind::Interrupted {
+                        return Err(e);
+                    }
+                }
+                _ => break,
             }
         }
         let n = self.inner.read(buf)?;
