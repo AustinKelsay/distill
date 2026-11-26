@@ -10,7 +10,7 @@ The hub's tick pulls from each spoke over SSH: it runs `ssh <host> distill expor
 
 The hub keeps each spoke's captures in a raw archive of their own, `machines/<machine>/raw/`, in the same append-only format as `raw/`. `archive.rs` writes it, as it writes `raw/`. The hub's own captures stay in `raw/`. Where a capture is stored says which machine it came from, so neither manifest format changes (ADR 0001), and no capture of one machine is mistaken for another's even when both have the same origin path. Everything under `sessions/`, `index/` and `state/` is still rebuilt from the raw archives, now including each session's machine. Every raw archive is in the backup set (ADR 0009).
 
-A spoke's home names its machine once, in its config: a name the owner picks, which the hub uses as `<machine>`. Session identity becomes the machine, the harness and the session id. The hub's own sessions keep their keys (`<harness>/<id>`), so the read log, tags and reveal requests that name them stay valid. A spoke's sessions are keyed `<machine>:<harness>/<id>`. A machine keeps its name: renaming one would change its sessions' keys, so it is not offered.
+A spoke's home names its machine once, in its config: a name the owner picks, which the hub uses as `<machine>`. A name is lowercase letters, digits and `-`, unique among the hub's machines, and not the hub's own. The hub refuses a spoke whose name is already in use before it takes any capture from it. Session identity becomes the machine, the harness and the session id. The hub's own sessions keep their keys (`<harness>/<id>`), so the read log, tags and reveal requests that name them stay valid. A spoke's sessions are keyed `<machine>:<harness>/<id>`. A machine keeps its name: renaming one would change its sessions' keys, so it is not offered.
 
 ## What a spoke does
 
@@ -22,7 +22,7 @@ Cards, personal details and vectors run only on the hub, under the hub's runtime
 
 ## Consequences
 
-- Session text moves between the owner's own machines as raw captures, over SSH, from a spoke's DISTILL to the hub's. That is not a read: no reader gets it, and on the hub it leaves only through the read path or a backup, as before. On the wire it is protected by SSH alone, and on a spoke by that machine's disk.
+- A spoke's export is a third way session text leaves a DISTILL home, beside the read path (ADR 0002) and a backup (ADR 0009). It goes only to the owner's own hub, as raw captures over SSH. It is not a read: no reader gets it, and on the hub it leaves only through the read path or a backup, as before. The spoke records each export. On the wire it is protected by SSH alone, and on a spoke by that machine's disk. This replaces ADR 0009's "there is no third". AGENTS.md, the glossary's read path, and the test that keeps faces on the read path change when the export ships (#138), since they describe what exists.
 - A spoke that is off or unreachable is behind until the next pull, and status says so.
 - A spoke's disk keeps every capture it ever made, as the hub's does.
 - Only the hub has a window worth opening. A spoke is set up from the command line.
