@@ -165,8 +165,9 @@ pub fn pull(
     Ok(report)
 }
 
-/// After the deadline, how long a pull waits for the next bytes before it gives up: a capture
-/// still coming is let finish, and an export that went quiet is not waited on.
+/// How long a pull waits for the next bytes before it gives up. A spoke sends without a pause
+/// once ssh is in, so a capture still coming is let finish past the deadline, and an export
+/// that went quiet is not waited on.
 const QUIET: Duration = Duration::from_secs(60);
 
 /// Counts the bytes read through it, for the watch on a pull.
@@ -225,19 +226,25 @@ fn pull_one(
             return pulled;
         }
     };
-    let mut stderr = child.stderr.take().expect("piped");
-    let drain = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stderr.read_to_string(&mut s);
-        s
-    });
+    // What ssh says, gathered as it comes: a proxy it started can hold the pipe open after ssh
+    // exits, so the pull waits for its end only briefly.
+    let said = Arc::new(Mutex::new(Vec::new()));
+    let drain = {
+        let (mut stderr, said) = (child.stderr.take().expect("piped"), said.clone());
+        std::thread::spawn(move || {
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = stderr.read(&mut buf) {
+                said.lock().map(|mut s| s.extend_from_slice(&buf[..n])).ok();
+            }
+        })
+    };
     let seen = Arc::new(AtomicU64::new(0));
     let mut stdout = BufReader::new(Counted {
         inner: child.stdout.take().expect("piped"),
         seen: seen.clone(),
     });
-    // Once the deadline has passed, an export that sends nothing for `quiet` is stopped, so a
-    // spoke that hangs doesn't hold the tick.
+    // An export that sends nothing for `quiet` is stopped, so a spoke that hangs holds neither
+    // the tick nor the archive lock.
     let child = Arc::new(Mutex::new(child));
     let (done, gave_up) = (
         Arc::new(AtomicBool::new(false)),
@@ -252,7 +259,7 @@ fn pull_one(
                 let now = seen.load(Ordering::Relaxed);
                 if now != bytes {
                     (bytes, since_bytes) = (now, Instant::now());
-                } else if deadline.passed() && since_bytes.elapsed() >= quiet {
+                } else if since_bytes.elapsed() >= quiet {
                     gave_up.store(true, Ordering::Relaxed);
                     let _ = child.lock().map(|mut c| c.kill());
                     return;
@@ -275,10 +282,15 @@ fn pull_one(
     };
     done.store(true, Ordering::Relaxed);
     let _ = watch.join();
-    let said = drain.join().unwrap_or_default();
+    let waited = Instant::now();
+    while !drain.is_finished() && waited.elapsed() < Duration::from_secs(1) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let said =
+        String::from_utf8_lossy(&said.lock().map(|s| s.clone()).unwrap_or_default()).into_owned();
     if gave_up.load(Ordering::Relaxed) {
         pulled.error = Some(format!(
-            "{} sent nothing for {}s after the tick's end, so the pull stopped",
+            "{} sent nothing for {}s, so the pull stopped",
             m.host,
             quiet.as_secs()
         ));
@@ -356,7 +368,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn an_export_that_goes_quiet_after_the_deadline_is_stopped() {
+    fn an_export_that_goes_quiet_is_stopped() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let (home, config) = hub_of(dir.path());
@@ -376,7 +388,7 @@ mod tests {
         let p = pull_one(
             &home,
             &config.machines[0],
-            Deadline::after(Duration::ZERO),
+            Deadline::NONE,
             ssh.to_str().unwrap(),
             Duration::from_millis(500),
         );

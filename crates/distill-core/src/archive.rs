@@ -682,10 +682,10 @@ pub fn take(
     let mut pending: Vec<Vec<u8>> = Vec::new();
     let mut waiting: BTreeSet<String> = BTreeSet::new();
     let commit = |archive: &mut Archive, pending: &mut Vec<Vec<u8>>, t: &mut Transfer| {
+        archive.append_lines(pending)?;
         for line in pending.drain(..) {
             t.lines += 1;
             t.to += line.len() as u64 + 1;
-            archive.append_line(line)?;
         }
         anyhow::Ok(())
     };
@@ -768,26 +768,40 @@ pub fn take(
 }
 
 impl Archive {
-    /// Append a manifest line another archive wrote, as it is, then drop what it supersedes, as
-    /// [`Archive::put`] does. Its blob is already in place, or that archive lacked it too.
-    fn append_line(&mut self, mut line: Vec<u8>) -> Result<()> {
-        let rec = serde_json::from_slice::<CaptureRecord>(&line).ok();
-        line.push(b'\n');
+    /// Append `lines` as they are, all of them or none, then drop each blob an append among them
+    /// superseded that nothing here needs once they are all in.
+    fn append_lines(&mut self, lines: &[Vec<u8>]) -> Result<()> {
+        let mut batch = Vec::new();
+        for line in lines {
+            batch.extend_from_slice(line);
+            batch.push(b'\n');
+        }
         let mut f = private_file()
             .create(true)
             .append(true)
             .open(&self.manifest)?;
-        f.write_all(&line)?;
-        f.sync_data()?;
+        let before = f.metadata()?.len();
+        if let Err(e) = f.write_all(&batch).and_then(|()| f.sync_data()) {
+            let _ = f.set_len(before).and_then(|()| f.sync_data());
+            return Err(e).context("append to the copy's manifest");
+        }
         set_private(&self.manifest);
-        let Some(rec) = rec else { return Ok(()) };
-        let previous = self.latest.insert(rec.origin.clone(), rec.clone());
-        self.records.push(rec.clone());
-        if rec.kind == CaptureKind::Append
-            && let Some(p) = previous
-            && p.capture_hash != rec.capture_hash
-        {
-            self.drop_if_unreferenced(&p.capture_hash)?;
+        let mut superseded = Vec::new();
+        for line in lines {
+            let Ok(rec) = serde_json::from_slice::<CaptureRecord>(line) else {
+                continue;
+            };
+            let previous = self.latest.insert(rec.origin.clone(), rec.clone());
+            if rec.kind == CaptureKind::Append
+                && let Some(p) = previous
+                && p.capture_hash != rec.capture_hash
+            {
+                superseded.push(p.capture_hash);
+            }
+            self.records.push(rec);
+        }
+        for sha in superseded {
+            self.drop_if_unreferenced(&sha)?;
         }
         Ok(())
     }
@@ -933,6 +947,28 @@ mod tests {
             .verify()
             .unwrap();
         assert!(nas.ok(), "{nas:?}");
+    }
+
+    #[test]
+    fn a_blob_another_origin_names_again_within_one_pull_is_kept() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "x", "1", &b"same\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        // `x` grows past the bytes the hub has, `y` holds them again, and `x` grows once more.
+        a.put(Harness::Pi, "x", "2", &b"same\nmore\n"[..]).unwrap();
+        a.put(Harness::Pi, "y", "1", &b"same\n"[..]).unwrap();
+        a.put(Harness::Pi, "x", "3", &b"same\nmore\nagain\n"[..])
+            .unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!(t.lines, 3, "{t:?}");
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
     }
 
     #[test]
