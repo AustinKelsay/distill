@@ -2,7 +2,8 @@
 //! Today it covers sessions and capture health per harness, format drift, the last sweep, the
 //! scan's, the word index's, the cards', the vectors' and the model detection pass's progress, the reveal requests waiting for the owner, warnings
 //! when a harness could delete sessions before they are swept or the timer has stopped sweeping,
-//! and the exposure check's results with a warning for each rule that fails.
+//! the exposure check's results with a warning for each rule that fails, and on a hub each
+//! spoke's captures and pulls (ADR 0010).
 
 use std::collections::BTreeMap;
 
@@ -34,7 +35,11 @@ pub struct Status {
     pub archive_bytes: u64,
     /// When the last successful sweep ran.
     pub last_sweep: Option<String>,
+    /// This machine's own captures, per harness.
     pub harnesses: Vec<HarnessStatus>,
+    /// On a hub, each spoke it pulls from or holds captures of (#140).
+    #[serde(default)]
+    pub machines: Vec<MachineStatus>,
     /// What the owner should act on, so that nothing is lost.
     pub warnings: Vec<Warning>,
     /// How many sessions have current findings, and how many wait for a scan.
@@ -89,6 +94,8 @@ pub struct Warning {
 pub enum WarningKind {
     /// The timer has not swept for longer than twice its interval.
     SweepOverdue,
+    /// A spoke in `[[machines]]` has not been pulled from for longer than twice the interval.
+    PullOverdue,
     /// A harness's setting could delete sessions sooner than the timer sweeps.
     PrunesSooner,
     /// A rule of the exposure check fails.
@@ -141,6 +148,30 @@ pub struct HarnessStatus {
     pub note: Option<String>,
 }
 
+/// A spoke as a hub holds it: its captures here, per harness, and its pulls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MachineStatus {
+    pub machine: String,
+    /// What ssh reaches it by; none when no `[[machines]]` entry names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub health: Health,
+    pub sessions: u64,
+    /// Files in its raw archive here (each origin's latest capture).
+    pub captures: u64,
+    pub archive_bytes: u64,
+    /// When its newest capture here was taken, on the spoke.
+    pub last_capture: Option<String>,
+    /// When a pull last took from it without an error.
+    pub last_pull: Option<String>,
+    /// The newest pull's error, when that pull failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_error: Option<String>,
+    /// Its harnesses that have captures here.
+    pub harnesses: Vec<HarnessStatus>,
+    pub note: Option<String>,
+}
+
 /// How many type names a harness's note lists before it counts the rest.
 const NOTE_TYPES: usize = 5;
 
@@ -167,6 +198,17 @@ fn drift_note(f: &Failures) -> String {
         ));
     }
     parts.join("; ")
+}
+
+/// Why a harness's captures warn as they parse: format drift, or captures that failed.
+fn parse_note(f: &Failures) -> Option<String> {
+    if f.drift > 0 || !f.unknown.is_empty() {
+        Some(drift_note(f))
+    } else if f.failed > 0 {
+        Some(format!("{} failed to parse", f.failed))
+    } else {
+        None
+    }
 }
 
 pub fn status(home: &Home) -> Result<Status> {
@@ -223,10 +265,8 @@ pub fn status(home: &Home) -> Result<Status> {
                 Health::Warn,
                 Some(format!("deletes {deletes} sooner than the sweep runs")),
             )
-        } else if f.drift > 0 || !f.unknown.is_empty() {
-            (Health::Warn, Some(drift_note(&f)))
-        } else if f.failed > 0 {
-            (Health::Warn, Some(format!("{} failed to parse", f.failed)))
+        } else if let Some(note) = parse_note(&f) {
+            (Health::Warn, Some(note))
         } else if capture_errors > 0 {
             (
                 Health::Warn,
@@ -242,7 +282,10 @@ pub fn status(home: &Home) -> Result<Status> {
             label: kind.label().to_string(),
             enabled,
             health,
-            sessions: sessions.iter().filter(|m| m.harness == kind).count() as u64,
+            sessions: sessions
+                .iter()
+                .filter(|m| m.machine.is_none() && m.harness == kind)
+                .count() as u64,
             captures: captured.len() as u64,
             archive_bytes,
             last_capture: captured.iter().map(|r| r.captured_at.clone()).max(),
@@ -254,6 +297,16 @@ pub fn status(home: &Home) -> Result<Status> {
             note,
         });
         warnings.extend(prunes.map(|(w, _)| w));
+    }
+
+    let machines = machines(home, config.as_ref(), &sessions)?;
+    if let Some(c) = &config {
+        warnings.extend(pull_overdue(
+            c,
+            &machines,
+            config_written(home),
+            chrono::Utc::now(),
+        ));
     }
 
     let mut backups = Vec::new();
@@ -303,6 +356,7 @@ pub fn status(home: &Home) -> Result<Status> {
         archive_bytes: archive.stored_bytes(),
         last_sweep: last.map(|(at, _)| at),
         harnesses,
+        machines,
         warnings,
         scan: findings::progress(home)?,
         index: index::progress(home)?,
@@ -315,6 +369,154 @@ pub fn status(home: &Home) -> Result<Status> {
         left,
         runs: runlog::history(home, HISTORY_RUNS)?,
     })
+}
+
+/// Each spoke in `[[machines]]` or with captures here, by name.
+fn machines(
+    home: &Home,
+    config: Option<&Config>,
+    sessions: &[crate::model::SessionMeta],
+) -> Result<Vec<MachineStatus>> {
+    let mut names: std::collections::BTreeMap<String, Option<String>> =
+        home.machines()?.into_iter().map(|m| (m, None)).collect();
+    for m in config.map_or(&[][..], |c| &c.machines[..]) {
+        names.insert(m.name.clone(), Some(m.host.clone()));
+    }
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Each one's newest pull, and the newest that took without an error.
+    let mut newest: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut last_ok: BTreeMap<String, String> = BTreeMap::new();
+    for e in runlog::recent(home, 500)? {
+        let Some(o) = e.outcome("pull") else { continue };
+        let Ok(r) = serde_json::from_value::<crate::machines::PullReport>(o.report) else {
+            continue;
+        };
+        for p in r.machines {
+            if p.error.is_none() {
+                last_ok
+                    .entry(p.machine.clone())
+                    .or_insert_with(|| e.at.clone());
+            }
+            newest.entry(p.machine).or_insert(p.error);
+        }
+    }
+    let mut out = Vec::new();
+    for (machine, host) in names {
+        let archive = Archive::open_of(home, Some(&machine))?;
+        let failures = normalize::failures_of(home, Some(&machine));
+        let mine: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.machine.as_deref() == Some(machine.as_str()))
+            .collect();
+        let mut harnesses = Vec::new();
+        for kind in Harness::ALL {
+            let captured: Vec<_> = archive
+                .latest()
+                .values()
+                .filter(|r| r.harness == kind)
+                .collect();
+            if captured.is_empty() {
+                continue;
+            }
+            let f = failures.get(&kind).cloned().unwrap_or_default();
+            let (health, note) = match parse_note(&f) {
+                Some(note) => (Health::Warn, Some(note)),
+                None if !kind.has_parser() => (Health::Warn, Some("archived, no parser".into())),
+                None => (Health::Ok, None),
+            };
+            harnesses.push(HarnessStatus {
+                harness: kind,
+                label: kind.label().to_string(),
+                enabled: true,
+                health,
+                sessions: mine.iter().filter(|s| s.harness == kind).count() as u64,
+                captures: captured.len() as u64,
+                archive_bytes: captured.iter().map(|r| r.size).sum(),
+                last_capture: captured.iter().map(|r| r.captured_at.clone()).max(),
+                capture_errors: 0,
+                parse_failures: f.failed,
+                drift: f.drift,
+                partial_drift: f.partial_drift,
+                unknown_types: f.unknown.clone(),
+                note,
+            });
+        }
+        let pull_error = newest.get(&machine).cloned().flatten();
+        let last_pull = last_ok.get(&machine).cloned();
+        let warned = harnesses.iter().find(|h| h.health == Health::Warn);
+        let (health, note) = if let Some(e) = &pull_error {
+            (Health::Warn, Some(format!("the last pull failed: {e}")))
+        } else if let Some(h) = warned {
+            (
+                Health::Warn,
+                Some(format!("{}: {}", h.label, h.note.as_deref().unwrap_or(""))),
+            )
+        } else if last_pull.is_none() && harnesses.is_empty() {
+            (Health::Missing, Some("not pulled from yet".into()))
+        } else {
+            (Health::Ok, None)
+        };
+        out.push(MachineStatus {
+            sessions: mine.len() as u64,
+            captures: harnesses.iter().map(|h| h.captures).sum(),
+            archive_bytes: harnesses.iter().map(|h| h.archive_bytes).sum(),
+            last_capture: harnesses
+                .iter()
+                .filter_map(|h| h.last_capture.clone())
+                .max(),
+            machine,
+            host,
+            health,
+            last_pull,
+            pull_error,
+            harnesses,
+            note,
+        });
+    }
+    Ok(out)
+}
+
+/// A warning for each spoke in `[[machines]]` that no pull has taken from for longer than twice
+/// the timer's interval, counted from when `config.toml` was written if none ever has.
+fn pull_overdue(
+    config: &Config,
+    machines: &[MachineStatus],
+    written: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<Warning> {
+    let every = i64::from(crate::schedule::interval_minutes(config));
+    machines
+        .iter()
+        .filter(|m| m.host.is_some())
+        .filter_map(|m| {
+            let since = match &m.last_pull {
+                Some(at) => chrono::DateTime::parse_from_rfc3339(at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc),
+                None => written?,
+            };
+            let quiet = (now - since).num_minutes();
+            (quiet > 2 * every).then(|| Warning {
+                kind: WarningKind::PullOverdue,
+                harness: None,
+                message: format!(
+                    "Nothing has been pulled from {} for {}, and the timer runs every {}: {}.",
+                    m.machine,
+                    span(quiet),
+                    span(every),
+                    match &m.pull_error {
+                        Some(e) => format!("the last pull failed: {e}"),
+                        None => format!(
+                            "check that it is on and reachable (`distill pull {}`)",
+                            m.machine
+                        ),
+                    }
+                ),
+            })
+        })
+        .collect()
 }
 
 /// A span of minutes a person can read: minutes under two hours, hours under two days, else days.
@@ -548,6 +750,83 @@ mod tests {
         }
     }
 
+    pub(super) fn pulled(home: &Home, machine: &str, minutes_ago: i64, error: Option<&str>) {
+        let report = crate::machines::PullReport {
+            machines: vec![crate::machines::Pulled {
+                machine: machine.into(),
+                took: Default::default(),
+                error: error.map(Into::into),
+            }],
+            skipped: None,
+        };
+        let mut e = runlog::RunEntry::of("tick", vec![crate::tick::pull_outcome(&report).unwrap()]);
+        e.at = (chrono::Utc::now() - chrono::Duration::minutes(minutes_ago))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        runlog::record(home, &e).unwrap();
+    }
+
+    #[test]
+    fn a_hub_reports_each_spokes_captures_per_harness_and_its_pulls_apart_from_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let config = Config {
+            machines: vec![crate::config::MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Config::default()
+        };
+        config.save(&home.config_path()).unwrap();
+        let capture = br#"{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}
+"#;
+        Archive::open_of(&home, Some("nas"))
+            .unwrap()
+            .put(Harness::ClaudeCode, "/x/-w/s1.jsonl", "1", &capture[..])
+            .unwrap();
+        normalize::normalize(&home, false).unwrap();
+
+        let s = status(&home).unwrap();
+        assert_eq!(s.sessions, 1);
+        // This machine's own row doesn't count the spoke's session.
+        let own = s
+            .harnesses
+            .iter()
+            .find(|h| h.harness == Harness::ClaudeCode)
+            .unwrap();
+        assert_eq!((own.sessions, own.captures), (0, 0), "{own:?}");
+        let [nas] = &s.machines[..] else {
+            panic!("{:?}", s.machines)
+        };
+        assert_eq!(
+            (nas.machine.as_str(), nas.host.as_deref()),
+            ("nas", Some("me@nas"))
+        );
+        assert_eq!((nas.sessions, nas.captures, nas.health), (1, 1, Health::Ok));
+        assert_eq!(nas.last_pull, None);
+        let [c] = &nas.harnesses[..] else {
+            panic!("{:?}", nas.harnesses)
+        };
+        assert_eq!(
+            (c.harness, c.sessions, c.health),
+            (Harness::ClaudeCode, 1, Health::Ok)
+        );
+        assert!(nas.last_capture.is_some());
+
+        pulled(&home, "nas", 30, None);
+        pulled(&home, "nas", 5, Some("ssh me@nas: Connection refused"));
+        let s = status(&home).unwrap();
+        let nas = &s.machines[0];
+        assert!(nas.last_pull.is_some());
+        assert_eq!(
+            nas.pull_error.as_deref(),
+            Some("ssh me@nas: Connection refused")
+        );
+        assert_eq!(nas.health, Health::Warn);
+        assert!(nas.note.as_deref().unwrap().contains("Connection refused"));
+    }
+
     #[test]
     fn a_drift_note_names_a_few_types_and_counts_the_rest() {
         let mut f = Failures {
@@ -703,6 +982,59 @@ mod warning_tests {
         let s = status(&home).unwrap();
         assert!(overdue(&s), "{s:?}");
         assert!(s.warnings[0].message.contains("3 hours"), "{s:?}");
+    }
+
+    fn pull_overdue_of(s: &Status) -> Vec<&str> {
+        s.warnings
+            .iter()
+            .filter(|w| w.kind == WarningKind::PullOverdue)
+            .map(|w| w.message.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn status_warns_when_a_spoke_has_not_been_pulled_for_twice_the_interval() {
+        let mut config = Config {
+            harnesses: vec![],
+            machines: vec![crate::config::MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Default::default()
+        };
+        config.schedule.sweep_every_minutes = 60;
+        let (_dir, home) = home_with(&config);
+        // Just set up: no pull yet, and none due.
+        assert!(pull_overdue_of(&status(&home).unwrap()).is_empty());
+
+        let f = std::fs::File::options()
+            .write(true)
+            .open(home.config_path())
+            .unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600))
+            .unwrap();
+        let s = status(&home).unwrap();
+        let w = pull_overdue_of(&s);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w[0].starts_with("Nothing has been pulled from nas for 3 hours"),
+            "{w:?}"
+        );
+        assert!(w[0].contains("`distill pull nas`"), "{w:?}");
+
+        // A pull that took but then failed: the warning counts from the one that took.
+        super::tests::pulled(&home, "nas", 125, None);
+        super::tests::pulled(&home, "nas", 10, Some("ssh me@nas: Connection refused"));
+        let w = pull_overdue_of(&status(&home).unwrap()).join(" ");
+        assert!(w.contains("for 2 hours"), "{w}");
+        assert!(
+            w.contains("the last pull failed: ssh me@nas: Connection refused"),
+            "{w}"
+        );
+
+        super::tests::pulled(&home, "nas", 5, None);
+        assert!(pull_overdue_of(&status(&home).unwrap()).is_empty());
     }
 
     #[test]

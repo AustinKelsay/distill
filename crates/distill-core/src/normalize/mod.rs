@@ -673,8 +673,13 @@ pub struct UnknownType {
 }
 
 pub fn failures(home: &Home) -> HashMap<Harness, Failures> {
+    failures_of(home, None)
+}
+
+/// [`failures`] for a spoke's captures, or this home's own with no machine.
+pub fn failures_of(home: &Home, machine: Option<&str>) -> HashMap<Harness, Failures> {
     let mut out: HashMap<Harness, Failures> = HashMap::new();
-    for s in load_state(home, None).values() {
+    for s in load_state(home, machine).values() {
         // A type a parser has since learned to ignore isn't drift, though its captures are
         // unchanged and not parsed again.
         let ignored = ignored(s.harness);

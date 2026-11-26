@@ -339,20 +339,22 @@ pub struct Left {
 /// One place text went.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Place {
-    /// `provider/model` for a reader, the target's name for a backup.
+    /// `provider/model` for a reader, the target's name for a backup, `hub` for a spoke's exports.
     pub name: String,
     pub kind: PlaceKind,
     #[serde(flatten)]
     pub spans: Spans,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaceKind {
     /// A model at a provider, reading through the read path.
     Reader,
     /// A backup target, which holds the backup set encrypted (ADR 0009).
     Backup,
+    /// The owner's hub, which a spoke's exports carry its raw captures to over SSH (ADR 0010).
+    Hub,
 }
 
 /// The last day's counts and the last 7 days'.
@@ -366,7 +368,7 @@ pub struct Spans {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Sent {
     /// Reads that served something (text, a list, tags, fingerprints, revealed values, an index
-    /// build), or whole backup runs.
+    /// build), whole backup runs, or exports that went to their end.
     pub times: u64,
     /// The sessions whose text, or revealed values, were served.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -376,7 +378,8 @@ pub struct Sent {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub listed: u64,
     /// For a backup: the bytes stored at the target, encrypted, by the runs in the backup log,
-    /// whole or not (a scheduled run stopped at its deadline is not logged).
+    /// whole or not (a scheduled run stopped at its deadline is not logged). For a hub: the
+    /// capture bytes exports sent, whole or not.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub bytes: u64,
 }
@@ -398,7 +401,7 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
     };
     // Per place: the counts, and the sessions seen in each span.
     type Tally = (Spans, BTreeSet<String>, BTreeSet<String>);
-    let mut places: BTreeMap<(String, bool), Tally> = BTreeMap::new();
+    let mut places: BTreeMap<(String, PlaceKind), Tally> = BTreeMap::new();
     let mut here: Tally = Default::default();
     for Logged { entry: e, via } in read_jsonl::<Logged>(&home.read_log_path())? {
         let Some(t) = when(&e.at) else { continue };
@@ -442,7 +445,7 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
                     &mut here
                 } else {
                     let name = model.map_or(p.clone(), |m| format!("{p}/{m}"));
-                    places.entry((name, false)).or_default()
+                    places.entry((name, PlaceKind::Reader)).or_default()
                 }
             }
             _ => &mut here,
@@ -465,11 +468,29 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
     // A run that failed may still have stored objects: its bytes count, but not as a run.
     for r in backups.iter().filter(|r| r.ok || r.bytes_sent > 0) {
         let Some(t) = when(&r.at) else { continue };
-        let tally = places.entry((r.target.clone(), true)).or_default();
+        let tally = places
+            .entry((r.target.clone(), PlaceKind::Backup))
+            .or_default();
         for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
             if inside {
                 sent.times += u64::from(r.ok);
                 sent.bytes += r.bytes_sent;
+            }
+        }
+    }
+    // A spoke's exports, which carry its captures as they are (ADR 0010); likewise an export
+    // that stopped short counts its bytes but not as an export.
+    let exports: Vec<crate::machines::ExportEntry> = read_jsonl(&home.export_log_path())?;
+    for x in exports
+        .iter()
+        .filter(|x| x.error.is_none() || x.sent.bytes > 0)
+    {
+        let Some(t) = when(&x.at) else { continue };
+        let tally = places.entry(("hub".into(), PlaceKind::Hub)).or_default();
+        for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
+            if inside {
+                sent.times += u64::from(x.error.is_none());
+                sent.bytes += x.sent.bytes;
             }
         }
     }
@@ -480,13 +501,9 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
     };
     let mut places: Vec<Place> = places
         .into_iter()
-        .map(|((name, backup), tally)| Place {
+        .map(|((name, kind), tally)| Place {
             name,
-            kind: if backup {
-                PlaceKind::Backup
-            } else {
-                PlaceKind::Reader
-            },
+            kind,
             spans: spans(tally),
         })
         .collect();
@@ -902,6 +919,50 @@ mod tests {
             "Ollama on this machine, the owner, DISTILL itself and the embedding build"
         );
         assert!(!got.maybe_short);
+    }
+
+    #[test]
+    fn a_spokes_exports_to_its_hub_count_as_what_left_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let now: DateTime<Utc> = "2026-11-20T12:00:00Z".parse().unwrap();
+        for (hours, error, bytes) in [
+            (1, None, 100),
+            // Cut short after sending some: its bytes count, but not as an export.
+            (2, Some("Broken pipe"), 7),
+            (3, Some("the cursor is not this archive's"), 0),
+            (80, None, 50),
+            (200, None, 9),
+        ] {
+            crate::util::append_jsonl(
+                &home.export_log_path(),
+                &crate::machines::ExportEntry {
+                    at: (now - chrono::Duration::hours(hours))
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    sent: crate::archive::Transfer {
+                        bytes,
+                        ..Default::default()
+                    },
+                    error: error.map(Into::into),
+                },
+            )
+            .unwrap();
+        }
+        let got = left(&home, now, &|_| true).unwrap();
+        let [hub] = &got.places[..] else {
+            panic!("{:?}", got.places)
+        };
+        assert_eq!((hub.name.as_str(), hub.kind), ("hub", PlaceKind::Hub));
+        let sent = |times, bytes| Sent {
+            times,
+            bytes,
+            ..Default::default()
+        };
+        assert_eq!(
+            (hub.spans.day.clone(), hub.spans.week.clone()),
+            (sent(1, 107), sent(2, 157))
+        );
     }
 
     #[test]
