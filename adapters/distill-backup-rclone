@@ -24,12 +24,22 @@ setting() {
 
 valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
 
-# Whether the remote holds the object `$1`: 0 yes, 1 no, 2 it couldn't tell (rclone exits 3 or 4
-# for a folder or file that isn't there, and otherwise for an error).
+# The path `$1` inside the remote. `nas:` is the remote's own starting folder and `nas:/` its root,
+# so a remote ending in `:` or `/` takes no `/` before it.
+at() {
+    case $remote in
+    *: | */) printf '%s%s' "$remote" "$1" ;;
+    *) printf '%s/%s' "$remote" "$1" ;;
+    esac
+}
+
+# Whether the remote holds the object `$1`: 0 yes, 1 no, 2 it couldn't tell. rclone exits 3 or 4
+# for a folder or file that isn't there and otherwise for an error; an object store answers a
+# name it doesn't hold as a folder, so only a file counts.
 holds() {
-    rclone lsjson --stat "$remote/objects/$1" >/dev/null 2>&1 </dev/null
+    stat=$(rclone lsjson --stat "$(at "objects/$1")" 2>/dev/null </dev/null)
     case $? in
-    0) return 0 ;;
+    0) printf '%s' "$stat" | grep -Eq '"IsDir": *false' ;;
     3 | 4) return 1 ;;
     *) return 2 ;;
     esac
@@ -52,7 +62,6 @@ while IFS= read -r line; do
         json=${rest#"$open" }
         [ "$version" = 1 ] || { reply "error unsupported protocol version $version"; continue; }
         remote=$(setting remote "$json")
-        remote=${remote%/}
         if [ -z "$remote" ]; then
             reply "error the target needs a remote"
             continue
@@ -61,7 +70,7 @@ while IFS= read -r line; do
         case "$open" in
         probe)
             # The remote must be there already: writing to one that isn't could make it.
-            probe="$remote/.distill-probe-$$"
+            probe=$(at ".distill-probe-$$")
             if ! out=$(rclone lsf --max-depth 1 "$remote" </dev/null 2>&1); then
                 reply "error $remote is not there ($out)"
             elif out=$(printf 'distill' | rclone rcat "$probe" 2>&1) && rclone deletefile "$probe" </dev/null 2>/dev/null; then
@@ -71,7 +80,7 @@ while IFS= read -r line; do
             fi
             ;;
         first)
-            if out=$(rclone mkdir "$remote/objects" </dev/null 2>&1); then
+            if out=$(rclone mkdir "$(at objects)" </dev/null 2>&1); then
                 ready=1
                 reply ok
             else
@@ -81,7 +90,7 @@ while IFS= read -r line; do
         *)
             # An object store lists a prefix that isn't there as empty, so a target used before
             # must hold an object, or it isn't the place it was.
-            if out=$(rclone lsf --files-only --max-depth 1 "$remote/objects" </dev/null 2>&1) && [ -n "$out" ]; then
+            if out=$(rclone lsf --files-only --max-depth 1 "$(at objects)" </dev/null 2>&1) && [ -n "$out" ]; then
                 ready=1
                 reply ok
             else
@@ -91,7 +100,7 @@ while IFS= read -r line; do
         esac
         ;;
     list)
-        if names=$(rclone lsf --files-only --max-depth 1 "$remote/objects" </dev/null); then
+        if names=$(rclone lsf --files-only --max-depth 1 "$(at objects)" </dev/null); then
             names=$(printf '%s\n' "$names" | grep -E '^[0-9a-fA-F]{64}$')
             n=$(printf '%s' "$names" | grep -c .)
             reply "ok $n"
@@ -110,7 +119,7 @@ while IFS= read -r line; do
             reply "ok present"
         elif [ "$there" = 2 ]; then
             reply "error can't tell whether $remote holds $name"
-        elif rclone copyto --immutable "$file" "$remote/objects/$name" </dev/null; then
+        elif rclone copyto --immutable "$file" "$(at "objects/$name")" </dev/null; then
             reply "ok stored"
         else
             reply "error can't store $name at $remote"
@@ -120,7 +129,8 @@ while IFS= read -r line; do
         name=${rest%% *}
         file=${rest#"$name" }
         valid "$name" || { reply "error not an object name"; continue; }
-        if rclone copyto "$remote/objects/$name" "$file" </dev/null; then reply ok; else reply "error can't read $name at $remote"; fi
+        # A name the remote doesn't hold copies nothing, and rclone says nothing of it.
+        if rclone copyto "$(at "objects/$name")" "$file" </dev/null && [ -f "$file" ]; then reply ok; else reply "error can't read $name at $remote"; fi
         ;;
     has)
         valid "$rest" || { reply "error not an object name"; continue; }
@@ -135,15 +145,16 @@ while IFS= read -r line; do
         valid "$rest" || { reply "error not an object name"; continue; }
         holds "$rest"
         there=$?
-        if [ "$there" = 1 ] || { [ "$there" = 0 ] && rclone deletefile "$remote/objects/$rest" </dev/null; }; then
+        if [ "$there" = 1 ] || { [ "$there" = 0 ] && rclone deletefile "$(at "objects/$rest")" </dev/null; }; then
             reply ok
         else
             reply "error can't delete $rest at $remote"
         fi
         ;;
     sync)
-        # An upload is stored when rclone returns.
-        reply ok
+        # An upload to a store is kept when rclone returns; one to a disk (rclone's local backend)
+        # is only once the system has written it out.
+        if sync; then reply ok; else reply "error can't sync"; fi
         ;;
     *)
         reply "error unknown command $cmd"

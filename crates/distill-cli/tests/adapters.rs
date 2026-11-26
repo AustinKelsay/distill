@@ -4,19 +4,23 @@
 //!
 //! - `distill-backup-ssh` runs against a stand-in for `ssh` that runs each command on this
 //!   machine, as the other machine's shell would, so its commands run in a real shell.
-//! - `distill-backup-rclone` runs against rclone's `local` backend. Without `rclone` on PATH that
-//!   case says so and is skipped.
+//! - `distill-backup-rclone` runs against an S3 store that rclone itself serves (`rclone serve
+//!   s3`), since an object store answers some things a folder doesn't: it holds no folders, so a
+//!   name it doesn't hold reads as one. Without `rclone` on PATH that case says so and is skipped.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
 
 struct Machine {
     _tmp: tempfile::TempDir,
     root: PathBuf,
     user: PathBuf,
     bin: PathBuf,
+    /// More environment for DISTILL, which its adapters inherit.
+    env: Vec<(String, String)>,
 }
 
 impl Machine {
@@ -46,6 +50,7 @@ impl Machine {
             root,
             user,
             bin,
+            env: Vec::new(),
         }
     }
 
@@ -62,6 +67,7 @@ impl Machine {
             .env("OLLAMA_HOST", "127.0.0.1:1")
             .env_remove("OLLAMA_MODELS")
             .env_remove("DISTILL_HOME")
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .output()
             .unwrap();
         (
@@ -185,12 +191,56 @@ fn a_home_backs_up_through_rclone_and_comes_back() {
         eprintln!("skipped: no rclone on PATH");
         return;
     }
-    let m = Machine::new();
-    let dir = m.root.join("bucket");
-    fs::create_dir(&dir).unwrap();
+    let mut m = Machine::new();
+    let data = m.root.join("s3");
+    fs::create_dir_all(data.join("bucket")).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let addr = format!("127.0.0.1:{port}");
+    let _store = Serving(
+        Command::new("rclone")
+            .args(["serve", "s3", "-q", "--addr", &addr])
+            .arg(&data)
+            .env("RCLONE_CONFIG", m.root.join("rclone.conf"))
+            .spawn()
+            .unwrap(),
+    );
+    let up = Instant::now();
+    while std::net::TcpStream::connect(&addr).is_err() {
+        assert!(
+            up.elapsed() < Duration::from_secs(20),
+            "rclone serve s3 never started"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // The remote `store`, set up as `rclone config` would, through rclone's environment.
+    m.env = [
+        (
+            "RCLONE_CONFIG",
+            m.root.join("rclone.conf").display().to_string(),
+        ),
+        ("RCLONE_CONFIG_STORE_TYPE", "s3".into()),
+        ("RCLONE_CONFIG_STORE_PROVIDER", "Rclone".into()),
+        ("RCLONE_CONFIG_STORE_ENDPOINT", format!("http://{addr}")),
+    ]
+    .map(|(k, v)| (k.to_string(), v))
+    .to_vec();
     m.journey(
         "rclone",
-        &[("remote", format!(":local:{}", dir.display()))],
-        &dir.join("objects"),
+        &[("remote", "store:bucket/distill".into())],
+        &data.join("bucket/distill/objects"),
     );
+}
+
+/// A server the test started, stopped when the test ends.
+struct Serving(Child);
+
+impl Drop for Serving {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

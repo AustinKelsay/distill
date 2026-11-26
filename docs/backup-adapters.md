@@ -1,8 +1,10 @@
 # Backup adapters
 
 A backup target of any kind but `folder` is reached through an adapter: an executable named
-`distill-backup-<kind>` on `PATH` (ADR 0009, issue #177). DISTILL runs it once for each use of
-a target, as the owner, with the timer's `PATH` when the tick runs it. They talk in lines, as
+`distill-backup-<kind>` on `PATH`, or else beside the `distill` binary, where
+`scripts/install.sh` puts the ones that ship (ADR 0009, issue #177). DISTILL runs it once for
+each use of a target, as the owner, with the timer's `PATH` when the tick runs it; the tools an
+adapter calls in turn, such as `ssh` or `rclone`, must be on that `PATH`. They talk in lines, as
 git remote helpers do, so DISTILL holds no cloud SDK and no network code for backups.
 
 An adapter moves opaque objects and knows nothing about DISTILL. Each object's name is 64
