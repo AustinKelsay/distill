@@ -6,7 +6,8 @@
 //!   machine, as the other machine's shell would, so its commands run in a real shell.
 //! - `distill-backup-rclone` runs against an S3 store that rclone itself serves (`rclone serve
 //!   s3`), since an object store answers some things a folder doesn't: it holds no folders, so a
-//!   name it doesn't hold reads as one. Without `rclone` on PATH that case says so and is skipped.
+//!   name it doesn't hold reads as one. Without an `rclone` that serves S3 (1.65 or later) that case
+//!   says so and is skipped.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -185,10 +186,13 @@ fn a_home_backs_up_over_ssh_and_comes_back() {
 
 #[test]
 fn a_home_backs_up_through_rclone_and_comes_back() {
-    let found = std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("rclone").is_file()));
-    if !found {
-        eprintln!("skipped: no rclone on PATH");
+    // `serve s3` came in rclone 1.65.
+    let serves = Command::new("rclone")
+        .args(["serve", "s3", "--help"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !serves {
+        eprintln!("skipped: no rclone on PATH that serves S3");
         return;
     }
     let mut m = Machine::new();
