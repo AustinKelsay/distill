@@ -89,15 +89,26 @@ pub struct Archive {
 }
 
 impl Archive {
+    /// This home's own raw archive.
     pub fn open(home: &Home) -> Result<Self> {
-        let records: Vec<CaptureRecord> = read_jsonl(&home.manifest_path())?;
+        Self::open_of(home, None)
+    }
+
+    /// A raw archive: this home's own with no machine, else that spoke's (ADR 0010), in the same
+    /// format.
+    pub fn open_of(home: &Home, machine: Option<&str>) -> Result<Self> {
+        if let Some(m) = machine {
+            crate::home::machine_name(m)?;
+        }
+        let manifest = home.manifest_path_of(machine);
+        let records: Vec<CaptureRecord> = read_jsonl(&manifest)?;
         let mut latest = BTreeMap::new();
         for r in &records {
             latest.insert(r.origin.clone(), r.clone());
         }
         Ok(Self {
-            raw: home.raw_dir(),
-            manifest: home.manifest_path(),
+            raw: home.raw_dir_of(machine),
+            manifest,
             records,
             latest,
         })
@@ -337,11 +348,24 @@ pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
 pub fn restore(
     home: &Home,
     manifest: &[u8],
+    fetch: impl FnMut(&str, &mut dyn Write) -> Result<bool>,
+) -> Result<Vec<String>> {
+    restore_of(home, None, manifest, fetch)
+}
+
+/// [`restore`] into one raw archive: this home's own with no machine, else that spoke's.
+pub fn restore_of(
+    home: &Home,
+    machine: Option<&str>,
+    manifest: &[u8],
     mut fetch: impl FnMut(&str, &mut dyn Write) -> Result<bool>,
 ) -> Result<Vec<String>> {
-    let raw = home.raw_dir();
-    if home.manifest_path().exists() {
-        bail!("{} already has an archive", home.root.display());
+    if let Some(m) = machine {
+        crate::home::machine_name(m)?;
+    }
+    let raw = home.raw_dir_of(machine);
+    if home.manifest_path_of(machine).exists() {
+        bail!("{} already has an archive", raw.display());
     }
     create_dir_private(&raw)?;
     set_private(&raw);
@@ -385,7 +409,7 @@ pub fn restore(
     for shard in &shards {
         crate::util::sync_dir(shard)?;
     }
-    crate::util::write_atomic(&home.manifest_path(), manifest)?;
+    crate::util::write_atomic(&home.manifest_path_of(machine), manifest)?;
     crate::util::sync_dir(&raw)?;
     Ok(missing)
 }
@@ -415,6 +439,24 @@ pub struct VerifyReport {
     pub bytes: u64,
     pub missing: Vec<String>,
     pub corrupt: Vec<String>,
+}
+
+/// [`Archive::verify`] over every raw archive the home holds (ADR 0010); a spoke's missing or
+/// corrupt captures are named with their machine.
+pub fn verify_all(home: &Home) -> Result<VerifyReport> {
+    let mut all = VerifyReport::default();
+    for machine in home.archives()? {
+        let r = Archive::open_of(home, machine.as_deref())?.verify()?;
+        let named = |c: String| match &machine {
+            Some(m) => format!("{m}: {c}"),
+            None => c,
+        };
+        all.checked += r.checked;
+        all.bytes += r.bytes;
+        all.missing.extend(r.missing.into_iter().map(named));
+        all.corrupt.extend(r.corrupt.into_iter().map(named));
+    }
+    Ok(all)
 }
 
 impl VerifyReport {

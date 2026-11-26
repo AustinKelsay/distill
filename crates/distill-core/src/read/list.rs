@@ -527,6 +527,7 @@ mod tests {
                 e.seq = i as u64;
             }
             let facts = SessionMeta {
+                machine: None,
                 harness: s.harness,
                 session_id: s.id.into(),
                 cwd: Some(s.cwd.into()),
@@ -557,10 +558,10 @@ mod tests {
                 mirror_refs: s.mirror_of.map(str::to_string).into_iter().collect(),
                 mirror_unresolved: Vec::new(),
             };
-            let dir = home.session_dir(s.harness, s.id);
+            let dir = home.session_dir(None, s.harness, s.id);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
-                home.meta_path(s.harness, s.id),
+                home.meta_path(None, s.harness, s.id),
                 serde_json::to_string(&facts).unwrap(),
             )
             .unwrap();
@@ -568,7 +569,11 @@ mod tests {
                 .iter()
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
-            std::fs::write(home.events_path(s.harness, s.id), lines.join("\n") + "\n").unwrap();
+            std::fs::write(
+                home.events_path(None, s.harness, s.id),
+                lines.join("\n") + "\n",
+            )
+            .unwrap();
         }
         crate::normalize::rebuild_session_list(&home).unwrap();
         (dir, home)

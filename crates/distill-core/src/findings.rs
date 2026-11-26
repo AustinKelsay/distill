@@ -382,7 +382,10 @@ pub(crate) fn set_card(home: &Home, facts: &SessionMeta, card: CardFindings) -> 
     let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
     let mut f = load(home, facts).with_context(|| format!("{} has no findings", facts.key()))?;
     f.card = Some(card);
-    write_json_pretty(&home.findings_path(facts.harness, &facts.session_id), &f)
+    write_json_pretty(
+        &home.findings_path(facts.machine.as_deref(), facts.harness, &facts.session_id),
+        &f,
+    )
 }
 
 impl Findings {
@@ -452,7 +455,10 @@ pub(crate) fn set_model(
         },
         findings,
     });
-    write_json_pretty(&home.findings_path(facts.harness, &facts.session_id), &f)?;
+    write_json_pretty(
+        &home.findings_path(facts.machine.as_deref(), facts.harness, &facts.session_id),
+        &f,
+    )?;
     Ok(placed)
 }
 
@@ -587,7 +593,12 @@ fn placed<'a>(
 /// A session's findings file as stored, current or not. A file that can't be read counts as
 /// missing.
 pub fn load(home: &Home, facts: &SessionMeta) -> Option<Findings> {
-    let text = fs::read_to_string(home.findings_path(facts.harness, &facts.session_id)).ok()?;
+    let text = fs::read_to_string(home.findings_path(
+        facts.machine.as_deref(),
+        facts.harness,
+        &facts.session_id,
+    ))
+    .ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -642,7 +653,7 @@ fn scan(
             m
         });
     write_json_pretty(
-        &home.findings_path(facts.harness, &facts.session_id),
+        &home.findings_path(facts.machine.as_deref(), facts.harness, &facts.session_id),
         &findings,
     )?;
     Ok(findings)

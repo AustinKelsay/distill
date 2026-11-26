@@ -135,6 +135,9 @@ pub struct Producer {
 /// to `meta.json` and the session list, both rebuilt from the raw archive.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMeta {
+    /// The spoke the session was captured on (ADR 0010); none for this home's own sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
     #[serde(alias = "source")]
     pub harness: Harness,
     pub session_id: String,
@@ -179,8 +182,12 @@ pub struct SessionMeta {
 }
 
 impl SessionMeta {
+    /// `<harness>/<id>`, or `<machine>:<harness>/<id>` for a spoke's session (ADR 0010).
     pub fn key(&self) -> String {
-        format!("{}/{}", self.harness.id(), self.session_id)
+        match &self.machine {
+            None => format!("{}/{}", self.harness.id(), self.session_id),
+            Some(m) => format!("{m}:{}/{}", self.harness.id(), self.session_id),
+        }
     }
 
     /// A mirror whose originals are in the archive and cover it.
@@ -205,7 +212,7 @@ impl SessionMeta {
         // when it began and T3 by when each item finished, so a T3 thread can end a whole turn
         // after its Cursor store's last time; that pair gets a turn's worth of slack.
         let slack = |k: &String| {
-            if k.starts_with("cursor/") && self.harness == Harness::T3Code {
+            if harness_of(k) == Some("cursor") && self.harness == Harness::T3Code {
                 CURSOR_TURN_SLACK
             } else {
                 COVER_SLACK
@@ -223,8 +230,16 @@ impl SessionMeta {
             })
         };
         self.mirror_refs.iter().all(covers)
-            && unresolved.iter().all(|k| originals.harnesses.contains(k))
+            && unresolved
+                .iter()
+                .all(|h| originals.harnesses.contains(&(self.machine.clone(), *h)))
     }
+}
+
+/// The harness a session key names: `<harness>/…`, or `<machine>:<harness>/…`.
+fn harness_of(key: &str) -> Option<&str> {
+    let (front, _) = key.split_once('/')?;
+    Some(front.rsplit(':').next().unwrap_or(front))
 }
 
 /// How much later a mirror may end than its original and still count as a copy of it: T3
@@ -246,7 +261,8 @@ fn ts(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
 /// it both stay.
 #[derive(Debug, Default)]
 pub struct Originals {
-    pub harnesses: std::collections::HashSet<Harness>,
+    /// The harnesses with sessions, on each machine.
+    pub harnesses: std::collections::HashSet<(Option<String>, Harness)>,
     /// Each original's key, with when it ended.
     pub keys: std::collections::HashMap<String, Option<String>>,
 }
@@ -255,7 +271,7 @@ impl Originals {
     pub fn of(metas: &[SessionMeta]) -> Self {
         let mut o = Originals::default();
         for m in metas.iter().filter(|m| !m.mirror) {
-            o.harnesses.insert(m.harness);
+            o.harnesses.insert((m.machine.clone(), m.harness));
             o.keys.insert(m.key(), m.ended_at.clone());
         }
         o
@@ -279,16 +295,28 @@ impl Roots {
         // A parent is named by its key, or by its id: one of the same harness wins. Hermes keeps
         // its database's sessions as `db-<id>`, while their parents name the bare id; the
         // database's record wins over a file's.
-        let resolve = |named: &str, harness: Harness| -> Option<String> {
-            if named.contains('/') {
-                return keys.contains(named).then(|| named.to_string());
+        // Only a session of the same machine: ids are each machine's own.
+        let resolve = |named: &str, harness: Harness, machine: &Option<String>| -> Option<String> {
+            if let Some((front, _)) = named.split_once('/') {
+                let on = front.rsplit_once(':').map(|(m, _)| m);
+                return (on == machine.as_deref() && keys.contains(named))
+                    .then(|| named.to_string());
             }
             let db = format!("db-{named}");
+            let here = |id: &str| -> Option<Vec<&SessionMeta>> {
+                let found: Vec<&SessionMeta> = by_id
+                    .get(id)?
+                    .iter()
+                    .copied()
+                    .filter(|m| m.machine == *machine)
+                    .collect();
+                (!found.is_empty()).then_some(found)
+            };
             let found = (harness == Harness::Hermes)
-                .then(|| by_id.get(db.as_str()))
+                .then(|| here(db.as_str()))
                 .flatten()
-                .or_else(|| by_id.get(named))
-                .or_else(|| by_id.get(db.as_str()))?;
+                .or_else(|| here(named))
+                .or_else(|| here(db.as_str()))?;
             found
                 .iter()
                 .find(|m| m.harness == harness)
@@ -300,7 +328,7 @@ impl Roots {
             if let Some(p) = m
                 .parent_session
                 .as_deref()
-                .and_then(|p| resolve(p, m.harness))
+                .and_then(|p| resolve(p, m.harness, &m.machine))
             {
                 parent.insert(m.key(), p);
             }
@@ -476,7 +504,7 @@ mod tests {
     fn what_a_mirror_needs_to_count_as_copied() {
         let m = mirror(r#","mirror_of":["codex"]"#);
         let mut codex = Originals::default();
-        codex.harnesses.insert(Harness::Codex);
+        codex.harnesses.insert((None, Harness::Codex));
         assert!(m.copied_in(&codex));
         // Codex never captured: the mirror is the only copy.
         assert!(!m.copied_in(&Originals::default()));
@@ -594,6 +622,49 @@ mod tests {
         for k in ["t3code/t1", "claude-code/s-1", "claude-code/agent-a2"] {
             assert_eq!(roots.of_session(k), None, "{k}");
         }
+    }
+
+    #[test]
+    fn a_spokes_sessions_name_only_sessions_of_their_machine() {
+        let on = |m: &str| format!(r#","machine":"{m}""#);
+        // One session id on the hub and on a spoke; the spoke's sub-agent names it by id.
+        let hub = session("claude-code", "s-1", "");
+        let spoke = session("claude-code", "s-1", &on("nas"));
+        let agent = session(
+            "claude-code",
+            "agent-a1",
+            &format!(r#"{},"parent_session":"s-1""#, on("nas")),
+        );
+        assert_eq!(spoke.key(), "nas:claude-code/s-1");
+        // A hub session naming a spoke's by its key reaches no other machine.
+        let across = session("droid", "d-1", r#","parent_session":"nas:claude-code/s-1""#);
+        let roots = Roots::of(&[hub.clone(), spoke, agent, across]);
+        assert_eq!(
+            roots.of_session("nas:claude-code/agent-a1"),
+            Some("nas:claude-code/s-1")
+        );
+        assert_eq!(roots.of_session("droid/d-1"), None);
+
+        // A spoke's mirror of a harness only the hub has sessions of is the only copy.
+        let thread = session(
+            "t3code",
+            "t1",
+            &format!(r#"{},"mirror":true,"mirror_of":["claude-code"]"#, on("nas")),
+        );
+        assert!(!thread.is_duplicate(&Originals::of(&[hub])));
+        // And a Cursor original on the spoke gets a Cursor turn's slack, as one here does.
+        let mut cursor = session(
+            "t3code",
+            "t2",
+            &format!(
+                r#"{},"mirror":true,"mirror_of":["cursor"],"mirror_refs":["nas:cursor/agent-1"]"#,
+                on("nas")
+            ),
+        );
+        cursor.ended_at = Some("2026-11-01T12:00:00Z".into());
+        let mut store = session("cursor", "agent-1", &on("nas"));
+        store.ended_at = Some("2026-11-01T11:00:00Z".into());
+        assert!(cursor.is_duplicate(&Originals::of(&[store])));
     }
 
     #[test]

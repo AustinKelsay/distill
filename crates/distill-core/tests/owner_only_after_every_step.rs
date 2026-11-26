@@ -119,7 +119,7 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
 
     // A reveal, requested, approved and collected.
     let findings: Value = serde_json::from_str(
-        &fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s1")).unwrap(),
+        &fs::read_to_string(home.findings_path(None, Harness::ClaudeCode, "s1")).unwrap(),
     )
     .unwrap();
     let fingerprint = findings["findings"]
@@ -155,7 +155,7 @@ fn every_file_the_model_steps_and_a_reveal_write_is_owner_only() {
         .unwrap();
 
     for made in [
-        home.card_path(Harness::ClaudeCode, "s1"),
+        home.card_path(None, Harness::ClaudeCode, "s1"),
         home.vectors_path(),
         home.card_failures_path(),
         home.detail_failures_path(),

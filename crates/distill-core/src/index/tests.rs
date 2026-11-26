@@ -151,7 +151,7 @@ fn an_entry_is_rebuilt_when_its_events_change_and_dropped_when_its_session_goes(
     assert_eq!(keys(&home, "sprocket"), ["claude-code/a"]);
     assert!(keys(&home, "widget").is_empty(), "the old text is gone");
 
-    fs::remove_dir_all(home.session_dir(Harness::ClaudeCode, "b")).unwrap();
+    fs::remove_dir_all(home.session_dir(None, Harness::ClaudeCode, "b")).unwrap();
     normalize::rebuild_session_list(&home).unwrap();
     let r = build(&home).unwrap();
     assert_eq!(r.removed, 1);
@@ -330,7 +330,7 @@ fn a_query_is_answered_from_the_index_without_reading_every_session() {
     build(&home).unwrap();
     // b's files are gone, though it is still listed: a search that read every session would
     // fail on it.
-    fs::remove_dir_all(home.session_dir(Harness::ClaudeCode, "b")).unwrap();
+    fs::remove_dir_all(home.session_dir(None, Harness::ClaudeCode, "b")).unwrap();
     assert_eq!(
         found(&home, "widget", &Filter::default()),
         [(

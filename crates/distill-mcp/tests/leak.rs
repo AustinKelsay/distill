@@ -95,7 +95,7 @@ fn no_tool_serves_a_planted_secret() {
     )
     .unwrap();
     assert_eq!((r.written, r.discarded), (0, 1), "{r:?}");
-    assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
+    assert!(!home.card_path(None, Harness::ClaudeCode, "s1").exists());
     let careful = FakeRuntime::running()
         .with_model("small:8b", Stored::Here)
         .replying(move |_, prompt| {
@@ -322,7 +322,7 @@ fn no_tool_serves_a_planted_secret() {
 
     // On disk, only the raw archive and the session's events hold a value: not its card, its
     // findings, the index, the vectors, the logs or the reveal request.
-    let session = home.session_dir(Harness::ClaudeCode, "s1");
+    let session = home.session_dir(None, Harness::ClaudeCode, "s1");
     let (mut stack, mut in_events) = (vec![home.root.clone()], false);
     while let Some(dir) = stack.pop() {
         for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {

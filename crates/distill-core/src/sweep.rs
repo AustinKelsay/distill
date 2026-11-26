@@ -371,7 +371,7 @@ mod tests {
         let n = crate::normalize::normalize(&home, false).unwrap();
         assert_eq!(n.sidecars, 1, "{n:?}");
         assert_eq!(n.normalized, 2, "{n:?}");
-        let meta = crate::normalize::find(&home, Harness::Codex, "z1")
+        let meta = crate::normalize::find(&home, None, Harness::Codex, "z1")
             .unwrap()
             .unwrap();
         assert_eq!(meta.counts.user, 1);
@@ -489,7 +489,7 @@ mod tests {
             for force in [false, true] {
                 let n = crate::normalize::normalize(&home, force).unwrap();
                 assert_eq!(n.sessions, 1, "{label}: {n:?}");
-                let meta = crate::normalize::find(&home, Harness::Codex, "c1")
+                let meta = crate::normalize::find(&home, None, Harness::Codex, "c1")
                     .unwrap()
                     .unwrap();
                 assert_eq!(
@@ -539,7 +539,7 @@ mod tests {
             .unwrap(); // A: X again
         for force in [false, true] {
             crate::normalize::normalize(&home, force).unwrap();
-            let meta = crate::normalize::find(&home, Harness::Codex, "c1")
+            let meta = crate::normalize::find(&home, None, Harness::Codex, "c1")
                 .unwrap()
                 .unwrap();
             assert_eq!(meta.counts.user, 3, "force={force}");
@@ -560,8 +560,8 @@ mod tests {
         // What an earlier version left: `a` as c1 and `b` as a suffixed copy.
         crate::normalize::normalize(&home, false).unwrap();
         let suffixed = format!("c1-{}", &crate::util::sha256_hex(b.as_bytes())[..8]);
-        let src = home.session_dir(Harness::Codex, "c1");
-        let dst = home.session_dir(Harness::Codex, &suffixed);
+        let src = home.session_dir(None, Harness::Codex, "c1");
+        let dst = home.session_dir(None, Harness::Codex, &suffixed);
         std::fs::create_dir_all(&dst).unwrap();
         let mut meta: crate::model::SessionMeta =
             serde_json::from_str(&std::fs::read_to_string(src.join("meta.json")).unwrap()).unwrap();

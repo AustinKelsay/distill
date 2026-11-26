@@ -406,7 +406,7 @@ fn every_session_is_embedded_newest_first_but_never_mirrors_or_the_old_steward()
         s("stew", "2026-11-04T09:00:00Z", "the release"),
     ]);
     // The previous build's steward ran "stew".
-    let meta = home.meta_path(Harness::ClaudeCode, "stew");
+    let meta = home.meta_path(None, Harness::ClaudeCode, "stew");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
     m["steward"] = true.into();

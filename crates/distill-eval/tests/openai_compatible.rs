@@ -139,7 +139,7 @@ fn a_provider_the_home_does_not_trust_is_refused_by_the_read_path() {
     let r = distill_core::cards::write(&home, &config, &runtime, Deadline::NONE).unwrap();
     assert_eq!((r.written, r.failed), (0, 1), "{r:?}");
     assert!(r.errors[0].contains("the read was refused"), "{r:?}");
-    assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
+    assert!(!home.card_path(None, Harness::ClaudeCode, "s1").exists());
 }
 
 #[test]

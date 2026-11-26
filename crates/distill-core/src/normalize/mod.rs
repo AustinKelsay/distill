@@ -179,19 +179,20 @@ fn first_meta_version() -> u32 {
     1
 }
 
-fn state_path(home: &Home) -> PathBuf {
-    home.state_dir().join("normalize.json")
+/// The parse state of one raw archive: this home's own with no machine, else a spoke's.
+fn state_path(home: &Home, machine: Option<&str>) -> PathBuf {
+    home.state_dir_of(machine).join("normalize.json")
 }
 
-fn load_state(home: &Home) -> BTreeMap<String, NormalizeState> {
-    std::fs::read_to_string(state_path(home))
+fn load_state(home: &Home, machine: Option<&str>) -> BTreeMap<String, NormalizeState> {
+    std::fs::read_to_string(state_path(home, machine))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
 pub fn session_dir(home: &Home, meta: &SessionMeta) -> PathBuf {
-    home.session_dir(meta.harness, &meta.session_id)
+    home.session_dir(meta.machine.as_deref(), meta.harness, &meta.session_id)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -239,9 +240,24 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     // Two runs at once (the timer and a manual run) would each read the state, rewrite
     // sessions from it and save their own copy, losing the other's work.
     let _lock = home.lock("normalize")?;
-    let archive = Archive::open(home)?;
-    let mut state = load_state(home);
     let mut report = NormalizeReport::default();
+    // This home's own raw archive, then each spoke's (ADR 0010).
+    for machine in home.archives()? {
+        normalize_archive(home, machine.as_deref(), force, &mut report)?;
+    }
+    report.sessions = rebuild_session_list(home)? as u64;
+    Ok(report)
+}
+
+/// Parse the captures of one raw archive whose result is missing or out of date.
+fn normalize_archive(
+    home: &Home,
+    machine: Option<&str>,
+    force: bool,
+    report: &mut NormalizeReport,
+) -> Result<()> {
+    let archive = Archive::open_of(home, machine)?;
+    let mut state = load_state(home, machine);
 
     // Codex compresses or moves a session file (`x.jsonl` → `archived_sessions/x.jsonl.zst`).
     // Every capture stays in the archive, but only the newest one of a file is the session, so
@@ -298,7 +314,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                     &crate::util::sha256_hex(origin.as_bytes())[..8]
                 ))
             {
-                let _ = std::fs::remove_dir_all(home.session_dir(rec.harness, &id));
+                let _ = std::fs::remove_dir_all(home.session_dir(machine, rec.harness, &id));
             }
             report.superseded += 1;
             continue;
@@ -332,7 +348,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
             && (!alias.is_some_and(|(_, shared)| shared)
                 || s.session.as_deref().is_some_and(|id| {
                     !id.ends_with(&format!("-{}", &crate::util::sha256_hex(origin.as_bytes())[..8]))
-                        && find(home, rec.harness, id)
+                        && find(home, machine, rec.harness, id)
                             .ok()
                             .flatten()
                             .is_some_and(|m| m.raw.origin == *origin)
@@ -343,7 +359,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         }
         let previous = state.get(origin).and_then(|s| s.session.clone());
         let mut missing_spills = Vec::new();
-        let result = normalize_one(home, &archive, rec, version, &mut missing_spills);
+        let result = normalize_one(home, machine, &archive, rec, version, &mut missing_spills);
         let mut entry = NormalizeState {
             harness: rec.harness,
             capture_hash: rec.capture_hash.clone(),
@@ -367,12 +383,12 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 // This capture now lives under another id: its old folder leaves the list.
                 if let Some(old) = previous
                     && old != meta.session_id
-                    && find(home, rec.harness, &old)
+                    && find(home, machine, rec.harness, &old)
                         .ok()
                         .flatten()
                         .is_some_and(|m| m.raw.origin == *origin)
                 {
-                    let _ = std::fs::remove_dir_all(home.session_dir(rec.harness, &old));
+                    let _ = std::fs::remove_dir_all(home.session_dir(machine, rec.harness, &old));
                 }
                 entry.session = Some(meta.session_id);
             }
@@ -394,12 +410,12 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
                 // It held a session before (an earlier parser read more into it): that session
                 // leaves the list now.
                 if let Some(old) = previous
-                    && find(home, rec.harness, &old)
+                    && find(home, machine, rec.harness, &old)
                         .ok()
                         .flatten()
                         .is_some_and(|m| m.raw.origin == *origin)
                 {
-                    let _ = std::fs::remove_dir_all(home.session_dir(rec.harness, &old));
+                    let _ = std::fs::remove_dir_all(home.session_dir(machine, rec.harness, &old));
                 }
             }
             Err(e) => {
@@ -409,15 +425,18 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
         }
         state.insert(origin.clone(), entry);
     }
-    write_json_pretty(&state_path(home), &state)?;
-    report.sessions = rebuild_session_list(home)? as u64;
-    Ok(report)
+    if let Some(dir) = state_path(home, machine).parent() {
+        crate::util::create_dir_private(dir)?;
+    }
+    write_json_pretty(&state_path(home, machine), &state)?;
+    Ok(())
 }
 
 /// Parse one capture into its session. For an OpenCode session, `missing_spills` gets the spilled
 /// tool outputs it names that the archive doesn't hold.
 fn normalize_one(
     home: &Home,
+    machine: Option<&str>,
     archive: &Archive,
     rec: &CaptureRecord,
     version: u32,
@@ -485,7 +504,7 @@ fn normalize_one(
         .or_else(|| fallback_id(&rec.origin))
         .unwrap_or_else(|| rec.capture_hash[..16].to_string());
     // Two captures can claim one session id (a copied or forked file). Keep both.
-    if let Ok(Some(existing)) = find(home, rec.harness, &session_id)
+    if let Ok(Some(existing)) = find(home, machine, rec.harness, &session_id)
         && existing.raw.origin != rec.origin
         && !(rec.harness == Harness::Codex
             && codex_file(&existing.raw.origin) == codex_file(&rec.origin))
@@ -498,8 +517,18 @@ fn normalize_one(
     let events = parsed.events;
     let started_at = events.iter().find_map(|e| e.ts.clone());
     let ended_at = events.iter().rev().find_map(|e| e.ts.clone());
-    let steward = parsed.cwd.as_deref().is_some_and(|c| home.is_inside(c));
+    // The previous build's steward ran only in this home, on this machine.
+    let steward = machine.is_none() && parsed.cwd.as_deref().is_some_and(|c| home.is_inside(c));
+    // A spoke's session names other sessions by their keys on that machine.
+    let on_machine = |key: String| match machine {
+        Some(m) => format!("{m}:{key}"),
+        None => key,
+    };
+    let parent_session = parsed
+        .parent_session
+        .map(|p| if p.contains('/') { on_machine(p) } else { p });
     let meta = SessionMeta {
+        machine: machine.map(str::to_string),
         harness: rec.harness,
         session_id,
         cwd: parsed.cwd,
@@ -508,7 +537,7 @@ fn normalize_one(
         harness_version: parsed.harness_version,
         started_at,
         ended_at,
-        parent_session: parsed.parent_session,
+        parent_session,
         counts: Counts::of(&events),
         raw: RawRef {
             origin: rec.origin.clone(),
@@ -523,17 +552,23 @@ fn normalize_one(
         steward,
         mirror: !parsed.mirror_of.is_empty(),
         mirror_of: parsed.mirror_of,
-        mirror_refs: parsed.mirror_refs,
+        mirror_refs: parsed.mirror_refs.into_iter().map(on_machine).collect(),
         mirror_unresolved: parsed.mirror_unresolved,
     };
-    write_atomic_with(&home.events_path(meta.harness, &meta.session_id), |w| {
-        for e in &events {
-            serde_json::to_writer(&mut *w, e)?;
-            w.write_all(b"\n")?;
-        }
-        Ok(())
-    })?;
-    write_json_pretty(&home.meta_path(meta.harness, &meta.session_id), &meta)?;
+    write_atomic_with(
+        &home.events_path(machine, meta.harness, &meta.session_id),
+        |w| {
+            for e in &events {
+                serde_json::to_writer(&mut *w, e)?;
+                w.write_all(b"\n")?;
+            }
+            Ok(())
+        },
+    )?;
+    write_json_pretty(
+        &home.meta_path(machine, meta.harness, &meta.session_id),
+        &meta,
+    )?;
     Ok((Some(meta), unknown))
 }
 
@@ -561,8 +596,12 @@ fn fallback_id(origin: &str) -> Option<String> {
 /// the session count.
 pub fn rebuild_session_list(home: &Home) -> Result<usize> {
     let mut metas = Vec::new();
-    for kind in Harness::ALL {
-        let dir = home.sessions_dir().join(kind.id());
+    let archives = home.archives()?;
+    for (machine, kind) in archives
+        .iter()
+        .flat_map(|m| Harness::ALL.map(|k| (m.clone(), k)))
+    {
+        let dir = home.sessions_dir_of(machine.as_deref()).join(kind.id());
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -599,7 +638,7 @@ pub fn read_session_list(home: &Home) -> Result<Vec<SessionMeta>> {
 /// A session's events. Only the parse step, the detector and the read path read stored text
 /// directly; everything else goes through the read path (`crate::read`).
 pub(crate) fn read_events(home: &Home, meta: &SessionMeta) -> Result<Vec<Event>> {
-    read_jsonl(&home.events_path(meta.harness, &meta.session_id))
+    read_jsonl(&home.events_path(meta.machine.as_deref(), meta.harness, &meta.session_id))
 }
 
 /// Captures that failed to parse, per harness, from the last parse, and record types its
@@ -628,7 +667,7 @@ pub struct UnknownType {
 
 pub fn failures(home: &Home) -> HashMap<Harness, Failures> {
     let mut out: HashMap<Harness, Failures> = HashMap::new();
-    for s in load_state(home).values() {
+    for s in load_state(home, None).values() {
         // A type a parser has since learned to ignore isn't drift, though its captures are
         // unchanged and not parsed again.
         let ignored = ignored(s.harness);
@@ -667,16 +706,21 @@ pub fn failures(home: &Home) -> HashMap<Harness, Failures> {
 
 /// Failed captures with their errors.
 pub fn failure_list(home: &Home, harness: Harness) -> Vec<(String, String)> {
-    load_state(home)
+    load_state(home, None)
         .into_iter()
         .filter(|(_, s)| s.harness == harness)
         .filter_map(|(origin, s)| s.error.map(|e| (origin, e)))
         .collect()
 }
 
-/// Read one session's facts by harness and id.
-pub fn find(home: &Home, harness: Harness, session_id: &str) -> Result<Option<SessionMeta>> {
-    let p = home.meta_path(harness, session_id);
+/// Read one session's facts by machine (none for this home's own), harness and id.
+pub fn find(
+    home: &Home,
+    machine: Option<&str>,
+    harness: Harness,
+    session_id: &str,
+) -> Result<Option<SessionMeta>> {
+    let p = home.meta_path(machine, harness, session_id);
     match std::fs::read_to_string(p) {
         Ok(t) => Ok(Some(serde_json::from_str(&t)?)),
         Err(_) => Ok(None),
@@ -686,6 +730,72 @@ pub fn find(home: &Home, harness: Harness, session_id: &str) -> Result<Option<Se
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spokes_capture_is_a_session_of_its_own_beside_the_hubs() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let line = |said: &str| {
+            format!(
+                "{{\"type\":\"user\",\"cwd\":\"/w/app\",\"sessionId\":\"s1\",\"timestamp\":\"2026-11-01T00:00:00Z\",\"message\":{{\"role\":\"user\",\"content\":\"{said}\"}}}}\n"
+            )
+        };
+        // The same origin path, and the same session id, on two machines.
+        let origin = "/u/.claude/projects/-w-app/s1.jsonl";
+        {
+            let _lock = home.lock_archive().unwrap();
+            Archive::open(&home)
+                .unwrap()
+                .put(
+                    Harness::ClaudeCode,
+                    origin,
+                    "1",
+                    line("fix the widget").as_bytes(),
+                )
+                .unwrap();
+            Archive::open_of(&home, Some("nas"))
+                .unwrap()
+                .put(
+                    Harness::ClaudeCode,
+                    origin,
+                    "1",
+                    line("rename the gadget").as_bytes(),
+                )
+                .unwrap();
+        }
+        assert!(
+            home.manifest_path_of(Some("nas"))
+                .starts_with(home.root.join("machines/nas/raw"))
+        );
+
+        let r = normalize(&home, false).unwrap();
+        assert_eq!((r.normalized, r.sessions), (2, 2), "{r:?}");
+        let list = read_session_list(&home).unwrap();
+        let keys: std::collections::BTreeSet<String> = list.iter().map(|m| m.key()).collect();
+        assert_eq!(
+            keys,
+            ["claude-code/s1", "nas:claude-code/s1"]
+                .map(String::from)
+                .into()
+        );
+        let spoke = list.iter().find(|m| m.machine.is_some()).unwrap();
+        assert_eq!(spoke.machine.as_deref(), Some("nas"));
+        assert!(
+            home.events_path(Some("nas"), Harness::ClaudeCode, "s1")
+                .is_file()
+        );
+        // Each machine's session holds its own capture.
+        let hub = list.iter().find(|m| m.machine.is_none()).unwrap();
+        assert_ne!(hub.raw.sha256, spoke.raw.sha256);
+        assert_eq!(normalize(&home, false).unwrap().skipped, 2);
+
+        // Everything derived is rebuilt the same from the raw archives.
+        std::fs::remove_dir_all(home.sessions_dir()).unwrap();
+        std::fs::remove_dir_all(home.state_dir()).unwrap();
+        normalize(&home, false).unwrap();
+        assert_eq!(read_session_list(&home).unwrap(), list);
+    }
 
     #[test]
     fn session_facts_hold_no_session_text_and_replace_the_previous_builds() {
@@ -706,7 +816,7 @@ mod tests {
         }
         // What the previous build left: facts with a title and a git outcome, under an older
         // session-facts version.
-        let meta_path = home.meta_path(Harness::ClaudeCode, "s1");
+        let meta_path = home.meta_path(None, Harness::ClaudeCode, "s1");
         std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
         let rec = Archive::open(&home).unwrap().latest()[origin].clone();
         std::fs::write(
@@ -726,7 +836,7 @@ mod tests {
             serde_json::json!({"source": "claude-code", "sha256": rec.capture_hash,
                 "version": 1, "meta_version": 3, "session": "s1"}),
         );
-        write_json_pretty(&state_path(&home), &state).unwrap();
+        write_json_pretty(&state_path(&home, None), &state).unwrap();
 
         let r = normalize(&home, false).unwrap();
         assert_eq!((r.normalized, r.sessions), (1, 1), "{r:?}");
@@ -753,7 +863,9 @@ mod tests {
         // The events still hold the text.
         let events = read_events(
             &home,
-            &find(&home, Harness::ClaudeCode, "s1").unwrap().unwrap(),
+            &find(&home, None, Harness::ClaudeCode, "s1")
+                .unwrap()
+                .unwrap(),
         );
         assert!(
             events
@@ -803,7 +915,7 @@ mod tests {
                 },
             );
         }
-        write_json_pretty(&state_path(&home), &state).unwrap();
+        write_json_pretty(&state_path(&home, None), &state).unwrap();
 
         let r = normalize(&home, false).unwrap();
         // The small one stays cached as empty; the big one is checked again and flagged.
@@ -844,12 +956,14 @@ mod tests {
         }
         let r = normalize(&home, false).unwrap();
         assert_eq!((r.normalized, r.failed, r.drift), (1, 0, 0), "{r:?}");
-        let meta = find(&home, Harness::ClaudeCode, "s1").unwrap().unwrap();
+        let meta = find(&home, None, Harness::ClaudeCode, "s1")
+            .unwrap()
+            .unwrap();
         let events = read_events(&home, &meta).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].text.as_deref(), Some("Rotated."));
 
-        let state = load_state(&home);
+        let state = load_state(&home, None);
         let names: Vec<&str> = state[origin].unknown.keys().map(String::as_str).collect();
         assert_eq!(names, ["block:widget_card", "tool-output.v2"]);
         assert_eq!(
@@ -863,7 +977,7 @@ mod tests {
         assert_eq!((f.failed, f.drift, f.partial_drift), (0, 0, 1));
         assert_eq!(f.unknown["tool-output.v2"].captures, 1);
         // The state holds the type names, never the records' text.
-        let text = std::fs::read_to_string(state_path(&home)).unwrap();
+        let text = std::fs::read_to_string(state_path(&home, None)).unwrap();
         for words in [
             "widget key",
             "rotated",
@@ -904,7 +1018,7 @@ mod tests {
             serde_json::json!({"harness": "claude-code", "capture_hash": rec.capture_hash,
                 "version": 1, "meta_version": 4, "session": "s1"}),
         );
-        write_json_pretty(&state_path(&home), &state).unwrap();
+        write_json_pretty(&state_path(&home, None), &state).unwrap();
         assert!(failures(&home).is_empty());
 
         let r = normalize(&home, false).unwrap();
@@ -1032,7 +1146,7 @@ not json\n\
         let r = normalize(&home, true).unwrap();
         assert_eq!((r.normalized, r.failed), (0, 1), "{r:?}");
         assert!(
-            !home.events_path(Harness::Codex, "abc").exists(),
+            !home.events_path(None, Harness::Codex, "abc").exists(),
             "a corrupt capture left a session"
         );
     }

@@ -15,8 +15,10 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 /// <home>/
 ///   config.toml                  config_path
 ///   raw/                         raw_dir, manifest_path: captures and their manifest
+///   machines/<machine>/raw/      raw_dir_of, manifest_path_of: a spoke's (ADR 0010)
 ///   sessions/index.jsonl         session_list_path: every session's facts
 ///   sessions/<harness>/<id>/     session_dir
+///   sessions/machines/<machine>/<harness>/<id>/   session_dir, for a spoke's session
 ///     meta.json                  meta_path: session facts
 ///     events.jsonl               events_path
 ///     findings.json              findings_path
@@ -27,6 +29,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///       seg-<n>.bin              words_segment_path
 ///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
+///   state/machines/<machine>/    state_dir_of: a spoke's archive's progress markers
 ///   log/reads.jsonl              read_log_path
 ///   log/backups.jsonl            backup_log_path
 ///   runs/                        runs_dir: the run log
@@ -36,7 +39,8 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///   tags.json                    owner_tags_path: the owner's tag edits
 /// ```
 ///
-/// `sessions/`, `index/` and `state/` can be deleted and rebuilt from `raw/`. What a backup holds
+/// `sessions/`, `index/` and `state/` can be deleted and rebuilt from the raw archives (`raw/`
+/// and each spoke's). What a backup holds
 /// is [`Home::keep`]'s answer for each path (ADR 0009). Folders a previous
 /// build left in a home ([`Home::PREVIOUS_BUILD`]) are ignored, never deleted.
 /// Whether a backup holds a file of the home (ADR 0009).
@@ -102,6 +106,54 @@ impl Home {
     pub fn manifest_path(&self) -> PathBuf {
         self.raw_dir().join("manifest.jsonl")
     }
+    /// Each spoke's raw archive, in a folder named for its machine (ADR 0010).
+    pub fn machines_dir(&self) -> PathBuf {
+        self.root.join("machines")
+    }
+    /// A raw archive: this home's own (`raw/`) with no machine, else that spoke's.
+    pub fn raw_dir_of(&self, machine: Option<&str>) -> PathBuf {
+        match machine {
+            None => self.raw_dir(),
+            Some(m) => self.machines_dir().join(m).join("raw"),
+        }
+    }
+    pub fn manifest_path_of(&self, machine: Option<&str>) -> PathBuf {
+        self.raw_dir_of(machine).join("manifest.jsonl")
+    }
+    /// Every raw archive this home holds: its own (`None`) first, then each spoke's.
+    pub fn archives(&self) -> Result<Vec<Option<String>>> {
+        Ok(std::iter::once(None)
+            .chain(self.machines()?.into_iter().map(Some))
+            .collect())
+    }
+    /// The spokes whose raw archive this home holds, by name, sorted.
+    pub fn machines(&self) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        let rd = match fs::read_dir(self.machines_dir()) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(names),
+            Err(e) => return Err(e).context("read machines/"),
+        };
+        for entry in rd {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if machine_name(name).is_err() {
+                continue;
+            }
+            // A spoke folder that can't be read is an error, not a spoke left out of verify.
+            match fs::metadata(entry.path().join("raw")) {
+                Ok(m) if m.is_dir() => names.push(name.to_string()),
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("read machines/{name}/raw")),
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
     pub fn sessions_dir(&self) -> PathBuf {
         self.root.join("sessions")
     }
@@ -109,25 +161,51 @@ impl Home {
     pub fn session_list_path(&self) -> PathBuf {
         self.sessions_dir().join("index.jsonl")
     }
+    /// The folders of one machine's sessions: this home's own with no machine, else a spoke's.
+    pub fn sessions_dir_of(&self, machine: Option<&str>) -> PathBuf {
+        match machine {
+            None => self.sessions_dir(),
+            Some(m) => self.sessions_dir().join("machines").join(m),
+        }
+    }
     /// The folder holding one session's files.
-    pub fn session_dir(&self, harness: Harness, session_id: &str) -> PathBuf {
-        self.sessions_dir()
+    pub fn session_dir(
+        &self,
+        machine: Option<&str>,
+        harness: Harness,
+        session_id: &str,
+    ) -> PathBuf {
+        self.sessions_dir_of(machine)
             .join(harness.id())
             .join(safe_component(session_id))
     }
     /// A session's facts.
-    pub fn meta_path(&self, harness: Harness, session_id: &str) -> PathBuf {
-        self.session_dir(harness, session_id).join("meta.json")
+    pub fn meta_path(&self, machine: Option<&str>, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(machine, harness, session_id)
+            .join("meta.json")
     }
     /// Read only by the read path (`crate::read`), so it is not public.
-    pub(crate) fn events_path(&self, harness: Harness, session_id: &str) -> PathBuf {
-        self.session_dir(harness, session_id).join("events.jsonl")
+    pub(crate) fn events_path(
+        &self,
+        machine: Option<&str>,
+        harness: Harness,
+        session_id: &str,
+    ) -> PathBuf {
+        self.session_dir(machine, harness, session_id)
+            .join("events.jsonl")
     }
-    pub fn findings_path(&self, harness: Harness, session_id: &str) -> PathBuf {
-        self.session_dir(harness, session_id).join("findings.json")
+    pub fn findings_path(
+        &self,
+        machine: Option<&str>,
+        harness: Harness,
+        session_id: &str,
+    ) -> PathBuf {
+        self.session_dir(machine, harness, session_id)
+            .join("findings.json")
     }
-    pub fn card_path(&self, harness: Harness, session_id: &str) -> PathBuf {
-        self.session_dir(harness, session_id).join("card.json")
+    pub fn card_path(&self, machine: Option<&str>, harness: Harness, session_id: &str) -> PathBuf {
+        self.session_dir(machine, harness, session_id)
+            .join("card.json")
     }
     /// The search index: word index and vectors.
     pub fn index_dir(&self) -> PathBuf {
@@ -153,6 +231,13 @@ impl Home {
     /// The vectors for search by meaning: one flat file, searched directly.
     pub fn vectors_path(&self) -> PathBuf {
         self.index_dir().join("vectors.bin")
+    }
+    /// Progress markers for one raw archive: this home's own with no machine, else a spoke's.
+    pub fn state_dir_of(&self, machine: Option<&str>) -> PathBuf {
+        match machine {
+            None => self.state_dir(),
+            Some(m) => self.state_dir().join("machines").join(m),
+        }
     }
     pub fn state_dir(&self) -> PathBuf {
         self.root.join("state")
@@ -203,11 +288,12 @@ impl Home {
         let parts: Vec<&str> = rel.split('/').collect();
         Some(match parts.as_slice() {
             ["config.toml" | "tags.json"] => Keep::Always,
-            ["raw", _, ..] => Keep::Always,
+            ["raw", _, ..] | ["machines", _, "raw", _, ..] => Keep::Always,
             ["keys", "fingerprint.key"] => Keep::Always,
             ["keys", "backup.key"] => Keep::Never,
             ["log", "reads.jsonl" | "backups.jsonl"] => Keep::Always,
             ["reveals", _] => Keep::Always,
+            ["sessions", "machines", _, _, _, "card.json"] => Keep::Cards,
             ["sessions", _, _, "card.json"] => Keep::Cards,
             ["sessions", _, ..] => Keep::Never,
             ["index", "vectors.bin"] => Keep::Vectors,
@@ -215,6 +301,23 @@ impl Home {
             [dir, ..] if Self::PREVIOUS_BUILD.contains(dir) => Keep::Never,
             _ => return None,
         })
+    }
+
+    /// The machine whose raw archive's manifest is at `rel` (`machines/<machine>/raw/
+    /// manifest.jsonl`), a path as [`Home::keep`] takes it.
+    pub fn spoke_manifest(rel: &str) -> Option<&str> {
+        match rel.split('/').collect::<Vec<_>>().as_slice() {
+            ["machines", m, "raw", "manifest.jsonl"] => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Whether `rel` is in a spoke's raw archive (`machines/<machine>/raw/`).
+    pub fn in_spoke_raw(rel: &str) -> bool {
+        matches!(
+            rel.split('/').collect::<Vec<_>>().as_slice(),
+            ["machines", _, "raw", _, ..]
+        )
     }
 
     /// The sessions whose last card attempt failed, so they are retried after the rest.
@@ -287,6 +390,17 @@ impl Home {
     }
 }
 
+/// Refuse a machine name that isn't lowercase letters, digits and `-` (ADR 0010).
+pub fn machine_name(name: &str) -> Result<()> {
+    let fits = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
+    if name.is_empty() || name.len() > 64 || name.starts_with('-') || !name.bytes().all(fits) {
+        anyhow::bail!(
+            "{name:?} is not a machine name: lowercase letters, digits and -, at most 64"
+        );
+    }
+    Ok(())
+}
+
 fn lock_at(path: &Path, name: &str) -> Result<fs::File> {
     if let Some(dir) = path.parent() {
         create_dir_private(dir)?;
@@ -318,14 +432,32 @@ mod tests {
         assert_eq!(p(h.manifest_path()), "/h/raw/manifest.jsonl");
         assert_eq!(p(h.session_list_path()), "/h/sessions/index.jsonl");
         let (k, id) = (Harness::Codex, "s1");
-        assert_eq!(p(h.session_dir(k, id)), "/h/sessions/codex/s1");
-        assert_eq!(p(h.meta_path(k, id)), "/h/sessions/codex/s1/meta.json");
-        assert_eq!(p(h.events_path(k, id)), "/h/sessions/codex/s1/events.jsonl");
+        assert_eq!(p(h.session_dir(None, k, id)), "/h/sessions/codex/s1");
         assert_eq!(
-            p(h.findings_path(k, id)),
+            p(h.meta_path(None, k, id)),
+            "/h/sessions/codex/s1/meta.json"
+        );
+        assert_eq!(
+            p(h.events_path(None, k, id)),
+            "/h/sessions/codex/s1/events.jsonl"
+        );
+        assert_eq!(
+            p(h.findings_path(None, k, id)),
             "/h/sessions/codex/s1/findings.json"
         );
-        assert_eq!(p(h.card_path(k, id)), "/h/sessions/codex/s1/card.json");
+        assert_eq!(
+            p(h.card_path(None, k, id)),
+            "/h/sessions/codex/s1/card.json"
+        );
+        let nas = Some("nas");
+        assert_eq!(
+            p(h.manifest_path_of(nas)),
+            "/h/machines/nas/raw/manifest.jsonl"
+        );
+        assert_eq!(
+            p(h.card_path(nas, k, id)),
+            "/h/sessions/machines/nas/codex/s1/card.json"
+        );
         assert_eq!(p(h.index_dir()), "/h/index");
         assert_eq!(p(h.vectors_path()), "/h/index/vectors.bin");
         assert_eq!(p(h.card_failures_path()), "/h/state/cards.json");
@@ -343,6 +475,34 @@ mod tests {
     }
 
     #[test]
+    fn a_machine_name_is_lowercase_letters_digits_and_dashes() {
+        for ok in ["nas", "build-box-2"] {
+            assert!(machine_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "-nas", "Nas", "nas/x", "..", "a:b", &"x".repeat(65)] {
+            assert!(machine_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_spoke_folder_that_cannot_be_read_is_an_error_not_a_spoke_left_out() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let h = Home::new(dir.path());
+        for m in ["nas", "box"] {
+            fs::create_dir_all(h.raw_dir_of(Some(m))).unwrap();
+        }
+        fs::create_dir_all(h.machines_dir().join("empty")).unwrap();
+        assert_eq!(h.machines().unwrap(), ["box", "nas"]);
+        let nas = h.machines_dir().join("nas");
+        fs::set_permissions(&nas, fs::Permissions::from_mode(0o000)).unwrap();
+        let got = h.machines();
+        fs::set_permissions(&nas, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(got.is_err(), "{got:?}");
+    }
+
+    #[test]
     fn a_backup_holds_what_cannot_be_rebuilt_and_cards_and_vectors_only_on_request() {
         use Keep::*;
         for (rel, want) in [
@@ -354,6 +514,11 @@ mod tests {
             ("log/reads.jsonl", Some(Always)),
             ("log/backups.jsonl", Some(Always)),
             ("reveals/r1.json", Some(Always)),
+            ("machines/nas/raw/ab/abcdef", Some(Always)),
+            ("machines/nas/raw/manifest.jsonl", Some(Always)),
+            ("machines/nas/other", None),
+            ("sessions/machines/nas/codex/s1/card.json", Some(Cards)),
+            ("sessions/machines/nas/codex/s1/meta.json", Some(Never)),
             ("sessions/codex/s1/card.json", Some(Cards)),
             ("sessions/codex/s1/events.jsonl", Some(Never)),
             ("sessions/index.jsonl", Some(Never)),

@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn a_model_reads_a_placeholder_in_place_of_each_secret_also_inside_tool_input() {
         let (_d, home, key) = home_with_secrets();
-        assert!(!home.findings_path(Harness::ClaudeCode, "s1").exists());
+        assert!(!home.findings_path(None, Harness::ClaudeCode, "s1").exists());
         let reader = Reader::model(Some("ollama"), Some("small:8b"));
         let t = text(read(&home, &local(), &reader, "claude-code/s1", Range::default()).unwrap());
         for value in [key.as_str(), "plaintext-pass-9", "12345678901"] {
@@ -977,7 +977,7 @@ mod tests {
         let reader = Reader::model(Some("ollama"), None);
         read(&home, &local(), &reader, "s1", Range::default()).unwrap();
         // Findings from another detector version, that missed everything.
-        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let path = home.findings_path(None, Harness::ClaudeCode, "s1");
         let mut f: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         f["made_from"]["detector"] = serde_json::json!(0);
@@ -1019,7 +1019,7 @@ mod tests {
         let (_d, home, key) = home_with_secrets();
         let reader = Reader::model(Some("ollama"), None);
         read(&home, &local(), &reader, "s1", Range::default()).unwrap();
-        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let path = home.findings_path(None, Harness::ClaudeCode, "s1");
         let mut f: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         f["findings"][0]["end"] = serde_json::json!(10_000);
@@ -1046,7 +1046,7 @@ mod tests {
         );
         assert_eq!(placeholders(&t).len(), 2, "{t}");
         // The findings file names the key's place by position only.
-        let path = home.findings_path(Harness::ClaudeCode, "s1");
+        let path = home.findings_path(None, Harness::ClaudeCode, "s1");
         let file = std::fs::read_to_string(&path).unwrap();
         assert!(
             !file.contains(&key) && !file.contains("plaintext-tok"),

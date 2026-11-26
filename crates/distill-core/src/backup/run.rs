@@ -361,29 +361,75 @@ fn run_into(
         };
     }
 
-    // 1. Blobs the lines this run covers say the archive holds, that the target lacks.
-    let archive = Archive::open(home)?;
-    for sha in expected_blobs(&parse_manifest(manifest)).keys() {
+    // 1. Blobs the lines this run covers say the archive holds, that the target lacks: this
+    // home's own, then each spoke's (ADR 0010), by the whole lines its manifest has now. A
+    // spoke's manifest itself goes with the logs below.
+    let mut spokes = Vec::new();
+    for machine in home.machines()? {
+        let lines = match fs::read(home.manifest_path_of(Some(&machine))) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+        };
+        let whole = lines.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        spokes.push((
+            Archive::open_of(home, Some(&machine))?,
+            lines[..whole].to_vec(),
+        ));
+    }
+    let own = Archive::open(home)?;
+    let mut archives: Vec<(&Archive, &[u8])> = vec![(&own, manifest)];
+    archives.extend(spokes.iter().map(|(a, lines)| (a, lines.as_slice())));
+    // Each blob once, from the first archive whose copy is whole: two archives can hold the
+    // same capture.
+    let mut holders: BTreeMap<String, Vec<&Archive>> = BTreeMap::new();
+    for (archive, lines) in &archives {
+        for sha in expected_blobs(&parse_manifest(lines)).into_keys() {
+            holders.entry(sha).or_default().push(*archive);
+        }
+    }
+    for (sha, holders) in &holders {
         let name = key.name(&format!("blob/{sha}"));
         if present.contains(&name) {
             continue;
         }
         stop_if_late!();
-        let mut blob = match archive.open_blob(sha) {
-            Ok(b) => b,
-            Err(e)
-                if e.downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                r.blobs_missing += 1;
-                continue;
+        let mut failed = None;
+        let mut sealed = None;
+        for archive in holders {
+            let mut blob = match archive.open_blob(sha) {
+                Ok(b) => b,
+                Err(e)
+                    if e.downcast_ref::<std::io::Error>()
+                        .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    continue;
+                }
+                Err(e) => {
+                    failed = Some(e);
+                    continue;
+                }
+            };
+            let mut out = scratch.file()?;
+            // A copy that can't be read, or doesn't hash to its name, is bad here; don't send it
+            // as if it were good, and try the next archive's.
+            match key.seal(&mut blob, &mut out).and_then(|_| blob.finish()) {
+                Ok(()) => {
+                    sealed = Some(out);
+                    break;
+                }
+                Err(e) => failed = Some(e),
             }
-            Err(e) => return Err(e),
+        }
+        let Some(mut sealed) = sealed else {
+            match failed {
+                Some(e) => return Err(e),
+                None => {
+                    r.blobs_missing += 1;
+                    continue;
+                }
+            }
         };
-        let mut sealed = scratch.file()?;
-        key.seal(&mut blob, &mut sealed)?;
-        // A blob that doesn't hash to its name is corrupt here; don't send it as if it were good.
-        blob.finish()?;
         stop_if_late!();
         r.bytes_sent += put(&*store, &name, &mut sealed)?;
         r.blobs_sent += 1;
@@ -469,7 +515,12 @@ fn run_into(
         };
         let rel = parts.join("/");
         let wanted = match Home::keep(&rel) {
-            Some(Keep::Always) => !rel.starts_with("raw/"),
+            // The raw archives' blobs went above, by their manifests' lines; this home's own
+            // manifest too.
+            Some(Keep::Always) => {
+                !rel.starts_with("raw/")
+                    && (!Home::in_spoke_raw(&rel) || Home::spoke_manifest(&rel).is_some())
+            }
             Some(Keep::Cards) => target.cards,
             Some(Keep::Vectors) => target.vectors,
             Some(Keep::Never) | None => false,
@@ -479,7 +530,8 @@ fn run_into(
             continue;
         }
         let bytes = fs::read(entry.path()).with_context(|| format!("read {rel}"))?;
-        if logs.contains(&rel) {
+        // A spoke's manifest grows by appends as a log does (ADR 0010).
+        if logs.contains(&rel) || Home::spoke_manifest(&rel).is_some() {
             // Only the whole lines, and of them only what the last run didn't cover, unless the
             // log no longer starts with what it covered.
             let whole = &bytes[..bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)];

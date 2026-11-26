@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use distill_core::archive::Archive;
+use distill_core::archive;
 use distill_core::readlog;
 use distill_core::runlog::{self, RunEntry, StepOutcome};
 
@@ -10,7 +10,7 @@ use crate::output::{human_bytes, out};
 pub struct Args {}
 
 pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
-    let r = Archive::open(&ctx.home)?.verify()?;
+    let r = archive::verify_all(&ctx.home)?;
     // And the read log's chain (#161): the first line that doesn't follow the one before it, or
     // a backup run that found the log rewritten.
     let chain = readlog::verify(&ctx.home)?;

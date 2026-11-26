@@ -63,7 +63,7 @@ fn model(reply: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> FakeRu
 }
 
 fn facts(home: &Home, id: &str) -> SessionMeta {
-    crate::normalize::find(home, Harness::ClaudeCode, id)
+    crate::normalize::find(home, None, Harness::ClaudeCode, id)
         .unwrap()
         .unwrap()
 }
@@ -111,7 +111,7 @@ fn the_steward_writes_a_card_from_the_session_as_a_local_model_reads_it() {
 
 /// Change `id`'s stored facts with `edit`, and rebuild the session list from them.
 fn edit_facts(home: &Home, id: &str, edit: impl FnOnce(&mut serde_json::Value)) {
-    let path = home.meta_path(Harness::ClaudeCode, id);
+    let path = home.meta_path(None, Harness::ClaudeCode, id);
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     edit(&mut v);
@@ -267,7 +267,7 @@ fn a_card_goes_out_of_date_when_its_events_or_secret_findings_change_and_is_writ
     assert!(current(&home, &f, &scan).is_some());
 
     // Different secret findings: the placeholders the card was built from changed.
-    let path = home.findings_path(Harness::ClaudeCode, "s1");
+    let path = home.findings_path(None, Harness::ClaudeCode, "s1");
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let fp = "ab".repeat(32);
@@ -282,7 +282,7 @@ fn a_card_goes_out_of_date_when_its_events_or_secret_findings_change_and_is_writ
 fn a_card_from_the_previous_build_counts_as_absent() {
     let (_d, home, config) =
         home_with(&[("s1", "2026-11-10T10:00:00Z", "rename the widget module")]);
-    let path = home.card_path(Harness::ClaudeCode, "s1");
+    let path = home.card_path(None, Harness::ClaudeCode, "s1");
     std::fs::write(
         &path,
         r#"{"task":"Rename","outcome":"success","quality":4,"tags":[],"summary":"Old.",
@@ -453,11 +453,11 @@ fn a_card_written_with_an_older_prompt_version_is_stale_shown_and_rewritten() {
     card.prompt_version = PROMPT_VERSION - 1;
     assert!(card.stale(MODEL));
     std::fs::write(
-        home.card_path(Harness::ClaudeCode, "s1"),
+        home.card_path(None, Harness::ClaudeCode, "s1"),
         serde_json::to_string(&card).unwrap(),
     )
     .unwrap();
-    let fpath = home.findings_path(Harness::ClaudeCode, "s1");
+    let fpath = home.findings_path(None, Harness::ClaudeCode, "s1");
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&fpath).unwrap()).unwrap();
     v["card"]["hash"] = card.hash().into();
@@ -522,7 +522,7 @@ fn a_card_whose_text_holds_a_secret_is_discarded_and_written_again() {
     assert_eq!((r.written, r.failed, r.discarded), (0, 1, 1), "{r:?}");
     assert!(r.errors[0].contains("held a secret"), "{r:?}");
     assert!(!format!("{r:?}").contains(&key));
-    assert!(!home.card_path(Harness::ClaudeCode, "s1").exists());
+    assert!(!home.card_path(None, Harness::ClaudeCode, "s1").exists());
     // Only the raw archive and the session's events hold the value: in the session's folder,
     // neither its card nor its findings do.
     let held = holding(&home.root, &key);
@@ -579,7 +579,8 @@ fn card_findings_are_stored_with_the_cards_field_names_as_their_place() {
             ("tags/1", Kind::Email, 0, "ops@example.org".len()),
         ]
     );
-    let file = std::fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s1")).unwrap();
+    let file =
+        std::fs::read_to_string(home.findings_path(None, Harness::ClaudeCode, "s1")).unwrap();
     assert!(
         !file.contains("jane@example.com"),
         "a finding never holds its value"
@@ -599,12 +600,12 @@ fn a_stored_card_found_to_hold_a_secret_at_a_later_scan_is_discarded_and_written
     .unwrap();
     let f = facts(&home, "s1");
     // A card written before the detector knew this kind of secret.
-    let path = home.card_path(Harness::ClaudeCode, "s1");
+    let path = home.card_path(None, Harness::ClaudeCode, "s1");
     let mut card = load(&home, &f).unwrap();
     card.summary = format!("Used {} to deploy.", fake_key());
     std::fs::write(&path, serde_json::to_string(&card).unwrap()).unwrap();
     // A new detector: the findings are out of date, and the scan runs again.
-    let fpath = home.findings_path(Harness::ClaudeCode, "s1");
+    let fpath = home.findings_path(None, Harness::ClaudeCode, "s1");
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&fpath).unwrap()).unwrap();
     v["made_from"]["detector"] = 0.into();
@@ -1129,7 +1130,7 @@ fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
     let none = crate::read::Filter::default();
     // A new card for `b`: the index entry goes out of date with it.
     let f = facts(&home, "b");
-    std::fs::remove_file(home.card_path(Harness::ClaudeCode, "b")).unwrap();
+    std::fs::remove_file(home.card_path(None, Harness::ClaudeCode, "b")).unwrap();
     assert!(crate::index::progress(&home).unwrap().pending >= 1);
     let fake =
         model(|_, _| reply_with("Ship it again", "Retried the rollout.", &["deploy"], "done"));
@@ -1142,7 +1143,7 @@ fn an_out_of_date_card_is_not_shown_and_the_index_follows_the_card() {
     assert_eq!(owner_hits(&home, "rollout", &none).len(), 1);
 
     // A card whose session changed is not shown.
-    let path = home.card_path(Harness::ClaudeCode, "b");
+    let path = home.card_path(None, Harness::ClaudeCode, "b");
     let mut card = load(&home, &f).unwrap();
     card.made_from.capture_hash = "0".repeat(64);
     std::fs::write(&path, serde_json::to_string(&card).unwrap()).unwrap();

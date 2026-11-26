@@ -11,6 +11,10 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 - A config that lists every harness DISTILL knew when it was written gets new harnesses switched on; one that lists only some gets nothing added.
 - Each new capture costs two directory fsyncs (about 18 ms), so a first sweep of a large machine takes a few minutes.
 
+## Machines
+
+- A hub reads each spoke's raw archive in `machines/<machine>/raw/` (ADR 0010): its captures become sessions keyed `<machine>:<harness>/<id>`, `distill verify` checks it, and a backup holds it. Nothing brings a spoke's captures there yet (#138), status doesn't report machines, so a spoke's parse failures go unseen (#140), and the faces show a spoke's session by its key but don't filter by machine (#141). A machine is named only by its folder there.
+
 ## Findings
 
 - Names, postal addresses, phone numbers and companies are found only by the model pass, only in what the owner and the agent wrote, and only once it has run. A detail cut across two parts of a long session can be missed. Personal details are not masked for a trusted reader.

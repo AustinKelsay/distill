@@ -90,7 +90,7 @@ fn refused_filing(f: Filed) -> String {
 /// Asserts that, outside the raw archive, only one file holds a value: one in the session's own
 /// folder (its events; the leak test names it).
 fn assert_no_value_outside_the_archive(home: &Home) {
-    let session = home.session_dir(Harness::ClaudeCode, "s1");
+    let session = home.session_dir(None, Harness::ClaudeCode, "s1");
     let holding: Vec<_> = walkdir::WalkDir::new(&home.root)
         .into_iter()
         .filter_map(Result::ok)
