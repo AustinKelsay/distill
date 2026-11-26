@@ -87,7 +87,7 @@ fn model(reply: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> FakeRu
 }
 
 fn facts(home: &Home, id: &str) -> SessionMeta {
-    crate::normalize::find(home, Harness::ClaudeCode, id)
+    crate::normalize::find(home, None, Harness::ClaudeCode, id)
         .unwrap()
         .unwrap()
 }
@@ -180,7 +180,8 @@ fn the_steward_sends_what_the_owner_and_the_agent_wrote_to_the_detail_model_and_
         ]
     );
     // Findings never hold values.
-    let file = std::fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s1")).unwrap();
+    let file =
+        std::fs::read_to_string(home.findings_path(None, Harness::ClaudeCode, "s1")).unwrap();
     for value in ["Jane Roe", "Example Street", "Acme", "555-0134"] {
         assert!(!file.contains(value), "{file}");
     }

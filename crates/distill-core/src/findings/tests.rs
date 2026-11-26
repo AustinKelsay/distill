@@ -94,7 +94,7 @@ fn findings_place_each_secret_and_never_hold_its_value() {
         ]
     );
 
-    let file = fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s0")).unwrap();
+    let file = fs::read_to_string(home.findings_path(None, Harness::ClaudeCode, "s0")).unwrap();
     for value in [key.as_str(), "plaintext-value-1", "plaintext-pass-2"] {
         assert!(!file.contains(value), "{file}");
     }
@@ -185,7 +185,7 @@ fn findings_go_out_of_date_when_what_they_were_made_from_changes() {
     let p = progress(&home).unwrap();
     assert_eq!((p.current, p.pending, p.secrets), (1, 0, 2));
 
-    let path = home.findings_path(Harness::ClaudeCode, "s0");
+    let path = home.findings_path(None, Harness::ClaudeCode, "s0");
     for (field, other) in [
         ("detector", serde_json::json!(DETECTOR_VERSION + 1)),
         ("capture_hash", serde_json::json!("0".repeat(64))),
@@ -275,7 +275,7 @@ fn personal_details_are_stored_beside_the_secrets_with_their_own_kinds() {
             (Kind::AnthropicKey, true, key.as_str()),
         ]
     );
-    let file = fs::read_to_string(home.findings_path(Harness::ClaudeCode, "s0")).unwrap();
+    let file = fs::read_to_string(home.findings_path(None, Harness::ClaudeCode, "s0")).unwrap();
     for value in ["jane@example.com", "Falcon", "falcon"] {
         assert!(!file.contains(value), "{file}");
     }

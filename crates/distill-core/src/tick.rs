@@ -600,8 +600,8 @@ mod tests {
         assert_eq!(r.steps[1].report["sessions"], 1);
         assert_eq!(r.steps[2].report["scanned"], 1);
         assert_eq!(r.steps[3].report["indexed"], 1);
-        assert!(home.meta_path(Harness::Pi, "p1").exists());
-        assert!(home.findings_path(Harness::Pi, "p1").exists());
+        assert!(home.meta_path(None, Harness::Pi, "p1").exists());
+        assert!(home.findings_path(None, Harness::Pi, "p1").exists());
 
         let runs = runlog::recent(&home, 10).unwrap();
         assert_eq!(runs.len(), 1, "{runs:?}");
@@ -624,7 +624,7 @@ mod tests {
         for old in ["recipes", "exports/good-sessions/b1", "steward"] {
             assert!(home.root.join(old).join("keep.txt").exists(), "{old}");
         }
-        assert!(!home.card_path(Harness::Pi, "p1").exists());
+        assert!(!home.card_path(None, Harness::Pi, "p1").exists());
         // With no card_model, the card step is skipped, and the run log says why.
         assert_eq!(r.steps[5].summary, "cards skipped: no card_model is set");
         assert_eq!(r.steps[5].report["skipped"], "no card_model is set");
@@ -690,7 +690,7 @@ mod tests {
             cards.errors[0].starts_with("pi/p2: the model's answer is not a usable card"),
             "{cards:?}"
         );
-        assert!(home.card_path(Harness::Pi, "p1").exists());
+        assert!(home.card_path(None, Harness::Pi, "p1").exists());
         // The steps before it all ran and succeeded.
         assert!(r.steps[..4].iter().all(|s| s.ok), "{r:?}");
         assert_eq!(r.steps[6].name, "vectors");

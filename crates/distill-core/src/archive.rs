@@ -89,15 +89,26 @@ pub struct Archive {
 }
 
 impl Archive {
+    /// This home's own raw archive.
     pub fn open(home: &Home) -> Result<Self> {
-        let records: Vec<CaptureRecord> = read_jsonl(&home.manifest_path())?;
+        Self::open_of(home, None)
+    }
+
+    /// A raw archive: this home's own with no machine, else that spoke's (ADR 0010), in the same
+    /// format.
+    pub fn open_of(home: &Home, machine: Option<&str>) -> Result<Self> {
+        if let Some(m) = machine {
+            crate::home::machine_name(m)?;
+        }
+        let manifest = home.manifest_path_of(machine);
+        let records: Vec<CaptureRecord> = read_jsonl(&manifest)?;
         let mut latest = BTreeMap::new();
         for r in &records {
             latest.insert(r.origin.clone(), r.clone());
         }
         Ok(Self {
-            raw: home.raw_dir(),
-            manifest: home.manifest_path(),
+            raw: home.raw_dir_of(machine),
+            manifest,
             records,
             latest,
         })

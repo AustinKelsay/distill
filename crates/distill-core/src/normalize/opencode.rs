@@ -884,7 +884,7 @@ mod tests {
     }
 
     fn tool_result(home: &Home, id: &str) -> String {
-        let meta = crate::normalize::find(home, Harness::OpenCode, id)
+        let meta = crate::normalize::find(home, None, Harness::OpenCode, id)
             .unwrap()
             .unwrap();
         crate::normalize::read_events(home, &meta)
@@ -1017,7 +1017,7 @@ mod tests {
         drop(archive);
         crate::normalize::normalize(&home, false).unwrap();
         crate::findings::scan_all(&home, &config).unwrap();
-        let facts = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+        let facts = crate::normalize::find(&home, None, Harness::OpenCode, "ses1")
             .unwrap()
             .unwrap();
         let key = crate::findings::FingerprintKey::open(&home).unwrap();
@@ -1040,7 +1040,7 @@ mod tests {
             )
             .unwrap();
         crate::normalize::normalize(&home, false).unwrap();
-        let facts = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+        let facts = crate::normalize::find(&home, None, Harness::OpenCode, "ses1")
             .unwrap()
             .unwrap();
         assert_eq!(facts.raw.attached.len(), 1);
@@ -1196,7 +1196,7 @@ mod tests {
         assert!(!String::from_utf8_lossy(&dup.bytes).contains("never exported"));
         let n = crate::normalize::normalize(&home, false).unwrap();
         assert_eq!((n.sessions, n.sidecars), (2, 1), "{n:?}");
-        let meta = crate::normalize::find(&home, Harness::OpenCode, "ses_v2only")
+        let meta = crate::normalize::find(&home, None, Harness::OpenCode, "ses_v2only")
             .unwrap()
             .unwrap();
         assert_eq!(tool_result(&home, "ses_v2only"), "line 1\nline 2\nline 3\n");
@@ -1247,7 +1247,7 @@ mod tests {
             "the session is captured again: {r:?}"
         );
         crate::normalize::normalize(&home, false).unwrap();
-        let meta = crate::normalize::find(&home, Harness::OpenCode, "ses1")
+        let meta = crate::normalize::find(&home, None, Harness::OpenCode, "ses1")
             .unwrap()
             .unwrap();
         let said: Vec<String> = crate::normalize::read_events(&home, &meta)

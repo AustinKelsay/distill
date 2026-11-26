@@ -503,7 +503,7 @@ fn a_tag_edit_shows_nothing_of_a_card_rewritten_meanwhile_and_its_refresh_waits_
         .replying(move |_, _| format!(
             r#"{{"title":"Contact {said}","summary":"Updated card.","tags":["deploy"],"outcome":"done"}}"#
         ));
-    std::fs::remove_file(core.home.card_path(Harness::ClaudeCode, "aaaa")).unwrap();
+    std::fs::remove_file(core.home.card_path(None, Harness::ClaudeCode, "aaaa")).unwrap();
     let written = distill_core::cards::write(
         &core.home,
         &config,

@@ -225,7 +225,12 @@ pub fn parse_reply(answer: &str) -> std::result::Result<Reply, String> {
 /// A session's card as stored, current or not. A card that can't be read, or is of another
 /// shape, counts as absent.
 pub fn load(home: &Home, facts: &SessionMeta) -> Option<Card> {
-    let text = std::fs::read_to_string(home.card_path(facts.harness, &facts.session_id)).ok()?;
+    let text = std::fs::read_to_string(home.card_path(
+        facts.machine.as_deref(),
+        facts.harness,
+        &facts.session_id,
+    ))
+    .ok()?;
     serde_json::from_str::<Card>(&text)
         .ok()
         .filter(|c| c.format == CARD_FORMAT && c.session == facts.key())
@@ -268,7 +273,11 @@ pub(crate) fn rescan(
     let card = load(home, facts)?;
     let found = findings::find_in_fields(card.fields(), key, detector);
     if found.iter().any(CardFinding::is_secret) {
-        let _ = std::fs::remove_file(home.card_path(facts.harness, &facts.session_id));
+        let _ = std::fs::remove_file(home.card_path(
+            facts.machine.as_deref(),
+            facts.harness,
+            &facts.session_id,
+        ));
         return None;
     }
     Some(CardFindings {
@@ -490,7 +499,7 @@ fn store(home: &Home, config: &Config, facts: &SessionMeta, card: &Card) -> Resu
     if found.iter().any(CardFinding::is_secret) {
         return Err(Store::HeldSecret);
     }
-    let path = home.card_path(facts.harness, &facts.session_id);
+    let path = home.card_path(facts.machine.as_deref(), facts.harness, &facts.session_id);
     write_json_pretty(&path, card).map_err(Store::Failed)?;
     findings::set_card(
         home,

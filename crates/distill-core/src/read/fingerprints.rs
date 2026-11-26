@@ -585,6 +585,7 @@ mod tests {
                 e.seq = i as u64;
             }
             let facts = SessionMeta {
+                machine: None,
                 harness: s.harness,
                 session_id: s.id.into(),
                 cwd: Some("/work/app".into()),
@@ -615,9 +616,9 @@ mod tests {
                 mirror_refs: s.mirror_of.map(str::to_string).into_iter().collect(),
                 mirror_unresolved: Vec::new(),
             };
-            std::fs::create_dir_all(home.session_dir(s.harness, s.id)).unwrap();
+            std::fs::create_dir_all(home.session_dir(None, s.harness, s.id)).unwrap();
             std::fs::write(
-                home.meta_path(s.harness, s.id),
+                home.meta_path(None, s.harness, s.id),
                 serde_json::to_string(&facts).unwrap(),
             )
             .unwrap();
@@ -625,7 +626,11 @@ mod tests {
                 .iter()
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
-            std::fs::write(home.events_path(s.harness, s.id), lines.join("\n") + "\n").unwrap();
+            std::fs::write(
+                home.events_path(None, s.harness, s.id),
+                lines.join("\n") + "\n",
+            )
+            .unwrap();
         }
         crate::normalize::rebuild_session_list(&home).unwrap();
         crate::findings::scan_all(&home, &home.load_config().unwrap_or_default()).unwrap();
@@ -986,8 +991,8 @@ mod tests {
         ]);
         // s1's events are gone: only its stored findings remain. s2's findings are gone: it is
         // pending, and is not scanned to answer.
-        std::fs::remove_file(home.events_path(Harness::ClaudeCode, "s1")).unwrap();
-        let s2 = home.findings_path(Harness::ClaudeCode, "s2");
+        std::fs::remove_file(home.events_path(None, Harness::ClaudeCode, "s1")).unwrap();
+        let s2 = home.findings_path(None, Harness::ClaudeCode, "s2");
         std::fs::remove_file(&s2).unwrap();
         let list = owner_list(&home, &FindingFilter::default(), Order::Spread);
         assert_eq!((list.total, list.pending), (1, 1));
@@ -1054,7 +1059,7 @@ mod tests {
             session(Harness::Codex, "s2", "2026-11-05T09:00:00Z", &[&a]),
             session(Harness::Codex, "s3", "2026-11-03T09:00:00Z", &[&b]),
         ]);
-        std::fs::remove_file(home.findings_path(Harness::Codex, "s3")).unwrap();
+        std::fs::remove_file(home.findings_path(None, Harness::Codex, "s3")).unwrap();
         let list = owner_list(&home, &FindingFilter::default(), Order::Spread);
         let t = list.text();
         let short = list.rows[0].fingerprint.short().to_string();

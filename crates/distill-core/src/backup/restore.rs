@@ -618,6 +618,63 @@ mod tests {
     }
 
     #[test]
+    fn a_spokes_raw_archive_is_backed_up_by_its_appends_and_restored() {
+        let (dir, home, target) = backed_up();
+        let origin = "/u/.claude/projects/-w-app/s1.jsonl";
+        let put = |said: &[&str]| {
+            let bytes = session("s1", said);
+            Archive::open_of(&home, Some("nas"))
+                .unwrap()
+                .put(
+                    Harness::ClaudeCode,
+                    origin,
+                    &bytes.len().to_string(),
+                    bytes.as_bytes(),
+                )
+                .unwrap();
+        };
+        put(&["sort the files"]);
+        assert!(run(&home, &target).unwrap().ok);
+        put(&["sort the files", "by date"]);
+        let second = run(&home, &target).unwrap();
+        assert!(second.ok, "{second:?}");
+
+        let key = BackupKey::existing(&home).unwrap().unwrap();
+        let store = store::open(&target, false).unwrap();
+        let rec = crate::backup::run::read_record(&*store, &key, second.run).unwrap();
+        let manifest = &rec.files["machines/nas/raw/manifest.jsonl"];
+        let len = fs::metadata(home.manifest_path_of(Some("nas")))
+            .unwrap()
+            .len();
+        assert!(
+            manifest.object.is_empty()
+                && manifest.len == len
+                && manifest.parts.iter().map(|p| p.runs).sum::<u64>() == 2,
+            "a spoke's manifest goes as what each run appended: {manifest:?}"
+        );
+
+        let restored = Home::new(dir.path().join("restored"));
+        restore(&restored, &*store, &key, false).unwrap();
+        assert_eq!(
+            files(&restored.raw_dir_of(Some("nas"))),
+            files(&home.raw_dir_of(Some("nas")))
+        );
+        crate::normalize::normalize(&home, false).unwrap();
+        crate::normalize::normalize(&restored, false).unwrap();
+        let keys = |h: &Home| -> Vec<String> {
+            let mut k: Vec<String> = crate::normalize::read_session_list(h)
+                .unwrap()
+                .iter()
+                .map(|m| m.key())
+                .collect();
+            k.sort();
+            k
+        };
+        assert_eq!(keys(&restored), keys(&home));
+        assert!(keys(&home).contains(&"nas:claude-code/s1".to_string()));
+    }
+
+    #[test]
     fn verify_finds_a_lost_object_by_name_and_a_changed_one_only_in_full() {
         let (_dir, home, target) = backed_up();
         let key = BackupKey::existing(&home).unwrap().unwrap();

@@ -469,6 +469,7 @@ fn run_into(
         };
         let rel = parts.join("/");
         let wanted = match Home::keep(&rel) {
+            // This home's own raw archive went above, by its manifest's lines.
             Some(Keep::Always) => !rel.starts_with("raw/"),
             Some(Keep::Cards) => target.cards,
             Some(Keep::Vectors) => target.vectors,
@@ -479,7 +480,9 @@ fn run_into(
             continue;
         }
         let bytes = fs::read(entry.path()).with_context(|| format!("read {rel}"))?;
-        if logs.contains(&rel) {
+        // A spoke's manifest grows by appends as a log does (ADR 0010).
+        let spoke_manifest = rel.starts_with("machines/") && rel.ends_with("/raw/manifest.jsonl");
+        if logs.contains(&rel) || spoke_manifest {
             // Only the whole lines, and of them only what the last run didn't cover, unless the
             // log no longer starts with what it covered.
             let whole = &bytes[..bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)];
