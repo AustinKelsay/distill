@@ -272,13 +272,7 @@ impl Archive {
 
     /// Remove a blob that only a superseded append referred to.
     fn drop_if_unreferenced(&self, sha: &str) -> Result<()> {
-        // Still the latest for some origin, or kept as the older side of a rewrite.
-        let in_use = self.latest.values().any(|r| r.capture_hash == sha)
-            || self
-                .records
-                .iter()
-                .any(|r| r.kind == CaptureKind::Rewrite && r.previous.as_deref() == Some(sha));
-        if !in_use {
+        if !in_use(&self.latest, &self.records, sha) {
             let path = self.blob_path(sha);
             if path.exists() {
                 fs::remove_file(path)?;
@@ -308,6 +302,15 @@ impl Archive {
         }
         Ok(report)
     }
+}
+
+/// Whether an archive with these records still needs blob `sha`: the latest capture of some
+/// origin, or the older side of a rewrite.
+fn in_use(latest: &BTreeMap<String, CaptureRecord>, records: &[CaptureRecord], sha: &str) -> bool {
+    latest.values().any(|r| r.capture_hash == sha)
+        || records
+            .iter()
+            .any(|r| r.kind == CaptureKind::Rewrite && r.previous.as_deref() == Some(sha))
 }
 
 /// The blobs an archive with these records should hold, with their sizes: the latest capture
@@ -524,7 +527,15 @@ pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Re
     writeln!(out, "{}", serde_json::to_string(&header)?)?;
     let archive = Archive::open(home)?;
     let held = expected_blobs(archive.records());
-    let mut sent = HashSet::new();
+    // What the hub's copy holds as each line goes in, dropping as `take` drops: a blob goes
+    // whenever the copy lacks it, also when an append there dropped it and a later line needs
+    // it again.
+    let mut records = parse_manifest(&manifest[..at]);
+    let mut latest: BTreeMap<String, CaptureRecord> = BTreeMap::new();
+    for r in &records {
+        latest.insert(r.origin.clone(), r.clone());
+    }
+    let mut there: HashSet<String> = expected_blobs(&records).into_keys().collect();
     let mut t = Transfer {
         since,
         to: since,
@@ -532,9 +543,10 @@ pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Re
     };
     for line in manifest[at..end].split_inclusive(|b| *b == b'\n') {
         let line = &line[..line.len() - 1];
-        if let Ok(rec) = serde_json::from_slice::<CaptureRecord>(line)
+        let rec = serde_json::from_slice::<CaptureRecord>(line).ok();
+        if let Some(rec) = &rec
             && held.contains_key(&rec.capture_hash)
-            && sent.insert(rec.capture_hash.clone())
+            && there.insert(rec.capture_hash.clone())
         {
             let path = archive.blob_path(&rec.capture_hash);
             match fs::File::open(&path) {
@@ -555,6 +567,17 @@ pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Re
         }
         writeln!(out, "line {}", line.len())?;
         out.write_all(line)?;
+        if let Some(rec) = rec {
+            let previous = latest.insert(rec.origin.clone(), rec.clone());
+            records.push(rec.clone());
+            if rec.kind == CaptureKind::Append
+                && let Some(p) = previous
+                && p.capture_hash != rec.capture_hash
+                && !in_use(&latest, &records, &p.capture_hash)
+            {
+                there.remove(&p.capture_hash);
+            }
+        }
         t.lines += 1;
         t.to += line.len() as u64 + 1;
     }
@@ -835,6 +858,27 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn a_blob_an_append_dropped_and_another_origin_brought_back_comes_again() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        // `x` holds the bytes, grows past them (they are dropped), then `y` holds them again.
+        a.put(Harness::Pi, "x", "1", &b"same\n"[..]).unwrap();
+        a.put(Harness::Pi, "x", "2", &b"same\nmore\n"[..]).unwrap();
+        a.put(Harness::Pi, "y", "1", &b"same\n"[..]).unwrap();
+        // Unchanged bytes with a new change signal: the same blob named again, not sent again.
+        a.put(Harness::Pi, "y", "2", &b"same\n"[..]).unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!((t.lines, t.blobs), (4, 3), "{t:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
     }
 
     #[test]
