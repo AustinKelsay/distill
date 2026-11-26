@@ -5,7 +5,7 @@
 # it), elsewhere as distill-gui beside the others.
 #
 # `--spoke` installs only `distill`, for a machine that only captures (ADR 0010): no window, no
-# MCP server, no backup adapters.
+# MCP server, no backup adapters, and it removes the window and MCP server an earlier install left.
 #
 # Everything is built in a staging folder first; the installed files are replaced only once all
 # of them are ready, so a failed build leaves the old ones in place.
@@ -66,6 +66,10 @@ if [[ -z "$SPOKE" ]]; then
     install -m 755 "$adapter" "$stage/${adapter##*/}"
     mv -f "$stage/${adapter##*/}" "$ROOT/bin/${adapter##*/}"
   done
+else
+  # A spoke serves no reader: an earlier full install's MCP server and window would read it.
+  rm -f "$ROOT/bin/distill-mcp" "$ROOT/bin/distill-gui"
+  if [[ -n "$MAC" && -e "$APPS/DISTILL.app" ]]; then mv "$APPS/DISTILL.app" "$stage/previous.app"; fi
 fi
 if [[ -n "$MAC" ]]; then
   if [[ -z "$SPOKE" ]]; then
