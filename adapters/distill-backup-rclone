@@ -25,10 +25,12 @@ setting() {
 valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
 
 # The path `$1` inside the remote. `nas:` is the remote's own starting folder and `nas:/` its root,
-# so a remote ending in `:` or `/` takes no `/` before it.
+# so a remote ending in `/`, or a bare `name:`, takes no `/` before it.
 at() {
     case $remote in
-    *: | */) printf '%s%s' "$remote" "$1" ;;
+    */) printf '%s%s' "$remote" "$1" ;;
+    */*) printf '%s/%s' "$remote" "$1" ;;
+    *:) printf '%s%s' "$remote" "$1" ;;
     *) printf '%s/%s' "$remote" "$1" ;;
     esac
 }
@@ -130,7 +132,7 @@ while IFS= read -r line; do
         file=${rest#"$name" }
         valid "$name" || { reply "error not an object name"; continue; }
         # A name the remote doesn't hold copies nothing, and rclone says nothing of it.
-        if rclone copyto "$(at "objects/$name")" "$file" </dev/null && [ -f "$file" ]; then reply ok; else reply "error can't read $name at $remote"; fi
+        if holds "$name" && rclone copyto "$(at "objects/$name")" "$file" </dev/null && [ -f "$file" ]; then reply ok; else reply "error can't read $name at $remote"; fi
         ;;
     has)
         valid "$rest" || { reply "error not an object name"; continue; }

@@ -84,7 +84,7 @@ while IFS= read -r line; do
         ;;
     list)
         # Only objects: files with 64 hex digits for a name. Anything else there isn't one.
-        if names=$(remote "cd $d/objects || exit 1
+        if names=$(remote "cd $d/objects && test -r . || exit 1
 for f in *; do
     case \$f in *[!0-9a-fA-F]*) continue ;; esac
     if test \${#f} -eq 64 && test -f \"\$f\"; then echo \"\$f\"; fi
