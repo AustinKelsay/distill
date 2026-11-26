@@ -75,7 +75,11 @@ fn a_spokes_captures_are_sessions_keyed_by_its_machine() {
     let parsed = json(&user, &home, &["parse"]);
     assert_eq!(parsed["sessions"], 2, "{parsed}");
     // The spoke's session answers to its key on every face, here the owner's tags.
-    let tagged = json(&user, &home, &["tag", "nas:claude-code/s1", "--add", "server"]);
+    let tagged = json(
+        &user,
+        &home,
+        &["tag", "nas:claude-code/s1", "--add", "server"],
+    );
     assert!(tagged.to_string().contains("server"), "{tagged}");
     json(&user, &home, &["tag", "claude-code/s1", "--add", "laptop"]);
 

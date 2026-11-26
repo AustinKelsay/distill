@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use distill_core::archive::Archive;
+use distill_core::archive;
 use distill_core::readlog;
 use distill_core::runlog::{self, RunEntry, StepOutcome};
 
@@ -10,17 +10,7 @@ use crate::output::{human_bytes, out};
 pub struct Args {}
 
 pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
-    // Every raw archive: this home's own, and each spoke's (ADR 0010).
-    let mut r = Archive::open(&ctx.home)?.verify()?;
-    for machine in ctx.home.machines()? {
-        let more = Archive::open_of(&ctx.home, Some(&machine))?.verify()?;
-        r.checked += more.checked;
-        r.bytes += more.bytes;
-        r.missing
-            .extend(more.missing.into_iter().map(|c| format!("{machine}: {c}")));
-        r.corrupt
-            .extend(more.corrupt.into_iter().map(|c| format!("{machine}: {c}")));
-    }
+    let r = archive::verify_all(&ctx.home)?;
     // And the read log's chain (#161): the first line that doesn't follow the one before it, or
     // a backup run that found the log rewritten.
     let chain = readlog::verify(&ctx.home)?;

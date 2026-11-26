@@ -13,7 +13,7 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 
 ## Machines
 
-- A hub reads each spoke's raw archive in `machines/<machine>/raw/` (ADR 0010): its captures become sessions keyed `<machine>:<harness>/<id>`, `distill verify` checks it, and a backup holds it. Nothing brings a spoke's captures there yet (#138), status doesn't report machines (#140), and the faces show a spoke's session by its key but don't filter by machine (#141). A machine is named only by its folder there.
+- A hub reads each spoke's raw archive in `machines/<machine>/raw/` (ADR 0010): its captures become sessions keyed `<machine>:<harness>/<id>`, `distill verify` checks it, and a backup holds it. Nothing brings a spoke's captures there yet (#138), status doesn't report machines, so a spoke's parse failures go unseen (#140), and the faces show a spoke's session by its key but don't filter by machine (#141). A machine is named only by its folder there.
 
 ## Findings
 

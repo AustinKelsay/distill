@@ -29,6 +29,7 @@ use crate::util::{create_dir_private, private_file, safe_component, set_private}
 ///       seg-<n>.bin              words_segment_path
 ///     vectors.bin                vectors_path: vectors for search by meaning
 ///   state/                       state_dir: locks and progress markers
+///   state/machines/<machine>/    state_dir_of: a spoke's archive's progress markers
 ///   log/reads.jsonl              read_log_path
 ///   log/backups.jsonl            backup_log_path
 ///   runs/                        runs_dir: the run log
@@ -118,6 +119,12 @@ impl Home {
     }
     pub fn manifest_path_of(&self, machine: Option<&str>) -> PathBuf {
         self.raw_dir_of(machine).join("manifest.jsonl")
+    }
+    /// Every raw archive this home holds: its own (`None`) first, then each spoke's.
+    pub fn archives(&self) -> Result<Vec<Option<String>>> {
+        Ok(std::iter::once(None)
+            .chain(self.machines()?.into_iter().map(Some))
+            .collect())
     }
     /// The spokes whose raw archive this home holds, by name, sorted.
     pub fn machines(&self) -> Result<Vec<String>> {
@@ -216,6 +223,13 @@ impl Home {
     /// The vectors for search by meaning: one flat file, searched directly.
     pub fn vectors_path(&self) -> PathBuf {
         self.index_dir().join("vectors.bin")
+    }
+    /// Progress markers for one raw archive: this home's own with no machine, else a spoke's.
+    pub fn state_dir_of(&self, machine: Option<&str>) -> PathBuf {
+        match machine {
+            None => self.state_dir(),
+            Some(m) => self.state_dir().join("machines").join(m),
+        }
     }
     pub fn state_dir(&self) -> PathBuf {
         self.root.join("state")

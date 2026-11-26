@@ -428,6 +428,24 @@ pub struct VerifyReport {
     pub corrupt: Vec<String>,
 }
 
+/// [`Archive::verify`] over every raw archive the home holds (ADR 0010); a spoke's missing or
+/// corrupt captures are named with their machine.
+pub fn verify_all(home: &Home) -> Result<VerifyReport> {
+    let mut all = VerifyReport::default();
+    for machine in home.archives()? {
+        let r = Archive::open_of(home, machine.as_deref())?.verify()?;
+        let named = |c: String| match &machine {
+            Some(m) => format!("{m}: {c}"),
+            None => c,
+        };
+        all.checked += r.checked;
+        all.bytes += r.bytes;
+        all.missing.extend(r.missing.into_iter().map(named));
+        all.corrupt.extend(r.corrupt.into_iter().map(named));
+    }
+    Ok(all)
+}
+
 impl VerifyReport {
     pub fn ok(&self) -> bool {
         self.missing.is_empty() && self.corrupt.is_empty()

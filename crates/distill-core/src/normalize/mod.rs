@@ -181,14 +181,7 @@ fn first_meta_version() -> u32 {
 
 /// The parse state of one raw archive: this home's own with no machine, else a spoke's.
 fn state_path(home: &Home, machine: Option<&str>) -> PathBuf {
-    match machine {
-        None => home.state_dir().join("normalize.json"),
-        Some(m) => home
-            .state_dir()
-            .join("machines")
-            .join(m)
-            .join("normalize.json"),
-    }
+    home.state_dir_of(machine).join("normalize.json")
 }
 
 fn load_state(home: &Home, machine: Option<&str>) -> BTreeMap<String, NormalizeState> {
@@ -249,7 +242,7 @@ pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     let _lock = home.lock("normalize")?;
     let mut report = NormalizeReport::default();
     // This home's own raw archive, then each spoke's (ADR 0010).
-    for machine in std::iter::once(None).chain(home.machines()?.into_iter().map(Some)) {
+    for machine in home.archives()? {
         normalize_archive(home, machine.as_deref(), force, &mut report)?;
     }
     report.sessions = rebuild_session_list(home)? as u64;
@@ -603,8 +596,11 @@ fn fallback_id(origin: &str) -> Option<String> {
 /// the session count.
 pub fn rebuild_session_list(home: &Home) -> Result<usize> {
     let mut metas = Vec::new();
-    let machines = std::iter::once(None).chain(home.machines()?.into_iter().map(Some));
-    for (machine, kind) in machines.flat_map(|m| Harness::ALL.map(|k| (m.clone(), k))) {
+    let archives = home.archives()?;
+    for (machine, kind) in archives
+        .iter()
+        .flat_map(|m| Harness::ALL.map(|k| (m.clone(), k)))
+    {
         let dir = home.sessions_dir_of(machine.as_deref()).join(kind.id());
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
