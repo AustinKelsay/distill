@@ -499,8 +499,20 @@ pub struct Transfer {
 /// Export this home's own captures from byte `since` of its manifest to `out`, as `machine`
 /// (ADR 0010): each manifest line after it, in order and as it is, with the blob it names just
 /// before it while this archive still holds that blob. A blob a later append superseded is gone,
-/// so only its line goes.
-pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Result<Transfer> {
+/// so only its line goes. `t` counts what was sent as it goes, so a caller has it also when the
+/// export stops short.
+pub fn export(
+    home: &Home,
+    machine: &str,
+    since: u64,
+    out: &mut dyn Write,
+    t: &mut Transfer,
+) -> Result<()> {
+    *t = Transfer {
+        since,
+        to: since,
+        ..Default::default()
+    };
     let manifest = match fs::read(home.manifest_path()) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -536,11 +548,6 @@ pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Re
         latest.insert(r.origin.clone(), r.clone());
     }
     let mut there: HashSet<String> = expected_blobs(&records).into_keys().collect();
-    let mut t = Transfer {
-        since,
-        to: since,
-        ..Default::default()
-    };
     for line in manifest[at..end].split_inclusive(|b| *b == b'\n') {
         let line = &line[..line.len() - 1];
         let rec = serde_json::from_slice::<CaptureRecord>(line).ok();
@@ -583,7 +590,22 @@ pub fn export(home: &Home, machine: &str, since: u64, out: &mut dyn Write) -> Re
     }
     writeln!(out, "end")?;
     out.flush()?;
-    Ok(t)
+    Ok(())
+}
+
+/// The length of the whole lines of `machine`'s manifest here: where its next pull starts.
+pub fn copy_length(home: &Home, machine: &str) -> Result<u64> {
+    let ours = match fs::read(home.manifest_path_of(Some(machine))) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+    };
+    Ok(whole_lines(&ours) as u64)
+}
+
+/// The length of `bytes` up to the end of its last line.
+fn whole_lines(bytes: &[u8]) -> usize {
+    bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
 }
 
 /// Take `machine`'s export from `input` into its raw archive here (ADR 0010), which it must
@@ -630,11 +652,20 @@ pub fn take(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
     };
-    if header.since != ours.len() as u64 || header.prefix != hex::encode(Sha256::digest(&ours)) {
+    let whole = whole_lines(&ours);
+    if header.since != whole as u64 || header.prefix != hex::encode(Sha256::digest(&ours[..whole]))
+    {
         bail!(
             "\"{machine}\"'s archive there does not continue its copy here: is another machine \
              using the name \"{machine}\"?"
         );
+    }
+    // A line cut short by a write that failed here (a full disk) is dropped: the export sends it
+    // again whole.
+    if whole < ours.len() {
+        let f = fs::OpenOptions::new().write(true).open(&path)?;
+        f.set_len(whole as u64)?;
+        f.sync_all()?;
     }
     let mut archive = Archive::open_of(home, Some(machine))?;
     create_dir_private(&archive.raw)?;
@@ -643,6 +674,20 @@ pub fn take(
         since: header.since,
         to: header.since,
         ..Default::default()
+    };
+    // Lines are held back while a capture they make the latest has no blob here yet (the spoke
+    // sent no blob for an append a later one superseded), and go in together once a later line
+    // brings one: so what an append drops is dropped only once what replaces it is in place, and
+    // a pull stops only there.
+    let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut waiting: BTreeSet<String> = BTreeSet::new();
+    let commit = |archive: &mut Archive, pending: &mut Vec<Vec<u8>>, t: &mut Transfer| {
+        for line in pending.drain(..) {
+            t.lines += 1;
+            t.to += line.len() as u64 + 1;
+            archive.append_line(line)?;
+        }
+        anyhow::Ok(())
     };
     let result = (|| -> Result<()> {
         loop {
@@ -693,15 +738,24 @@ pub fn take(
                     if line.contains(&b'\n') {
                         bail!("a manifest line holds a line break");
                     }
-                    archive.append_line(line)?;
-                    t.lines += 1;
-                    t.to += len as u64 + 1;
-                    if stop() {
-                        t.stopped = true;
-                        return Ok(());
+                    if let Ok(rec) = serde_json::from_slice::<CaptureRecord>(&line) {
+                        if archive.blob_path(&rec.capture_hash).exists() {
+                            waiting.remove(&rec.origin);
+                        } else {
+                            waiting.insert(rec.origin);
+                        }
+                    }
+                    pending.push(line);
+                    if waiting.is_empty() {
+                        commit(&mut archive, &mut pending, &mut t)?;
+                        if stop() {
+                            t.stopped = true;
+                            return Ok(());
+                        }
                     }
                 }
-                ["end"] => return Ok(()),
+                // What the spoke lacks too stays lacking: the copy is as the spoke's is.
+                ["end"] => return commit(&mut archive, &mut pending, &mut t),
                 _ => bail!(
                     "not part of an export: {:?}",
                     frame.chars().take(80).collect::<String>()
@@ -799,9 +853,9 @@ mod tests {
 
     /// What `export` writes from `spoke` for the hub's copy of `nas` as it is now.
     fn export_for(spoke: &Home, hub: &Home) -> Vec<u8> {
-        let since = fs::metadata(hub.manifest_path_of(Some("nas"))).map_or(0, |m| m.len());
+        let since = copy_length(hub, "nas").unwrap();
         let mut out = Vec::new();
-        export(spoke, "nas", since, &mut out).unwrap();
+        export(spoke, "nas", since, &mut out, &mut Transfer::default()).unwrap();
         out
     }
 
@@ -882,6 +936,57 @@ mod tests {
     }
 
     #[test]
+    fn what_an_append_drops_here_is_dropped_only_once_its_replacement_is_in_place() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"a\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        // Two appends: the first one's blob is gone on the spoke, so its line comes alone.
+        a.put(Harness::Pi, "s", "2", &b"a\nb\n"[..]).unwrap();
+        a.put(Harness::Pi, "s", "3", &b"a\nb\nc\n"[..]).unwrap();
+        let before = fs::read(hub.manifest_path_of(Some("nas"))).unwrap();
+        // Cut after the lone line: nothing of it goes in, and the old capture stays readable.
+        let bytes = export_for(&spoke, &hub);
+        let cut = bytes.windows(5).position(|w| w == b"blob ").unwrap();
+        let err = take(&hub, "nas", &mut &bytes[..cut], &|| false).unwrap_err();
+        assert!(format!("{err:#}").contains("ended early"), "{err:#}");
+        assert_eq!(fs::read(hub.manifest_path_of(Some("nas"))).unwrap(), before);
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        // A pull told to stop at once stops only after both lines, with the newest in place.
+        let bytes = export_for(&spoke, &hub);
+        let t = take(&hub, "nas", &mut &bytes[..], &|| true).unwrap();
+        assert!(t.stopped && t.lines == 2, "{t:?}");
+        let nas = Archive::open_of(&hub, Some("nas"))
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert!(nas.ok(), "{nas:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
+    fn a_line_cut_short_here_is_dropped_and_sent_again_whole() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        pull(&spoke, &hub);
+        a.put(Harness::Pi, "t", "1", &b"two\n"[..]).unwrap();
+        // A write that failed partway (a full disk) left half a line.
+        let manifest = hub.manifest_path_of(Some("nas"));
+        let mut f = fs::OpenOptions::new().append(true).open(&manifest).unwrap();
+        f.write_all(b"{\"source\":\"pi\",\"ori").unwrap();
+        let t = pull(&spoke, &hub);
+        assert_eq!(t.lines, 1, "{t:?}");
+        assert_eq!(files(&spoke.raw_dir()), files(&hub.raw_dir_of(Some("nas"))));
+    }
+
+    #[test]
     fn a_pull_that_stops_or_is_cut_keeps_what_it_took_and_the_next_goes_on() {
         let (_s, spoke) = home();
         let (_h, hub) = home();
@@ -918,7 +1023,7 @@ mod tests {
             .put(Harness::Pi, "x", "1", &b"elsewhere\n"[..])
             .unwrap();
         let mut bytes = Vec::new();
-        export(&spoke, "box", 0, &mut bytes).unwrap();
+        export(&spoke, "box", 0, &mut bytes, &mut Transfer::default()).unwrap();
         let err = take(&hub, "nas", &mut &bytes[..], &|| false).unwrap_err();
         assert!(
             format!("{err:#}").contains("is \"box\", not \"nas\""),
@@ -931,7 +1036,7 @@ mod tests {
             .unwrap()
             .len();
         let mut bytes = Vec::new();
-        match export(&other, "nas", since, &mut bytes) {
+        match export(&other, "nas", since, &mut bytes, &mut Transfer::default()) {
             Ok(_) => {
                 let err = take(&hub, "nas", &mut &bytes[..], &|| false).unwrap_err();
                 assert!(format!("{err:#}").contains("does not continue"), "{err:#}");

@@ -3,9 +3,11 @@
 //! <bytes>`, where `<bytes>` is the length of its copy of that spoke's manifest, so the copy is its
 //! own cursor and is rebuilt with it. [`crate::archive`] writes and reads the captures.
 
-use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -37,18 +39,16 @@ pub fn export(home: &Home, since: u64, out: &mut dyn Write) -> Result<Transfer> 
              --spoke <machine>`"
         );
     };
-    let result = archive::export(home, &spoke.machine, since, out);
+    // What went before an export stopped short (the hub hung up) is logged too.
+    let mut sent = Transfer::default();
+    let result = archive::export(home, &spoke.machine, since, out, &mut sent);
     let entry = ExportEntry {
         at: now_rfc3339(),
-        sent: result.as_ref().cloned().unwrap_or(Transfer {
-            since,
-            to: since,
-            ..Default::default()
-        }),
+        sent: sent.clone(),
         error: result.as_ref().err().map(|e| format!("{e:#}")),
     };
     append_jsonl(&home.export_log_path(), &entry)?;
-    result
+    result.map(|()| sent)
 }
 
 /// The `since` an SSH forced command was asked for. `original` is `SSH_ORIGINAL_COMMAND`, which
@@ -134,8 +134,21 @@ pub fn pull(
     {
         bail!("no machine is named {name:?} in [[machines]]");
     }
-    // Two pulls of one machine at once would append to its copy together.
-    let _lock = home.lock("pull")?;
+    // The archive lock, as the sweep and a backup take it: two pulls at once would append to one
+    // copy together, and a backup would read a copy a pull is changing. The tick doesn't wait.
+    let _lock = if deadline == Deadline::NONE {
+        home.lock_archive()?
+    } else {
+        match home.try_lock("archive")? {
+            Some(lock) => lock,
+            None => {
+                return Ok(PullReport {
+                    skipped: Some("a sweep, a backup or another pull holds the archive".into()),
+                    ..Default::default()
+                });
+            }
+        }
+    };
     let mut report = PullReport::default();
     for m in config
         .machines
@@ -145,13 +158,39 @@ pub fn pull(
         if deadline.passed() {
             break;
         }
-        report.machines.push(pull_one(home, m, deadline));
+        report
+            .machines
+            .push(pull_one(home, m, deadline, "ssh", QUIET));
     }
     Ok(report)
 }
 
-fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
-    let since = fs::metadata(home.manifest_path_of(Some(&m.name))).map_or(0, |f| f.len());
+/// After the deadline, how long a pull waits for the next bytes before it gives up: a capture
+/// still coming is let finish, and an export that went quiet is not waited on.
+const QUIET: Duration = Duration::from_secs(60);
+
+/// Counts the bytes read through it, for the watch on a pull.
+struct Counted<R> {
+    inner: R,
+    seen: Arc<AtomicU64>,
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.seen.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+fn pull_one(
+    home: &Home,
+    m: &MachineConfig,
+    deadline: Deadline,
+    ssh: &str,
+    quiet: Duration,
+) -> Pulled {
+    let since = archive::copy_length(home, &m.name).unwrap_or(0);
     let mut pulled = Pulled {
         machine: m.name.clone(),
         took: Transfer {
@@ -162,7 +201,7 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
         error: None,
     };
     let command = m.command.as_deref().unwrap_or("distill");
-    let spawned = Command::new("ssh")
+    let spawned = Command::new(ssh)
         // No prompt, so the timer can run it; and a connection that goes quiet is dropped
         // rather than holding the tick.
         .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"])
@@ -192,14 +231,62 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
         let _ = stderr.read_to_string(&mut s);
         s
     });
-    let mut stdout = BufReader::new(child.stdout.take().expect("piped"));
+    let seen = Arc::new(AtomicU64::new(0));
+    let mut stdout = BufReader::new(Counted {
+        inner: child.stdout.take().expect("piped"),
+        seen: seen.clone(),
+    });
+    // Once the deadline has passed, an export that sends nothing for `quiet` is stopped, so a
+    // spoke that hangs doesn't hold the tick.
+    let child = Arc::new(Mutex::new(child));
+    let (done, gave_up) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let watch = {
+        let (child, done, gave_up) = (child.clone(), done.clone(), gave_up.clone());
+        std::thread::spawn(move || {
+            let (mut bytes, mut since_bytes) = (0, Instant::now());
+            while !done.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+                let now = seen.load(Ordering::Relaxed);
+                if now != bytes {
+                    (bytes, since_bytes) = (now, Instant::now());
+                } else if deadline.passed() && since_bytes.elapsed() >= quiet {
+                    gave_up.store(true, Ordering::Relaxed);
+                    let _ = child.lock().map(|mut c| c.kill());
+                    return;
+                }
+            }
+        })
+    };
     let took = archive::take(home, &m.name, &mut stdout, &|| deadline.passed());
     if !matches!(&took, Ok(t) if !t.stopped) {
-        let _ = child.kill();
+        let _ = child.lock().map(|mut c| c.kill());
     }
     drop(stdout);
-    let status = child.wait();
+    let status = loop {
+        match child.lock().map(|mut c| c.try_wait()) {
+            Ok(Ok(Some(status))) => break Ok(status),
+            Ok(Ok(None)) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(Err(e)) => break Err(e),
+            Err(_) => break Err(std::io::Error::other("the watch on ssh failed")),
+        }
+    };
+    done.store(true, Ordering::Relaxed);
+    let _ = watch.join();
     let said = drain.join().unwrap_or_default();
+    if gave_up.load(Ordering::Relaxed) {
+        pulled.error = Some(format!(
+            "{} sent nothing for {}s after the tick's end, so the pull stopped",
+            m.host,
+            quiet.as_secs()
+        ));
+        if let Ok(t) = took {
+            pulled.took = t;
+        }
+        return pulled;
+    }
     let last = said
         .lines()
         .rev()
@@ -232,6 +319,116 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::archive::Archive;
+    use crate::config::Spoke;
+    use crate::harness::Harness;
+    use std::fs;
+
+    fn hub_of(dir: &std::path::Path) -> (Home, Config) {
+        let home = Home::new(dir.join("hub"));
+        home.ensure().unwrap();
+        let config = Config {
+            machines: vec![MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Config::default()
+        };
+        (home, config)
+    }
+
+    #[test]
+    fn the_tick_doesnt_wait_on_a_sweep_or_backup_holding_the_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let _held = home.lock_archive().unwrap();
+        let r = pull(
+            &home,
+            &config,
+            None,
+            Deadline::after(Duration::from_secs(60)),
+        )
+        .unwrap();
+        assert!(r.machines.is_empty(), "{r:?}");
+        assert!(r.skipped.unwrap().contains("holds the archive"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_export_that_goes_quiet_after_the_deadline_is_stopped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        // A stand-in for ssh: a header for an empty copy, then nothing.
+        let ssh = dir.path().join("ssh");
+        use sha2::Digest;
+        let empty = hex::encode(sha2::Sha256::digest(b""));
+        fs::write(
+            &ssh,
+            format!(
+                "#!/bin/sh\nprintf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\n'\nexec sleep 30\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
+        let start = Instant::now();
+        let p = pull_one(
+            &home,
+            &config.machines[0],
+            Deadline::after(Duration::ZERO),
+            ssh.to_str().unwrap(),
+            Duration::from_millis(500),
+        );
+        assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
+        assert!(p.error.unwrap().contains("sent nothing"));
+    }
+
+    /// Takes `room` bytes, then fails as a pipe whose reader went away does.
+    struct HungUp {
+        room: usize,
+    }
+
+    impl Write for HungUp {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.room == 0 {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            let n = buf.len().min(self.room);
+            self.room -= n;
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_export_the_hub_hung_up_on_logs_what_went_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        Config {
+            spoke: Some(Spoke {
+                machine: "nas".into(),
+            }),
+            ..Config::default()
+        }
+        .save(&home.config_path())
+        .unwrap();
+        let mut a = Archive::open(&home).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        a.put(Harness::Pi, "t", "1", &b"two\n"[..]).unwrap();
+        let mut whole = Vec::new();
+        export(&home, 0, &mut whole).unwrap();
+        // Room for everything but the last line and the end.
+        let at = whole.windows(5).rposition(|w| w == b"line ").unwrap();
+        assert!(export(&home, 0, &mut HungUp { room: at }).is_err());
+        let log = fs::read_to_string(home.export_log_path()).unwrap();
+        let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!((last.sent.lines, last.sent.blobs), (1, 2), "{last:?}");
+        assert!(last.error.is_some(), "{last:?}");
+    }
 
     #[test]
     fn a_forced_command_runs_only_an_export_since_a_byte_count() {
