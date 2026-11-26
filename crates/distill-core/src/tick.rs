@@ -83,11 +83,11 @@ pub struct Step {
     /// The step calls a model, so it gets a share of the tick's [`model_budget`].
     pub model: bool,
     generation: bool,
+    /// A spoke's tick runs it too: a spoke only captures, and the hub parses what it pulls
+    /// (ADR 0010).
+    pub spoke: bool,
     pub run: fn(&Home, &Config, &LocalRuntime, Deadline) -> Result<StepOutcome>,
 }
-
-/// The steps a spoke's tick runs.
-pub const SPOKE_STEPS: &[&str] = &["sweep"];
 
 /// The tick's steps, in order. Capture comes first and never waits on a model.
 pub const STEPS: &[Step] = &[
@@ -95,48 +95,56 @@ pub const STEPS: &[Step] = &[
         name: "sweep",
         model: false,
         generation: false,
+        spoke: true,
         run: sweep_step,
     },
     Step {
         name: "parse",
         model: false,
         generation: false,
+        spoke: false,
         run: parse_step,
     },
     Step {
         name: "scan",
         model: false,
         generation: false,
+        spoke: false,
         run: scan_step,
     },
     Step {
         name: "index",
         model: false,
         generation: false,
+        spoke: false,
         run: index_step,
     },
     Step {
         name: "backup",
         model: false,
         generation: false,
+        spoke: false,
         run: backup_step,
     },
     Step {
         name: "cards",
         model: true,
         generation: true,
+        spoke: false,
         run: cards_step,
     },
     Step {
         name: "vectors",
         model: true,
         generation: false,
+        spoke: false,
         run: vectors_step,
     },
     Step {
         name: "details",
         model: true,
         generation: true,
+        spoke: false,
         run: details_step,
     },
 ];
@@ -368,8 +376,7 @@ fn tick_with_runtimes(
     home.ensure()?;
     let mut steps = Vec::with_capacity(STEPS.len());
     for (i, s) in STEPS.iter().enumerate() {
-        // A spoke only captures; the hub parses what it pulls (ADR 0010).
-        if config.spoke.is_some() && !SPOKE_STEPS.contains(&s.name) {
+        if config.spoke.is_some() && !s.spoke {
             continue;
         }
         let deadline = match end {
@@ -439,7 +446,7 @@ mod tests {
         h.roots = vec![pi];
         let r = tick(&home, &config).unwrap();
         let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, SPOKE_STEPS);
+        assert_eq!(names, ["sweep"]);
         assert!(r.steps[0].ok && r.steps[0].report["new"] == 1, "{r:?}");
         // Captured, and nothing parsed.
         assert!(home.manifest_path().exists());

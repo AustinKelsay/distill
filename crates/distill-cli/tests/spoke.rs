@@ -87,4 +87,10 @@ fn a_spoke_captures_and_serves_no_reader() {
     }
     let log = fs::read_to_string(home.join("log/reads.jsonl")).unwrap();
     assert_eq!(log.lines().count(), 3, "{log}");
+
+    // A spoke's own exposure check: owner-only, not synced, no listener.
+    let exposure = json(&user, &home, &["exposure"]);
+    for rule in exposure["rules"].as_array().unwrap() {
+        assert_eq!(rule["outcome"], "pass", "{exposure}");
+    }
 }
