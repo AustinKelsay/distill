@@ -16,8 +16,10 @@ set -u
 host=""
 dir=""
 ctl=""
+d=""  # dir, quoted for the other machine's shell
 
-reply() { printf '%s\n' "$*"; }
+# One reply line: a tool's message of several lines is joined into one.
+reply() { printf '%s\n' "$(printf '%s' "$*" | tr '\n' ' ')"; }
 
 # A JSON string setting, as plain text; empty when it's missing or holds an escape.
 setting() {
@@ -43,10 +45,15 @@ trap finish EXIT
 
 valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
 
+ready=""
 while IFS= read -r line; do
     cmd=${line%% *}
     rest=${line#"$cmd"}
     rest=${rest# }
+    if [ "$cmd" != hello ] && [ -z "$ready" ]; then
+        reply "error no target yet: hello first"
+        continue
+    fi
     case "$cmd" in
     hello)
         version=${rest%% *}
@@ -68,6 +75,7 @@ while IFS= read -r line; do
         *) check="test -d $d/objects" ;;
         esac
         if out=$(remote "$check" </dev/null 2>&1); then
+            ready=1
             reply ok
         else
             reply "error $host:$dir is not there or can't be written to${out:+ ($out)}"

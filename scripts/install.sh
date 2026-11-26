@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build and install distill, distill-mcp and the backup adapters (adapters/) into Cargo's bin
-# directory ($CARGO_INSTALL_ROOT, else $CARGO_HOME, else ~/.cargo, plus /bin), and the window: on macOS as DISTILL.app in
-# ~/Applications (scripts/mac-app.sh builds it; `distill gui` opens it), elsewhere as
-# distill-gui beside the others.
+# directory ($CARGO_INSTALL_ROOT, else $CARGO_HOME, else ~/.cargo, plus /bin), and the window:
+# on macOS as DISTILL.app in ~/Applications (scripts/mac-app.sh builds it; `distill gui` opens
+# it), elsewhere as distill-gui beside the others.
 #
 # Everything is built in a staging folder first; the installed files are replaced only once all
 # of them are ready, so a failed build leaves the old ones in place.

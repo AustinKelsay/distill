@@ -17,8 +17,8 @@ key is the adapter's own setting:
 ```toml
 [[backup]]
 name = "offsite"
-kind = "s3"              # runs distill-backup-s3
-bucket = "my-backups"    # the adapter's own settings
+kind = "rclone"          # runs distill-backup-rclone
+remote = "b2:my-backups" # the adapter's own settings
 ```
 
 ## The protocol

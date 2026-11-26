@@ -15,7 +15,8 @@ set -u
 
 remote=""
 
-reply() { printf '%s\n' "$*"; }
+# One reply line: a tool's message of several lines is joined into one.
+reply() { printf '%s\n' "$(printf '%s' "$*" | tr '\n' ' ')"; }
 
 setting() {
     printf '%s' "$2" | sed -n "s/.*\"$1\":\"\\([^\"\\\\]*\\)\".*/\\1/p"
@@ -23,13 +24,26 @@ setting() {
 
 valid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
 
-# Whether the remote holds the object `$1`.
-holds() { rclone lsjson --stat "$remote/objects/$1" >/dev/null 2>&1 </dev/null; }
+# Whether the remote holds the object `$1`: 0 yes, 1 no, 2 it couldn't tell (rclone exits 3 or 4
+# for a folder or file that isn't there, and otherwise for an error).
+holds() {
+    rclone lsjson --stat "$remote/objects/$1" >/dev/null 2>&1 </dev/null
+    case $? in
+    0) return 0 ;;
+    3 | 4) return 1 ;;
+    *) return 2 ;;
+    esac
+}
 
+ready=""
 while IFS= read -r line; do
     cmd=${line%% *}
     rest=${line#"$cmd"}
     rest=${rest# }
+    if [ "$cmd" != hello ] && [ -z "$ready" ]; then
+        reply "error no target yet: hello first"
+        continue
+    fi
     case "$cmd" in
     hello)
         version=${rest%% *}
@@ -46,18 +60,33 @@ while IFS= read -r line; do
         command -v rclone >/dev/null || { reply "error no rclone on PATH"; continue; }
         case "$open" in
         probe)
+            # The remote must be there already: writing to one that isn't could make it.
             probe="$remote/.distill-probe-$$"
-            if out=$(printf 'distill' | rclone rcat "$probe" 2>&1) && rclone deletefile "$probe" </dev/null 2>/dev/null; then
+            if ! out=$(rclone lsf --max-depth 1 "$remote" </dev/null 2>&1); then
+                reply "error $remote is not there ($out)"
+            elif out=$(printf 'distill' | rclone rcat "$probe" 2>&1) && rclone deletefile "$probe" </dev/null 2>/dev/null; then
                 reply ok
             else
                 reply "error $remote can't be written to${out:+ ($out)}"
             fi
             ;;
         first)
-            if out=$(rclone mkdir "$remote/objects" </dev/null 2>&1); then reply ok; else reply "error can't set up $remote ($out)"; fi
+            if out=$(rclone mkdir "$remote/objects" </dev/null 2>&1); then
+                ready=1
+                reply ok
+            else
+                reply "error can't set up $remote ($out)"
+            fi
             ;;
         *)
-            if out=$(rclone lsf --max-depth 1 "$remote/objects" </dev/null 2>&1); then reply ok; else reply "error $remote/objects is not there ($out)"; fi
+            # An object store lists a prefix that isn't there as empty, so a target used before
+            # must hold an object, or it isn't the place it was.
+            if out=$(rclone lsf --files-only --max-depth 1 "$remote/objects" </dev/null 2>&1) && [ -n "$out" ]; then
+                ready=1
+                reply ok
+            else
+                reply "error $remote/objects holds nothing, though this target was used before (is the remote right?)${out:+ ($out)}"
+            fi
             ;;
         esac
         ;;
@@ -75,8 +104,12 @@ while IFS= read -r line; do
         name=${rest%% *}
         file=${rest#"$name" }
         valid "$name" || { reply "error not an object name"; continue; }
-        if holds "$name"; then
+        holds "$name"
+        there=$?
+        if [ "$there" = 0 ]; then
             reply "ok present"
+        elif [ "$there" = 2 ]; then
+            reply "error can't tell whether $remote holds $name"
         elif rclone copyto --immutable "$file" "$remote/objects/$name" </dev/null; then
             reply "ok stored"
         else
@@ -91,11 +124,22 @@ while IFS= read -r line; do
         ;;
     has)
         valid "$rest" || { reply "error not an object name"; continue; }
-        if holds "$rest"; then reply "ok yes"; else reply "ok no"; fi
+        holds "$rest"
+        case $? in
+        0) reply "ok yes" ;;
+        1) reply "ok no" ;;
+        *) reply "error can't tell whether $remote holds $rest" ;;
+        esac
         ;;
     delete)
         valid "$rest" || { reply "error not an object name"; continue; }
-        if ! holds "$rest" || rclone deletefile "$remote/objects/$rest" </dev/null; then reply ok; else reply "error can't delete $rest at $remote"; fi
+        holds "$rest"
+        there=$?
+        if [ "$there" = 1 ] || { [ "$there" = 0 ] && rclone deletefile "$remote/objects/$rest" </dev/null; }; then
+            reply ok
+        else
+            reply "error can't delete $rest at $remote"
+        fi
         ;;
     sync)
         # An upload is stored when rclone returns.
