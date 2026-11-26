@@ -47,18 +47,24 @@ while IFS= read -r line; do
     put)
         name=${rest%% *}
         file=${rest#"$name" }
-        tmp="$dir/objects/.$name.$$"
-        if ! cp "$file" "$tmp"; then
+        if [ -f "$dir/objects/$name" ]; then
+            reply "ok present"
+            continue
+        fi
+        # Staged under its own name in a folder of its own, then linked into objects/: a link
+        # never replaces, so of two puts of one name one stores, and anything already in the
+        # way fails the link rather than taking the object inside it.
+        stage="$dir/.stage.$$"
+        if ! { mkdir -p "$stage" && cp "$file" "$stage/$name"; }; then
             reply "error can't store $name"
-        elif ln "$tmp" "$dir/objects/$name" 2>/dev/null; then
-            # A hard link never replaces, so of two puts of one name, one stores.
+        elif ln "$stage/$name" "$dir/objects/" 2>/dev/null; then
             reply "ok stored"
-        elif [ -e "$dir/objects/$name" ]; then
+        elif [ -f "$dir/objects/$name" ]; then
             reply "ok present"
         else
             reply "error can't store $name"
         fi
-        rm -f "$tmp"
+        rm -rf "$stage"
         ;;
     has)
         if [ -e "$dir/objects/$rest" ]; then reply "ok yes"; else reply "ok no"; fi

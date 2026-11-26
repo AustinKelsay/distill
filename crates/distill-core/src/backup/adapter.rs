@@ -125,12 +125,23 @@ impl Adapter {
             Err(e) => Err(e),
         };
         if !matches!(read, Ok(n) if n > 0) {
-            // It stopped: closing its input lets one that is still running finish.
+            // Closing both pipes lets one still running finish, even one still writing.
             io.stdin = None;
+            io.stdout = None;
             let status = io
                 .child
                 .wait()
                 .map_or_else(|e| e.to_string(), |s| s.to_string());
+            let garbled = read
+                .as_ref()
+                .err()
+                .and_then(|e| e.downcast_ref::<std::io::Error>());
+            if garbled.is_some_and(|e| e.kind() == std::io::ErrorKind::InvalidData) {
+                bail!(
+                    "{} answered with something that isn't text ({status})",
+                    self.program
+                );
+            }
             bail!("{} stopped without answering ({status})", self.program);
         }
         let reply = reply.trim_end_matches(['\n', '\r']);

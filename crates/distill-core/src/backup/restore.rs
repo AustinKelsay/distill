@@ -280,22 +280,22 @@ pub fn verify(
     };
     // The manifest is always opened: it says which blobs the target should hold.
     c.objects += rec.manifest.len() as u64;
-    let manifest = match manifest(store, key, &scratch, &rec) {
-        Ok(m) => m,
-        Err(e) if unreadable(&e) && rec.manifest.iter().all(|p| present.contains(&p.object)) => {
-            return Err(e);
-        }
-        Err(_) if rec.manifest.iter().any(|p| !present.contains(&p.object)) => {
-            c.missing += rec
-                .manifest
-                .iter()
-                .filter(|p| !present.contains(&p.object))
-                .count() as u64;
-            Vec::new()
-        }
-        Err(_) => {
-            c.corrupt += 1;
-            Vec::new()
+    let absent = rec
+        .manifest
+        .iter()
+        .filter(|p| !present.contains(&p.object))
+        .count() as u64;
+    let manifest = if absent > 0 {
+        c.missing += absent;
+        Vec::new()
+    } else {
+        match manifest(store, key, &scratch, &rec) {
+            Ok(m) => m,
+            Err(e) if unreadable(&e) => return Err(e),
+            Err(_) => {
+                c.corrupt += 1;
+                Vec::new()
+            }
         }
     };
     let mut check = |name: &str, want: Option<(&str, u64)>| -> Result<()> {
