@@ -135,7 +135,7 @@ impl Adapter {
             Some(rest) if rest.is_empty() || rest.starts_with(' ') => {
                 then(rest.trim_start(), &mut io.stdout)
             }
-            _ => bail!("{} answered {reply:?}, which is not a reply", self.program),
+            _ => Err(self.unexpected(reply)),
         }
     }
 

@@ -19,7 +19,7 @@ pub mod status;
 pub mod store;
 pub mod target;
 
-pub use restore::{BackupCheck, RestoreReport, restore, verify};
+pub use restore::{BackupCheck, RestoreReport, restore, restore_target, verify};
 pub use run::{BackupReport, run};
 pub use status::{TargetStatus, TickBackups, targets};
 pub use target::{Place, add_folder, places, reused_name, synced, test};

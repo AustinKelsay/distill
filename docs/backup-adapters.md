@@ -41,8 +41,10 @@ The path `<file>` is the rest of the line. Each file is in a temporary folder on
 use, and DISTILL removes it after the call. A reply DISTILL doesn't expect, or an adapter that
 exits before replying, fails the use of the target.
 
-An adapter answers a command it doesn't know with `error`, so a later version of the protocol can
-add commands (`delete`, for pruning, comes with pruning) and tell old adapters apart.
+ADR 0009's contract also names `has` and `delete`. Neither is in version 1: `put` answers
+whether the name was there, so nothing asks `has` on its own, and `delete` comes with pruning,
+which doesn't exist yet. An adapter answers a command it doesn't know with `error`, so a later
+version can add commands and tell old adapters apart.
 
 `crates/distill-core/tests/fixtures/distill-backup-reference` is a reference adapter in `sh`
 that keeps objects in a folder. The tests use it.
