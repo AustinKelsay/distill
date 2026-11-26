@@ -47,13 +47,24 @@ while IFS= read -r line; do
     put)
         name=${rest%% *}
         file=${rest#"$name" }
-        if [ -e "$dir/objects/$name" ]; then
-            reply "ok present"
-        elif cp "$file" "$dir/objects/.$name.tmp" && mv "$dir/objects/.$name.tmp" "$dir/objects/$name"; then
+        tmp="$dir/objects/.$name.$$"
+        if ! cp "$file" "$tmp"; then
+            reply "error can't store $name"
+        elif ln "$tmp" "$dir/objects/$name" 2>/dev/null; then
+            # A hard link never replaces, so of two puts of one name, one stores.
             reply "ok stored"
+        elif [ -e "$dir/objects/$name" ]; then
+            reply "ok present"
         else
             reply "error can't store $name"
         fi
+        rm -f "$tmp"
+        ;;
+    has)
+        if [ -e "$dir/objects/$rest" ]; then reply "ok yes"; else reply "ok no"; fi
+        ;;
+    delete)
+        rm -f "$dir/objects/$rest" && reply ok || reply "error can't delete $rest"
         ;;
     get)
         name=${rest%% *}

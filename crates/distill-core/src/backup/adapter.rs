@@ -48,7 +48,8 @@ pub(super) struct Adapter {
 struct Io {
     child: Child,
     stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    /// `None` once closed, so an adapter still writing stops rather than blocks.
+    stdout: Option<BufReader<ChildStdout>>,
 }
 
 impl Adapter {
@@ -79,11 +80,13 @@ impl Adapter {
             })?;
         let io = Io {
             stdin: child.stdin.take(),
-            stdout: BufReader::new(child.stdout.take().expect("piped")),
+            stdout: child.stdout.take().map(BufReader::new),
             child,
         };
         let scratch = tempfile::Builder::new()
             .prefix("distill-backup-")
+            // Owner-only from the start: the system's temporary folder is shared.
+            .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .tempdir()
             .context("make a folder for backup objects in transit")?;
         if scratch.path().to_string_lossy().contains('\n') {
@@ -115,7 +118,10 @@ impl Adapter {
             .and_then(|s| Ok(writeln!(s, "{line}").and_then(|()| s.flush())?));
         let mut reply = String::new();
         let read = match sent {
-            Ok(()) => io.stdout.read_line(&mut reply).map_err(anyhow::Error::from),
+            Ok(()) => match io.stdout.as_mut() {
+                Some(out) => out.read_line(&mut reply).map_err(anyhow::Error::from),
+                None => Err(anyhow!("the adapter's output is closed")),
+            },
             Err(e) => Err(e),
         };
         if !matches!(read, Ok(n) if n > 0) {
@@ -133,7 +139,8 @@ impl Adapter {
         }
         match reply.strip_prefix("ok") {
             Some(rest) if rest.is_empty() || rest.starts_with(' ') => {
-                then(rest.trim_start(), &mut io.stdout)
+                let out = io.stdout.as_mut().expect("read from above");
+                then(rest.trim_start(), out)
             }
             _ => Err(self.unexpected(reply)),
         }
@@ -215,10 +222,12 @@ fn copy_out(path: &Path, to: &mut dyn Write) -> Result<()> {
 }
 
 impl Drop for Adapter {
-    /// Close the adapter's input, which tells it to finish, and wait for it.
+    /// Close the adapter's input, which tells it to finish, and its output, so one still writing
+    /// (a list cut short) stops rather than blocks, and wait for it.
     fn drop(&mut self) {
         let io = self.io.get_mut().unwrap_or_else(|e| e.into_inner());
         io.stdin = None;
+        io.stdout = None;
         let _ = io.child.wait();
     }
 }

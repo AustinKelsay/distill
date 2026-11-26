@@ -282,6 +282,9 @@ pub fn verify(
     c.objects += rec.manifest.len() as u64;
     let manifest = match manifest(store, key, &scratch, &rec) {
         Ok(m) => m,
+        Err(e) if unreadable(&e) && rec.manifest.iter().all(|p| present.contains(&p.object)) => {
+            return Err(e);
+        }
         Err(_) if rec.manifest.iter().any(|p| !present.contains(&p.object)) => {
             c.missing += rec
                 .manifest
@@ -301,7 +304,13 @@ pub fn verify(
             c.missing += 1;
         } else if full {
             let mut h = Counted::default();
-            let good = fetch(store, key, &scratch, name, &mut h).is_ok()
+            let fetched = fetch(store, key, &scratch, name, &mut h);
+            if let Err(e) = fetched.as_ref()
+                && unreadable(e)
+            {
+                return Err(fetched.unwrap_err());
+            }
+            let good = fetched.is_ok()
                 && want.is_none_or(|(sha, size)| {
                     hex::encode(h.hasher.clone().finalize()) == sha
                         && (size == u64::MAX || h.bytes == size)
@@ -377,9 +386,24 @@ fn fetch(
     to: &mut dyn Write,
 ) -> Result<()> {
     let mut sealed = scratch.file()?;
-    store.get(name, &mut sealed)?;
+    store.get(name, &mut sealed).context(Unreadable)?;
     sealed.seek(SeekFrom::Start(0))?;
     key.open(&mut sealed as &mut dyn Read, to)
+}
+
+/// A target that could not be read, which a check reports as its error, apart from an object it
+/// handed back that does not decrypt, which it counts as corrupt.
+#[derive(Debug)]
+struct Unreadable;
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the target could not be read")
+    }
+}
+
+fn unreadable(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<Unreadable>().is_some()
 }
 
 /// Whether a record's path is one a restore writes: in the backup set, outside `raw/`, and with

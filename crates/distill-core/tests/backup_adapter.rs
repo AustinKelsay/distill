@@ -34,6 +34,26 @@ fn an_adapter_target_is_tested_backed_up_verified_and_restored_like_a_folder() {
     let reference = include_str!("fixtures/distill-backup-reference");
     adapter(&bin, "reference", reference);
     adapter(&bin, "broken", "#!/bin/sh\nread line\nexit 3\n");
+    // The reference adapter, with each command it is sent written to a log.
+    let log = tmp.path().join("commands.log");
+    adapter(
+        &bin,
+        "logged",
+        &format!(
+            "#!/bin/sh\ntee -a '{}' | '{}'\n",
+            log.display(),
+            bin.join("distill-backup-reference").display()
+        ),
+    );
+    // The reference adapter, failing every get from the third on, as a network that went away.
+    adapter(
+        &bin,
+        "flaky",
+        &reference.replace(
+            "    get)\n",
+            "    get)\n        gets=$((${gets:-0} + 1))\n        if [ \"$gets\" -ge 3 ]; then reply \"error the network went away\"; continue; fi\n",
+        ),
+    );
     let path = format!(
         "{}:{}",
         bin.display(),
@@ -50,7 +70,7 @@ fn an_adapter_target_is_tested_backed_up_verified_and_restored_like_a_folder() {
         .unwrap();
     let place = tmp.path().join("offsite");
     fs::create_dir(&place).unwrap();
-    let t = target("reference", &place);
+    let t = target("logged", &place);
     let config = Config {
         backups: vec![t.clone()],
         ..Default::default()
@@ -72,6 +92,15 @@ fn an_adapter_target_is_tested_backed_up_verified_and_restored_like_a_folder() {
 
     let r = backup::run(&home, &t).unwrap();
     assert!(r.ok && r.blobs_sent == 1, "{r:?}");
+    // The record is stored last and made durable too, as every object before it was.
+    let sent = fs::read_to_string(&log).unwrap();
+    let sent: Vec<&str> = sent.lines().collect();
+    assert!(
+        sent[sent.len() - 3] == "sync"
+            && sent[sent.len() - 2].starts_with("put ")
+            && sent[sent.len() - 1] == "sync",
+        "{sent:?}"
+    );
     assert!(
         backup::test(&home, &t)
             .unwrap()
@@ -81,6 +110,14 @@ fn an_adapter_target_is_tested_backed_up_verified_and_restored_like_a_folder() {
     let s = store::open(&t, false).unwrap();
     let check = backup::verify(&home, "offsite", &*s, &key, true).unwrap();
     assert!(check.ok(), "{check:?}");
+    // A target that can't hand an object back fails the check with its reason; it is not corrupt.
+    let flaky = store::open(&target("flaky", &place), false).unwrap();
+    let failed = backup::verify(&home, "offsite", &*flaky, &key, true).unwrap_err();
+    assert!(
+        format!("{failed:#}").contains("distill-backup-flaky: the network went away"),
+        "{failed:#}"
+    );
+    drop(flaky);
 
     let restored = Home::new(tmp.path().join("restored"));
     let report = backup::restore(&restored, &*s, &key, false).unwrap();

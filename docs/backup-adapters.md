@@ -35,16 +35,22 @@ The adapter's standard error is left to the owner's terminal or the tick's log.
 | `list` | `ok <n>`, then `n` lines with one name each | Names every object the target holds. |
 | `put <name> <file>` | `ok stored` or `ok present` | Stores the bytes of the file at the path `<file>` under `<name>`, unless the target holds that name already. Then it stores nothing and says `present`. A put never overwrites. |
 | `get <name> <file>` | `ok` | Writes the object's bytes into the file at the path `<file>`. |
-| `sync` | `ok` | Makes every object the target lists durable. A run sends it before its record. |
+| `sync` | `ok` | Makes every object the target lists durable. A run sends it before its record and again after it. |
+| `has <name>` | `ok yes` or `ok no` | Says whether the target holds `<name>`. |
+| `delete <name>` | `ok` | Removes the object `<name>`, if the target holds it. Used only to prune. |
 
 The path `<file>` is the rest of the line. Each file is in a temporary folder only the owner can
 use, and DISTILL removes it after the call. A reply DISTILL doesn't expect, or an adapter that
 exits before replying, fails the use of the target.
 
-ADR 0009's contract also names `has` and `delete`. Neither is in version 1: `put` answers
-whether the name was there, so nothing asks `has` on its own, and `delete` comes with pruning,
-which doesn't exist yet. An adapter answers a command it doesn't know with `error`, so a later
-version can add commands and tell old adapters apart.
+DISTILL doesn't send `has` or `delete` yet: `put` answers whether the name was there, and
+`delete` waits for pruning. An adapter should still answer both. It answers a command it doesn't
+know with `error`, so a later version can add commands and tell old adapters apart.
+
+The target's table sits in `config.toml` and goes to the adapter whole, so keep a credential out
+of it. An adapter takes its credentials from where its tool keeps them (an SSH key, a cloud
+CLI's profile, rclone's config), and a restore names the target with `--kind` and `--set`
+alone.
 
 `crates/distill-core/tests/fixtures/distill-backup-reference` is a reference adapter in `sh`
 that keeps objects in a folder. The tests use it.
