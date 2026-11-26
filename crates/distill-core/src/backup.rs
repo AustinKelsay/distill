@@ -12,6 +12,7 @@
 //!   object is (a blob's capture hash, a file's path). A plain SHA-256 would let a target test
 //!   whether it holds a file it already knows.
 
+mod adapter;
 pub mod restore;
 pub mod run;
 pub mod status;

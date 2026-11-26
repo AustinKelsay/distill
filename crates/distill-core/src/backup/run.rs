@@ -744,6 +744,7 @@ mod tests {
             path: Some(dir.path().join("drive")),
             cards: false,
             vectors: false,
+            settings: Default::default(),
         };
         (dir, home, target)
     }

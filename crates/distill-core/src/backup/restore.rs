@@ -463,6 +463,7 @@ mod tests {
             path: Some(dir.path().join("drive")),
             cards: false,
             vectors: false,
+            settings: Default::default(),
         };
         run(&home, &target).unwrap();
         (dir, home, target)

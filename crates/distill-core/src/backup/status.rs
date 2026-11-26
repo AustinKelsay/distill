@@ -200,6 +200,7 @@ mod tests {
             path: Some(path),
             cards: false,
             vectors: false,
+            settings: Default::default(),
         }
     }
 

@@ -1,0 +1,74 @@
+#!/bin/sh
+# A reference backup adapter (docs/backup-adapters.md), for tests: it keeps each object as a file
+# in `<dir>/objects/`, where `dir` is a setting in the target's `[[backup]]` table. It answers
+# `error ...` to anything it doesn't know.
+set -u
+dir=""
+reply() { printf '%s\n' "$*"; }
+while IFS= read -r line; do
+    cmd=${line%% *}
+    rest=${line#"$cmd"}
+    rest=${rest# }
+    case "$cmd" in
+    hello)
+        version=${rest%% *}
+        rest=${rest#"$version" }
+        open=${rest%% *}
+        json=${rest#"$open" }
+        if [ "$version" != 1 ]; then
+            reply "error unsupported protocol version $version"
+            continue
+        fi
+        dir=$(printf '%s' "$json" | sed -n 's/.*"dir":"\([^"]*\)".*/\1/p')
+        if [ -z "$dir" ]; then
+            reply "error the target needs a dir"
+        elif [ ! -d "$dir" ]; then
+            reply "error $dir is not there"
+        elif [ "$open" = probe ]; then
+            if : >"$dir/.probe" 2>/dev/null; then
+                rm -f "$dir/.probe"
+                reply ok
+            else
+                reply "error $dir can't be written to"
+            fi
+        elif [ "$open" = first ]; then
+            mkdir -p "$dir/objects" && reply ok || reply "error can't make $dir/objects"
+        elif [ -d "$dir/objects" ]; then
+            reply ok
+        else
+            reply "error $dir/objects is not there"
+        fi
+        ;;
+    list)
+        n=$(ls "$dir/objects" | wc -l | tr -d ' ')
+        reply "ok $n"
+        ls "$dir/objects"
+        ;;
+    put)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        if [ -e "$dir/objects/$name" ]; then
+            reply "ok present"
+        elif cp "$file" "$dir/objects/.$name.tmp" && mv "$dir/objects/.$name.tmp" "$dir/objects/$name"; then
+            reply "ok stored"
+        else
+            reply "error can't store $name"
+        fi
+        ;;
+    get)
+        name=${rest%% *}
+        file=${rest#"$name" }
+        if cp "$dir/objects/$name" "$file" 2>/dev/null; then
+            reply ok
+        else
+            reply "error no object $name"
+        fi
+        ;;
+    sync)
+        reply ok
+        ;;
+    *)
+        reply "error unknown command $cmd"
+        ;;
+    esac
+done
