@@ -184,7 +184,7 @@ impl Trust {
     /// only the built-in providers count. A config that is there but can't be read serves no
     /// reader, since what it says can't be told.
     pub fn of(home: &Home) -> (Config, Self) {
-        if !home.config_path().exists() {
+        if !home.has_config() {
             let config = Config::default();
             let trust = Self::new(&config);
             return (config, trust);
@@ -194,12 +194,16 @@ impl Trust {
                 let trust = Self::new(&config);
                 (config, trust)
             }
-            Err(e) => {
+            // Not why: the parser's message can quote the config's lines, which a reader and
+            // the read log must not get. `distill tick` shows the owner why.
+            Err(_) => {
                 let config = Config::default();
                 let mut trust = Self::new(&config);
-                trust.refused = Some(format!(
-                    "the config can't be read ({e:#}), so no reader is served until it is fixed."
-                ));
+                trust.refused = Some(
+                    "the config can't be read, so no reader is served until the owner fixes it \
+                     (`distill tick` says why)."
+                        .into(),
+                );
                 (config, trust)
             }
         }

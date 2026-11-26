@@ -108,4 +108,16 @@ fn a_spoke_captures_and_serves_no_reader() {
     fs::write(home.join("config.toml"), bad).unwrap();
     let (ok, out) = distill(&user, &home, &["search", "failing"]);
     assert!(!ok && out.contains("the config can't be read"), "{out}");
+    assert!(
+        !out.contains("Build Box"),
+        "a reader gets no line of the config: {out}"
+    );
+    // Nor is it parsed, scanned, or written over, since it may name a spoke.
+    for args in [&["parse"][..], &["scan"], &["init", "--force"]] {
+        let (ok, out) = distill(&user, &home, args);
+        assert!(
+            !ok && out.contains("can't tell whether this home is a spoke"),
+            "{args:?}: {out}"
+        );
+    }
 }

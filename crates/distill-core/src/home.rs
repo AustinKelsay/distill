@@ -373,6 +373,27 @@ impl Home {
         lock_at(&self.findings_lock_path(harness, session_id), "findings")
     }
 
+    /// Whether the home has a config: anything at its path, a link whose target is gone
+    /// included.
+    pub fn has_config(&self) -> bool {
+        !matches!(
+            fs::symlink_metadata(self.config_path()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        )
+    }
+
+    /// This home's `[spoke]`, if it is one (ADR 0010); none with no config. A config that is
+    /// there but can't be read is an error, since it may name a spoke.
+    pub fn spoke(&self) -> Result<Option<crate::config::Spoke>> {
+        if !self.has_config() {
+            return Ok(None);
+        }
+        Ok(self
+            .load_config()
+            .context("can't tell whether this home is a spoke")?
+            .spoke)
+    }
+
     /// The config, with the owner's tag edits from `tags.json` (`crate::tags::OwnerTags`);
     /// none when that file can't be read.
     pub fn load_config(&self) -> Result<Config> {

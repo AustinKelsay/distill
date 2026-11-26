@@ -237,7 +237,7 @@ impl NormalizeReport {
 /// Parse every capture whose result is missing or out of date. The caller records the run.
 pub fn normalize(home: &Home, force: bool) -> Result<NormalizeReport> {
     // A spoke parses nothing: the hub parses what it pulls (ADR 0010).
-    if let Some(spoke) = home.load_config().ok().and_then(|c| c.spoke) {
+    if let Some(spoke) = home.spoke()? {
         bail!(
             "this home is the spoke \"{}\": it only captures, and the hub parses what it pulls",
             spoke.machine

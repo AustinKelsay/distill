@@ -759,6 +759,7 @@ mod tests {
     fn a_spoke_or_a_config_that_cannot_be_read_serves_no_reader_distill_included() {
         let (_d, home) = home_with_session();
         let sessions = normalize::read_session_list(&home).unwrap();
+        // `Build Box` stands for whatever the broken line holds.
         for (config, says) in [
             (
                 "[spoke]\nmachine = \"nas\"\n",
@@ -783,12 +784,29 @@ mod tests {
             let err = for_index(&home, &sessions, |_, _| panic!("served")).unwrap_err();
             assert!(format!("{err:#}").contains(says), "{err:#}");
         }
+        // A config link whose target is gone is a config that can't be read, not none.
+        std::fs::remove_file(home.config_path()).unwrap();
+        std::os::unix::fs::symlink(home.root.join("gone.toml"), home.config_path()).unwrap();
+        let why = refused(
+            read(
+                &home,
+                &local(),
+                &Reader::Owner,
+                "claude-code/s1",
+                Range::default(),
+            )
+            .unwrap(),
+        );
+        assert!(why.contains("the config can't be read"), "{why}");
         let log = readlog::list(&home, None, usize::MAX).unwrap();
         assert!(
             log.iter()
                 .all(|e| matches!(e.result, ReadResult::Refused { .. })),
             "{log:?}"
         );
+        // The refusal doesn't quote the config: its lines can hold what the owner keeps private.
+        let text = std::fs::read_to_string(home.root.join("log/reads.jsonl")).unwrap();
+        assert!(!text.contains("Build Box"), "{text}");
     }
 
     fn refused(r: Read) -> String {

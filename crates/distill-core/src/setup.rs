@@ -30,7 +30,7 @@ pub fn initialize(home: &Home, config: &Config, force: bool) -> Result<()> {
     }
     // A spoke keeps its name and stays a spoke: its hub knows its sessions by that name
     // (ADR 0010).
-    if let Some(was) = home.load_config().ok().and_then(|c| c.spoke)
+    if let Some(was) = home.spoke()?
         && config.spoke.as_ref() != Some(&was)
     {
         bail!(
