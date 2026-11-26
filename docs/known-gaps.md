@@ -14,7 +14,7 @@ What DISTILL does not do, or does only partly. Update this page when a change ad
 ## Machines
 
 - A hub reads each spoke's raw archive in `machines/<machine>/raw/` (ADR 0010): its captures become sessions keyed `<machine>:<harness>/<id>`, `distill verify` checks it, and a backup holds it. Nothing brings a spoke's captures there yet (#138), status doesn't report machines, so a spoke's parse failures go unseen (#140), and the faces show a spoke's session by its key but don't filter by machine (#141). A machine is named only by its folder there.
-- A spoke is set up from the command line (`distill init --spoke <machine>`, and `scripts/install.sh --spoke` for `distill` alone). Its tick only sweeps, and its read path refuses every reader, the owner and MCP included. It keeps every capture it makes; nothing prunes it after a pull. Running `distill parse`, `scan` or `index` by hand on a spoke still builds sessions and an index there, which nothing reads. A window opened on a spoke shows only refusals.
+- A spoke is set up from the command line (`distill init --spoke <machine>`, and `scripts/install.sh --spoke` for `distill` alone). Its tick only sweeps, it refuses to parse, and its read path refuses every reader, the owner, DISTILL itself and MCP included; so does any home whose config is there but can't be read. A home that was a hub keeps the sessions and index it built, unread. A spoke keeps every capture it makes; nothing prunes it after a pull. A window opened on a spoke shows only refusals.
 
 ## Findings
 

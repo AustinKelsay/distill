@@ -159,8 +159,7 @@ fn serve(
     page: Page,
     listed_rows: &mut u64,
 ) -> Result<Listed> {
-    let config = home.load_config().unwrap_or_default();
-    let trust = Trust::new(&config);
+    let (config, trust) = Trust::of(home);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Listed::Refused(why));
     }

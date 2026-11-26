@@ -36,7 +36,8 @@ fn json(user: &Path, home: &Path, args: &[&str]) -> Value {
 fn a_spoke_captures_and_serves_no_reader() {
     let tmp = tempfile::tempdir().unwrap();
     let user = tmp.path().join("user");
-    let claude = tmp.path().join("claude/proj");
+    // Under Claude Code's own folder, so `init` finds it.
+    let claude = user.join(".claude/projects/proj");
     fs::create_dir_all(&claude).unwrap();
     fs::write(
         claude.join("s1.jsonl"),
@@ -52,14 +53,18 @@ fn a_spoke_captures_and_serves_no_reader() {
     assert_eq!(c["spoke"]["machine"], "nas", "{c}");
     let written = fs::read_to_string(home.join("config.toml")).unwrap();
     assert!(written.contains("[spoke]\nmachine = \"nas\""), "{written}");
-    fs::write(
-        home.join("config.toml"),
-        format!(
-            "[[harnesses]]\nkind = \"claude-code\"\nenabled = true\nroots = [\"{}\"]\n\n[spoke]\nmachine = \"nas\"\n",
-            claude.parent().unwrap().display()
-        ),
-    )
-    .unwrap();
+    // A spoke keeps its name and stays a spoke.
+    for args in [
+        &["init", "--force"][..],
+        &["init", "--force", "--spoke", "other"],
+    ] {
+        let (ok, out) = distill(&user, &home, args);
+        assert!(
+            !ok && out.contains("a machine keeps its name"),
+            "{args:?}: {out}"
+        );
+    }
+    json(&user, &home, &["init", "--force", "--spoke", "nas"]);
 
     let tick = json(&user, &home, &["tick"]);
     let steps: Vec<_> = tick["steps"]
@@ -72,6 +77,8 @@ fn a_spoke_captures_and_serves_no_reader() {
     assert_eq!(tick["steps"][0]["report"]["new"], 1, "{tick}");
     assert!(home.join("raw/manifest.jsonl").exists());
     assert!(!home.join("sessions/claude-code").exists());
+    let (ok, out) = distill(&user, &home, &["parse"]);
+    assert!(!ok && out.contains("the hub parses what it pulls"), "{out}");
 
     // No reader reads here, the owner included; each refusal is in the read log.
     for args in [
@@ -88,9 +95,17 @@ fn a_spoke_captures_and_serves_no_reader() {
     let log = fs::read_to_string(home.join("log/reads.jsonl")).unwrap();
     assert_eq!(log.lines().count(), 3, "{log}");
 
-    // A spoke's own exposure check: owner-only, not synced, no listener.
+    // A spoke's own exposure check: owner-only, not synced, no listener. Without `lsof` the
+    // listener rule can't be checked, and says so.
     let exposure = json(&user, &home, &["exposure"]);
     for rule in exposure["rules"].as_array().unwrap() {
-        assert_eq!(rule["outcome"], "pass", "{exposure}");
+        let unchecked = rule["rule"] == "no_listener" && rule["outcome"] == "unchecked";
+        assert!(rule["outcome"] == "pass" || unchecked, "{exposure}");
     }
+
+    // A config that can't be read serves no reader either: it might name a spoke.
+    let bad = written.replace("machine = \"nas\"", "machine = \"Build Box\"");
+    fs::write(home.join("config.toml"), bad).unwrap();
+    let (ok, out) = distill(&user, &home, &["search", "failing"]);
+    assert!(!ok && out.contains("the config can't be read"), "{out}");
 }

@@ -266,8 +266,7 @@ fn serve(
     page: Page,
     served: &mut u64,
 ) -> Result<Searched> {
-    let config = home.load_config().unwrap_or_default();
-    let trust = Trust::new(&config);
+    let (config, trust) = Trust::of(home);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Searched::Refused(why));
     }

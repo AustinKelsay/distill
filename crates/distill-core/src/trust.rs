@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, ProviderConfig, ProviderKind};
+use crate::home::Home;
 use crate::runtime::{LocalRuntime, RuntimeState};
 
 /// The local runtime, built in and always trusted. In this version the only local provider.
@@ -114,8 +115,9 @@ pub struct ListedProvider {
 pub struct Trust {
     providers: Vec<Provider>,
     warnings: Vec<String>,
-    /// A spoke's machine: no reader reads there (ADR 0010).
-    spoke: Option<String>,
+    /// Why no reader is served at all: on a spoke, since nothing reads there (ADR 0010), or
+    /// when the config is there but can't be read, since it may name a spoke.
+    refused: Option<String>,
 }
 
 impl Trust {
@@ -168,8 +170,44 @@ impl Trust {
         Self {
             providers,
             warnings,
-            spoke: config.spoke.as_ref().map(|s| s.machine.clone()),
+            refused: config.spoke.as_ref().map(|s| {
+                format!(
+                    "this home is the spoke \"{}\": it only captures, and its sessions are \
+                     read on the hub that pulls from it.",
+                    s.machine
+                )
+            }),
         }
+    }
+
+    /// The home's config, and the trust it sets: what every read starts from. With no config,
+    /// only the built-in providers count. A config that is there but can't be read serves no
+    /// reader, since what it says can't be told.
+    pub fn of(home: &Home) -> (Config, Self) {
+        if !home.config_path().exists() {
+            let config = Config::default();
+            let trust = Self::new(&config);
+            return (config, trust);
+        }
+        match home.load_config() {
+            Ok(config) => {
+                let trust = Self::new(&config);
+                (config, trust)
+            }
+            Err(e) => {
+                let config = Config::default();
+                let mut trust = Self::new(&config);
+                trust.refused = Some(format!(
+                    "the config can't be read ({e:#}), so no reader is served until it is fixed."
+                ));
+                (config, trust)
+            }
+        }
+    }
+
+    /// Why no reader is served at all, if none is.
+    pub fn refused(&self) -> Option<&str> {
+        self.refused.as_deref()
     }
 
     /// Config entries that were ignored, and why.
@@ -204,11 +242,8 @@ impl Trust {
     /// Whether `reader` may read session text. `runtime` tells a model stored on this machine
     /// from one Ollama serves from a cloud; it need not be running.
     pub fn check(&self, reader: &Reader, runtime: &LocalRuntime) -> Access {
-        if let Some(machine) = &self.spoke {
-            return Access::Refused(format!(
-                "this home is the spoke \"{machine}\": it only captures, and its sessions are \
-                 read on the hub that pulls from it."
-            ));
+        if let Some(why) = &self.refused {
+            return Access::Refused(why.clone());
         }
         let Some((provider, via)) = Self::resolve(reader, runtime) else {
             return match reader {
