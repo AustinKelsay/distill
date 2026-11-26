@@ -25,7 +25,7 @@ host = "me@nas"         # what `ssh` reaches it by: a host, user@host, or a Host
 # command = "/home/me/.cargo/bin/distill"   # when `distill` isn't on the PATH SSH gives it
 ```
 
-Each tick then runs `ssh <host> distill export --since <bytes>` for each machine, after the sweep, and the parse step turns what came into sessions. `distill pull` (or `distill pull nas`) runs it at once. The hub refuses a machine that names itself otherwise, or whose archive is not the one it has a copy of.
+Each tick then runs `ssh <host> distill export --since <bytes>` for each machine, after the sweep, and the parse step turns what came into sessions. `<bytes>` is the length of the hub's copy of that spoke's manifest, so the copy is its own cursor: a restored or rebuilt hub goes on from where its copy ends. `distill pull` (or `distill pull nas`) runs it at once. The hub refuses a machine that names itself otherwise, or whose archive is not the one it has a copy of.
 
 SSH runs with `BatchMode`, so it never asks for a password: the hub's key must be in the spoke's `authorized_keys`, and the spoke in the hub's `known_hosts` (connect once by hand).
 
@@ -37,7 +37,7 @@ On the spoke, the hub's key can run nothing but the export. Prefix its line in `
 command="distill export --ssh",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… hub
 ```
 
-With `--ssh`, the export reads where to start from what the hub asked to run (`SSH_ORIGINAL_COMMAND`), which must be `distill export --since <bytes>`; anything else is refused. Use the full path to `distill` if it isn't on SSH's `PATH`.
+With `--ssh`, the export takes where to start from what the hub asked to run (`SSH_ORIGINAL_COMMAND`), which must end `export --since <bytes>`; whatever else it asks for, only the export runs. Use the full path to `distill` if it isn't on SSH's `PATH`.
 
 ## What leaves the spoke
 

@@ -230,8 +230,6 @@ pub fn index_step(
     })
 }
 
-/// Back up to every `[[backup]]` target that has had a first run by hand (issue #150), sending
-/// no more blobs once the tick's budget is over; the model steps get what is left of it.
 /// Pull each spoke's new captures (ADR 0010), until the tick's end; skipped with no
 /// `[[machines]]`.
 pub fn pull_step(
@@ -254,6 +252,8 @@ pub fn pull_outcome(r: &crate::machines::PullReport) -> Result<StepOutcome> {
     })
 }
 
+/// Back up to every `[[backup]]` target that has had a first run by hand (issue #150), sending
+/// no more blobs once the tick's budget is over; the model steps get what is left of it.
 pub fn backup_step(
     home: &Home,
     config: &Config,

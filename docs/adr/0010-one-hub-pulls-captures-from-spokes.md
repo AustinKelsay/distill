@@ -4,7 +4,7 @@ An owner who runs agents on several machines has a partial archive on each, or n
 
 ## The hub pulls
 
-The hub's tick pulls from each spoke over SSH: it runs `ssh <host> distill export --since <cursor>` and takes the blobs and manifest records the spoke has added since the last pull. Neither side opens a listener. The SSH key lives on the hub, and the spoke's `authorized_keys` can limit it to that one command. A spoke never holds a credential for the hub. Blobs are named by their SHA-256, so the hub checks each blob it receives and skips any it has, which makes a pull safe to repeat after one stops partway. The cursor is kept in `state/` on the hub, so it can be rebuilt. Pulling is a tick step inside the tick's time limit.
+The hub's tick pulls from each spoke over SSH: it runs `ssh <host> distill export --since <cursor>` and takes the blobs and manifest records the spoke has added since the last pull. Neither side opens a listener. The SSH key lives on the hub, and the spoke's `authorized_keys` can limit it to that one command. A spoke never holds a credential for the hub. Blobs are named by their SHA-256, so the hub checks each blob it receives and skips any it has, which makes a pull safe to repeat after one stops partway. The cursor is the length of the hub's copy of that spoke's manifest, so it is rebuilt with the copy. Pulling is a tick step inside the tick's time limit.
 
 ## An archive per machine
 

@@ -163,7 +163,16 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
     };
     let command = m.command.as_deref().unwrap_or("distill");
     let spawned = Command::new("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--"])
+        // No prompt, so the timer can run it; and a connection that goes quiet is dropped
+        // rather than holding the tick.
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"])
+        .args([
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=4",
+            "--",
+        ])
         .arg(&m.host)
         .arg(format!("{command} export --since {since}"))
         .stdin(Stdio::null())
@@ -178,7 +187,7 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
         }
     };
     let mut stderr = child.stderr.take().expect("piped");
-    let said = std::thread::spawn(move || {
+    let drain = std::thread::spawn(move || {
         let mut s = String::new();
         let _ = stderr.read_to_string(&mut s);
         s
@@ -190,7 +199,7 @@ fn pull_one(home: &Home, m: &MachineConfig, deadline: Deadline) -> Pulled {
     }
     drop(stdout);
     let status = child.wait();
-    let said = said.join().unwrap_or_default();
+    let said = drain.join().unwrap_or_default();
     let last = said
         .lines()
         .rev()
