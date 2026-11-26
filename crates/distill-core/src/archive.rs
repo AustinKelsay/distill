@@ -561,12 +561,19 @@ pub fn export(
                 Ok(mut f) => {
                     let len = f.metadata()?.len();
                     writeln!(out, "blob {} {len}", rec.capture_hash)?;
-                    let n = std::io::copy(&mut (&mut f).take(len), out)?;
-                    if n != len {
-                        bail!("blob {} changed while it was read", rec.capture_hash);
+                    // Counted as it goes, so an export cut off inside a blob logs what left.
+                    let (mut left, mut buf) = (len, vec![0; 64 * 1024]);
+                    while left > 0 {
+                        let chunk = left.min(buf.len() as u64) as usize;
+                        let n = f.read(&mut buf[..chunk])?;
+                        if n == 0 {
+                            bail!("blob {} changed while it was read", rec.capture_hash);
+                        }
+                        out.write_all(&buf[..n])?;
+                        t.bytes += n as u64;
+                        left -= n as u64;
                     }
                     t.blobs += 1;
-                    t.bytes += len;
                 }
                 // Missing here too: the hub's copy will miss it as this one does.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

@@ -475,6 +475,18 @@ mod tests {
         let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
         assert_eq!((last.sent.lines, last.sent.blobs), (1, 2), "{last:?}");
         assert!(last.error.is_some(), "{last:?}");
+
+        // Cut inside a large blob: what of it went is counted.
+        let big = "x".repeat(99_999) + "\n";
+        a.put(Harness::Pi, "u", "1", big.as_bytes()).unwrap();
+        let mut whole = Vec::new();
+        export(&home, 0, &mut whole).unwrap();
+        let at = whole.windows(5).rposition(|w| w == b"blob ").unwrap();
+        assert!(export(&home, 0, &mut HungUp { room: at + 80_000 }).is_err());
+        let log = fs::read_to_string(home.export_log_path()).unwrap();
+        let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!(last.sent.blobs, 2, "{last:?}");
+        assert_eq!(last.sent.bytes, 8 + 64 * 1024, "{last:?}");
     }
 
     #[test]

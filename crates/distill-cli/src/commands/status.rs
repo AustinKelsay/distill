@@ -88,13 +88,14 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
         }
         for m in &s.machines {
             println!(
-                "machine {}{}: {} · {} sessions · last pull {}{}",
+                "machine {}{}: {} · {} sessions · last capture {} · last pull {}{}",
                 m.machine,
                 m.host
                     .as_deref()
                     .map_or(String::new(), |h| format!(" ({h})")),
                 format!("{:?}", m.health).to_lowercase(),
                 m.sessions,
+                m.last_capture.as_deref().unwrap_or("never"),
                 m.last_pull.as_deref().unwrap_or("never"),
                 m.note
                     .as_deref()
