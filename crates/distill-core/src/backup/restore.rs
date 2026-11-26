@@ -666,7 +666,7 @@ mod tests {
     fn a_capture_two_archives_hold_goes_from_the_copy_that_is_whole() {
         let (dir, home, target) = backed_up();
         let bytes = session("s3", &["count the files"]);
-        let mut put = |machine: Option<&str>| {
+        let put = |machine: Option<&str>| {
             Archive::open_of(&home, machine)
                 .unwrap()
                 .put(Harness::ClaudeCode, "/u/s3.jsonl", "1", bytes.as_bytes())
