@@ -170,14 +170,27 @@ pub fn pull(
 /// that went quiet is not waited on.
 const QUIET: Duration = Duration::from_secs(60);
 
-/// Counts the bytes read through it, for the watch on a pull.
+/// Counts the bytes read through it, for the watch on a pull, and stops waiting for more once
+/// the watch gave up: a process ssh left behind can hold the pipe open after ssh is gone.
 struct Counted<R> {
     inner: R,
     seen: Arc<AtomicU64>,
+    gave_up: Arc<AtomicBool>,
 }
 
-impl<R: Read> Read for Counted<R> {
+impl<R: Read + std::os::fd::AsRawFd> Read for Counted<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut ready = libc::pollfd {
+            fd: self.inner.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd, for a descriptor `inner` keeps open.
+        while unsafe { libc::poll(&mut ready, 1, 100) } == 0 {
+            if self.gave_up.load(Ordering::Relaxed) {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+        }
         let n = self.inner.read(buf)?;
         self.seen.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
@@ -239,17 +252,18 @@ fn pull_one(
         })
     };
     let seen = Arc::new(AtomicU64::new(0));
-    let mut stdout = BufReader::new(Counted {
-        inner: child.stdout.take().expect("piped"),
-        seen: seen.clone(),
-    });
-    // An export that sends nothing for `quiet` is stopped, so a spoke that hangs holds neither
-    // the tick nor the archive lock.
-    let child = Arc::new(Mutex::new(child));
     let (done, gave_up) = (
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
     );
+    let mut stdout = BufReader::new(Counted {
+        inner: child.stdout.take().expect("piped"),
+        seen: seen.clone(),
+        gave_up: gave_up.clone(),
+    });
+    // An export that sends nothing for `quiet` is stopped, so a spoke that hangs holds neither
+    // the tick nor the archive lock.
+    let child = Arc::new(Mutex::new(child));
     let watch = {
         let (child, done, gave_up) = (child.clone(), done.clone(), gave_up.clone());
         std::thread::spawn(move || {
@@ -372,14 +386,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let (home, config) = hub_of(dir.path());
-        // A stand-in for ssh: a header for an empty copy, then nothing.
+        // A stand-in for ssh: a header for an empty copy, then nothing, and a process left
+        // behind that holds its output open.
         let ssh = dir.path().join("ssh");
         use sha2::Digest;
         let empty = hex::encode(sha2::Sha256::digest(b""));
         fs::write(
             &ssh,
             format!(
-                "#!/bin/sh\nprintf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\n'\nexec sleep 30\n"
+                "#!/bin/sh\nprintf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\n'\nsleep 20 &\nexec sleep 30\n"
             ),
         )
         .unwrap();

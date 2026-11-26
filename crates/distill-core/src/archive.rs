@@ -771,6 +771,9 @@ impl Archive {
     /// Append `lines` as they are, all of them or none, then drop each blob an append among them
     /// superseded that nothing here needs once they are all in.
     fn append_lines(&mut self, lines: &[Vec<u8>]) -> Result<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
         let mut batch = Vec::new();
         for line in lines {
             batch.extend_from_slice(line);
