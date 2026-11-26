@@ -31,6 +31,16 @@ pub struct Config {
     /// `[tags]`: the owner's tag aliases (`crate::tags`).
     #[serde(default, skip_serializing_if = "crate::tags::TagsConfig::is_empty")]
     pub tags: crate::tags::TagsConfig,
+    /// `[spoke]`: this home only captures, for the hub that pulls from it (ADR 0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoke: Option<Spoke>,
+}
+
+/// A spoke's `[spoke]` table: the name its hub knows it by. A spoke's tick only sweeps, and its
+/// read path serves no reader, since its captures are read on the hub.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Spoke {
+    pub machine: String,
 }
 
 /// One backup target: a `[[backup]]` table.
@@ -180,6 +190,7 @@ impl Default for Config {
             schedule: Schedule::default(),
             backups: Vec::new(),
             tags: Default::default(),
+            spoke: None,
         }
     }
 }
@@ -204,6 +215,10 @@ impl Config {
                     });
                 }
             }
+        }
+        if let Some(spoke) = &config.spoke {
+            crate::home::machine_name(&spoke.machine)
+                .with_context(|| format!("[spoke] in {}", path.display()))?;
         }
         Ok(config)
     }
@@ -365,6 +380,28 @@ enrich_every_hours = 24
             "{text}"
         );
         assert_eq!(Config::load(&path).unwrap(), c);
+    }
+
+    #[test]
+    fn a_spoke_names_its_machine_by_the_machine_name_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let c = Config {
+            spoke: Some(Spoke {
+                machine: "build-box".into(),
+            }),
+            ..Config::default()
+        };
+        c.save(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[spoke]\nmachine = \"build-box\""), "{text}");
+        assert_eq!(Config::load(&path).unwrap(), c);
+        // A hub's config has no `[spoke]`, as before.
+        Config::default().save(&path).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("spoke"));
+        fs::write(&path, "[spoke]\nmachine = \"Build Box\"\n").unwrap();
+        let err = format!("{:#}", Config::load(&path).unwrap_err());
+        assert!(err.contains("[spoke]"), "{err}");
     }
 
     #[test]

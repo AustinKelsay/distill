@@ -114,6 +114,8 @@ pub struct ListedProvider {
 pub struct Trust {
     providers: Vec<Provider>,
     warnings: Vec<String>,
+    /// A spoke's machine: no reader reads there (ADR 0010).
+    spoke: Option<String>,
 }
 
 impl Trust {
@@ -166,6 +168,7 @@ impl Trust {
         Self {
             providers,
             warnings,
+            spoke: config.spoke.as_ref().map(|s| s.machine.clone()),
         }
     }
 
@@ -201,6 +204,12 @@ impl Trust {
     /// Whether `reader` may read session text. `runtime` tells a model stored on this machine
     /// from one Ollama serves from a cloud; it need not be running.
     pub fn check(&self, reader: &Reader, runtime: &LocalRuntime) -> Access {
+        if let Some(machine) = &self.spoke {
+            return Access::Refused(format!(
+                "this home is the spoke \"{machine}\": it only captures, and its sessions are \
+                 read on the hub that pulls from it."
+            ));
+        }
         let Some((provider, via)) = Self::resolve(reader, runtime) else {
             return match reader {
                 Reader::Owner | Reader::Distill => Access::Allowed,
@@ -392,6 +401,26 @@ mod tests {
         match access {
             Access::Refused(why) => why,
             Access::Allowed => panic!("allowed"),
+        }
+    }
+
+    #[test]
+    fn on_a_spoke_no_reader_may_read() {
+        let c = Config {
+            spoke: Some(crate::config::Spoke {
+                machine: "nas".into(),
+            }),
+            ..Config::default()
+        };
+        let t = Trust::new(&c);
+        let rt = FakeRuntime::not_installed().runtime();
+        for reader in [
+            Reader::Owner,
+            Reader::Distill,
+            model(Some("ollama"), Some("m")),
+        ] {
+            let why = refused(t.check(&reader, &rt));
+            assert!(why.contains("spoke \"nas\""), "{why}");
         }
     }
 
