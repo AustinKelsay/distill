@@ -1,7 +1,8 @@
 //! A backup target reached through its adapter (ADR 0009, issue #177): the executable
-//! `distill-backup-<kind>` on `PATH`, spoken to in lines over its standard input and output, as
-//! git remote helpers are. `docs/backup-adapters.md` is the protocol. Core holds no network code
-//! for backups: the adapter moves opaque names and ciphertext and never sees a key.
+//! `distill-backup-<kind>` on `PATH`, or where DISTILL is installed, spoken to in lines over its
+//! standard input and output, as git remote helpers are. `docs/backup-adapters.md` is the
+//! protocol. Core holds no network code for backups: the adapter moves opaque names and
+//! ciphertext and never sees a key.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -37,6 +38,18 @@ impl Open {
     }
 }
 
+/// `program` where `scripts/install.sh` puts the adapters that ship: beside the running binary,
+/// or beside the `distill` the window names in `DISTILL_CLI`. The timer and the window may run
+/// with a `PATH` that leaves that folder out.
+fn installed(program: &str) -> Option<PathBuf> {
+    let cli = std::env::var_os("DISTILL_CLI").map(PathBuf::from);
+    [std::env::current_exe().ok(), cli]
+        .into_iter()
+        .flatten()
+        .filter_map(|bin| Some(bin.parent()?.join(program)))
+        .find(|path| path.is_file())
+}
+
 /// A running adapter for one target, until it is dropped.
 pub(super) struct Adapter {
     program: String,
@@ -66,14 +79,21 @@ impl Adapter {
             );
         }
         let program = format!("distill-backup-{kind}");
-        let mut child = Command::new(&program)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
+        let spawn = |path: &Path| {
+            Command::new(path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+        };
+        let mut child = spawn(Path::new(&program))
+            .or_else(|e| match installed(&program) {
+                Some(path) if e.kind() == std::io::ErrorKind::NotFound => spawn(&path),
+                _ => Err(e),
+            })
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => anyhow!(
-                    "no `{program}` on PATH, for backup target {:?} of kind {kind:?}",
+                    "no `{program}` on PATH or where distill is installed, for backup target {:?} of kind {kind:?}",
                     target.name
                 ),
                 _ => anyhow!(e).context(format!("start {program}")),

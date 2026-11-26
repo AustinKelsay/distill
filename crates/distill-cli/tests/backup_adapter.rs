@@ -102,6 +102,31 @@ fn a_home_backs_up_through_an_adapter_and_comes_back_from_it() {
     assert!(back.contains("Restored into"), "{back}");
     assert!(restored.join("raw").is_dir());
 
+    // An adapter that isn't on PATH is found where DISTILL is installed, as the window names it
+    // (`DISTILL_CLI`): the timer and the window may run with a PATH that leaves that folder out.
+    let beside = Command::new(env!("CARGO_BIN_EXE_distill"))
+        .args(["--home", tmp.path().join("beside").to_str().unwrap()])
+        .args([
+            "restore",
+            "--kind",
+            "reference",
+            "--set",
+            &dir,
+            "--key-file",
+        ])
+        .arg(&key_file)
+        .env("HOME", &user)
+        .env("PATH", "/usr/bin:/bin")
+        .env("DISTILL_CLI", user.join("bin/distill"))
+        .env_remove("DISTILL_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        beside.status.success(),
+        "{}",
+        String::from_utf8_lossy(&beside.stderr)
+    );
+
     // An adapter that isn't installed says so.
     let missing = distill(
         &user,

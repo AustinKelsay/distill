@@ -14,6 +14,13 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      # The rclone adapter's test runs against `rclone serve s3` (rclone 1.65 or later; the
+      # distribution's package is older).
+      - run: |
+          curl -fsSLO https://downloads.rclone.org/v1.76.0/rclone-v1.76.0-linux-amd64.zip
+          unzip -q rclone-v1.76.0-linux-amd64.zip
+          sudo install -m 755 rclone-v1.76.0-linux-amd64/rclone /usr/local/bin/rclone
+          rm -rf rclone-v1.76.0-linux-amd64*
       - run: cargo fmt --all --check
       - run: cargo clippy -p distill-core -p distill-cli -p distill-mcp --all-targets -- -D warnings
       - run: cargo test -p distill-core -p distill-cli -p distill-mcp

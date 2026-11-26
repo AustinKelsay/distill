@@ -1,8 +1,10 @@
 # Backup adapters
 
 A backup target of any kind but `folder` is reached through an adapter: an executable named
-`distill-backup-<kind>` on `PATH` (ADR 0009, issue #177). DISTILL runs it once for each use of
-a target, as the owner, with the timer's `PATH` when the tick runs it. They talk in lines, as
+`distill-backup-<kind>` on `PATH`, or else beside the `distill` binary, where
+`scripts/install.sh` puts the ones that ship (ADR 0009, issue #177). DISTILL runs it once for
+each use of a target, as the owner, with the timer's `PATH` when the tick runs it; the tools an
+adapter calls in turn, such as `ssh` or `rclone`, must be on that `PATH`. They talk in lines, as
 git remote helpers do, so DISTILL holds no cloud SDK and no network code for backups.
 
 An adapter moves opaque objects and knows nothing about DISTILL. Each object's name is 64
@@ -17,8 +19,8 @@ key is the adapter's own setting:
 ```toml
 [[backup]]
 name = "offsite"
-kind = "s3"              # runs distill-backup-s3
-bucket = "my-backups"    # the adapter's own settings
+kind = "rclone"          # runs distill-backup-rclone
+remote = "b2:my-backups" # the adapter's own settings
 ```
 
 ## The protocol
@@ -51,6 +53,16 @@ The target's table sits in `config.toml` and goes to the adapter whole, so keep 
 of it. An adapter takes its credentials from where its tool keeps them (an SSH key, a cloud
 CLI's profile, rclone's config), and a restore names the target with `--kind` and `--set`
 alone.
+
+## Adapters that ship
+
+`scripts/install.sh` installs these from `adapters/`. Each script's header shows its settings.
+
+- `distill-backup-ssh`: a folder on another machine the owner reaches over SSH (`host`, `dir`).
+  It uses the owner's SSH keys and config as they are, never asks for a password, and shares one
+  connection across a use.
+- `distill-backup-rclone`: any rclone remote (`remote`), which covers S3-compatible stores,
+  self-hosted ones included, and rclone's other backends. Set the remote up with `rclone config`.
 
 `crates/distill-core/tests/fixtures/distill-backup-reference` is a reference adapter in `sh`
 that keeps objects in a folder. The tests use it.
