@@ -136,11 +136,19 @@ impl Home {
         };
         for entry in rd {
             let entry = entry?;
-            if let Some(name) = entry.file_name().to_str()
-                && machine_name(name).is_ok()
-                && entry.path().join("raw").is_dir()
-            {
-                names.push(name.to_string());
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if machine_name(name).is_err() {
+                continue;
+            }
+            // A spoke folder that can't be read is an error, not a spoke left out of verify.
+            match fs::metadata(entry.path().join("raw")) {
+                Ok(m) if m.is_dir() => names.push(name.to_string()),
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("read machines/{name}/raw")),
             }
         }
         names.sort();
@@ -474,6 +482,24 @@ mod tests {
         for bad in ["", "-nas", "Nas", "nas/x", "..", "a:b", &"x".repeat(65)] {
             assert!(machine_name(bad).is_err(), "{bad}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_spoke_folder_that_cannot_be_read_is_an_error_not_a_spoke_left_out() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let h = Home::new(dir.path());
+        for m in ["nas", "box"] {
+            fs::create_dir_all(h.raw_dir_of(Some(m))).unwrap();
+        }
+        fs::create_dir_all(h.machines_dir().join("empty")).unwrap();
+        assert_eq!(h.machines().unwrap(), ["box", "nas"]);
+        let nas = h.machines_dir().join("nas");
+        fs::set_permissions(&nas, fs::Permissions::from_mode(0o000)).unwrap();
+        let got = h.machines();
+        fs::set_permissions(&nas, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(got.is_err(), "{got:?}");
     }
 
     #[test]

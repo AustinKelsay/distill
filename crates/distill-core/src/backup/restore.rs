@@ -293,7 +293,12 @@ pub fn verify(
             }
         }
     };
+    // A blob two archives hold is one object on the target: count it once.
+    let mut seen = std::collections::HashSet::<String>::new();
     let mut check = |name: &str, want: Option<(&str, u64)>| -> Result<()> {
+        if !seen.insert(name.to_string()) {
+            return Ok(());
+        }
         c.objects += 1;
         if !present.contains(name) {
             c.missing += 1;
@@ -690,6 +695,12 @@ mod tests {
             let store = store::open(&target, false).unwrap();
             let check = verify(&home, "drive", &*store, &key, true).unwrap();
             assert_eq!((check.missing, check.corrupt), (0, 0), "{check:?}");
+            // The target holds it once, so losing it is one missing object, not one per archive.
+            let name = key.name(&format!("blob/{sha}"));
+            let objects = target.path.as_ref().unwrap().join("distill-backup");
+            fs::remove_file(objects.join(&name[..2]).join(&name)).unwrap();
+            let check = verify(&home, "drive", &*store, &key, false).unwrap();
+            assert_eq!(check.missing, 1, "{check:?}");
             drop(dir);
         }
     }
