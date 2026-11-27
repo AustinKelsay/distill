@@ -91,6 +91,25 @@ fn it_offers_list_read_and_search_tools_whose_descriptions_say_session_text_is_d
             "{d}"
         );
         assert_eq!(t["inputSchema"]["type"], "object");
+        if matches!(
+            t["name"].as_str(),
+            Some("list_sessions" | "search_sessions" | "list_tags")
+        ) {
+            let props = &t["inputSchema"]["properties"];
+            for (k, ty) in [
+                ("exclude_tag", "array"),
+                ("exclude_project", "array"),
+                ("exclude_harness", "array"),
+                ("has_reasoning", "boolean"),
+                ("min_turns", "integer"),
+                ("max_turns", "integer"),
+                ("min_tool_calls", "integer"),
+                ("max_bytes", "integer"),
+                ("tool", "array"),
+            ] {
+                assert_eq!(props[k]["type"], ty, "{} missing {k}", t["name"]);
+            }
+        }
     }
 }
 
@@ -554,6 +573,46 @@ fn sessions_list_and_search_with_their_cards_filtered_by_tag_and_outcome() {
     let (err, t) = call(&s, "list_sessions", json!({"outcome": "great"}));
     assert!(
         err && t.contains("done, partly_done, failed, unknown"),
+        "{t}"
+    );
+
+    // Exclusions and shape/tool filters work on list_sessions, search_sessions, and list_tags.
+    let (err, t) = call(&s, "list_sessions", json!({"exclude_tag": ["refactor"]}));
+    assert!(!err && t.starts_with("No sessions match."), "{t}");
+    let (err, t) = call(&s, "list_tags", json!({"exclude_tag": ["refactor"]}));
+    assert!(
+        !err && t.starts_with("No tags on the 0 matching sessions"),
+        "{t}"
+    );
+    let (err, t) = call(
+        &s,
+        "list_sessions",
+        json!({"exclude_harness": ["claude-code"]}),
+    );
+    assert!(!err && t.starts_with("No sessions match."), "{t}");
+    let (err, t) = call(
+        &s,
+        "list_sessions",
+        json!({"min_turns": 1, "max_turns": 5, "max_bytes": 10000}),
+    );
+    assert!(!err && t.contains("claude-code/s1"), "{t}");
+    let (err, t) = call(&s, "list_sessions", json!({"has_reasoning": true}));
+    assert!(!err && t.starts_with("No sessions match."), "{t}");
+    let (err, t) = call(
+        &s,
+        "search_sessions",
+        json!({"query": "callers", "exclude_tag": ["refactor"]}),
+    );
+    assert!(!err && !t.contains("claude-code/s1"), "{t}");
+    let (err, t) = call(
+        &s,
+        "list_sessions",
+        json!({"exclude_harness": ["not-a-harness"]}),
+    );
+    assert!(err && t.contains("unknown harness"), "{t}");
+    let (err, t) = call(&s, "list_sessions", json!({"has_reasoning": "yes"}));
+    assert!(
+        err && t.contains("has_reasoning must be true or false"),
         "{t}"
     );
 }

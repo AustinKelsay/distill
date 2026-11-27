@@ -254,3 +254,83 @@ fn with_no_embedding_model_or_no_local_runtime_search_finds_by_words_and_says_so
         "{st}"
     );
 }
+
+#[test]
+fn search_supports_exclusion_shape_and_tool_filters() {
+    let s1 = [
+        r#"{"type":"user","timestamp":"2026-11-01T10:00:00Z","cwd":"/work/keep","message":{"role":"user","content":"overflow one"}}"#,
+        r#"{"type":"assistant","timestamp":"2026-11-01T10:01:30Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"thinking","thinking":"check bounds"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}},{"type":"text","text":"fixed overflow"}]}}"#,
+        r#"{"type":"user","timestamp":"2026-11-01T10:02:00Z","cwd":"/work/keep","message":{"role":"user","content":"thanks"}}"#,
+    ]
+    .join("\n")
+        + "\n";
+    let s2 = [
+        r#"{"type":"user","timestamp":"2026-11-02T10:00:00Z","cwd":"/work/drop","message":{"role":"user","content":"overflow two"}}"#,
+        r#"{"type":"assistant","timestamp":"2026-11-02T10:00:05Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"quick answer"}]}}"#,
+    ]
+    .join("\n")
+        + "\n";
+    let m = Machine::new(&[("s1.jsonl", s1), ("s2.jsonl", s2)]);
+
+    // Parse-time shape facts are recorded in meta.json.
+    let meta: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(m.home.join("sessions/claude-code/s1/meta.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["duration_secs"], 120);
+    assert_eq!(meta["tools"], serde_json::json!(["Bash"]));
+    assert_eq!(meta["counts"]["reasoning"], 1);
+    assert!(meta["counts"]["bytes_reasoning"].as_u64().unwrap() > 0);
+
+    let out = m.ok(&[
+        "search",
+        "overflow",
+        "--provider",
+        "ollama",
+        "--exclude-project",
+        "/work/drop",
+        "--has-reasoning",
+        "--min-turns",
+        "2",
+        "--min-tool-calls",
+        "1",
+        "--tool",
+        "bash",
+    ]);
+    assert_eq!(keys(&out), ["claude-code/s1"], "{out}");
+
+    // Bare --has-reasoning before positional query does not consume the query word.
+    let bare_before_query = m.ok(&[
+        "search",
+        "--provider",
+        "ollama",
+        "--has-reasoning",
+        "overflow",
+    ]);
+    assert_eq!(
+        keys(&bare_before_query),
+        ["claude-code/s1"],
+        "{bare_before_query}"
+    );
+
+    let no_reason = m.ok(&[
+        "search",
+        "overflow",
+        "--provider",
+        "ollama",
+        "--has-reasoning=false",
+        "--max-turns",
+        "1",
+    ]);
+    assert_eq!(keys(&no_reason), ["claude-code/s2"], "{no_reason}");
+
+    let excluded = m.ok(&[
+        "search",
+        "overflow",
+        "--provider",
+        "ollama",
+        "--exclude-harness",
+        "claude-code",
+    ]);
+    assert!(keys(&excluded).is_empty(), "{excluded}");
+}

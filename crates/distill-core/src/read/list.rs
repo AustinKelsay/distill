@@ -44,6 +44,24 @@ pub struct Filter {
     pub steward: bool,
     /// Only sessions whose current card has every one of these tags, ignoring case (#159).
     pub tags: Vec<String>,
+    /// Leave out sessions whose current card has any of these tags, ignoring case (#218).
+    pub exclude_tags: Vec<String>,
+    /// Leave out sessions that worked in any of these folders or one inside them (#218).
+    pub exclude_projects: Vec<String>,
+    /// Leave out sessions from any of these harnesses (#218).
+    pub exclude_harnesses: Vec<Harness>,
+    /// Only sessions with (`Some(true)`) or without (`Some(false)`) reasoning events (#218).
+    pub has_reasoning: Option<bool>,
+    /// Only sessions with at least this many owner messages (`counts.user`, #218).
+    pub min_turns: Option<u64>,
+    /// Only sessions with at most this many owner messages (`counts.user`, #218).
+    pub max_turns: Option<u64>,
+    /// Only sessions with at least this many tool calls (#218).
+    pub min_tool_calls: Option<u64>,
+    /// Only sessions whose total content bytes are at most this many (#218).
+    pub max_bytes: Option<u64>,
+    /// Only sessions that called every one of these tools, ignoring case (#218).
+    pub tools: Vec<String>,
     /// Only sessions whose current card has this outcome.
     pub outcome: Option<Outcome>,
     /// Only the session with this key (`harness/id`): the window reads one session's row with
@@ -331,6 +349,7 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
+            && !self.exclude_harnesses.contains(&m.harness)
             && on_machine(self.machine.as_deref(), m)
             && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
@@ -338,21 +357,40 @@ impl Filter {
                     .as_deref()
                     .is_some_and(|cwd| Path::new(cwd).starts_with(p.trim()))
             })
+            && !self.exclude_projects.iter().any(|p| {
+                let p = p.trim();
+                !p.is_empty()
+                    && m.cwd
+                        .as_deref()
+                        .is_some_and(|cwd| Path::new(cwd).starts_with(p))
+            })
             && model.is_none_or(|want| m.models.iter().any(|x| x.to_lowercase().contains(&want)))
             && self.since.is_none_or(|s| day.is_some_and(|d| d >= s))
             && self.until.is_none_or(|u| day.is_some_and(|d| d <= u))
+            && self
+                .has_reasoning
+                .is_none_or(|want| (m.counts.reasoning > 0) == want)
+            && self.min_turns.is_none_or(|n| m.counts.user >= n)
+            && self.max_turns.is_none_or(|n| m.counts.user <= n)
+            && self.min_tool_calls.is_none_or(|n| m.counts.tool_calls >= n)
+            && self.max_bytes.is_none_or(|n| m.counts.content_bytes() <= n)
+            && self.tools.iter().all(|want| {
+                let want = want.trim().to_lowercase();
+                want.is_empty() || m.tools.iter().any(|t| t.to_lowercase() == want)
+            })
             && (self.mirrors || !m.is_duplicate(originals))
             && (self.steward || !m.steward)
     }
 
-    /// Whether the filter asks about cards: by tag or outcome.
+    /// Whether the filter asks about cards: by tag, excluded tag, or outcome.
     pub(super) fn wants_card(&self) -> bool {
-        !self.tags.is_empty() || self.outcome.is_some()
+        !self.tags.is_empty() || !self.exclude_tags.is_empty() || self.outcome.is_some()
     }
 
     /// Whether `m`'s current card matches the tag and outcome asked for; true when neither is.
     /// Read from the stored findings and card, never the events: a session whose findings or card
-    /// are missing or out of date has no card to match. `key` is the home's fingerprint key.
+    /// are missing or out of date has no card to match, so positive tag/outcome filters fail while
+    /// exclusion-only tag filters pass. `key` is the home's fingerprint key.
     pub(super) fn card_matches(
         &self,
         home: &Home,
@@ -364,13 +402,15 @@ impl Filter {
         if !self.wants_card() {
             return true;
         }
-        cards::stored_current(home, config, key, m)
-            .is_some_and(|(card, found)| self.fits(&card, &found, config, finds))
+        match cards::stored_current(home, config, key, m) {
+            Some((card, found)) => self.fits(&card, &found, config, finds),
+            None => self.tags.is_empty() && self.outcome.is_none(),
+        }
     }
 
-    /// Whether `card` (with its findings `found`) has the tags and outcome the filter names, if
-    /// any: each tag among the card's tags as they are shown (`cards::viewed`), all told apart by
-    /// `tags::screened` with `finds`.
+    /// Whether `card` (with its findings `found`) has the tags and outcome the filter names and
+    /// none of `exclude_tags`, if any: each tag among the card's tags as they are shown
+    /// (`cards::viewed`), all told apart by `tags::screened` with `finds`.
     pub(super) fn fits(
         &self,
         card: &cards::Card,
@@ -381,7 +421,7 @@ impl Filter {
         if self.outcome.is_some_and(|o| card.outcome != o) {
             return false;
         }
-        if self.tags.is_empty() {
+        if self.tags.is_empty() && self.exclude_tags.is_empty() {
             return true;
         }
         let shown: Vec<String> =
@@ -393,6 +433,10 @@ impl Filter {
         self.tags
             .iter()
             .all(|t| shown.contains(&crate::tags::screened(t, &config.tags, finds)))
+            && !self
+                .exclude_tags
+                .iter()
+                .any(|t| shown.contains(&crate::tags::screened(t, &config.tags, finds)))
     }
 }
 
@@ -555,8 +599,10 @@ mod tests {
                 harness_version: None,
                 started_at: Some(s.started.into()),
                 ended_at: Some(s.started.into()),
+                duration_secs: Some(0),
                 parent_session: None,
                 counts: Counts::of(&events),
+                tools: crate::model::tools_of(&events),
                 raw: RawRef {
                     origin: format!("/s/{}.jsonl", s.id),
                     sha256: "0".repeat(64),
@@ -1125,5 +1171,239 @@ mod tests {
         assert!(t.contains("[clipped]"), "{t}");
         assert!(t.matches("word").count() < 60, "{t}");
         assert!(t.contains("No message from the owner."), "{t}");
+    }
+
+    #[test]
+    fn filters_by_exclusions_shape_ranges_and_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        Config::default().save(&home.config_path()).unwrap();
+
+        let write_session =
+            |harness: Harness, id: &str, cwd: &str, started: &str, events: Vec<Event>| {
+                let mut events = events;
+                for (i, e) in events.iter_mut().enumerate() {
+                    e.seq = i as u64;
+                }
+                let facts = SessionMeta {
+                    machine: None,
+                    harness,
+                    session_id: id.into(),
+                    cwd: Some(cwd.into()),
+                    git_branch: Some("main".into()),
+                    models: vec!["claude-sonnet".into()],
+                    harness_version: None,
+                    started_at: Some(started.into()),
+                    ended_at: Some(started.into()),
+                    duration_secs: Some(0),
+                    parent_session: None,
+                    counts: Counts::of(&events),
+                    tools: crate::model::tools_of(&events),
+                    raw: RawRef {
+                        origin: format!("/s/{id}.jsonl"),
+                        sha256: "0".repeat(64),
+                        size: 1,
+                        attached: Vec::new(),
+                    },
+                    normalizer: Producer {
+                        name: harness.id().into(),
+                        version: 1,
+                    },
+                    steward: false,
+                    mirror: false,
+                    mirror_of: Vec::new(),
+                    mirror_refs: Vec::new(),
+                    mirror_unresolved: Vec::new(),
+                };
+                let sdir = home.session_dir(None, harness, id);
+                std::fs::create_dir_all(&sdir).unwrap();
+                std::fs::write(
+                    home.meta_path(None, harness, id),
+                    serde_json::to_string(&facts).unwrap(),
+                )
+                .unwrap();
+                let lines: Vec<String> = events
+                    .iter()
+                    .map(|e| serde_json::to_string(e).unwrap())
+                    .collect();
+                std::fs::write(home.events_path(None, harness, id), lines.join("\n") + "\n")
+                    .unwrap();
+                facts
+            };
+
+        let mut bash = Event::new(EventKind::ToolCall);
+        bash.tool = Some("Bash".into());
+        let mut edit = Event::new(EventKind::ToolCall);
+        edit.tool = Some("Edit".into());
+
+        // s1: Claude Code, /work/app, 2 turns, reasoning, Bash + Edit, small bytes, card + owner tag `no-distill`
+        let s1 = write_session(
+            Harness::ClaudeCode,
+            "s1",
+            "/work/app",
+            "2026-11-01T10:00:00Z",
+            vec![
+                Event::text(EventKind::User, "first"),
+                Event::text(EventKind::Reasoning, "plan"),
+                bash.clone(),
+                edit.clone(),
+                Event::text(EventKind::User, "second"),
+                Event::text(EventKind::Assistant, "done"),
+            ],
+        );
+        // s2: Codex, /work/scratch, 1 turn, no reasoning, Bash only, big tool output, card with tag `rust`
+        let s2 = write_session(
+            Harness::Codex,
+            "s2",
+            "/work/scratch",
+            "2026-11-02T10:00:00Z",
+            vec![
+                Event::text(EventKind::User, "hi"),
+                bash.clone(),
+                Event::text(EventKind::ToolResult, "x".repeat(500)),
+                Event::text(EventKind::Assistant, "ok"),
+            ],
+        );
+        // s3: Claude Code, /work/apple, 3 turns, reasoning, no card yet
+        let _s3 = write_session(
+            Harness::ClaudeCode,
+            "s3",
+            "/work/apple",
+            "2026-11-03T10:00:00Z",
+            vec![
+                Event::text(EventKind::User, "u1"),
+                Event::text(EventKind::User, "u2"),
+                Event::text(EventKind::User, "u3"),
+                Event::text(EventKind::Reasoning, "thought"),
+                Event::text(EventKind::Assistant, "a"),
+            ],
+        );
+
+        crate::normalize::rebuild_session_list(&home).unwrap();
+        crate::findings::scan_all(&home, &Config::default()).unwrap();
+
+        // Write current cards for s1 and s2 (leave s3 uncarded).
+        let write_card = |meta: &SessionMeta, tags: &[&str]| {
+            let scan = crate::findings::load(&home, meta).unwrap();
+            let card = crate::cards::Card {
+                format: crate::cards::CARD_FORMAT,
+                session: meta.key(),
+                title: format!("Title {}", meta.session_id),
+                summary: "Summary".into(),
+                tags: tags.iter().map(|t| t.to_string()).collect(),
+                outcome: Outcome::Done,
+                model: "m".into(),
+                prompt_version: crate::cards::PROMPT_VERSION,
+                written_at: "2026-11-05T00:00:00Z".into(),
+                made_from: crate::findings::BuiltFrom::of(meta, &scan),
+            };
+            std::fs::write(
+                home.card_path(None, meta.harness, &meta.session_id),
+                serde_json::to_string(&card).unwrap(),
+            )
+            .unwrap();
+            std::fs::remove_file(home.findings_path(None, meta.harness, &meta.session_id)).unwrap();
+        };
+        write_card(&s1, &["rust"]);
+        write_card(&s2, &["rust"]);
+        crate::findings::scan_all(&home, &Config::default()).unwrap();
+        // Owner adds `no-distill` to s1.
+        crate::tags::tag_session(
+            &home,
+            &Config::default(),
+            &s1.key(),
+            &["no-distill".into()],
+            &[],
+        )
+        .unwrap();
+
+        let only = |f: Filter| -> Vec<String> {
+            let Listed::Rows(rows) =
+                list(&home, &local(), &Reader::Owner, &f, Page::default()).unwrap()
+            else {
+                panic!("owner gets rows");
+            };
+            rows.rows.into_iter().map(|r| r.facts.key()).collect()
+        };
+
+        // Exclusion-only tag filter drops s1 (owner tag) but keeps both s2 and uncarded s3.
+        assert_eq!(
+            only(Filter {
+                exclude_tags: vec!["no-distill".into()],
+                ..Filter::default()
+            }),
+            ["claude-code/s3", "codex/s2"]
+        );
+        // Combining positive + negative tag filters drops uncarded s3 too.
+        assert_eq!(
+            only(Filter {
+                tags: vec!["rust".into()],
+                exclude_tags: vec!["no-distill".into()],
+                ..Filter::default()
+            }),
+            ["codex/s2"]
+        );
+        // Folder-boundary project exclusion: /work/app excludes s1, not /work/apple (s3).
+        assert_eq!(
+            only(Filter {
+                exclude_projects: vec!["/work/app".into()],
+                ..Filter::default()
+            }),
+            ["claude-code/s3", "codex/s2"]
+        );
+        // Harness exclusion.
+        assert_eq!(
+            only(Filter {
+                exclude_harnesses: vec![Harness::Codex],
+                ..Filter::default()
+            }),
+            ["claude-code/s3", "claude-code/s1"]
+        );
+        // Reasoning filter (both true and false).
+        assert_eq!(
+            only(Filter {
+                has_reasoning: Some(true),
+                ..Filter::default()
+            }),
+            ["claude-code/s3", "claude-code/s1"]
+        );
+        assert_eq!(
+            only(Filter {
+                has_reasoning: Some(false),
+                ..Filter::default()
+            }),
+            ["codex/s2"]
+        );
+        // Turn range, tool calls, max bytes, and case-insensitive tool list.
+        assert_eq!(
+            only(Filter {
+                min_turns: Some(2),
+                max_turns: Some(2),
+                ..Filter::default()
+            }),
+            ["claude-code/s1"]
+        );
+        assert_eq!(
+            only(Filter {
+                min_tool_calls: Some(2),
+                ..Filter::default()
+            }),
+            ["claude-code/s1"]
+        );
+        assert_eq!(
+            only(Filter {
+                max_bytes: Some(100),
+                ..Filter::default()
+            }),
+            ["claude-code/s3", "claude-code/s1"]
+        );
+        assert_eq!(
+            only(Filter {
+                tools: vec!["bash".into(), "EDIT".into()],
+                ..Filter::default()
+            }),
+            ["claude-code/s1"]
+        );
     }
 }

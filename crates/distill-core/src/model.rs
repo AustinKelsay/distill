@@ -74,6 +74,16 @@ pub struct Counts {
     pub assistant: u64,
     pub tool_calls: u64,
     pub tool_errors: u64,
+    #[serde(default)]
+    pub reasoning: u64,
+    #[serde(default)]
+    pub bytes_user: u64,
+    #[serde(default)]
+    pub bytes_assistant: u64,
+    #[serde(default)]
+    pub bytes_reasoning: u64,
+    #[serde(default)]
+    pub bytes_tool_result: u64,
 }
 
 impl Counts {
@@ -83,16 +93,64 @@ impl Counts {
             ..Default::default()
         };
         for e in events {
+            let bytes = e.text.as_deref().map_or(0, str::len) as u64;
             match e.kind {
-                EventKind::User => c.user += 1,
-                EventKind::Assistant => c.assistant += 1,
+                EventKind::User => {
+                    c.user += 1;
+                    c.bytes_user += bytes;
+                }
+                EventKind::Assistant => {
+                    c.assistant += 1;
+                    c.bytes_assistant += bytes;
+                }
+                EventKind::Reasoning => {
+                    c.reasoning += 1;
+                    c.bytes_reasoning += bytes;
+                }
                 EventKind::ToolCall => c.tool_calls += 1,
-                EventKind::ToolResult if e.is_error == Some(true) => c.tool_errors += 1,
-                _ => {}
+                EventKind::ToolResult => {
+                    if e.is_error == Some(true) {
+                        c.tool_errors += 1;
+                    }
+                    c.bytes_tool_result += bytes;
+                }
+                EventKind::System => {}
             }
         }
         c
     }
+
+    /// Total text bytes across user, assistant, reasoning and tool-result events.
+    pub fn content_bytes(&self) -> u64 {
+        self.bytes_user
+            .saturating_add(self.bytes_assistant)
+            .saturating_add(self.bytes_reasoning)
+            .saturating_add(self.bytes_tool_result)
+    }
+}
+
+/// Elapsed seconds between `started_at` and `ended_at` when both parse as RFC 3339 timestamps
+/// and `ended_at >= started_at`.
+pub fn duration_secs(started_at: Option<&str>, ended_at: Option<&str>) -> Option<u64> {
+    let start = ts(started_at?)?;
+    let end = ts(ended_at?)?;
+    if end < start {
+        return None;
+    }
+    u64::try_from((end - start).num_seconds()).ok()
+}
+
+/// Distinct tool names called in `events`, sorted.
+pub fn tools_of(events: &[Event]) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for e in events {
+        if e.kind == EventKind::ToolCall
+            && let Some(tool) = e.tool.as_deref().map(str::trim).filter(|t| !t.is_empty())
+        {
+            names.insert(tool.to_string());
+        }
+    }
+    names.into_iter().collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -154,9 +212,15 @@ pub struct SessionMeta {
     pub started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<String>,
+    /// Elapsed seconds from `started_at` to `ended_at`, when both parse and `ended_at >= started_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session: Option<String>,
     pub counts: Counts,
+    /// Distinct tool names called in this session, sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
     pub raw: RawRef,
     pub normalizer: Producer,
     /// The mark on sessions the previous build's steward ran (they worked inside the home).
@@ -698,5 +762,73 @@ mod tests {
         let mut continued = thread.clone();
         continued.ended_at = Some("2026-11-03T09:00:00Z".into());
         assert!(!continued.is_duplicate(&o));
+    }
+
+    #[test]
+    fn shape_facts_count_reasoning_bytes_duration_and_sorted_tools() {
+        let mut call_a = Event::new(EventKind::ToolCall);
+        call_a.tool = Some("Bash".into());
+        let mut call_b = Event::new(EventKind::ToolCall);
+        call_b.tool = Some(" Edit ".into());
+        let mut call_dup = Event::new(EventKind::ToolCall);
+        call_dup.tool = Some("Bash".into());
+        let mut call_blank = Event::new(EventKind::ToolCall);
+        call_blank.tool = Some("   ".into());
+        let mut tool_err = Event::text(EventKind::ToolResult, "err!");
+        tool_err.is_error = Some(true);
+        tool_err.tool = Some("IgnoredResultTool".into());
+
+        let events = vec![
+            Event::text(EventKind::System, "system prompt ignored in content_bytes"),
+            Event::text(EventKind::User, "hello"),
+            Event::text(EventKind::Reasoning, "think"),
+            Event::text(EventKind::Assistant, "world!!"),
+            call_a,
+            call_b,
+            call_dup,
+            call_blank,
+            tool_err,
+            Event::text(EventKind::ToolResult, "ok"),
+        ];
+        let c = Counts::of(&events);
+        assert_eq!(c.events, 10);
+        assert_eq!(c.user, 1);
+        assert_eq!(c.assistant, 1);
+        assert_eq!(c.reasoning, 1);
+        assert_eq!(c.tool_calls, 4);
+        assert_eq!(c.tool_errors, 1);
+        assert_eq!(c.bytes_user, 5);
+        assert_eq!(c.bytes_reasoning, 5);
+        assert_eq!(c.bytes_assistant, 7);
+        assert_eq!(c.bytes_tool_result, 6);
+        assert_eq!(c.content_bytes(), 23);
+
+        assert_eq!(tools_of(&events), ["Bash", "Edit"]);
+
+        assert_eq!(
+            duration_secs(Some("2026-11-01T10:00:00Z"), Some("2026-11-01T10:02:30Z")),
+            Some(150)
+        );
+        assert_eq!(
+            duration_secs(Some("2026-11-01T10:00:00Z"), Some("2026-11-01T10:00:00Z")),
+            Some(0)
+        );
+        // Reversed (including subsecond), missing, or invalid timestamps yield None.
+        assert_eq!(
+            duration_secs(Some("2026-11-01T10:05:00Z"), Some("2026-11-01T10:00:00Z")),
+            None
+        );
+        assert_eq!(
+            duration_secs(
+                Some("2026-11-01T10:00:00.500Z"),
+                Some("2026-11-01T10:00:00.100Z")
+            ),
+            None
+        );
+        assert_eq!(duration_secs(None, Some("2026-11-01T10:00:00Z")), None);
+        assert_eq!(
+            duration_secs(Some("not-a-ts"), Some("2026-11-01T10:00:00Z")),
+            None
+        );
     }
 }
