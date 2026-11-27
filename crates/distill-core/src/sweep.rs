@@ -96,7 +96,7 @@ pub fn sweep(home: &Home, config: &Config, only: Option<Harness>) -> Result<Swee
     home.ensure()?;
     let _lock = home.lock_archive()?;
     // What a sweep or pull that died left half-written; it is never a capture.
-    crate::archive::clear_staging(home)?;
+    crate::archive::clear_staging(home);
     let mut archive = Archive::open(home)?;
     let mut report = SweepReport::default();
     for sc in &config.harnesses {

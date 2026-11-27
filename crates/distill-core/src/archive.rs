@@ -355,10 +355,10 @@ const STAGING: [&str; 4] = [INCOMING, PULLING, RESTORING, ".manifest.jsonl.tmp-"
 
 /// Remove the staging files a writer that died left in `home`'s raw archives, its own and each
 /// spoke's, keeping any whose process still runs. Take the archive lock first. Returns how many
-/// went.
-pub fn clear_staging(home: &Home) -> Result<u64> {
+/// went. Best effort: what can't be read or removed stays, and nothing waits on it.
+pub fn clear_staging(home: &Home) -> u64 {
     let mut raws = vec![home.raw_dir_of(None)];
-    for m in home.machines()? {
+    for m in home.machines().unwrap_or_default() {
         raws.push(home.raw_dir_of(Some(&m)));
     }
     let mut cleared = 0;
@@ -375,13 +375,24 @@ pub fn clear_staging(home: &Home) -> Result<u64> {
                 && pid != std::process::id()
                 && !running(pid)
                 && e.file_type().is_ok_and(|t| t.is_file())
+                && fs::remove_file(e.path()).is_ok()
             {
-                fs::remove_file(e.path())?;
                 cleared += 1;
             }
         }
     }
-    Ok(cleared)
+    cleared
+}
+
+/// Sync the folder of `blob`, already in place, and `raw`, unless this pull has: an earlier pull
+/// may have renamed it in and failed before its sync, and a line is about to name it.
+fn synced_once(synced: &mut HashSet<PathBuf>, raw: &Path, blob: &Path) -> Result<()> {
+    let shard = blob.parent().context("blob has parent")?;
+    if synced.insert(shard.to_path_buf()) {
+        sync_dir(shard)?;
+        sync_dir(raw)?;
+    }
+    Ok(())
 }
 
 /// Whether process `pid` is running, as far as this account can tell.
@@ -851,11 +862,7 @@ pub fn take_into(
                     let dest = archive.blob_path(sha);
                     if dest.exists() {
                         t.present += 1;
-                        let shard = dest.parent().expect("blob has parent");
-                        if synced.insert(shard.to_path_buf()) {
-                            crate::util::sync_dir(shard)?;
-                            crate::util::sync_dir(&archive.raw)?;
-                        }
+                        synced_once(&mut synced, &archive.raw, &dest)?;
                         continue;
                     }
                     out.file.sync_all()?;
@@ -881,7 +888,10 @@ pub fn take_into(
                         if !is_blob_name(&rec.capture_hash) {
                             bail!("not a blob name: {:?}", rec.capture_hash);
                         }
-                        if archive.blob_path(&rec.capture_hash).exists() {
+                        let blob = archive.blob_path(&rec.capture_hash);
+                        if blob.exists() {
+                            // Its blob may be one an earlier pull renamed in and failed to sync.
+                            synced_once(&mut synced, &archive.raw, &blob)?;
                             waiting.remove(&rec.origin);
                         } else {
                             waiting.insert(rec.origin);
@@ -1119,10 +1129,12 @@ mod tests {
         for f in &files {
             fs::write(f, b"half").unwrap();
         }
-        assert_eq!(clear_staging(&home).unwrap(), 3);
+        assert_eq!(clear_staging(&home), 3);
         let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
         assert_eq!(left, [false, true, true, false, false, true]);
-        // The sweep clears it once it holds the archive.
+        // The sweep clears it once it holds the archive, and a stray file where the spokes' folders
+        // are doesn't stop it.
+        fs::write(home.machines_dir().join("notes"), b"x").unwrap();
         fs::write(&files[0], b"half").unwrap();
         // No harness on, so it sweeps nothing of this machine's.
         let none = crate::Config {
@@ -1131,6 +1143,35 @@ mod tests {
         };
         crate::sweep::sweep(&home, &none, None).unwrap();
         assert!(!files[0].exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_line_naming_a_blob_already_here_waits_for_its_folder_to_sync() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let spoke = Home::new(dir.path().join("spoke"));
+        let hub = Home::new(dir.path().join("hub"));
+        let mut raw = Archive::open(&spoke).unwrap();
+        let first = raw
+            .put(Harness::Codex, "s", "1", &b"first"[..])
+            .unwrap()
+            .unwrap();
+        // An earlier pull renamed the blob in, then failed to sync its folder, which still can't be.
+        let shard = hub.raw_dir_of(Some("nas")).join(&first.capture_hash[..2]);
+        fs::create_dir_all(&shard).unwrap();
+        fs::write(shard.join(&first.capture_hash), b"first").unwrap();
+        fs::set_permissions(&shard, fs::Permissions::from_mode(0o300)).unwrap();
+        // The spoke appends meanwhile, so the retry gets the first line without its blob.
+        raw.put(Harness::Codex, "s", "2", &b"first, then more"[..])
+            .unwrap()
+            .unwrap();
+        let mut export = Vec::new();
+        crate::archive::export(&spoke, "nas", 0, &mut export, &mut Default::default()).unwrap();
+        let took = take(&hub, "nas", &mut std::io::Cursor::new(export), &|| true);
+        fs::set_permissions(&shard, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(took.is_err(), "{took:?}");
+        assert!(!hub.manifest_path_of(Some("nas")).exists());
     }
 
     #[test]

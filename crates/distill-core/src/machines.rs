@@ -154,7 +154,7 @@ pub fn pull(
             }
         }
     };
-    crate::archive::clear_staging(home)?;
+    crate::archive::clear_staging(home);
     let mut report = PullReport::default();
     for m in config
         .machines
