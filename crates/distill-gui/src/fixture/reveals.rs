@@ -106,6 +106,7 @@ pub fn findings_where() -> State {
     let fp = fingerprint("a1");
     let place = |session: &str, harness, project: &str, started: &str, events: &[u64]| Appearance {
         session: session.into(),
+        machine: None,
         harness,
         project: Some(project.into()),
         started_at: day(started),

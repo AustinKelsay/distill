@@ -86,6 +86,8 @@ fn header(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
         .status
         .iter()
         .flat_map(|st| st.machines.iter().map(|m| m.machine.as_str()))
+        // A spoke named `hub` can't be picked apart from the hub's own (docs/known-gaps.md).
+        .filter(|m| *m != HUB)
         .collect();
     let machine = (!spokes.is_empty() || f.machine.is_some()).then(|| {
         let names: Vec<&str> = [ANY_MACHINE, THIS_HUB]

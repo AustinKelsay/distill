@@ -2,8 +2,9 @@
 //! health per harness, format drift, the last sweep, warnings, each step's progress (scan, word
 //! index, cards, vectors and the model detection pass), the reveal
 //! requests waiting, the recent runs, the backup targets (each with Back up now and Verify) and
-//! the exposure check, with a Fix button that calls `exposure::fix`, and on a hub its spokes. A step with nothing to report says it is not yet available. No session text
-//! is shown.
+//! the exposure check, with a Fix button that calls `exposure::fix`. On a hub, its spokes, each
+//! with its health and last pull. A step with nothing to report says it is not yet available. No
+//! session text is shown.
 //!
 //! When a ticket adds a field to `Status`, it adds its line here: a step's progress goes in
 //! [`steps`], anything else in its own section of [`report`].

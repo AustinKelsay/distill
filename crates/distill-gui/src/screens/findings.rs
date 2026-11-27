@@ -491,7 +491,8 @@ fn where_found(st: &FindingsState, p: &Paint) -> El {
         return c.child(p.note("Looking for its sessions…"));
     }
     for (n, a) in appearances(st).into_iter().enumerate() {
-        let mut facts = vec![a.harness.label().to_string()];
+        let mut facts: Vec<String> = a.machine.iter().cloned().collect();
+        facts.push(a.harness.label().to_string());
         if let Some(pr) = &a.project {
             facts.push(pr.clone());
         }

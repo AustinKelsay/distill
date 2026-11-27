@@ -184,6 +184,10 @@ pub enum Loaded {
 /// Moving to the screen covers every finding again, and loads the list when no session is open.
 pub fn open(s: &mut State) {
     s.sessions.menu = None;
+    // The machine filter lists the spokes the status report names.
+    if s.overview.status.is_none() {
+        crate::screens::overview::load(s);
+    }
     match &mut s.sessions.open {
         Some(o) => o.revealed.clear(),
         None => search(s),

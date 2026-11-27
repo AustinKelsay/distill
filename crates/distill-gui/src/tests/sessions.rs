@@ -940,9 +940,8 @@ fn on_a_hub_the_list_filters_by_machine_and_names_a_spokes_sessions() {
     );
     let config = core.home.load_config().unwrap();
     distill_core::tick::tick_with(&core.home, &config, &core.runtime).unwrap();
+    // Opening Sessions first reads the status report, which names the spokes.
     let mut rt = window(&core);
-    rt.update(|s, _| crate::screens::overview::load(s));
-    run_jobs(&mut rt, &core);
     assert!(
         rt.find("filter-machine-trigger").is_some(),
         "{:?}",
