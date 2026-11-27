@@ -15,7 +15,9 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
-use super::blocks::{PlanTracker, first_text, plan_line};
+use super::blocks::{
+    PlanTracker, first_text, normalize_stop_reason, parse_usage, plan_line, push_compaction,
+};
 use crate::harness::{Candidate, Harness};
 use crate::model::{Event, EventKind, Parsed};
 
@@ -385,10 +387,39 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             "assistant_message" => {
                 let mut e = Event::text(EventKind::Assistant, text(it.get("text"))).at(at);
                 e.model = model.clone();
+                e.stop_reason = it
+                    .get("stopReason")
+                    .or_else(|| it.get("stop_reason"))
+                    .or_else(|| it.get("finishReason"))
+                    .or_else(|| it.get("finish_reason"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stop_reason)
+                    .or_else(|| {
+                        it.get("status")
+                            .and_then(Value::as_str)
+                            .and_then(normalize_stop_reason)
+                            .filter(|r| r == "aborted")
+                    });
+                e.usage = it
+                    .get("usage")
+                    .or_else(|| it.get("tokenUsage"))
+                    .and_then(parse_usage);
                 out.push(e);
             }
             "reasoning" => out.push(Event::text(EventKind::Reasoning, text(it.get("text"))).at(at)),
-            "system_notice" | "notification" | "compaction" | "handoff" => out.push(
+            "compaction" => {
+                let completed = it
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_none_or(|st| st == "completed");
+                let summary = first_text(it, &["summary", "text", "title"]);
+                if completed {
+                    push_compaction(&mut out, summary, at);
+                } else if let Some(body) = summary {
+                    out.push(Event::text(EventKind::System, body).at(at));
+                }
+            }
+            "system_notice" | "notification" | "handoff" => out.push(
                 Event::text(EventKind::System, text(it.get("text").or(it.get("title")))).at(at),
             ),
             "command_execution" => {
@@ -799,6 +830,45 @@ mod tests {
             parse(&export_thread(&db, "t1").unwrap().bytes)
                 .unwrap()
                 .is_mirror()
+        );
+    }
+
+    #[test]
+    fn preserves_compaction_stop_reason_and_usage() {
+        let src = r#"{"row":"thread","thread_id":"t10","provider_instance":"fragment"}
+{"row":"item","item":{"type":"user_message","text":"go","startedAt":"2026-01-01T00:00:00Z"}}
+{"row":"item","item":{"type":"compaction","title":"Compacted context","status":"completed","summary":"Earlier context summarized","startedAt":"2026-01-01T00:00:01Z"}}
+{"row":"item","item":{"type":"compaction","title":"Compaction failed","status":"failed","startedAt":"2026-01-01T00:00:01Z"}}
+{"row":"item","item":{"type":"handoff","text":"Switched models","startedAt":"2026-01-01T00:00:02Z"}}
+{"row":"item","item":{"type":"assistant_message","text":"cut off","status":"interrupted","startedAt":"2026-01-01T00:00:03Z"}}
+{"row":"item","item":{"type":"assistant_message","text":"done","finishReason":"stop","usage":{"inputTokens":210,"outputTokens":35,"cacheReadTokens":50},"startedAt":"2026-01-01T00:00:04Z"}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 6);
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        assert_eq!(p.events[1].kind, EventKind::System);
+        assert_eq!(p.events[1].compaction, Some(true));
+        assert_eq!(
+            p.events[1].text.as_deref(),
+            Some("Earlier context summarized")
+        );
+        // Failed compaction is not flagged as a context reset.
+        assert_eq!(p.events[2].kind, EventKind::System);
+        assert_eq!(p.events[2].compaction, None);
+        assert_eq!(p.events[3].kind, EventKind::System);
+        assert_eq!(p.events[3].compaction, None);
+        assert_eq!(p.events[4].stop_reason.as_deref(), Some("aborted"));
+        assert_eq!(p.events[5].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(
+            p.events[5].usage,
+            Some(crate::model::TokenUsage {
+                input: Some(210),
+                output: Some(35),
+                cache_read: Some(50),
+                cache_write: None,
+            })
         );
     }
 }
