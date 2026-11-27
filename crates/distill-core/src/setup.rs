@@ -43,7 +43,7 @@ pub fn initialize(home: &Home, config: &Config, force: bool) -> Result<()> {
     if let Some(spoke) = &config.spoke
         && was.is_none()
     {
-        crate::home::new_machine_name(&spoke.machine)?;
+        crate::home::not_hub(&spoke.machine)?;
     }
     home.ensure()?;
     config.save(&home.config_path())

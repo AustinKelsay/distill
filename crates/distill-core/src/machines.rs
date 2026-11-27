@@ -222,7 +222,7 @@ pub fn add(config: &mut Config, name: &str, host: &str) -> Result<()> {
         command: None,
     };
     m.check()?;
-    crate::home::new_machine_name(&m.name)?;
+    crate::home::not_hub(&m.name)?;
     if config.machines.iter().any(|x| x.name == m.name) {
         bail!("a machine is already named {:?}", m.name);
     }

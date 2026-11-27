@@ -430,11 +430,10 @@ pub fn machine_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check `name` for a machine being named now, by `init --spoke` or by adding a spoke: a machine
-/// name, and not [`HUB`], which a machine filter takes for this hub's own sessions. A machine
-/// already named `hub` keeps its name.
-pub fn new_machine_name(name: &str) -> Result<()> {
-    machine_name(name)?;
+/// Refuse [`HUB`] for a machine being named now, by `init --spoke` or by adding a spoke: a
+/// machine filter takes it for this hub's own sessions. A machine already named `hub` keeps its
+/// name.
+pub fn not_hub(name: &str) -> Result<()> {
     if name == HUB {
         anyhow::bail!(
             "\"{HUB}\" can't name a spoke: a machine filter takes it for the hub's own sessions"
