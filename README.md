@@ -71,6 +71,8 @@ vectors = false             # also carry vectors, which cost embedding time to r
 
 Any other kind runs an adapter, `distill-backup-<kind>` on `PATH` (`docs/backup-adapters.md`). Two are installed with DISTILL: `ssh`, to a folder on another machine you reach over SSH (`host`, `dir`), and `rclone`, to any rclone remote, such as an S3-compatible store (`remote`). Each script's header shows its settings.
 
+Agents on several machines (ADR 0010, `docs/machines.md`): on each other machine, `scripts/install.sh --spoke` and `distill init --spoke <name>` set up a spoke, which only captures. Add it to the machine that keeps the archive, the hub, under Setup's Machines step or as a `[[machines]]` table (`name`, and the `host` SSH reaches it by), and the hub's tick pulls its new captures over SSH. Its sessions are keyed `<name>:<harness>/<id>`; the window's overview shows each spoke's last pull, and `search` and `tags` take `--machine`.
+
 ## Commands
 
 | Command | What it does |
@@ -87,6 +89,8 @@ Any other kind runs an adapter, `distill-backup-<kind>` on `PATH` (`docs/backup-
 | `distill reveal` | A model asks for specific secrets; the owner approves in the window; the model collects them once. |
 | `distill exposure` | Whether the home is owner-only, outside known synced folders and unlistened; `--fix` repairs file modes. |
 | `distill providers` | Providers, which are trusted, and the local runtime's models; `add <name> --trusted`, `trust` and `untrust` manage remote ones. |
+| `distill pull [machine]` | On a hub, pull each `[[machines]]` spoke's new captures over SSH now; the tick does it on every run. |
+| `distill export --since BYTES` | On a spoke, what the hub runs over SSH: its raw captures from that byte of its manifest on. `--ssh` takes it from a forced command (`docs/machines.md`). |
 | `distill reads`, `distill runs` | The read log (every read, refusal and reveal) and the run log. |
 | `distill init`, `harnesses`, `sweep`, `parse`, `scan`, `verify`, `schedule`, `gui` | Setup, and each step on its own. |
 

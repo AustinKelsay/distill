@@ -1,0 +1,63 @@
+        title: DISTILL
+      text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals
+        text: Approvals
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+        steps: Setup steps
+          step-0: Harnesses
+          text: 1 Harnesses
+          step-1: Home folder
+          text: 2 Home folder
+          step-2: Trusted AI
+          text: 3 Trusted AI
+          step-3: Models
+          text: 4 Models
+          step-4: Privacy
+          text: 5 Privacy
+          step-5: Backups
+          text: 6 Backups
+          step-6: Machines
+          text: 7 Machines
+          step-7: Schedule
+          text: 8 Schedule
+        text: Step 7 of 8
+          step-title: Machines
+        text: Other machines whose sessions this one collects
+        text: Agents on another machine can be archived here too. That machine runs DISTILL as a spoke (`distill init --spoke <name>`), which only captures; this one pulls its new captures over SSH on every run, and keeps them as that machine's. Neither side opens a port.
+          spokes: Spokes
+              title: Spokes
+            text: nas
+            text: me@nas.example
+              checked: me@nas.example answers as nas, with captures to pull
+              check: Check
+                label: Check
+              remove: Remove
+                label: Remove
+            text: build-box
+            text: build-box
+              checked: ssh build-box: Permission denied (publickey).
+              check: Check
+                label: Check
+              remove: Remove
+                label: Remove
+                input: 
+                input: 
+            add-machine: Add
+              label: Add
+        text: SSH never asks for a password here: this machine's key must be in the spoke's authorized_keys (limited to the export, as docs/machines.md shows), and the spoke in known_hosts. Check connects as a pull does and takes nothing.
+        back: Back
+          label: Back
+        next: Next
+          label: Next

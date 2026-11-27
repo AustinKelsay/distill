@@ -213,6 +213,54 @@ impl<R: Read + std::os::fd::AsRawFd> Read for Counted<R> {
     }
 }
 
+/// Add the spoke `name`, reached at `host`, to `config`'s `[[machines]]`, as `config.toml` would
+/// accept it: a machine name not taken, and a host.
+pub fn add(config: &mut Config, name: &str, host: &str) -> Result<()> {
+    let m = MachineConfig {
+        name: name.trim().to_string(),
+        host: host.trim().to_string(),
+        command: None,
+    };
+    m.check()?;
+    if config.machines.iter().any(|x| x.name == m.name) {
+        bail!("a machine is already named {:?}", m.name);
+    }
+    config.machines.push(m);
+    Ok(())
+}
+
+/// Check that `m` answers over SSH as the spoke this hub has a copy of, as a pull would start:
+/// it runs the export there and reads only its header, so nothing is taken, and says whether
+/// it has captures to pull. The spoke logs it as an export cut short.
+pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
+    if home.spoke()?.is_some() {
+        bail!("a spoke pulls from no machine: it only captures");
+    }
+    let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET);
+    match (pulled.error, waiting) {
+        (Some(e), _) => bail!(e),
+        (None, Some(true)) => Ok(format!(
+            "{} answers as {}, with captures to pull",
+            m.host, m.name
+        )),
+        (None, _) => Ok(format!(
+            "{} answers as {}, with nothing new to pull",
+            m.host, m.name
+        )),
+    }
+}
+
+/// How long a check waits for the spoke's first bytes.
+const CHECK_QUIET: Duration = Duration::from_secs(20);
+
+/// What a run of the export over SSH is for.
+enum Want {
+    /// Take its captures, stopping between two at the deadline.
+    Take(Deadline),
+    /// Read its header only.
+    Check,
+}
+
 fn pull_one(
     home: &Home,
     m: &MachineConfig,
@@ -220,6 +268,18 @@ fn pull_one(
     ssh: &str,
     quiet: Duration,
 ) -> Pulled {
+    over_ssh(home, m, Want::Take(deadline), ssh, quiet).0
+}
+
+/// Run `m`'s export over SSH for `want`: what a pull took, or why it failed, and for a check
+/// whether the spoke has captures to pull.
+fn over_ssh(
+    home: &Home,
+    m: &MachineConfig,
+    want: Want,
+    ssh: &str,
+    quiet: Duration,
+) -> (Pulled, Option<bool>) {
     let mut pulled = Pulled {
         machine: m.name.clone(),
         at: None,
@@ -230,7 +290,7 @@ fn pull_one(
         Ok(n) => n,
         Err(e) => {
             pulled.error = Some(format!("{e:#}"));
-            return pulled;
+            return (pulled, None);
         }
     };
     pulled.took.since = since;
@@ -257,7 +317,7 @@ fn pull_one(
         Ok(c) => c,
         Err(e) => {
             pulled.error = Some(format!("could not run ssh: {e}"));
-            return pulled;
+            return (pulled, None);
         }
     };
     // What ssh says, gathered as it comes: a proxy it started can hold the pipe open after ssh
@@ -302,14 +362,22 @@ fn pull_one(
             }
         })
     };
-    let took = archive::take_into(
-        home,
-        &m.name,
-        &mut stdout,
-        &|| deadline.passed(),
-        &mut pulled.took,
-    );
-    if took.is_err() || pulled.took.stopped {
+    let mut waiting = None;
+    let took = match want {
+        Want::Take(deadline) => archive::take_into(
+            home,
+            &m.name,
+            &mut stdout,
+            &|| deadline.passed(),
+            &mut pulled.took,
+        ),
+        Want::Check => archive::check_export(home, &m.name, &mut stdout).map(|w| {
+            waiting = Some(w);
+        }),
+    };
+    // A check is done once the header is read: the rest isn't wanted.
+    let stopped = pulled.took.stopped || waiting.is_some();
+    if took.is_err() || stopped {
         let _ = child.lock().map(|mut c| c.kill());
     }
     drop(stdout);
@@ -335,7 +403,7 @@ fn pull_one(
             m.host,
             quiet.as_secs()
         ));
-        return pulled;
+        return (pulled, None);
     }
     let last = said
         .lines()
@@ -345,7 +413,7 @@ fn pull_one(
     match took {
         Ok(()) => {
             let failed = status.as_ref().map_or(true, |s| !s.success());
-            if failed && !pulled.took.stopped {
+            if failed && !stopped {
                 pulled.error = Some(match last {
                     Some(l) => format!("ssh {}: {l}", m.host),
                     None => format!("ssh {} failed", m.host),
@@ -364,7 +432,7 @@ fn pull_one(
             });
         }
     }
-    pulled
+    (pulled, waiting)
 }
 
 #[cfg(test)]
@@ -403,6 +471,77 @@ mod tests {
         .unwrap();
         assert!(r.machines.is_empty(), "{r:?}");
         assert!(r.skipped.unwrap().contains("holds the archive"));
+    }
+
+    /// A stand-in for ssh that runs `body` as a shell script.
+    #[cfg(unix)]
+    fn fake_ssh(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let ssh = dir.join("ssh");
+        fs::write(&ssh, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
+        ssh
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_check_reads_the_spokes_header_and_takes_nothing() {
+        use sha2::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let m = &config.machines[0];
+        let empty = hex::encode(sha2::Sha256::digest(b""));
+        let header = |name: &str, end: u64| {
+            format!(
+                "printf 'distill-export 1\\n{{\"machine\":\"{name}\",\"since\":0,\"prefix\":\"{empty}\",\"end\":{end}}}\\n'\nexec sleep 30"
+            )
+        };
+        let check = |body: &str| {
+            let ssh = fake_ssh(dir.path(), body);
+            let start = Instant::now();
+            let r = over_ssh(&home, m, Want::Check, ssh.to_str().unwrap(), QUIET);
+            assert!(start.elapsed() < Duration::from_secs(10), "{r:?}");
+            r
+        };
+        // Captures waiting: the rest of the export isn't read, and nothing is written.
+        let (p, waiting) = check(&header("nas", 120));
+        assert_eq!((p.error, waiting), (None, Some(true)));
+        assert!(!home.raw_dir_of(Some("nas")).exists());
+        let (p, waiting) = check(&header("nas", 0));
+        assert_eq!((p.error, waiting), (None, Some(false)));
+        // Another machine answering, and one that can't be reached.
+        let (p, _) = check(&header("box", 0));
+        assert!(p.error.unwrap().contains(r#"is "box", not "nas""#));
+        let (p, waiting) =
+            check("echo 'ssh: connect to host nas port 22: Connection refused' >&2\nexit 255");
+        assert_eq!(waiting, None);
+        assert_eq!(
+            p.error.unwrap(),
+            "ssh me@nas: ssh: connect to host nas port 22: Connection refused"
+        );
+    }
+
+    #[test]
+    fn a_spoke_is_added_as_config_toml_would_take_it() {
+        let mut config = Config::default();
+        add(&mut config, " nas ", " me@nas ").unwrap();
+        assert_eq!(
+            (
+                config.machines[0].name.as_str(),
+                config.machines[0].host.as_str()
+            ),
+            ("nas", "me@nas")
+        );
+        for (name, host, says) in [
+            ("nas", "me@other", "already named"),
+            ("Nas", "me@nas", "not a machine name"),
+            ("box", "-oProxyCommand=x", "not a host"),
+            ("box", " ", "not a host"),
+        ] {
+            let e = add(&mut config, name, host).unwrap_err();
+            assert!(format!("{e:#}").contains(says), "{name} {host}: {e:#}");
+        }
+        assert_eq!(config.machines.len(), 1);
     }
 
     #[cfg(unix)]

@@ -51,6 +51,18 @@ pub struct MachineConfig {
     pub command: Option<String>,
 }
 
+impl MachineConfig {
+    /// Refuse a name that isn't a machine name, or a host `ssh` can't be given.
+    pub fn check(&self) -> anyhow::Result<()> {
+        crate::home::machine_name(&self.name)?;
+        // `ssh` would take a host that starts with `-` as an option.
+        if self.host.trim().is_empty() || self.host.starts_with('-') {
+            anyhow::bail!("{:?} is not a host", self.host);
+        }
+        Ok(())
+    }
+}
+
 /// A spoke's `[spoke]` table: the name its hub knows it by. A spoke's tick only sweeps, and its
 /// read path serves no reader, since its captures are read on the hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -239,14 +251,10 @@ impl Config {
         let mut names = std::collections::HashSet::new();
         for m in &config.machines {
             let at = || format!("[[machines]] {:?} in {}", m.name, path.display());
-            crate::home::machine_name(&m.name).with_context(at)?;
+            m.check().with_context(at)?;
             if !names.insert(&m.name) {
                 return Err(anyhow::anyhow!("two machines are named {:?}", m.name))
                     .with_context(at);
-            }
-            // `ssh` would take a host that starts with `-` as an option.
-            if m.host.trim().is_empty() || m.host.starts_with('-') {
-                return Err(anyhow::anyhow!("{:?} is not a host", m.host)).with_context(at);
             }
         }
         Ok(config)

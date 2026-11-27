@@ -116,6 +116,14 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
             "For your agents",
             "Give an agent the MCP server, named with the service it runs at:",
             Some("claude mcp add distill -- distill-mcp --provider <service>"),
+        ))
+        .child(p.separator())
+        .child(line(
+            p,
+            "On other machines",
+            "Make each one a spoke, which only captures, then add it under Setup's Machines step: \
+             this machine pulls its sessions over SSH on every run.",
+            Some("distill init --spoke <name>"),
         ));
     let start = Button::new(if set_up { "Open Setup" } else { "Start setup" })
         .variant(if set_up {

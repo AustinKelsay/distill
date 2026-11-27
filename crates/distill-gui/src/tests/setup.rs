@@ -181,6 +181,7 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
             "Models",
             "Privacy",
             "Backups",
+            "Machines",
             "Schedule"
         ]
     );
@@ -190,10 +191,10 @@ fn next_and_back_walk_the_steps_and_the_last_offers_finish() {
     assert!(shows(&rt, "DISTILL_HOME"));
     press(&mut rt, "back");
     assert_eq!(rt.state.setup.step, 0);
-    for _ in 0..6 {
+    for _ in 0..7 {
         press(&mut rt, "next");
     }
-    assert_eq!(rt.state.setup.step, 6);
+    assert_eq!(rt.state.setup.step, 7);
     assert!(!on(&rt, "next") && on(&rt, "finish"));
 }
 
@@ -950,4 +951,38 @@ fn a_new_backup_key_is_confirmed_shown_once_and_starts_each_folder_over() {
     press(&mut rt, "show-key");
     run_jobs(&mut rt, &t.core);
     assert!(shows(&rt, "This is the new backup key"), "{:?}", texts(&rt));
+}
+
+#[test]
+fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
+    let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1600.0));
+    step(&mut rt, "Machines");
+    assert!(shows(&rt, "No other machine yet."), "{:?}", texts(&rt));
+    type_into(&mut rt, |s| &mut s.setup.machine_name, "nas");
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "me@nas");
+    press(&mut rt, "add-machine");
+    let m = &rt.state.setup.draft.machines;
+    assert_eq!(
+        m.iter()
+            .map(|m| (m.name.as_str(), m.host.as_str()))
+            .collect::<Vec<_>>(),
+        [("nas", "me@nas")]
+    );
+    assert_eq!(rt.state.setup.machine_name.text, "", "the fields clear");
+    assert!(shows(&rt, "me@nas") && on(&rt, "check"), "{:?}", texts(&rt));
+
+    // As config.toml would refuse it: a name taken, and a host ssh would read as an option.
+    type_into(&mut rt, |s| &mut s.setup.machine_name, "nas");
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "me@other");
+    press(&mut rt, "add-machine");
+    assert!(shows(&rt, "a machine is already named"), "{:?}", texts(&rt));
+    type_into(&mut rt, |s| &mut s.setup.machine_name, "box");
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "-oProxyCommand=x");
+    press(&mut rt, "add-machine");
+    assert!(shows(&rt, "is not a host"), "{:?}", texts(&rt));
+    assert_eq!(rt.state.setup.draft.machines.len(), 1);
+
+    press(&mut rt, "remove");
+    assert!(rt.state.setup.draft.machines.is_empty());
+    assert!(shows(&rt, "No other machine yet."));
 }

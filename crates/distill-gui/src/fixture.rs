@@ -33,7 +33,8 @@ pub const SCENES: &[Scene] = &[
     ("setup-backups-key", backups_key_shown),
     ("setup-backups-empty", backups_empty),
     ("setup-backups-new-key", backups_new_key),
-    ("setup-schedule", |s| setup_step(s, 6)),
+    ("setup-machines", |s| setup_step(s, 6)),
+    ("setup-schedule", |s| setup_step(s, 7)),
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
     ("overview-new", |s| *s = just_set_up()),
@@ -118,6 +119,19 @@ fn setup_step(s: &mut State, step: usize) {
             Err("the backup folder /Volumes/Share does not exist (is the drive connected?)".into()),
         );
         s.setup.has_key = Some(false);
+    }
+    if step == 6 {
+        for (name, host) in [("nas", "me@nas.example"), ("build-box", "build-box")] {
+            distill_core::machines::add(&mut s.setup.draft, name, host).expect("valid machine");
+        }
+        s.setup.checks.insert(
+            "nas".into(),
+            Ok("me@nas.example answers as nas, with captures to pull".into()),
+        );
+        s.setup.checks.insert(
+            "build-box".into(),
+            Err("ssh build-box: Permission denied (publickey).".into()),
+        );
     }
 }
 
