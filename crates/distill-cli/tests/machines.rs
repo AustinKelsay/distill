@@ -91,6 +91,30 @@ fn a_spokes_captures_are_sessions_keyed_by_its_machine() {
 
     let checked = json(&user, &home, &["verify"]);
     assert_eq!(checked["checked"], 2, "{checked}");
+
+    // Rebuilt from the raw archives alone, each session is its machine's again.
+    let list = || -> Vec<(Value, Value)> {
+        let mut l: Vec<_> = fs::read_to_string(home.join("sessions/index.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|l| {
+                let v: Value = serde_json::from_str(l).unwrap();
+                (v["machine"].clone(), v["session_id"].clone())
+            })
+            .collect();
+        l.sort_by_key(|k| k.0.to_string());
+        l
+    };
+    let before = list();
+    assert_eq!(before.len(), 2);
+    assert!(before.iter().any(|(m, _)| m == "nas"), "{before:?}");
+    fs::remove_dir_all(home.join("sessions")).unwrap();
+    fs::remove_file(home.join("state/normalize.json")).unwrap();
+    fs::remove_dir_all(home.join("state/machines")).unwrap();
+    let parsed = json(&user, &home, &["parse"]);
+    assert_eq!(parsed["sessions"], 2, "{parsed}");
+    assert_eq!(list(), before);
+
     // A spoke's blob that changed is the spoke's, by name.
     let blob = walk(&home.join("machines/nas/raw"))
         .into_iter()
@@ -223,6 +247,21 @@ fn a_hub_pulls_a_spokes_new_captures_over_ssh() {
         &["tag", "nas:claude-code/s1", "--add", "server"],
     );
     assert!(tagged.to_string().contains("server"), "{tagged}");
+    // The hub's status has the spoke's row, and its scan and word index cover its session.
+    let s = json(&user, &home, &["status"]);
+    let nas = &s["machines"][0];
+    assert_eq!(
+        (&nas["machine"], &nas["sessions"]),
+        (&"nas".into(), &1.into()),
+        "{s}"
+    );
+    assert!(nas["last_pull"].is_string(), "{s}");
+    assert_eq!(nas["harnesses"][0]["harness"], "claude-code", "{s}");
+    assert_eq!(
+        (&s["scan"]["current"], &s["index"]["current"]),
+        (&1.into(), &1.into()),
+        "{s}"
+    );
 
     // Through a forced command the same; and the spoke logged every export.
     let forced = tmp.path().join("forced");
@@ -230,6 +269,14 @@ fn a_hub_pulls_a_spokes_new_captures_over_ssh() {
     assert!(ok, "{out}");
     let exports = fs::read_to_string(spoke.join("log/exports.jsonl")).unwrap();
     assert_eq!(exports.lines().count(), 3, "{exports}");
+    // The spoke counts them as what left it.
+    let s = json(&spoke_user, &spoke, &["status"]);
+    let hub = &s["left"]["places"][0];
+    assert_eq!(
+        (&hub["kind"], &hub["week"]["times"]),
+        (&"hub".into(), &3.into()),
+        "{s}"
+    );
 
     // A host that can't be reached fails with what ssh said.
     let (ok, out) = pull(&[("FAKE_DOWN", forced.as_path())]);

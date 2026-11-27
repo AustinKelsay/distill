@@ -109,6 +109,34 @@ fn the_steward_writes_a_card_from_the_session_as_a_local_model_reads_it() {
     assert_eq!(line["result"], "served", "{line}");
 }
 
+#[test]
+fn a_spokes_session_gets_its_card_as_the_hubs_own_do() {
+    let (_d, home, config) = home_with(&[]);
+    Archive::open_of(&home, Some("nas"))
+        .unwrap()
+        .put(
+            Harness::ClaudeCode,
+            "/s/proj/s1.jsonl",
+            "1",
+            session("s1", "2026-11-10T10:00:00Z", "rename the widget module").as_bytes(),
+        )
+        .unwrap();
+    crate::normalize::normalize(&home, false).unwrap();
+    let fake = model(|_, _| reply("Rename the widget module"));
+    let r = write(&home, &config, &fake.runtime(), Deadline::NONE).unwrap();
+    assert_eq!((r.written, r.failed), (1, 0), "{r:?}");
+    let facts = crate::normalize::find(&home, Some("nas"), Harness::ClaudeCode, "s1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        load(&home, &facts).unwrap().title,
+        "Rename the widget module"
+    );
+    let log = crate::readlog::list(&home, None, usize::MAX).unwrap();
+    let line = serde_json::to_value(&log[0]).unwrap();
+    assert_eq!(line["session"], "nas:claude-code/s1", "{line}");
+}
+
 /// Change `id`'s stored facts with `edit`, and rebuild the session list from them.
 fn edit_facts(home: &Home, id: &str, edit: impl FnOnce(&mut serde_json::Value)) {
     let path = home.meta_path(None, Harness::ClaudeCode, id);

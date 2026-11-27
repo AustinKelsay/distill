@@ -69,6 +69,9 @@ pub fn forced_since(original: Option<&str>) -> Result<u64> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pulled {
     pub machine: String,
+    /// When this machine's pull ended: a tick logs it only once all its steps are done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
     #[serde(flatten)]
     pub took: Transfer,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,9 +163,10 @@ pub fn pull(
         if deadline.passed() {
             break;
         }
-        report
-            .machines
-            .push(pull_one(home, m, deadline, "ssh", QUIET));
+        let mut pulled = pull_one(home, m, deadline, "ssh", QUIET);
+        // To the millisecond, so a pull by hand that ends just after a tick's sorts after it.
+        pulled.at = Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        report.machines.push(pulled);
     }
     Ok(report)
 }
@@ -218,6 +222,7 @@ fn pull_one(
 ) -> Pulled {
     let mut pulled = Pulled {
         machine: m.name.clone(),
+        at: None,
         took: Transfer::default(),
         error: None,
     };
@@ -475,6 +480,23 @@ mod tests {
         let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
         assert_eq!((last.sent.lines, last.sent.blobs), (1, 2), "{last:?}");
         assert!(last.error.is_some(), "{last:?}");
+
+        // Cut inside a large blob: what of it went is counted.
+        let big = "x".repeat(99_999) + "\n";
+        a.put(Harness::Pi, "u", "1", big.as_bytes()).unwrap();
+        let mut whole = Vec::new();
+        export(&home, 0, &mut whole).unwrap();
+        let at = whole.windows(5).rposition(|w| w == b"blob ").unwrap();
+        let payload = at + whole[at..].iter().position(|b| *b == b'\n').unwrap() + 1;
+        assert!(export(&home, 0, &mut HungUp { room: at + 80_000 }).is_err());
+        let log = fs::read_to_string(home.export_log_path()).unwrap();
+        let last: ExportEntry = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!(last.sent.blobs, 2, "{last:?}");
+        assert_eq!(
+            last.sent.bytes,
+            (8 + at + 80_000 - payload) as u64,
+            "{last:?}"
+        );
     }
 
     #[test]

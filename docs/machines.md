@@ -42,3 +42,7 @@ command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 ## What leaves the spoke
 
 An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went.
+
+## Checking on them
+
+On the hub, `distill status` has a line for each spoke: its health, its sessions and when a pull last took from it, then its harnesses as the hub's own are shown. A spoke whose newest pull failed says why. When a spoke in `[[machines]]` hasn't been pulled from for twice the timer's interval, status warns. On a spoke, the exports count among what left it, as `the hub, over ssh`.

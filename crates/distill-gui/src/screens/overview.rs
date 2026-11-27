@@ -343,6 +343,7 @@ fn warnings(shown: &[&Warning], p: &Paint) -> El {
     for (i, w) in shown.iter().enumerate() {
         let kind = match w.kind {
             WarningKind::SweepOverdue => "Sweep overdue",
+            WarningKind::PullOverdue => "Pull overdue",
             WarningKind::PrunesSooner => "Prunes sooner",
             WarningKind::Exposure => "Exposure",
             WarningKind::Backup => "Backup",
@@ -644,6 +645,7 @@ fn left(st: &Status, p: &Paint) -> El {
         t
     };
     let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));
+    let exported = |s: &Sent| format!("{}, {}", count(s.times, "export"), human_bytes(s.bytes));
     let cell = |t: El, font, ink| t.font(font).color(ink).wrap().w(0.0).grow(1.0).min_w(0.0);
     let line = |key: String, name: String, day: String, week: String, head: bool| {
         let font = if head { p.caption() } else { p.text() };
@@ -678,6 +680,7 @@ fn left(st: &Status, p: &Paint) -> El {
         let (name, f): (String, &dyn Fn(&Sent) -> String) = match place.kind {
             PlaceKind::Reader => (place.name.clone(), &read),
             PlaceKind::Backup => (format!("Backup {}", place.name), &ran),
+            PlaceKind::Hub => ("The hub, over SSH".into(), &exported),
         };
         card = card.child(line(
             format!("left-{i}"),

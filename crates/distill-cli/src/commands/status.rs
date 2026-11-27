@@ -84,20 +84,44 @@ pub fn run(ctx: &Ctx, _: Args) -> Result<()> {
             println!("{line}");
         }
         for h in &s.harnesses {
+            println!("{}", harness_line(h));
+        }
+        for m in &s.machines {
             println!(
-                "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",
-                h.harness.id(),
-                format!("{:?}", h.health).to_lowercase(),
-                h.sessions,
-                h.captures,
-                human_bytes(h.archive_bytes),
-                h.note.as_deref().unwrap_or("")
+                "machine {}{}: {} · {} sessions · last capture {} · last pull {}{}",
+                m.machine,
+                m.host
+                    .as_deref()
+                    .map_or(String::new(), |h| format!(" ({h})")),
+                format!("{:?}", m.health).to_lowercase(),
+                m.sessions,
+                m.last_capture.as_deref().unwrap_or("never"),
+                m.last_pull.as_deref().unwrap_or("never"),
+                m.note
+                    .as_deref()
+                    .map_or(String::new(), |n| format!(" · {n}"))
             );
+            for h in &m.harnesses {
+                println!("  {}", harness_line(h));
+            }
         }
         for w in &s.warnings {
             println!("warning: {}", w.message);
         }
     })
+}
+
+/// A harness's row: its health, sessions, captures, bytes and note.
+fn harness_line(h: &status::HarnessStatus) -> String {
+    format!(
+        "  {:<12} {:<8} {:>6} sessions {:>6} captures {:>10}  {}",
+        h.harness.id(),
+        format!("{:?}", h.health).to_lowercase(),
+        h.sessions,
+        h.captures,
+        human_bytes(h.archive_bytes),
+        h.note.as_deref().unwrap_or("")
+    )
 }
 
 /// The cards' line. A stale card (written with another prompt version or `card_model`) is still
@@ -147,6 +171,7 @@ fn left_lines(left: &distill_core::readlog::Left) -> Vec<String> {
         t
     };
     let ran = |s: &Sent| format!("{}, {}", count(s.times, "run"), human_bytes(s.bytes));
+    let exported = |s: &Sent| format!("{}, {}", count(s.times, "export"), human_bytes(s.bytes));
     let mut lines = vec!["left this machine (last day · last 7 days):".to_string()];
     if left.places.is_empty() {
         lines.push("  nothing in the last 7 days".into());
@@ -155,6 +180,7 @@ fn left_lines(left: &distill_core::readlog::Left) -> Vec<String> {
         let (name, f): (String, &dyn Fn(&Sent) -> String) = match p.kind {
             PlaceKind::Reader => (p.name.clone(), &read),
             PlaceKind::Backup => (format!("backup {}", p.name), &ran),
+            PlaceKind::Hub => ("the hub, over ssh".into(), &exported),
         };
         lines.push(format!(
             "  {name}: {} · {}",
