@@ -52,12 +52,17 @@ pub struct MachineConfig {
 }
 
 impl MachineConfig {
-    /// Refuse a name that isn't a machine name, or a host `ssh` can't be given.
+    /// Refuse a name that isn't a machine name, or a host or command `ssh` can't be given.
     pub fn check(&self) -> anyhow::Result<()> {
         crate::home::machine_name(&self.name)?;
         // `ssh` would take a host that starts with `-` as an option.
         if self.host.trim().is_empty() || self.host.starts_with('-') {
             anyhow::bail!("{:?} is not a host", self.host);
+        }
+        if let Some(c) = &self.command
+            && (c.trim().is_empty() || c.trim_start().starts_with('-'))
+        {
+            anyhow::bail!("{c:?} is not a command");
         }
         Ok(())
     }

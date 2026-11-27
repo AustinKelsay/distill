@@ -122,8 +122,12 @@ fn setup_step(s: &mut State, step: usize) {
         s.setup.has_key = Some(false);
     }
     if step == setup::MACHINES {
-        for (name, host) in [("nas", "me@nas.example"), ("build-box", "build-box")] {
-            distill_core::machines::add(&mut s.setup.draft, name, host).expect("valid machine");
+        for (name, host, command) in [
+            ("nas", "me@nas.example", ""),
+            ("build-box", "build-box", "/opt/distill/bin/distill"),
+        ] {
+            distill_core::machines::add(&mut s.setup.draft, name, host, command)
+                .expect("valid machine");
         }
         s.setup.checks.insert(
             "nas".into(),
@@ -565,7 +569,7 @@ pub fn hub() -> State {
     st.machines = serde_json::from_value(serde_json::json!([
         {
             "machine": "nas", "host": "me@nas.example", "health": "ok",
-            "sessions": 212, "captures": 230, "archive_bytes": 48_000_000u64,
+            "sessions": 212, "captures": 1204, "archive_bytes": 48_000_000u64,
             "last_capture": at(20), "last_pull": at(5),
             "harnesses": [], "note": null,
         },

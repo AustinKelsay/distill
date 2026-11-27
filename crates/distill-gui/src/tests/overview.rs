@@ -29,6 +29,15 @@ fn the_overview_shows_sessions_and_capture_health_per_harness() {
 }
 
 #[test]
+fn each_spoke_says_its_host_and_captures_below_its_row() {
+    let rt = runtime_sized(fixture::hub(), (1080.0, 2400.0));
+    assert_eq!(
+        text_of(&rt, "machine-nas/note"),
+        "me@nas.example · 1,204 captures"
+    );
+}
+
+#[test]
 fn the_overview_shows_the_last_sweep_and_each_steps_progress() {
     let rt = runtime_sized(fixture::running(), (1080.0, 2400.0));
     assert_eq!(text_of(&rt, "last-sweep"), "Last sweep 12 min ago");

@@ -652,7 +652,26 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
     assert!(rt.state.setup.recovery.is_none());
     type_into(&mut rt, |s| &mut s.setup.machine_name, "nas");
     type_into(&mut rt, |s| &mut s.setup.machine_host, "me@nas");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "/opt/bin/distill",
+    );
     press(&mut rt, "add-machine");
+    // Its check would run ssh: it is taken from the queue, and what it would say handed in.
+    press(&mut rt, "check");
+    let i = rt
+        .state
+        .outbox
+        .iter()
+        .position(|j| j.what == "check machine")
+        .unwrap();
+    rt.state.outbox.remove(i);
+    let (n, checked) = rt.state.setup.checking_machines[0].clone();
+    assert_eq!(checked.command.as_deref(), Some("/opt/bin/distill"));
+    rt.update(|s, _| crate::screens::setup::land_check(s, n, Ok("me@nas answers as nas".into())));
+    settle(&mut rt);
+    assert_eq!(text_of(&rt, "machine-0/checked"), "me@nas answers as nas");
     step(&mut rt, "Schedule");
     press(&mut rt, "finish");
     let core = t.core.clone();
@@ -669,9 +688,9 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
         saved
             .machines
             .iter()
-            .map(|m| (m.name.as_str(), m.host.as_str()))
+            .map(|m| (m.name.as_str(), m.host.as_str(), m.command.as_deref()))
             .collect::<Vec<_>>(),
-        [("nas", "me@nas")]
+        [("nas", "me@nas", Some("/opt/bin/distill"))]
     );
     assert_eq!(rt.state.screen, Screen::Overview);
     assert!(rt.state.overview.backing_up.contains("drive"));
@@ -992,9 +1011,91 @@ fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
     type_into(&mut rt, |s| &mut s.setup.machine_host, "-oProxyCommand=x");
     press(&mut rt, "add-machine");
     assert!(shows(&rt, "is not a host"), "{:?}", texts(&rt));
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "me@box");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "-oProxyCommand=x",
+    );
+    press(&mut rt, "add-machine");
+    assert!(shows(&rt, "is not a command"), "{:?}", texts(&rt));
     assert_eq!(rt.state.setup.draft.machines.len(), 1);
+    // Where distill is on the spoke, when it isn't on the PATH SSH gives it.
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "/opt/bin/distill",
+    );
+    press(&mut rt, "add-machine");
+    assert_eq!(
+        rt.state.setup.draft.machines[1].command.as_deref(),
+        Some("/opt/bin/distill")
+    );
+    assert_eq!(text_of(&rt, "machine-1/host"), "me@box");
+    assert_eq!(text_of(&rt, "machine-1/command"), "/opt/bin/distill");
+    assert!(!on(&rt, "machine-0/command"));
+    assert_eq!(rt.state.setup.machine_command.text, "", "the fields clear");
 
+    press(&mut rt, "machine-1/remove");
     press(&mut rt, "remove");
     assert!(rt.state.setup.draft.machines.is_empty());
     assert!(shows(&rt, "No other machine yet."));
+}
+
+#[test]
+fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
+    let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1600.0));
+    step(&mut rt, "Machines");
+    let add_at = |rt: &mut Runtime<State>, host: &str| {
+        type_into(rt, |s| &mut s.setup.machine_name, "nas");
+        type_into(rt, |s| &mut s.setup.machine_host, host);
+        press(rt, "add-machine");
+    };
+    let add = |rt: &mut Runtime<State>| add_at(rt, "me@nas");
+    // The checks would run ssh: each is taken from the queue, and its result handed in.
+    let check = |rt: &mut Runtime<State>| {
+        press(rt, "check");
+        assert_eq!(text_of(rt, "machine-0/check"), "Checking…");
+        let asked = std::mem::take(&mut rt.state.outbox);
+        assert_eq!(
+            asked.iter().map(|j| j.what).collect::<Vec<_>>(),
+            ["check machine"]
+        );
+        rt.state.setup.checking_machines.last().unwrap().0
+    };
+    let land = |rt: &mut Runtime<State>, n: u64, r: &str| {
+        rt.update(|s, _| crate::screens::setup::land_check(s, n, Ok(r.into())));
+        settle(rt);
+    };
+    // Removed while it is checked and added again just as it was: a new row, checked at once.
+    add(&mut rt);
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add(&mut rt);
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    let new = check(&mut rt);
+    // The removed row's check lands first: dropped, and the new one still runs.
+    land(&mut rt, old, "the removed row's");
+    assert!(!on(&rt, "checked"), "{:?}", texts(&rt));
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    land(&mut rt, new, "the new row's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "the new row's");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    // Or last: still dropped.
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add(&mut rt);
+    let new = check(&mut rt);
+    land(&mut rt, new, "the newest row's");
+    land(&mut rt, old, "the removed row's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "the newest row's");
+    // Added again at the right host: checked at once, and the old check still lands nowhere.
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add_at(&mut rt, "me@nas.lan");
+    let new = check(&mut rt);
+    land(&mut rt, old, "me@nas's");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    land(&mut rt, new, "me@nas.lan's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "me@nas.lan's");
 }

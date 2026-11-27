@@ -215,12 +215,14 @@ impl<R: Read + std::os::fd::AsRawFd> Read for Counted<R> {
 }
 
 /// Add the spoke `name`, reached at `host`, to `config`'s `[[machines]]`, as `config.toml` would
-/// accept it: a machine name not taken, and a host.
-pub fn add(config: &mut Config, name: &str, host: &str) -> Result<()> {
+/// accept it: a machine name not taken, and a host. `command` is where `distill` is on the spoke;
+/// empty for the one on the `PATH` SSH gives it.
+pub fn add(config: &mut Config, name: &str, host: &str, command: &str) -> Result<()> {
+    let command = command.trim();
     let m = MachineConfig {
         name: name.trim().to_string(),
         host: host.trim().to_string(),
-        command: None,
+        command: (!command.is_empty()).then(|| command.to_string()),
     };
     m.check()?;
     crate::home::not_hub(&m.name)?;
@@ -579,6 +581,38 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_spokes_command_is_what_ssh_runs_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, mut config) = hub_of(dir.path());
+        let said = dir.path().join("said");
+        let ssh = fake_ssh(
+            dir.path(),
+            &format!("printf '%s\\n' \"$@\" > '{}'\nexit 255", said.display()),
+        );
+        for (command, runs) in [
+            (None, "distill"),
+            (Some("/opt/bin/distill"), "/opt/bin/distill"),
+        ] {
+            config.machines[0].command = command.map(String::from);
+            over_ssh(
+                &home,
+                &config.machines[0],
+                Want::Check,
+                ssh.to_str().unwrap(),
+                QUIET,
+                None,
+            );
+            let args = fs::read_to_string(&said).unwrap();
+            let args: Vec<&str> = args.lines().collect();
+            assert_eq!(
+                args[args.len() - 2..],
+                ["me@nas", &format!("{runs} export --since 0")]
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_spoke_that_keeps_sending_without_finishing_is_stopped_at_the_time_limit() {
         let dir = tempfile::tempdir().unwrap();
         let (home, config) = hub_of(dir.path());
@@ -646,25 +680,43 @@ mod tests {
     #[test]
     fn a_spoke_is_added_as_config_toml_would_take_it() {
         let mut config = Config::default();
-        add(&mut config, " nas ", " me@nas ").unwrap();
+        add(&mut config, " nas ", " me@nas ", " ").unwrap();
+        add(&mut config, "box", "me@box", " /opt/bin/distill ").unwrap();
+        let got: Vec<_> = config
+            .machines
+            .iter()
+            .map(|m| (m.name.as_str(), m.host.as_str(), m.command.as_deref()))
+            .collect();
         assert_eq!(
-            (
-                config.machines[0].name.as_str(),
-                config.machines[0].host.as_str()
-            ),
-            ("nas", "me@nas")
+            got,
+            [
+                ("nas", "me@nas", None),
+                ("box", "me@box", Some("/opt/bin/distill"))
+            ]
         );
-        for (name, host, says) in [
-            ("nas", "me@other", "already named"),
-            ("Nas", "me@nas", "not a machine name"),
-            ("box", "-oProxyCommand=x", "not a host"),
-            ("box", " ", "not a host"),
-            ("hub", "me@hub", "can't name a spoke"),
+        for (name, host, command, says) in [
+            ("nas", "me@other", "", "already named"),
+            ("Nas", "me@nas", "", "not a machine name"),
+            ("pi", "-oProxyCommand=x", "", "not a host"),
+            ("pi", " ", "", "not a host"),
+            ("pi", "me@pi", "-oProxyCommand=x", "not a command"),
+            ("hub", "me@hub", "", "can't name a spoke"),
         ] {
-            let e = add(&mut config, name, host).unwrap_err();
+            let e = add(&mut config, name, host, command).unwrap_err();
             assert!(format!("{e:#}").contains(says), "{name} {host}: {e:#}");
         }
-        assert_eq!(config.machines.len(), 1);
+        assert_eq!(config.machines.len(), 2);
+        // A config.toml that gives one blank is refused as it loads.
+        let blank = MachineConfig {
+            command: Some(" ".into()),
+            ..config.machines[0].clone()
+        };
+        assert!(format!("{:#}", blank.check().unwrap_err()).contains("not a command"));
+        let spaced = MachineConfig {
+            command: Some(" -oProxyCommand=x".into()),
+            ..config.machines[0].clone()
+        };
+        assert!(format!("{:#}", spaced.check().unwrap_err()).contains("not a command"));
     }
 
     #[cfg(unix)]
