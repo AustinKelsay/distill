@@ -223,10 +223,12 @@ fn a_hub_pulls_a_spokes_new_captures_over_ssh() {
         fs::read(home.join("machines/nas/raw/manifest.jsonl")).unwrap()
     );
 
-    // The session grows on the spoke; the hub's tick pulls what's new and parses it as nas's.
+    // The session grows on the spoke, with a fake key in it; the hub's tick pulls what's new and
+    // parses it as nas's.
+    let key = ["sk-", "ant-", "api03-", &"Wd2".repeat(9)].concat();
     fs::write(
         &session,
-        line("fix the failing test") + &line("and the flaky one"),
+        line("fix the failing test") + &line(&format!("and the flaky one, with {key}")),
     )
     .unwrap();
     json(&spoke_user, &spoke, &["tick"]);
@@ -284,6 +286,20 @@ fn a_hub_pulls_a_spokes_new_captures_over_ssh() {
         search("nas")
     );
     assert!(!search("hub").contains("nas:"), "{}", search("hub"));
+    // So do its findings.
+    let findings =
+        |machine: &str| json(&user, &home, &["findings", "--machine", machine])["total"].clone();
+    assert_eq!(findings("nas"), 1);
+    assert_eq!(findings("NAS"), 1);
+    assert_eq!(findings("hub"), 0);
+
+    // A new spoke can't take the name the filter keeps for the hub's own.
+    let (ok, out) = distill(
+        &tmp.path().join("u2"),
+        &tmp.path().join("h2"),
+        &["init", "--spoke", "hub"],
+    );
+    assert!(!ok && out.contains("can't name a spoke"), "{out}");
 
     // Through a forced command the same; and the spoke logged every export.
     let forced = tmp.path().join("forced");
