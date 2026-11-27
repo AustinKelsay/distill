@@ -345,6 +345,55 @@ pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
         .collect()
 }
 
+/// What a writer of a raw archive stages there before a rename, each named for its process.
+const STAGING: [&str; 4] = [
+    ".incoming-",
+    ".pulling-",
+    ".restoring-",
+    ".manifest.jsonl.tmp-",
+];
+
+/// Remove the staging files a writer that died left in `home`'s raw archives, its own and each
+/// spoke's, keeping any whose process still runs. Take the archive lock first. Returns how many
+/// went.
+pub fn clear_staging(home: &Home) -> Result<u64> {
+    let mut raws = vec![home.raw_dir_of(None)];
+    for m in home.machines()? {
+        raws.push(home.raw_dir_of(Some(&m)));
+    }
+    let mut cleared = 0;
+    for raw in raws {
+        let Ok(entries) = fs::read_dir(&raw) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let pid = STAGING
+                .iter()
+                .find_map(|p| name.to_str()?.strip_prefix(p)?.parse::<u32>().ok());
+            if let Some(pid) = pid
+                && pid != std::process::id()
+                && !running(pid)
+                && e.file_type().is_ok_and(|t| t.is_file())
+            {
+                fs::remove_file(e.path())?;
+                cleared += 1;
+            }
+        }
+    }
+    Ok(cleared)
+}
+
+/// Whether process `pid` is running, as far as this account can tell.
+fn running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 sends nothing; it only asks whether the process is there.
+    let there = unsafe { libc::kill(pid, 0) } == 0;
+    there || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 /// Restore an archive into `home`, which has none (ADR 0009, issue #149): every blob `manifest`
 /// says it should hold, from `fetch` (which writes a blob's bytes and says whether it had it),
 /// then the manifest itself, so every line names bytes that are in place. Each blob is checked
@@ -751,6 +800,9 @@ pub fn take_into(
     let mut archive = Archive::open_of(home, Some(machine))?;
     create_dir_private(&archive.raw)?;
     let tmp = archive.raw.join(format!(".pulling-{}", std::process::id()));
+    // Folders of blobs already here that this pull has synced: an earlier pull may have renamed
+    // one in and failed before its sync, so it is synced once before a line names it.
+    let mut synced = HashSet::new();
     *t = Transfer {
         since: header.since,
         to: header.since,
@@ -799,6 +851,11 @@ pub fn take_into(
                     let dest = archive.blob_path(sha);
                     if dest.exists() {
                         t.present += 1;
+                        let shard = dest.parent().expect("blob has parent");
+                        if synced.insert(shard.to_path_buf()) {
+                            crate::util::sync_dir(shard)?;
+                            crate::util::sync_dir(&archive.raw)?;
+                        }
                         continue;
                     }
                     out.file.sync_all()?;
@@ -1034,6 +1091,37 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn staging_a_dead_writer_left_is_cleared_and_a_running_ones_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let dead = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            let pid = c.id();
+            c.wait().unwrap();
+            pid
+        };
+        let own = std::process::id();
+        let (raw, nas) = (home.raw_dir_of(None), home.raw_dir_of(Some("nas")));
+        fs::create_dir_all(&raw).unwrap();
+        fs::create_dir_all(&nas).unwrap();
+        let files = [
+            raw.join(format!(".incoming-{dead}")),
+            raw.join(format!(".incoming-{own}")),
+            raw.join(".incoming-x"),
+            nas.join(format!(".pulling-{dead}")),
+            nas.join(format!(".manifest.jsonl.tmp-{dead}")),
+            nas.join("manifest.jsonl"),
+        ];
+        for f in &files {
+            fs::write(f, b"half").unwrap();
+        }
+        assert_eq!(clear_staging(&home).unwrap(), 3);
+        let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
+        assert_eq!(left, [false, true, true, false, false, true]);
     }
 
     #[test]

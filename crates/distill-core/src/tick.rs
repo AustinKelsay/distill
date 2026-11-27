@@ -59,6 +59,11 @@ impl Deadline {
         }
     }
 
+    /// When nothing is carried on any more, if ever.
+    pub fn finish_by(&self) -> Option<Instant> {
+        self.finish_by
+    }
+
     /// The step takes no more sessions.
     pub fn passed(&self) -> bool {
         self.start_by.is_some_and(|at| Instant::now() >= at)
