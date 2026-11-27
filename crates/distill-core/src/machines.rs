@@ -581,6 +581,38 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_spokes_command_is_what_ssh_runs_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, mut config) = hub_of(dir.path());
+        let said = dir.path().join("said");
+        let ssh = fake_ssh(
+            dir.path(),
+            &format!("printf '%s\\n' \"$@\" > '{}'\nexit 255", said.display()),
+        );
+        for (command, runs) in [
+            (None, "distill"),
+            (Some("/opt/bin/distill"), "/opt/bin/distill"),
+        ] {
+            config.machines[0].command = command.map(String::from);
+            over_ssh(
+                &home,
+                &config.machines[0],
+                Want::Check,
+                ssh.to_str().unwrap(),
+                QUIET,
+                None,
+            );
+            let args = fs::read_to_string(&said).unwrap();
+            let args: Vec<&str> = args.lines().collect();
+            assert_eq!(
+                args[args.len() - 2..],
+                ["me@nas", &format!("{runs} export --since 0")]
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_spoke_that_keeps_sending_without_finishing_is_stopped_at_the_time_limit() {
         let dir = tempfile::tempdir().unwrap();
         let (home, config) = hub_of(dir.path());
