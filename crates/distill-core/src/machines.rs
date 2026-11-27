@@ -712,6 +712,11 @@ mod tests {
             ..config.machines[0].clone()
         };
         assert!(format!("{:#}", blank.check().unwrap_err()).contains("not a command"));
+        let spaced = MachineConfig {
+            command: Some(" -oProxyCommand=x".into()),
+            ..config.machines[0].clone()
+        };
+        assert!(format!("{:#}", spaced.check().unwrap_err()).contains("not a command"));
     }
 
     #[cfg(unix)]

@@ -60,7 +60,7 @@ impl MachineConfig {
             anyhow::bail!("{:?} is not a host", self.host);
         }
         if let Some(c) = &self.command
-            && (c.trim().is_empty() || c.starts_with('-'))
+            && (c.trim().is_empty() || c.trim_start().starts_with('-'))
         {
             anyhow::bail!("{c:?} is not a command");
         }
