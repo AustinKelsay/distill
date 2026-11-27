@@ -6,6 +6,7 @@ use std::borrow::Cow;
 
 use distill_core::Harness;
 use distill_core::cards::Outcome;
+use distill_core::home::HUB;
 use distill_core::model::EventKind;
 use distill_core::read::Opening;
 use distill_core::tags;
@@ -18,21 +19,24 @@ use crate::cover;
 use crate::ui::{Paint, ago, count, pill, thousands};
 
 const ANY_HARNESS: &str = "Any harness";
+const ANY_MACHINE: &str = "Any machine";
+/// The hub's own sessions, in the machine filter.
+const THIS_HUB: &str = "This hub";
 const ANY_OUTCOME: &str = "Any outcome";
 /// How many of the tags in use the list shows as chips.
 const TOP_TAGS: usize = 12;
 
 pub fn view(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
-    let st = &s.sessions;
     col()
         .w_full()
         .h_full()
-        .child(header(st, p, layer))
+        .child(header(s, p, layer))
         .child(p.separator())
         .child(results(s, p))
 }
 
-fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
+fn header(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
+    let st = &s.sessions;
     let search = TextInput::new(&st.query)
         .label("Search sessions")
         .placeholder("Words or a description of past work")
@@ -76,6 +80,41 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
             super::search(s);
         })
         .build(&p.k, layer);
+    // On a hub, its spokes and its own sessions; a home without spokes has no machine filter.
+    let spokes: Vec<&str> = s
+        .overview
+        .status
+        .iter()
+        .flat_map(|st| st.machines.iter().map(|m| m.machine.as_str()))
+        .collect();
+    let machine = (!spokes.is_empty() || f.machine.is_some()).then(|| {
+        let names: Vec<&str> = [ANY_MACHINE, THIS_HUB]
+            .into_iter()
+            .chain(spokes.iter().copied())
+            .collect();
+        let current = match f.machine.as_deref() {
+            None => ANY_MACHINE,
+            Some(HUB) => THIS_HUB,
+            Some(m) => m,
+        };
+        Select::new("filter-machine", &names)
+            .label("Machine")
+            .appearance(SelectAppearance::Field)
+            .width(150.0)
+            .current(Some(current))
+            .open(st.menu == Some("filter-machine"))
+            .on_toggle(|s: &mut State| toggle_menu(s, "filter-machine"))
+            .on_close(|s: &mut State| s.sessions.menu = None)
+            .on_choose(|s: &mut State, v: &str, _: &mut Tx| {
+                s.sessions.filters.machine = match v {
+                    ANY_MACHINE => None,
+                    THIS_HUB => Some(HUB.to_string()),
+                    m => Some(m.to_string()),
+                };
+                super::search(s);
+            })
+            .build(&p.k, layer)
+    });
     let outcomes: Vec<&str> = std::iter::once(ANY_OUTCOME)
         .chain(Outcome::ALL.iter().map(|o| outcome_label(*o)))
         .collect();
@@ -103,6 +142,7 @@ fn header(st: &SessionsState, p: &Paint, layer: &mut Vec<El>) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(harness)
+                .children(machine)
                 .child(field(
                     p,
                     "filter-model",
@@ -463,9 +503,11 @@ fn result_row(s: &State, r: &ResultRow, i: usize, p: &Paint) -> El {
     col().w_full().pb(10.0).child(p.k.interactive(item))
 }
 
-/// `Claude Code · /work/app · claude-opus-5-5 · Nov 10 · 6 events`.
+/// `Claude Code · /work/app · claude-opus-5-5 · Nov 10 · 6 events`, after the machine for a
+/// spoke's session.
 pub fn facts_line(s: &State, f: &distill_core::model::SessionMeta) -> String {
-    let mut parts = vec![f.harness.label().to_string()];
+    let mut parts: Vec<String> = f.machine.iter().cloned().collect();
+    parts.push(f.harness.label().to_string());
     if let Some(cwd) = &f.cwd {
         parts.push(cwd.clone());
     }

@@ -914,3 +914,57 @@ fn a_tag_with_a_comma_in_it_filters_whole_and_its_owner_can_hide_it() {
     assert_eq!(place(&rt), None);
     assert!(rt.state.sessions.open.as_ref().unwrap().tag_error.is_none());
 }
+
+/// Copy a folder's files, keeping its layout.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn on_a_hub_the_list_filters_by_machine_and_names_a_spokes_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = archive(dir.path());
+    // The same captures as a spoke's, parsed into sessions of their own.
+    copy_tree(
+        &core.home.raw_dir_of(None),
+        &core.home.raw_dir_of(Some("nas")),
+    );
+    let config = core.home.load_config().unwrap();
+    distill_core::tick::tick_with(&core.home, &config, &core.runtime).unwrap();
+    let mut rt = window(&core);
+    rt.update(|s, _| crate::screens::overview::load(s));
+    run_jobs(&mut rt, &core);
+    assert!(
+        rt.find("filter-machine-trigger").is_some(),
+        "{:?}",
+        texts(&rt)
+    );
+
+    fn pick(rt: &mut Runtime<State>, core: &Core, m: Option<&str>) -> Vec<Option<String>> {
+        rt.update(|s, _| {
+            s.sessions.filters.machine = m.map(str::to_string);
+            sessions::search(s);
+        });
+        run_jobs(rt, core);
+        let r = rt.state.sessions.results.as_ref().unwrap();
+        r.rows.iter().map(|r| r.facts.machine.clone()).collect()
+    }
+    assert_eq!(pick(&mut rt, &core, None).len(), 4);
+    let nas = Some("nas".to_string());
+    assert_eq!(pick(&mut rt, &core, Some("nas")), [nas.clone(), nas]);
+    let all = everything(&rt);
+    assert!(all.contains("nas · Claude Code · /work/"), "{all}");
+    assert_eq!(
+        pick(&mut rt, &core, Some(distill_core::home::HUB)),
+        [None, None]
+    );
+}

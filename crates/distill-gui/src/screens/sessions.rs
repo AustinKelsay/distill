@@ -66,6 +66,8 @@ pub struct SessionsState {
 #[derive(Default)]
 pub struct Filters {
     pub harness: Option<Harness>,
+    /// A spoke's name, or [`distill_core::home::HUB`] for the hub's own sessions.
+    pub machine: Option<String>,
     pub model: TextEdit,
     pub project: TextEdit,
     pub since: TextEdit,
@@ -79,6 +81,7 @@ impl Filters {
         let words = |t: &TextEdit| Some(t.text.trim().to_string()).filter(|s| !s.is_empty());
         Ok(Filter {
             harness: self.harness,
+            machine: self.machine.clone(),
             project: words(&self.project),
             model: words(&self.model),
             since: parse_day(&self.since, "from")?,
@@ -101,6 +104,7 @@ impl Filters {
 
     fn any(&self) -> bool {
         self.harness.is_some()
+            || self.machine.is_some()
             || self.outcome.is_some()
             || [
                 &self.model,

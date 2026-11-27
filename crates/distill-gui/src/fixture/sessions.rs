@@ -225,6 +225,25 @@ pub fn sessions_listed() -> State {
     s
 }
 
+/// On a hub, the list filtered to one spoke's sessions, each saying where it was captured.
+pub fn sessions_on_a_hub() -> State {
+    let mut s = super::hub();
+    s.screen = Screen::Sessions;
+    s.sessions.filters.machine = Some("nas".into());
+    let mut rows = rows();
+    for r in &mut rows {
+        r.facts.machine = Some("nas".into());
+    }
+    s.sessions.results = Some(Results {
+        total: rows.len() as u64,
+        next: None,
+        query: None,
+        notes: Vec::new(),
+        rows,
+    });
+    s
+}
+
 /// A search for "deploy", with the passage it matched.
 pub fn sessions_searched() -> State {
     let mut s = on_sessions();

@@ -1,0 +1,223 @@
+        title: DISTILL
+      text: Your session archive
+      nav: Screens
+        nav-setup: Setup
+        text: Setup
+        nav-overview: Overview
+        text: Overview
+        nav-sessions: Sessions
+        text: Sessions
+        nav-findings: Findings
+        text: Findings
+        nav-approvals: Approvals, 2 waiting
+        text: Approvals
+        text: 2
+        nav-read-log: Read log
+        text: Read log
+        nav-guide: Guide
+        text: Guide
+      text: Overview
+        sweep: Last sweep 12 min ago
+          last-sweep: Last sweep 12 min ago
+        refresh: Refresh
+          label: Refresh
+          text: Sessions
+            value: 5,529
+          text: Raw archive
+            value: 2.6 GB
+          text: Harnesses captured
+            value: 6
+        progress: Progress
+            title: Progress
+          text: Scan for findings
+              value: 5,529 of 5,529 scanned
+              percent: 100%
+            detail: 37 secrets found
+          text: Word index
+              value: 5,490 of 5,529 indexed
+              percent: 99%
+            detail: 39 waiting · 212 MB
+          text: Cards
+              value: 1,212 of 5,300 with a card
+              percent: 22%
+            detail: 4,088 waiting · 6 to retry · qwen-small:4b
+          text: Search by meaning
+              value: 900 of 5,300 with vectors
+              percent: 16%
+            detail: 4,400 waiting · 5.5 MB · embed-text:v1
+          text: Model detection pass
+              value: 640 of 5,529 checked by the model
+              percent: 11%
+            detail: 4,889 waiting · 2 to retry · 88 personal details found · qwen-small:4b
+        backups: Backups
+            title: Backups
+          text: drive
+          text: /Volumes/Backup
+            text: Up to date
+            text: ·
+              when: Last backup 40 min ago
+            verify: Verify
+              label: Verify
+            back-up: Back up now
+              label: Back up now
+          text: share
+          text: /Volumes/Share
+            text: 212 session updates not backed up yet
+            text: ·
+              when: Last backup yesterday
+            verify: Verify
+              label: Verify
+            back-up: Back up now
+              label: Back up now
+        runs: Recent runs
+            title: Recent runs
+            cadence: Hourly · sweep to models
+            when: 40 min ago
+            status: cards: time limit
+            text: cards: time limit
+            text: others OK
+            when: 6 h ago to 1 h ago
+            what: 6 scheduled runs
+            status: cards: time limit
+            text: cards: time limit
+            status: details: time limit
+            text: details: time limit
+            text: others OK
+            when: 7 h ago
+            status: cards: failed
+            text: cards: failed
+            status: details: failed
+            text: details: failed
+            text: others OK
+            failure-0: cards failed: the provider did not answer within 120 seconds
+            failure-1: details failed: the provider did not answer within 120 seconds
+            when: yesterday to 8 h ago
+            what: 24 scheduled runs
+            status: All steps OK
+            text: All steps OK
+            when: yesterday
+            what: Sweep on its own
+            status: OK
+            text: OK
+        reveals: Reveal requests
+            title: Reveal requests
+            message: 2 reveal requests wait for you
+            open-approvals: Open approvals
+              label: Open approvals
+        left: What left this machine
+            title: What left this machine
+            name: Where
+            day: Last day
+            week: Last 7 days
+            name: example-cloud/qwen-large
+            day: 48 reads, 24 sessions, 60 listed
+            week: 410 reads, 205 sessions, 340 listed
+            name: Backup drive
+            day: 24 runs, 3.1 MB
+            week: 168 runs, 41.0 MB
+            name: example-agent/coder
+            day: 0 reads
+            week: 6 reads, 2 sessions
+            name: Stayed on this machine
+            day: 96 reads, 30 sessions
+            week: 702 reads, 260 sessions
+        harnesses: Harnesses
+            title: Harnesses
+            drift: No format drift
+          text: Harness
+          text: Health
+          text: Sessions
+          text: Captures
+          text: Archive
+          text: Last capture
+          text: Drift
+          text: Claude Code
+            health: OK
+            sessions: 4,118
+            captures: 4,212
+            size: 1.8 GB
+            last: 12 min ago
+            drift: 0
+          text: Codex
+            health: OK
+            sessions: 1,090
+            captures: 1,103
+            size: 642 MB
+            last: 12 min ago
+            drift: 0
+          text: OpenCode
+            health: OK
+            sessions: 61
+            captures: 1
+            size: 92.4 MB
+            last: 1 h ago
+            drift: 0
+          text: Droid
+            health: Missing
+            sessions: 0
+            captures: 0
+            size: 0 B
+            last: Not yet
+            drift: 0
+            note: not found on this machine
+          text: Pi
+            health: OK
+            sessions: 46
+            captures: 48
+            size: 12.3 MB
+            last: 2 days ago
+            drift: 0
+          text: T3 Code
+            health: OK
+            sessions: 214
+            captures: 220
+            size: 31.0 MB
+            last: 12 min ago
+            drift: 0
+          off: Not captured: Cursor, Grok, Antigravity, Hermes, Goose.
+        machines: Machines
+            title: Machines
+            machines-note: Spokes this hub pulls captures from over SSH
+          text: Machine
+          text: Health
+          text: Sessions
+          text: Captures
+          text: Archive
+          text: Last capture
+          text: Last pull
+          text: nas
+            health: OK
+            sessions: 212
+            captures: 230
+            size: 48.0 MB
+            last: 20 min ago
+            pulled: 5 min ago
+            note: me@nas.example
+          text: build-box
+            health: Warning
+            sessions: 37
+            captures: 41
+            size: 6.2 MB
+            last: yesterday
+            pulled: yesterday
+            note: me@build-box.example · the last pull failed: ssh me@build-box.example: Connection refused
+        exposure: Exposure
+            title: Exposure
+            outcome: Pass
+            text: Pass
+          text: home is owner-only
+            message: every file and folder in the home is owner-only
+            outcome: Pass
+            text: Pass
+          text: fingerprint key is owner-only
+            message: the fingerprint key is owner-only
+            outcome: Pass
+            text: Pass
+          text: home is not in a synced folder
+            message: the home is not in a synced folder
+            outcome: Not checked
+            text: Not checked
+          text: no network listener
+            message: lsof is not available
+          disk: The disk is encrypted.
+          backups: Backups carry the archive, every secret in it included: keep them encrypted too.
