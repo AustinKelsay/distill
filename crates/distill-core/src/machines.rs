@@ -457,7 +457,13 @@ fn over_ssh(
     match took {
         Ok(()) => {
             let failed = status.as_ref().map_or(true, |s| !s.success());
-            if failed && !stopped {
+            if failed && !stopped && gave_up.load(Ordering::Relaxed) {
+                // What it sent is taken; only its ssh, which the watch stopped, didn't end.
+                pulled.error = Some(format!(
+                    "{} sent everything, but its ssh didn't end, so it was stopped",
+                    m.host
+                ));
+            } else if failed && !stopped {
                 pulled.error = Some(match last {
                     Some(l) => format!("ssh {}: {l}", m.host),
                     None => format!("ssh {} failed", m.host),
@@ -599,6 +605,36 @@ mod tests {
         assert_eq!(waiting, None);
         let e = p.error.unwrap();
         assert!(e.contains("still sending at the check's time limit"), "{e}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_spoke_whose_ssh_doesnt_end_after_a_whole_export_says_so() {
+        use sha2::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let empty = hex::encode(sha2::Sha256::digest(b""));
+        // Everything there is, then ssh stays open.
+        let body = format!(
+            "printf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\nend\\n'\nexec sleep 30"
+        );
+        let ssh = fake_ssh(dir.path(), &body);
+        // Stopped once quiet, and once at the time limit.
+        let second = Duration::from_secs(1);
+        for (quiet, overrun) in [(second, QUIET), (QUIET, second)] {
+            let start = Instant::now();
+            let p = pull_one(
+                &home,
+                &config.machines[0],
+                Deadline::after(Duration::from_millis(200)),
+                ssh.to_str().unwrap(),
+                quiet,
+                overrun,
+            );
+            assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
+            let e = p.error.unwrap();
+            assert!(e.contains("sent everything, but its ssh didn't end"), "{e}");
+        }
     }
 
     #[test]
