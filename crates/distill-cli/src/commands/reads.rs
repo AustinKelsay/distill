@@ -42,6 +42,9 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
                 e.reader.to_string(),
                 e.session.as_deref().unwrap_or(match e.result {
                     ReadResult::Listed { .. } => "(a list of sessions)",
+                    ReadResult::StreamStarted { .. } | ReadResult::StreamCompleted { .. } => {
+                        "(structured stream)"
+                    }
                     ReadResult::Findings { .. } => "(findings)",
                     ReadResult::Tags { .. } => "(tags)",
                     _ => "-",

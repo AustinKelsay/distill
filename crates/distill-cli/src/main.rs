@@ -1,5 +1,5 @@
 //! `distill`: the command line. Each command is its own module under `commands/` and holds no
-//! logic of its own; the work is in distill-core. Only `read`, `search`, `tags` and
+//! logic of its own; the work is in distill-core. Only `list`, `read`, `search`, `tags` and
 //! `reveal collect` print session text or secret values, and only through the read path; and
 //! `export`, on a spoke, writes its captures for the hub's pull (ADR 0010).
 
@@ -64,7 +64,9 @@ enum Cmd {
     Backup(backup::Args),
     /// Bring a backup back into an empty home, with its backup key
     Restore(restore::Args),
-    /// Read a session's events as a model at a named provider
+    /// List sessions matching filters, newest first, as a model at a named provider
+    List(list::Args),
+    /// Read one or more sessions' events as a model at a named provider
     Read(read::Args),
     /// The read log: who read which session, and what they got
     Reads(reads::Args),
@@ -118,6 +120,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Providers(a) => providers::run(&ctx, a),
         Cmd::Backup(a) => backup::run(&ctx, a),
         Cmd::Restore(a) => restore::run(&ctx, a),
+        Cmd::List(a) => list::run(&ctx, a),
         Cmd::Read(a) => read::run(&ctx, a),
         Cmd::Reads(a) => reads::run(&ctx, a),
         Cmd::Search(a) => search::run(&ctx, a),

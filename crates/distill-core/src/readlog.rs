@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::home::Home;
 use crate::runtime::LocalRuntime;
 use crate::trust::{Reader, Trust};
-use crate::util::{count, create_dir_private, private_file, read_jsonl, set_private};
+use crate::util::{count, create_dir_private, private_file, read_jsonl, set_private, sync_dir};
 
 /// One line of the read log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +72,23 @@ pub enum ReadResult {
     },
     /// The tags in use: this many tags, counted on this many sessions' cards.
     Tags { tags: u64, sessions: u64 },
+    /// A multi-session structured read started (ADR 0011); paired with
+    /// [`ReadResult::StreamCompleted`] by `batch_id`.
+    StreamStarted {
+        batch_id: String,
+        placeholders: String,
+        requested: u64,
+    },
+    /// A multi-session structured read finished or stopped early (ADR 0011); paired with
+    /// [`ReadResult::StreamStarted`] by `batch_id`.
+    StreamCompleted {
+        batch_id: String,
+        placeholders: String,
+        sessions: u64,
+        events: u64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stopped_early: bool,
+    },
     /// Nothing, and why.
     Refused { reason: String },
     /// Nothing: the read path failed before it could decide.
@@ -118,11 +135,14 @@ pub(crate) fn append(home: &Home, runtime: Option<&LocalRuntime>, entry: &ReadEn
     let via = runtime
         .and_then(|rt| Trust::ollama_via(&entry.reader, rt))
         .map(str::to_string);
+    // Hold the reads lock across directory creation, torn-tail recovery, append, and directory
+    // syncs so concurrent writers or retries after a failed sync cannot bypass durability.
+    let _lock = home.lock("reads")?;
     let dir = home.log_dir();
     create_dir_private(&dir)?;
     set_private(&dir);
     let path = home.read_log_path();
-    let _lock = home.lock("reads")?;
+    trim_torn_tail(&path)?;
     let entry = serde_json::to_string(&Logged {
         entry: entry.clone(),
         via,
@@ -138,6 +158,46 @@ pub(crate) fn append(home: &Home, runtime: Option<&LocalRuntime>, entry: &ReadEn
     f.write_all(line.as_bytes())?;
     f.sync_data()?;
     set_private(&path);
+    sync_dir(&dir)?;
+    sync_dir(&home.root)?;
+    Ok(())
+}
+
+/// Truncate any incomplete trailing fragment left without a terminating newline (e.g. a crash
+/// mid-append) before appending a new chained line, so the next entry is never swallowed into a
+/// malformed line. Must be called under the `reads` lock.
+fn trim_torn_tail(path: &Path) -> Result<()> {
+    let mut f = match fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(());
+    }
+    f.seek(SeekFrom::Start(len - 1))?;
+    let mut last = [0u8; 1];
+    f.read_exact(&mut last)?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+    let mut end = len;
+    let mut clean_len = 0u64;
+    let mut buf = [0u8; 4096];
+    while end > 0 {
+        let start = end.saturating_sub(buf.len() as u64);
+        let n = (end - start) as usize;
+        f.seek(SeekFrom::Start(start))?;
+        f.read_exact(&mut buf[..n])?;
+        if let Some(pos) = buf[..n].iter().rposition(|b| *b == b'\n') {
+            clean_len = start + pos as u64 + 1;
+            break;
+        }
+        end = start;
+    }
+    f.set_len(clean_len)?;
+    f.sync_data()?;
     Ok(())
 }
 
@@ -399,17 +459,29 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
             .map(|t| t.with_timezone(&Utc))
             .filter(|t| *t >= week && *t <= now)
     };
-    // Per place: the counts, and the sessions seen in each span.
-    type Tally = (Spans, BTreeSet<String>, BTreeSet<String>);
+    // Per place: the counts, and the sessions seen in each span (plus batched stream session totals).
+    #[derive(Default)]
+    struct Tally {
+        spans: Spans,
+        week_sessions: BTreeSet<String>,
+        day_sessions: BTreeSet<String>,
+        streamed_week: u64,
+        streamed_day: u64,
+    }
     let mut places: BTreeMap<(String, PlaceKind), Tally> = BTreeMap::new();
-    let mut here: Tally = Default::default();
+    let mut here = Tally::default();
     for Logged { entry: e, via } in read_jsonl::<Logged>(&home.read_log_path())? {
         let Some(t) = when(&e.at) else { continue };
         let mut listed = 0;
+        let mut streamed_sessions = 0;
         let session = match &e.result {
             ReadResult::Served { .. } | ReadResult::RevealCollected { .. } => e.session.clone(),
             ReadResult::Listed { sessions } => {
                 listed = *sessions;
+                None
+            }
+            ReadResult::StreamCompleted { sessions, .. } if *sessions > 0 => {
+                streamed_sessions = *sessions;
                 None
             }
             ReadResult::Tags { .. } | ReadResult::Findings { .. } | ReadResult::Indexed { .. } => {
@@ -451,17 +523,19 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
             _ => &mut here,
         };
         let recent = t >= day;
-        tally.0.week.times += 1;
-        tally.0.week.listed += listed;
+        tally.spans.week.times += 1;
+        tally.spans.week.listed += listed;
+        tally.streamed_week += streamed_sessions;
         if recent {
-            tally.0.day.times += 1;
-            tally.0.day.listed += listed;
+            tally.spans.day.times += 1;
+            tally.spans.day.listed += listed;
+            tally.streamed_day += streamed_sessions;
         }
         if let Some(s) = session {
             if recent {
-                tally.2.insert(s.clone());
+                tally.day_sessions.insert(s.clone());
             }
-            tally.1.insert(s);
+            tally.week_sessions.insert(s);
         }
     }
     let backups: Vec<crate::backup::BackupReport> = read_jsonl(&home.backup_log_path())?;
@@ -471,7 +545,10 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
         let tally = places
             .entry((r.target.clone(), PlaceKind::Backup))
             .or_default();
-        for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
+        for (sent, inside) in [
+            (&mut tally.spans.week, true),
+            (&mut tally.spans.day, t >= day),
+        ] {
             if inside {
                 sent.times += u64::from(r.ok);
                 sent.bytes += r.bytes_sent;
@@ -487,17 +564,20 @@ pub fn left(home: &Home, now: DateTime<Utc>, stored_here: &dyn Fn(&str) -> bool)
     {
         let Some(t) = when(&x.at) else { continue };
         let tally = places.entry(("hub".into(), PlaceKind::Hub)).or_default();
-        for (sent, inside) in [(&mut tally.0.week, true), (&mut tally.0.day, t >= day)] {
+        for (sent, inside) in [
+            (&mut tally.spans.week, true),
+            (&mut tally.spans.day, t >= day),
+        ] {
             if inside {
                 sent.times += u64::from(x.error.is_none());
                 sent.bytes += x.sent.bytes;
             }
         }
     }
-    let spans = |(mut s, week, day): Tally| {
-        s.week.sessions = week.len() as u64;
-        s.day.sessions = day.len() as u64;
-        s
+    let spans = |mut t: Tally| {
+        t.spans.week.sessions = t.week_sessions.len() as u64 + t.streamed_week;
+        t.spans.day.sessions = t.day_sessions.len() as u64 + t.streamed_day;
+        t.spans
     };
     let mut places: Vec<Place> = places
         .into_iter()
@@ -558,6 +638,30 @@ impl ReadResult {
                 "listed {} on {}",
                 count(*tags, "tag"),
                 count(*sessions, "session")
+            ),
+            ReadResult::StreamStarted {
+                batch_id,
+                placeholders,
+                requested,
+            } => format!(
+                "stream {batch_id} started ({placeholders}, {} requested)",
+                count(*requested, "session")
+            ),
+            ReadResult::StreamCompleted {
+                batch_id,
+                placeholders,
+                sessions,
+                events,
+                stopped_early,
+            } => format!(
+                "stream {batch_id} {} ({placeholders}): {}, {}",
+                if *stopped_early {
+                    "stopped early"
+                } else {
+                    "completed"
+                },
+                count(*sessions, "session"),
+                count(*events, "event")
             ),
             ReadResult::Refused { reason } => format!("refused: {reason}"),
             ReadResult::Failed { error } => format!("failed: {error}"),
@@ -1057,9 +1161,167 @@ mod tests {
                 },
                 "failed: boom",
             ),
+            (
+                ReadResult::StreamStarted {
+                    batch_id: "deadbeef".into(),
+                    placeholders: "secrets".into(),
+                    requested: 3,
+                },
+                "stream deadbeef started (secrets, 3 sessions requested)",
+            ),
+            (
+                ReadResult::StreamCompleted {
+                    batch_id: "deadbeef".into(),
+                    placeholders: "secrets".into(),
+                    sessions: 2,
+                    events: 5,
+                    stopped_early: false,
+                },
+                "stream deadbeef completed (secrets): 2 sessions, 5 events",
+            ),
+            (
+                ReadResult::StreamCompleted {
+                    batch_id: "deadbeef".into(),
+                    placeholders: "secrets".into(),
+                    sessions: 1,
+                    events: 2,
+                    stopped_early: true,
+                },
+                "stream deadbeef stopped early (secrets): 1 session, 2 events",
+            ),
         ];
         for (r, want) in cases {
             assert_eq!(r.text(), want);
         }
+    }
+
+    #[test]
+    fn left_ignores_zero_session_stream_batches_and_counts_served_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let now_str = "2026-11-27T12:00:00Z";
+        let now: DateTime<Utc> = now_str.parse().unwrap();
+        let reader = Reader::model(Some("ollama"), Some("small:8b"));
+        append(
+            &home,
+            None,
+            &ReadEntry {
+                at: now_str.into(),
+                reader: reader.clone(),
+                session: None,
+                result: ReadResult::StreamStarted {
+                    batch_id: "empty1".into(),
+                    placeholders: "secrets".into(),
+                    requested: 2,
+                },
+            },
+        )
+        .unwrap();
+        append(
+            &home,
+            None,
+            &ReadEntry {
+                at: now_str.into(),
+                reader: reader.clone(),
+                session: None,
+                result: ReadResult::StreamCompleted {
+                    batch_id: "empty1".into(),
+                    placeholders: "secrets".into(),
+                    sessions: 0,
+                    events: 0,
+                    stopped_early: false,
+                },
+            },
+        )
+        .unwrap();
+        let report = left(&home, now, &|_| true).unwrap();
+        assert_eq!(report.here.day.times, 0);
+        assert_eq!(report.here.day.sessions, 0);
+
+        append(
+            &home,
+            None,
+            &ReadEntry {
+                at: now_str.into(),
+                reader,
+                session: None,
+                result: ReadResult::StreamCompleted {
+                    batch_id: "real1".into(),
+                    placeholders: "secrets".into(),
+                    sessions: 2,
+                    events: 7,
+                    stopped_early: false,
+                },
+            },
+        )
+        .unwrap();
+        let report = left(&home, now, &|_| true).unwrap();
+        assert_eq!(report.here.day.times, 1);
+        assert_eq!(report.here.day.sessions, 2);
+    }
+
+    #[test]
+    fn append_recovers_from_torn_tail_without_swallowing_the_next_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let reader = Reader::model(Some("ollama"), Some("small:8b"));
+
+        // Case 1: torn first line with no newline at all.
+        create_dir_private(&home.log_dir()).unwrap();
+        fs::write(home.read_log_path(), b"{\"prev\":\"torn").unwrap();
+        append(
+            &home,
+            None,
+            &ReadEntry {
+                at: "2026-11-27T12:00:00Z".into(),
+                reader: reader.clone(),
+                session: None,
+                result: ReadResult::StreamStarted {
+                    batch_id: "b1".into(),
+                    placeholders: "secrets".into(),
+                    requested: 2,
+                },
+            },
+        )
+        .unwrap();
+        let entries = list(&home, None, 10).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            entries[0].result,
+            ReadResult::StreamStarted { ref batch_id, .. } if batch_id == "b1"
+        ));
+        assert_eq!(verify(&home).unwrap().broken, None);
+
+        // Case 2: torn tail after an existing valid chained line.
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(home.read_log_path())
+            .unwrap();
+        f.write_all(b"{\"prev\":\"half").unwrap();
+        drop(f);
+        append(
+            &home,
+            None,
+            &ReadEntry {
+                at: "2026-11-27T12:00:01Z".into(),
+                reader,
+                session: None,
+                result: ReadResult::StreamStarted {
+                    batch_id: "b2".into(),
+                    placeholders: "secrets".into(),
+                    requested: 3,
+                },
+            },
+        )
+        .unwrap();
+        let entries = list(&home, None, 10).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(
+            entries[0].result,
+            ReadResult::StreamStarted { ref batch_id, .. } if batch_id == "b2"
+        ));
+        assert_eq!(verify(&home).unwrap().broken, None);
     }
 }

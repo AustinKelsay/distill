@@ -254,3 +254,206 @@ fn the_read_log_lists_every_call_newest_first_by_reader() {
     let log = fs::read_to_string(m.home.join("log/reads.jsonl")).unwrap();
     no_session_text(&log);
 }
+
+#[test]
+fn list_keys_pipes_into_structured_jsonl_read_and_preserves_legacy_text_and_json() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let user = tmp.path().join("user");
+    fs::create_dir_all(user.join("bin")).unwrap();
+    let home = tmp.path().join("home");
+    let claude = tmp.path().join("claude");
+    fs::create_dir_all(claude.join("proj")).unwrap();
+    let secret = format!("{}{}", "sk-ant-", "api03-9999999999abcdefghij1234567890");
+    fs::write(
+        claude.join("proj/s1.jsonl"),
+        format!(
+            "{{\"type\":\"user\",\"cwd\":\"/work/app\",\"timestamp\":\"2026-11-10T10:00:00Z\",\"message\":{{\"role\":\"user\",\"content\":\"first session {secret}\"}}}}\n\
+             {{\"type\":\"assistant\",\"timestamp\":\"2026-11-10T10:00:05Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"m\",\"content\":[{{\"type\":\"text\",\"text\":\"ok\"}}]}}}}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        claude.join("proj/s2.jsonl"),
+        "{\"type\":\"user\",\"cwd\":\"/work/app\",\"timestamp\":\"2026-11-10T11:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"second session\"}}\n",
+    )
+    .unwrap();
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let m = Machine {
+        user,
+        home,
+        no_runtime: closed.to_string(),
+        _tmp: tmp,
+    };
+    m.ok(&["init"], &[]);
+    let config = format!(
+        "[[harnesses]]\nkind = \"claude-code\"\nenabled = true\nroots = [\"{}\"]\n",
+        claude.display()
+    );
+    fs::write(m.home.join("config.toml"), config).unwrap();
+    m.ok(&["sweep"], &[]);
+    m.ok(&["parse"], &[]);
+    m.ok(&["scan"], &[]);
+
+    // Legacy `distill --json read s2` keeps `{"text": "..."}` with notices.
+    let legacy: Value =
+        serde_json::from_str(&m.ok(&["--json", "read", "s2", "--provider", "ollama"], &[]))
+            .unwrap();
+    assert!(
+        legacy["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("=== Archived session from DISTILL")
+    );
+
+    // `distill list --all --keys` prints one key per line, newest first.
+    let keys_out = m.ok(&["list", "--provider", "ollama", "--all", "--keys"], &[]);
+    let keys: Vec<&str> = keys_out.lines().collect();
+    assert_eq!(keys, ["claude-code/s2", "claude-code/s1"]);
+
+    // Pipe keys into `distill read --provider ollama --format jsonl --stdin`.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_distill"))
+        .env("HOME", &m.user)
+        .env("PATH", m.user.join("bin"))
+        .env("OLLAMA_HOST", &m.no_runtime)
+        .env_remove("OLLAMA_MODELS")
+        .env_remove("DISTILL_HOME")
+        .env_remove("DISTILL_PROVIDER")
+        .env_remove("DISTILL_MODEL")
+        .args([
+            "--home",
+            m.home.to_str().unwrap(),
+            "read",
+            "--provider",
+            "ollama",
+            "--format",
+            "jsonl",
+            "--stdin",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(keys_out.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "jsonl stream failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains(&secret), "secret leaked:\n{stdout}");
+    assert!(!stdout.contains("=== Archived session from DISTILL"));
+    let records: Vec<Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["schema_version"], 1);
+    assert_eq!(records[0]["session"], "claude-code/s2");
+    assert_eq!(records[1]["session"], "claude-code/s1");
+    assert!(
+        records[1]["events"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("[secret:")
+    );
+
+    // Reject `--from` with multi-session `--stdin`, while allowing single-key `--stdin`.
+    let mut multi_range = Command::new(env!("CARGO_BIN_EXE_distill"))
+        .env("HOME", &m.user)
+        .env("PATH", m.user.join("bin"))
+        .env("OLLAMA_HOST", &m.no_runtime)
+        .env_remove("OLLAMA_MODELS")
+        .env_remove("DISTILL_HOME")
+        .env_remove("DISTILL_PROVIDER")
+        .env_remove("DISTILL_MODEL")
+        .args([
+            "--home",
+            m.home.to_str().unwrap(),
+            "read",
+            "--provider",
+            "ollama",
+            "--format",
+            "jsonl",
+            "--stdin",
+            "--from",
+            "0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    multi_range
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(keys_out.as_bytes())
+        .unwrap();
+    let mr_out = multi_range.wait_with_output().unwrap();
+    assert!(!mr_out.status.success());
+    let mr_err = String::from_utf8_lossy(&mr_out.stderr);
+    assert!(mr_err.contains("--from and --to"), "{mr_err}");
+
+    let mut single_range = Command::new(env!("CARGO_BIN_EXE_distill"))
+        .env("HOME", &m.user)
+        .env("PATH", m.user.join("bin"))
+        .env("OLLAMA_HOST", &m.no_runtime)
+        .env_remove("OLLAMA_MODELS")
+        .env_remove("DISTILL_HOME")
+        .env_remove("DISTILL_PROVIDER")
+        .env_remove("DISTILL_MODEL")
+        .args([
+            "--home",
+            m.home.to_str().unwrap(),
+            "read",
+            "--provider",
+            "ollama",
+            "--format",
+            "jsonl",
+            "--stdin",
+            "--from",
+            "1",
+            "--to",
+            "1",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    single_range
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"claude-code/s1\n")
+        .unwrap();
+    let sr_out = single_range.wait_with_output().unwrap();
+    assert!(
+        sr_out.status.success(),
+        "single-key stdin with range failed: {}",
+        String::from_utf8_lossy(&sr_out.stderr)
+    );
+    let sr_rec: Value = serde_json::from_slice(&sr_out.stdout).unwrap();
+    assert_eq!(sr_rec["events"].as_array().unwrap().len(), 1);
+    assert_eq!(sr_rec["events"][0]["seq"], 1);
+
+    // Untrusted provider on `distill list` is refused cleanly.
+    let (ok, out, err) = m.run(
+        &["list", "--provider", "unheard-of", "--all", "--keys"],
+        &[],
+    );
+    assert!(!ok && out.is_empty() && err.contains("distill providers add unheard-of --trusted"));
+}
