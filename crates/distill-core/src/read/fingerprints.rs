@@ -604,8 +604,10 @@ mod tests {
                 harness_version: None,
                 started_at: Some(s.started.into()),
                 ended_at: Some(s.ended.into()),
+                duration_secs: crate::model::duration_secs(Some(s.started), Some(s.ended)),
                 parent_session: None,
                 counts: Counts::of(&events),
+                tools: crate::model::tools_of(&events),
                 raw: RawRef {
                     origin: format!("/s/{}.jsonl", s.id),
                     sha256: "0".repeat(64),

@@ -138,8 +138,9 @@ fn drift_suspect(rec: &CaptureRecord) -> bool {
 
 /// The session-facts version. Bump when what the parse step derives beyond the parsers changes;
 /// every session is parsed again. 4: the title and the git outcome were removed. 5: the record
-/// types each capture's parser skipped are kept (`NormalizeState::unknown`).
-pub const META_VERSION: u32 = 5;
+/// types each capture's parser skipped are kept (`NormalizeState::unknown`). 6: parse-time shape
+/// stats (`Counts` reasoning/byte totals, `SessionMeta::duration_secs`, `SessionMeta::tools`).
+pub const META_VERSION: u32 = 6;
 
 /// Per-origin result of the last normalize, so unchanged captures are skipped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -534,6 +535,8 @@ fn normalize_one(
     let parent_session = parsed
         .parent_session
         .map(|p| if p.contains('/') { on_machine(p) } else { p });
+    let duration_secs = crate::model::duration_secs(started_at.as_deref(), ended_at.as_deref());
+    let tools = crate::model::tools_of(&events);
     let meta = SessionMeta {
         machine: machine.map(str::to_string),
         harness: rec.harness,
@@ -544,8 +547,10 @@ fn normalize_one(
         harness_version: parsed.harness_version,
         started_at,
         ended_at,
+        duration_secs,
         parent_session,
         counts: Counts::of(&events),
+        tools,
         raw: RawRef {
             origin: rec.origin.clone(),
             sha256: rec.capture_hash.clone(),

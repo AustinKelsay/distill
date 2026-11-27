@@ -30,7 +30,9 @@ impl Tool for SearchSessions {
              summary, tags and an outcome, written by a model) or, with no card yet, the \
              opening of what the owner first wrote, and the passage that matched. Filter by \
              harness, machine, project (a folder; sessions in it and below), model (part of its name), \
-             start date, and the card's tag and outcome. At most {PAGE_MAX} results per call \
+             start date, the card's tag and outcome, exclusions (exclude_tag, exclude_project, \
+             exclude_harness), and session shape (has_reasoning, min_turns, max_turns, \
+             min_tool_calls, max_bytes, tool). At most {PAGE_MAX} results per call \
              ({SEARCH_DEFAULT} unless asked); the first line says how many match and the offset \
              where the next page starts. Mirrors of sessions already in the archive, and \
              sessions the previous build's steward ran, are left out unless asked for. Secrets \

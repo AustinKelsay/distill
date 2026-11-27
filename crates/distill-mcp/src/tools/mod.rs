@@ -91,9 +91,14 @@ fn number(args: &Value, name: &str) -> Result<Option<u64>, String> {
 
 /// The argument `name` as true or false, false when not given.
 fn flag(args: &Value, name: &str) -> Result<bool, String> {
+    Ok(opt_flag(args, name)?.unwrap_or(false))
+}
+
+/// The argument `name` as true or false, when given.
+fn opt_flag(args: &Value, name: &str) -> Result<Option<bool>, String> {
     match args.get(name) {
-        None | Some(Value::Null) => Ok(false),
-        Some(Value::Bool(b)) => Ok(*b),
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
         Some(other) => Err(format!("{name} must be true or false, not {other}")),
     }
 }
