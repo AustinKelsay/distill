@@ -484,6 +484,8 @@ fn machines(
                     labels.join(", ")
                 )),
             )
+        } else if last_pull.is_none() && harnesses.is_empty() && host.is_some() {
+            (Health::Warn, Some("never pulled".into()))
         } else if last_pull.is_none() && harnesses.is_empty() {
             (Health::Missing, Some("not pulled from yet".into()))
         } else {
@@ -934,6 +936,37 @@ mod tests {
         let last = chrono::DateTime::parse_from_rfc3339(nas.last_pull.as_deref().unwrap()).unwrap();
         let days = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_days();
         assert_eq!(days, 30, "{nas:?}");
+    }
+
+    #[test]
+    fn a_spoke_in_the_config_never_pulled_warns_but_one_with_captures_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let spoke = |name: &str| crate::config::MachineConfig {
+            name: name.into(),
+            host: format!("me@{name}"),
+            command: None,
+        };
+        let config = Config {
+            machines: vec![spoke("nas"), spoke("box")],
+            ..Config::default()
+        };
+        config.save(&home.config_path()).unwrap();
+        // box's captures came another way, as a restored hub's do: its run log isn't restored.
+        let capture = br#"{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}
+"#;
+        Archive::open_of(&home, Some("box"))
+            .unwrap()
+            .put(Harness::ClaudeCode, "/x/-w/s1.jsonl", "1", &capture[..])
+            .unwrap();
+        let s = status(&home).unwrap();
+        let of = |m: &str| s.machines.iter().find(|x| x.machine == m).unwrap();
+        assert_eq!(
+            (of("nas").health, of("nas").note.as_deref()),
+            (Health::Warn, Some("never pulled"))
+        );
+        assert_eq!(of("box").health, Health::Ok, "{:?}", of("box"));
     }
 
     #[test]
