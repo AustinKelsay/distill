@@ -154,6 +154,7 @@ pub fn pull(
             }
         }
     };
+    crate::archive::clear_staging(home);
     let mut report = PullReport::default();
     for m in config
         .machines
@@ -163,7 +164,7 @@ pub fn pull(
         if deadline.passed() {
             break;
         }
-        let mut pulled = pull_one(home, m, deadline, "ssh", QUIET);
+        let mut pulled = pull_one(home, m, deadline, "ssh", QUIET, OVERRUN);
         // To the millisecond, so a pull by hand that ends just after a tick's sorts after it.
         pulled.at = Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         report.machines.push(pulled);
@@ -237,7 +238,7 @@ pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
     if home.spoke()?.is_some() {
         bail!("a spoke pulls from no machine: it only captures");
     }
-    let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET);
+    let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET, Some(CHECK_LIMIT));
     match (pulled.error, waiting) {
         (Some(e), _) => bail!(e),
         (None, Some(true)) => Ok(format!(
@@ -254,6 +255,14 @@ pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
 /// How long a check waits for the spoke's first bytes.
 const CHECK_QUIET: Duration = Duration::from_secs(20);
 
+/// How long a check may take in all: a spoke that keeps sending without finishing its header
+/// is never quiet.
+const CHECK_LIMIT: Duration = Duration::from_secs(30);
+
+/// How long a tick's pull may run past the tick's end while a capture is still coming, before
+/// it is stopped mid-capture; the next pull goes on from the last whole one.
+const OVERRUN: Duration = Duration::from_secs(60);
+
 /// What a run of the export over SSH is for.
 enum Want {
     /// Take its captures, stopping between two at the deadline.
@@ -268,8 +277,12 @@ fn pull_one(
     deadline: Deadline,
     ssh: &str,
     quiet: Duration,
+    overrun: Duration,
 ) -> Pulled {
-    over_ssh(home, m, Want::Take(deadline), ssh, quiet).0
+    let limit = deadline
+        .finish_by()
+        .map(|t| t.saturating_duration_since(Instant::now()) + overrun);
+    over_ssh(home, m, Want::Take(deadline), ssh, quiet, limit).0
 }
 
 /// Run `m`'s export over SSH for `want`: what a pull took, or why it failed, and for a check
@@ -280,7 +293,10 @@ fn over_ssh(
     want: Want,
     ssh: &str,
     quiet: Duration,
+    limit: Option<Duration>,
 ) -> (Pulled, Option<bool>) {
+    let until = limit.map(|l| Instant::now() + l);
+    let checking = matches!(want, Want::Check);
     let mut pulled = Pulled {
         machine: m.name.clone(),
         at: None,
@@ -337,7 +353,8 @@ fn over_ssh(
         })
     };
     let seen = Arc::new(AtomicU64::new(0));
-    let (done, gave_up) = (
+    let (done, gave_up, overran) = (
+        Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
     );
@@ -346,16 +363,27 @@ fn over_ssh(
         seen: seen.clone(),
         gave_up: gave_up.clone(),
     });
-    // An export that sends nothing for `quiet` is stopped, so a spoke that hangs holds neither
-    // the tick nor the archive lock.
+    // An export that sends nothing for `quiet`, or still sends at `until`, is stopped, so a
+    // spoke that hangs or trickles holds neither the tick nor the archive lock.
     let child = Arc::new(Mutex::new(child));
     let watch = {
-        let (child, done, gave_up) = (child.clone(), done.clone(), gave_up.clone());
+        let (child, done, gave_up, overran) = (
+            child.clone(),
+            done.clone(),
+            gave_up.clone(),
+            overran.clone(),
+        );
         std::thread::spawn(move || {
             let (mut bytes, mut since_bytes) = (0, Instant::now());
             while !done.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(100));
                 let now = seen.load(Ordering::Relaxed);
+                if until.is_some_and(|t| Instant::now() >= t) {
+                    overran.store(true, Ordering::Relaxed);
+                    gave_up.store(true, Ordering::Relaxed);
+                    let _ = child.lock().map(|mut c| c.kill());
+                    return;
+                }
                 if now != bytes {
                     (bytes, since_bytes) = (now, Instant::now());
                 } else if since_bytes.elapsed() >= quiet {
@@ -401,6 +429,18 @@ fn over_ssh(
     }
     let said =
         String::from_utf8_lossy(&said.lock().map(|s| s.clone()).unwrap_or_default()).into_owned();
+    if took.is_err() && overran.load(Ordering::Relaxed) {
+        pulled.error = Some(if checking {
+            format!("{} was still sending at the check's time limit", m.host)
+        } else {
+            format!(
+                "{} was still sending at the pull's time limit, so it stopped: the next pull \
+                 goes on from the last whole capture",
+                m.host
+            )
+        });
+        return (pulled, None);
+    }
     if took.is_err() && gave_up.load(Ordering::Relaxed) {
         pulled.error = Some(format!(
             "{} sent nothing for {}s, so the pull stopped",
@@ -417,7 +457,13 @@ fn over_ssh(
     match took {
         Ok(()) => {
             let failed = status.as_ref().map_or(true, |s| !s.success());
-            if failed && !stopped {
+            if !stopped && gave_up.load(Ordering::Relaxed) && status.as_ref().is_ok_and(killed) {
+                // What it sent is taken; only its ssh, which the watch stopped, didn't end.
+                pulled.error = Some(format!(
+                    "{} sent everything, but its ssh didn't end, so it was stopped",
+                    m.host
+                ));
+            } else if failed && !stopped {
                 pulled.error = Some(match last {
                     Some(l) => format!("ssh {}: {l}", m.host),
                     None => format!("ssh {} failed", m.host),
@@ -437,6 +483,12 @@ fn over_ssh(
         }
     }
     (pulled, waiting)
+}
+
+/// Whether ssh ended because the watch killed it, not on its own.
+fn killed(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(libc::SIGKILL)
 }
 
 #[cfg(test)]
@@ -503,7 +555,7 @@ mod tests {
         let check = |body: &str| {
             let ssh = fake_ssh(dir.path(), body);
             let start = Instant::now();
-            let r = over_ssh(&home, m, Want::Check, ssh.to_str().unwrap(), QUIET);
+            let r = over_ssh(&home, m, Want::Check, ssh.to_str().unwrap(), QUIET, None);
             assert!(start.elapsed() < Duration::from_secs(10), "{r:?}");
             r
         };
@@ -523,6 +575,72 @@ mod tests {
             p.error.unwrap(),
             "ssh me@nas: ssh: connect to host nas port 22: Connection refused"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_spoke_that_keeps_sending_without_finishing_is_stopped_at_the_time_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let m = &config.machines[0];
+        // A byte at a time, never a whole frame, so it is never quiet.
+        let ssh = fake_ssh(dir.path(), "while :; do printf d; sleep 0.05; done");
+        let ssh = ssh.to_str().unwrap();
+        let start = Instant::now();
+        let p = pull_one(
+            &home,
+            m,
+            Deadline::after(Duration::from_millis(200)),
+            ssh,
+            QUIET,
+            Duration::from_millis(300),
+        );
+        assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
+        let e = p.error.unwrap();
+        assert!(e.contains("still sending at the pull's time limit"), "{e}");
+        let start = Instant::now();
+        let (p, waiting) = over_ssh(
+            &home,
+            m,
+            Want::Check,
+            ssh,
+            QUIET,
+            Some(Duration::from_millis(500)),
+        );
+        assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
+        assert_eq!(waiting, None);
+        let e = p.error.unwrap();
+        assert!(e.contains("still sending at the check's time limit"), "{e}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_spoke_whose_ssh_doesnt_end_after_a_whole_export_says_so() {
+        use sha2::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let empty = hex::encode(sha2::Sha256::digest(b""));
+        // Everything there is, then ssh stays open.
+        let body = format!(
+            "printf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\nend\\n'\nexec sleep 30"
+        );
+        let ssh = fake_ssh(dir.path(), &body);
+        // Stopped once quiet, and once at the time limit.
+        let second = Duration::from_secs(1);
+        for (quiet, overrun) in [(second, QUIET), (QUIET, second)] {
+            let start = Instant::now();
+            let p = pull_one(
+                &home,
+                &config.machines[0],
+                Deadline::after(Duration::from_millis(200)),
+                ssh.to_str().unwrap(),
+                quiet,
+                overrun,
+            );
+            assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
+            let e = p.error.unwrap();
+            assert!(e.contains("sent everything, but its ssh didn't end"), "{e}");
+        }
     }
 
     #[test]
@@ -575,6 +693,7 @@ mod tests {
             Deadline::NONE,
             ssh.to_str().unwrap(),
             Duration::from_millis(500),
+            OVERRUN,
         );
         assert!(start.elapsed() < Duration::from_secs(10), "{p:?}");
         assert!(p.error.unwrap().contains("sent nothing"));

@@ -170,7 +170,7 @@ impl Archive {
     ) -> Result<Option<CaptureRecord>> {
         let previous = self.latest.get(origin).cloned();
         create_dir_private(&self.raw)?;
-        let tmp = self.raw.join(format!(".incoming-{}", std::process::id()));
+        let tmp = self.raw.join(format!("{INCOMING}{}", std::process::id()));
         let mut out = private_file()
             .write(true)
             .create(true)
@@ -345,6 +345,75 @@ pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
         .collect()
 }
 
+/// What a writer of a raw archive stages there before a rename, each named for its process: a
+/// capture the sweep is taking, a blob a pull or a restore is taking, and the copy's manifest a
+/// pull rewrites ([`write_atomic_with`]'s name for it).
+const INCOMING: &str = ".incoming-";
+const PULLING: &str = ".pulling-";
+const RESTORING: &str = ".restoring-";
+const STAGING: [&str; 4] = [INCOMING, PULLING, RESTORING, ".manifest.jsonl.tmp-"];
+
+/// Remove the staging files a writer that died left in `home`'s raw archives, its own and each
+/// spoke's, keeping any whose process still runs. Take the archive lock first. Returns how many
+/// went. Best effort: what can't be read or removed stays, and nothing waits on it.
+pub fn clear_staging(home: &Home) -> u64 {
+    let mut raws = vec![home.raw_dir_of(None)];
+    // Each spoke's folder on its own, so one entry that isn't a spoke's skips only itself.
+    for e in fs::read_dir(home.machines_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if let Some(m) = e.file_name().to_str()
+            && crate::home::machine_name(m).is_ok()
+        {
+            raws.push(home.raw_dir_of(Some(m)));
+        }
+    }
+    let mut cleared = 0;
+    for raw in raws {
+        let Ok(entries) = fs::read_dir(&raw) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let pid = STAGING
+                .iter()
+                .find_map(|p| name.to_str()?.strip_prefix(p)?.parse::<u32>().ok());
+            if let Some(pid) = pid
+                && pid != std::process::id()
+                && !running(pid)
+                && e.file_type().is_ok_and(|t| t.is_file())
+                && fs::remove_file(e.path()).is_ok()
+            {
+                cleared += 1;
+            }
+        }
+    }
+    cleared
+}
+
+/// Sync the folder of `blob`, already in place, and `raw`, unless this pull has: an earlier pull
+/// may have renamed it in and failed before its sync, and a line is about to name it.
+fn synced_once(synced: &mut HashSet<PathBuf>, raw: &Path, blob: &Path) -> Result<()> {
+    let shard = blob.parent().context("blob has parent")?;
+    if synced.insert(shard.to_path_buf()) {
+        sync_dir(shard)?;
+        sync_dir(raw)?;
+    }
+    Ok(())
+}
+
+/// Whether process `pid` is running, as far as this account can tell.
+fn running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 sends nothing; it only asks whether the process is there.
+    let there = unsafe { libc::kill(pid, 0) } == 0;
+    there || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 /// Restore an archive into `home`, which has none (ADR 0009, issue #149): every blob `manifest`
 /// says it should hold, from `fetch` (which writes a blob's bytes and says whether it had it),
 /// then the manifest itself, so every line names bytes that are in place. Each blob is checked
@@ -373,7 +442,7 @@ pub fn restore_of(
     }
     create_dir_private(&raw)?;
     set_private(&raw);
-    let tmp = raw.join(format!(".restoring-{}", std::process::id()));
+    let tmp = raw.join(format!("{RESTORING}{}", std::process::id()));
     let mut missing = Vec::new();
     let mut shards = BTreeSet::new();
     for (sha, size) in expected_blobs(&parse_manifest(manifest)) {
@@ -750,7 +819,10 @@ pub fn take_into(
     }
     let mut archive = Archive::open_of(home, Some(machine))?;
     create_dir_private(&archive.raw)?;
-    let tmp = archive.raw.join(format!(".pulling-{}", std::process::id()));
+    let tmp = archive.raw.join(format!("{PULLING}{}", std::process::id()));
+    // Folders of blobs already here that this pull has synced: an earlier pull may have renamed
+    // one in and failed before its sync, so it is synced once before a line names it.
+    let mut synced = HashSet::new();
     *t = Transfer {
         since: header.since,
         to: header.since,
@@ -799,6 +871,7 @@ pub fn take_into(
                     let dest = archive.blob_path(sha);
                     if dest.exists() {
                         t.present += 1;
+                        synced_once(&mut synced, &archive.raw, &dest)?;
                         continue;
                     }
                     out.file.sync_all()?;
@@ -807,6 +880,7 @@ pub fn take_into(
                     fs::rename(&tmp, &dest)?;
                     crate::util::sync_dir(shard)?;
                     crate::util::sync_dir(&archive.raw)?;
+                    synced.insert(shard.to_path_buf());
                     t.blobs += 1;
                     t.bytes += len;
                 }
@@ -824,7 +898,10 @@ pub fn take_into(
                         if !is_blob_name(&rec.capture_hash) {
                             bail!("not a blob name: {:?}", rec.capture_hash);
                         }
-                        if archive.blob_path(&rec.capture_hash).exists() {
+                        let blob = archive.blob_path(&rec.capture_hash);
+                        if blob.exists() {
+                            // Its blob may be one an earlier pull renamed in and failed to sync.
+                            synced_once(&mut synced, &archive.raw, &blob)?;
                             waiting.remove(&rec.origin);
                         } else {
                             waiting.insert(rec.origin);
@@ -1034,6 +1111,79 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn staging_a_dead_writer_left_is_cleared_and_a_running_ones_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let dead = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            let pid = c.id();
+            c.wait().unwrap();
+            pid
+        };
+        let own = std::process::id();
+        let (raw, nas) = (home.raw_dir_of(None), home.raw_dir_of(Some("nas")));
+        fs::create_dir_all(&raw).unwrap();
+        fs::create_dir_all(&nas).unwrap();
+        let files = [
+            raw.join(format!(".incoming-{dead}")),
+            raw.join(format!(".incoming-{own}")),
+            raw.join(".incoming-x"),
+            nas.join(format!(".pulling-{dead}")),
+            nas.join(format!(".manifest.jsonl.tmp-{dead}")),
+            nas.join("manifest.jsonl"),
+        ];
+        for f in &files {
+            fs::write(f, b"half").unwrap();
+        }
+        assert_eq!(clear_staging(&home), 3);
+        let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
+        assert_eq!(left, [false, true, true, false, false, true]);
+        // The sweep clears it once it holds the archive, and a stray file where the spokes' folders
+        // are doesn't stop it.
+        fs::write(home.machines_dir().join("notes"), b"x").unwrap();
+        fs::write(&files[0], b"half").unwrap();
+        fs::write(&files[4], b"half").unwrap();
+        // No harness on, so it sweeps nothing of this machine's.
+        let none = crate::Config {
+            harnesses: vec![],
+            ..crate::Config::default()
+        };
+        crate::sweep::sweep(&home, &none, None).unwrap();
+        assert!(!files[0].exists());
+        assert!(!files[4].exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_line_naming_a_blob_already_here_waits_for_its_folder_to_sync() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let spoke = Home::new(dir.path().join("spoke"));
+        let hub = Home::new(dir.path().join("hub"));
+        let mut raw = Archive::open(&spoke).unwrap();
+        let first = raw
+            .put(Harness::Codex, "s", "1", &b"first"[..])
+            .unwrap()
+            .unwrap();
+        // An earlier pull renamed the blob in, then failed to sync its folder, which still can't be.
+        let shard = hub.raw_dir_of(Some("nas")).join(&first.capture_hash[..2]);
+        fs::create_dir_all(&shard).unwrap();
+        fs::write(shard.join(&first.capture_hash), b"first").unwrap();
+        fs::set_permissions(&shard, fs::Permissions::from_mode(0o300)).unwrap();
+        // The spoke appends meanwhile, so the retry gets the first line without its blob.
+        raw.put(Harness::Codex, "s", "2", &b"first, then more"[..])
+            .unwrap()
+            .unwrap();
+        let mut export = Vec::new();
+        crate::archive::export(&spoke, "nas", 0, &mut export, &mut Default::default()).unwrap();
+        let took = take(&hub, "nas", &mut std::io::Cursor::new(export), &|| true);
+        fs::set_permissions(&shard, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(took.is_err(), "{took:?}");
+        assert!(!hub.manifest_path_of(Some("nas")).exists());
     }
 
     #[test]
