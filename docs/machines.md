@@ -25,7 +25,7 @@ host = "me@nas"         # what `ssh` reaches it by: a host, user@host, or a Host
 # command = "/home/me/.cargo/bin/distill"   # when `distill` isn't on the PATH SSH gives it
 ```
 
-Or add it in the window, under Setup's Machines step, with its name and SSH host. There, Check connects as a pull starts and reads only the export's header: it says whether the spoke answers as that name and has captures to pull, and takes nothing. It hangs up on the export, which the spoke logs, usually as cut short.
+Or add it in the window, under Setup's Machines step, with its name and SSH host. There, Check connects as a pull starts and reads only the export's header: it says whether the spoke answers as that name and has captures to pull, and takes nothing. It hangs up on the export, which the spoke logs, usually as cut short. Then it asks the spoke to run `printf distill-unlimited`: a key limited to the export (below) is refused, and Check says its key runs only the export; a key that runs it can run any command on the spoke, and Check fails until it is limited.
 
 Each tick then runs `ssh <host> distill export --since <bytes>` for each machine, after the sweep, and the parse step turns what came into sessions. `<bytes>` is the length of the hub's copy of that spoke's manifest, so the copy is its own cursor: a restored or rebuilt hub goes on from where its copy ends. `distill pull` (or `distill pull nas`) runs it at once. The hub refuses a machine that names itself otherwise, or whose archive is not the one it has a copy of.
 
@@ -54,7 +54,7 @@ Host nas
 
 An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went. The hub records each pull in its run log: when it ended, the span of the manifest, the captures and blob bytes it stored, and why it failed, if it did (`distill --json runs`; `distill status` shows each spoke's last).
 
-Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model; it logs each refused call there, with who asked and for which session when one was named, never text (a home that was a hub also keeps its earlier lines). `distill exposure` on a spoke checks its modes, that no DISTILL process listens on a port, and, machine-wide, whether a disk is encrypted, as on the hub (`docs/known-gaps.md` says where that check falls short); a spoke never makes a fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses a key file other accounts can read.
+Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model; it logs each refused call there, with who asked and for which session when one was named, never text (a home that was a hub also keeps its earlier lines). `distill exposure` on a spoke checks its modes, that no DISTILL process listens on a port, and whether the disk holding its home is encrypted, as on the hub (`docs/known-gaps.md` says where that check falls short); a spoke never makes a fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses a key file other accounts can read.
 
 ## Checking on them
 

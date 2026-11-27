@@ -53,6 +53,10 @@ pub fn export(home: &Home, since: u64, out: &mut dyn Write) -> Result<Transfer> 
     result.map(|()| sent)
 }
 
+/// How a spoke refuses what its forced command doesn't run: the hub's check reads it as a key
+/// limited to the export.
+const ONLY_EXPORT: &str = "this key may only run `distill export --since <bytes>`";
+
 /// The `since` an SSH forced command was asked for. `original` is `SSH_ORIGINAL_COMMAND`, which
 /// must end `export --since <bytes>`, as [`pull`] sends it; whatever else it asks for is not run.
 pub fn forced_since(original: Option<&str>) -> Result<u64> {
@@ -61,7 +65,7 @@ pub fn forced_since(original: Option<&str>) -> Result<u64> {
         [_, .., "export", "--since", n] => n
             .parse()
             .with_context(|| format!("{n:?} is not a byte count")),
-        _ => bail!("this key may only run `distill export --since <bytes>`"),
+        _ => bail!("{ONLY_EXPORT}"),
     }
 }
 
@@ -237,21 +241,142 @@ pub fn add(config: &mut Config, name: &str, host: &str, command: &str) -> Result
 /// it runs the export there and reads only its header, so nothing is taken, and says whether
 /// it has captures to pull. The spoke logs the export it hung up on.
 pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
+    check_with(home, m, "ssh")
+}
+
+/// [`check`], over `ssh`. Then it asks the spoke to run something other than the export: a key
+/// limited to the export (`docs/machines.md`) is refused, and one that isn't runs it.
+fn check_with(home: &Home, m: &MachineConfig, ssh: &str) -> Result<String> {
     if home.spoke()?.is_some() {
         bail!("a spoke pulls from no machine: it only captures");
     }
-    let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET, Some(CHECK_LIMIT));
-    match (pulled.error, waiting) {
+    let (pulled, waiting) = over_ssh(home, m, Want::Check, ssh, CHECK_QUIET, Some(CHECK_LIMIT));
+    let answers = match (pulled.error, waiting) {
         (Some(e), _) => bail!(e),
-        (None, Some(true)) => Ok(format!(
-            "{} answers as {}, with captures to pull",
-            m.host, m.name
-        )),
-        (None, _) => Ok(format!(
-            "{} answers as {}, with nothing new to pull",
-            m.host, m.name
-        )),
+        (None, Some(true)) => format!("{} answers as {}, with captures to pull", m.host, m.name),
+        (None, _) => format!("{} answers as {}, with nothing new to pull", m.host, m.name),
+    };
+    let (out, err, code) = probe(m, ssh, PROBE_LIMIT);
+    // Anything a shell's startup files print comes first.
+    if String::from_utf8_lossy(&out).contains(UNLIMITED) {
+        bail!(
+            "{answers}, but this key can run any command on {}: limit it to the export in the \
+             spoke's authorized_keys (docs/machines.md)",
+            m.host
+        );
     }
+    // Refused as `distill export --ssh` refuses: its forced command. Only `restrict` on the
+    // same line also turns off forwarding, which no command run can show.
+    // The spoke's `distill` exits 1 on an error; ssh itself exits 255.
+    if code == Some(1) && String::from_utf8_lossy(&err).contains(ONLY_EXPORT) {
+        Ok(format!(
+            "{answers}; the spoke runs only the export for its key (keep `restrict` on that \
+             line too: docs/machines.md)"
+        ))
+    } else {
+        Ok(format!(
+            "{answers}; DISTILL can't tell whether its key runs only the export"
+        ))
+    }
+}
+
+/// What a check asks the spoke to run besides the export, and what that prints when it runs.
+const PROBE: &str = "printf distill-unlimited";
+const UNLIMITED: &str = "distill-unlimited";
+
+/// How long that may take.
+const PROBE_LIMIT: Duration = Duration::from_secs(15);
+
+/// ssh's options for a pull and a check: no terminal; no prompt, so the timer can run it; and a
+/// connection that goes quiet is dropped rather than holding the tick.
+const SSH_OPTIONS: [&str; 10] = [
+    // No terminal, even when the owner's ssh config asks for one: it would merge what the
+    // spoke prints with what it says went wrong.
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=4",
+    "--",
+];
+
+/// Run [`PROBE`] on spoke `m` over `ssh`, for at most `limit`: what it printed and what ssh
+/// said, the first few KB of each, and its exit code (none when it was stopped). Both are read
+/// as they come, without waiting on whatever else holds them once ssh has ended, and closed when
+/// it returns.
+fn probe(m: &MachineConfig, ssh: &str, limit: Duration) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    use std::os::fd::AsRawFd;
+    let Ok(mut child) = Command::new(ssh)
+        .args(SSH_OPTIONS)
+        .arg(&m.host)
+        .arg(PROBE)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
+        return Default::default();
+    };
+    let (mut out_pipe, mut err_pipe) = (child.stdout.take(), child.stderr.take());
+    for fd in [
+        out_pipe.as_ref().map(|p| p.as_raw_fd()),
+        err_pipe.as_ref().map(|p| p.as_raw_fd()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        // SAFETY: the descriptor is this process's own pipe, open for as long as its handle.
+        unsafe {
+            libc::fcntl(
+                fd,
+                libc::F_SETFL,
+                libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK,
+            )
+        };
+    }
+    /// Read what `pipe` has now, at most 64 KB a call so a pipe that never runs dry is left to
+    /// the limit, keeping the first 4 KB in `into` and dropping the rest, so ssh is never held
+    /// writing into a full pipe. At its end, close it.
+    fn drain(pipe: &mut Option<impl Read>, into: &mut Vec<u8>) {
+        let mut buf = [0u8; 4096];
+        for _ in 0..16 {
+            let Some(r) = pipe else { return };
+            match r.read(&mut buf) {
+                Ok(0) => *pipe = None,
+                Ok(n) => {
+                    into.extend_from_slice(&buf[..n.min(4096usize.saturating_sub(into.len()))])
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => *pipe = None,
+            }
+        }
+    }
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let until = Instant::now() + limit;
+    let code = loop {
+        drain(&mut out_pipe, &mut out);
+        drain(&mut err_pipe, &mut err);
+        match child.try_wait() {
+            // What ssh wrote is in its pipes once it has ended.
+            Ok(Some(status)) => {
+                drain(&mut out_pipe, &mut out);
+                drain(&mut err_pipe, &mut err);
+                break status.code();
+            }
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    (out, err, code)
 }
 
 /// How long a check waits for the spoke's first bytes.
@@ -319,16 +444,7 @@ fn over_ssh(
     pulled.took.to = since;
     let command = m.command.as_deref().unwrap_or("distill");
     let spawned = Command::new(ssh)
-        // No prompt, so the timer can run it; and a connection that goes quiet is dropped
-        // rather than holding the tick.
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"])
-        .args([
-            "-o",
-            "ServerAliveInterval=15",
-            "-o",
-            "ServerAliveCountMax=4",
-            "--",
-        ])
+        .args(SSH_OPTIONS)
         .arg(&m.host)
         .arg(format!("{command} export --since {since}"))
         .stdin(Stdio::null())
@@ -609,6 +725,70 @@ mod tests {
                 ["me@nas", &format!("{runs} export --since 0")]
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_check_says_whether_the_hubs_key_runs_only_the_export() {
+        use sha2::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let m = &config.machines[0];
+        let empty = hex::encode(sha2::Sha256::digest(b""));
+        let header = format!(
+            "printf 'distill-export 1\\n{{\"machine\":\"nas\",\"since\":0,\"prefix\":\"{empty}\",\"end\":0}}\\n'; exec sleep 30"
+        );
+        // The export answers as a pull's would; what else the key is asked to run, `probe` says.
+        let check = |probe: &str| {
+            let ssh = fake_ssh(
+                dir.path(),
+                &format!("case \"$*\" in\n*printf*) {probe};;\n*) {header};;\nesac"),
+            );
+            check_with(&home, m, ssh.to_str().unwrap())
+        };
+        // A key limited to the export: the spoke refuses anything else, as `distill export --ssh` does.
+        let limited = check(&format!(
+            "echo 'error: {}' >&2; exit 1",
+            forced_since(Some("printf distill-unlimited")).unwrap_err()
+        ))
+        .unwrap();
+        assert_eq!(
+            limited,
+            "me@nas answers as nas, with nothing new to pull; the spoke runs only the export for \
+             its key (keep `restrict` on that line too: docs/machines.md)"
+        );
+        // A key that runs any command.
+        let any = check("printf distill-unlimited").unwrap_err().to_string();
+        assert!(any.contains("can run any command on me@nas"), "{any}");
+        assert!(any.contains("docs/machines.md"), "{any}");
+        // Neither answer: nothing, or another forced command's refusal.
+        for probe in [
+            "exit 0",
+            "echo 'error: this key may only run exports and backups' >&2; exit 1",
+            &format!("echo 'error: {}' >&2; exit 255", ONLY_EXPORT),
+        ] {
+            let unknown = check(probe).unwrap();
+            assert!(
+                unknown.ends_with("can't tell whether its key runs only the export"),
+                "{unknown}"
+            );
+        }
+        // A process left holding ssh's output doesn't hold the check past its limit.
+        let ssh = fake_ssh(dir.path(), "sleep 30 &\nexit 0");
+        let start = Instant::now();
+        let (out, err, code) = probe(m, ssh.to_str().unwrap(), Duration::from_millis(500));
+        assert!(start.elapsed() < Duration::from_secs(10));
+        assert_eq!((out, err, code), (vec![], vec![], Some(0)));
+        // Nor one that never stops printing.
+        let ssh = fake_ssh(dir.path(), "exec yes");
+        let start = Instant::now();
+        let (out, _, code) = probe(m, ssh.to_str().unwrap(), Duration::from_millis(500));
+        assert!(start.elapsed() < Duration::from_secs(10));
+        assert_eq!((out.len(), code), (4096, None));
+        // More than a pipe holds, then the spoke's own exit: the rest is read and dropped.
+        let ssh = fake_ssh(dir.path(), "head -c 1048576 /dev/zero; exit 1");
+        let (out, _, code) = probe(m, ssh.to_str().unwrap(), Duration::from_secs(5));
+        assert_eq!((out.len(), code), (4096, Some(1)));
     }
 
     #[cfg(unix)]

@@ -108,10 +108,10 @@ pub struct LeftFolder {
 }
 
 /// What the check asks the machine: which DISTILL processes listen on a port (None when it
-/// can't tell), and whether the disk is encrypted.
+/// can't tell), and whether the disk holding a folder (the home) is encrypted.
 pub struct Probes {
     pub listeners: fn() -> Option<Vec<String>>,
-    pub disk_encrypted: fn() -> Option<bool>,
+    pub disk_encrypted: fn(&Path) -> Option<bool>,
 }
 
 impl Probes {
@@ -153,7 +153,7 @@ pub fn check_at(home: &Home, user: &Path, probes: &Probes) -> Exposure {
             not_synced(home, user),
             no_listener(probes),
         ],
-        disk_encrypted: (probes.disk_encrypted)(),
+        disk_encrypted: (probes.disk_encrypted)(&home.root),
         backups: backups_note(home),
         previous_build: previous_build(home, user),
     }
@@ -452,9 +452,9 @@ fn listeners_in(lsof: &str) -> Vec<String> {
     out
 }
 
-/// Whether the disk is encrypted: FileVault on macOS, a dm-crypt device on Linux. None when this
-/// machine can't tell.
-fn system_disk_encrypted() -> Option<bool> {
+/// Whether the disk holding `home` is encrypted: FileVault on macOS, and on Linux whether the
+/// device under it is, or sits on, a dm-crypt device. None when this machine can't tell.
+fn system_disk_encrypted(home: &Path) -> Option<bool> {
     if cfg!(target_os = "macos") {
         let out = Command::new("/usr/bin/fdesetup")
             .arg("status")
@@ -469,12 +469,67 @@ fn system_disk_encrypted() -> Option<bool> {
             None
         }
     } else {
-        // Without a dm-crypt device the disk may still be encrypted some other way.
-        let crypt = fs::read_dir("/sys/block").ok()?.flatten().any(|d| {
-            fs::read_to_string(d.path().join("dm/uuid")).is_ok_and(|u| u.starts_with("CRYPT-"))
-        });
-        crypt.then_some(true)
+        use std::os::unix::fs::MetadataExt;
+        let dev = fs::metadata(home).ok()?.dev();
+        // Linux's encoding of a device number (glibc's `major` and `minor`).
+        let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & 0xffff_f000);
+        let minor = (dev & 0xff) | ((dev >> 12) & 0xffff_ff00);
+        crypt_below(Path::new("/sys"), major, minor)
     }
+}
+
+/// Whether block device `major:minor`, as `sys` (sysfs) lists it, is encrypted: a dm-crypt
+/// device, or one whose devices below (`slaves/`, so LVM on LUKS counts) all are; one in the clear
+/// below a mirror holds a readable copy. None when sysfs doesn't list it, or part of the chain
+/// can't be read.
+fn crypt_below(sys: &Path, major: u64, minor: u64) -> Option<bool> {
+    fn crypt(dev: &Path, depth: u8) -> Option<bool> {
+        let missing = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+        // A link that leads nowhere can't be read.
+        let mut dev = fs::canonicalize(dev).ok()?;
+        // A partition sits on its disk, which lists the devices below.
+        if dev.join("partition").exists() {
+            dev = dev.parent()?.to_path_buf();
+        }
+        match fs::read_to_string(dev.join("dm/uuid")) {
+            // cryptsetup names its integrity and verity mappings so too; they encrypt nothing.
+            Ok(uuid)
+                if uuid.starts_with("CRYPT-")
+                    && !["CRYPT-INTEGRITY-", "CRYPT-VERITY-"]
+                        .iter()
+                        .any(|p| uuid.starts_with(p)) =>
+            {
+                return Some(true);
+            }
+            Err(e) if !missing(&e) => return None,
+            _ => {}
+        }
+        let below = match fs::read_dir(dev.join("slaves")) {
+            Ok(below) => below,
+            Err(e) if missing(&e) => return Some(false),
+            Err(_) => return None,
+        };
+        // Deeper than any real stack: a loop.
+        if depth >= 16 {
+            return None;
+        }
+        let (mut any, mut known) = (false, true);
+        for b in below {
+            any = true;
+            match crypt(&b.ok()?.path(), depth + 1) {
+                Some(false) => return Some(false),
+                Some(true) => {}
+                None => known = false,
+            }
+        }
+        // Nothing below: a disk, in the clear.
+        if !any {
+            Some(false)
+        } else {
+            known.then_some(true)
+        }
+    }
+    crypt(&sys.join(format!("dev/block/{major}:{minor}")), 0)
 }
 
 #[cfg(test)]

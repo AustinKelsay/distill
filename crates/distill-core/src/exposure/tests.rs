@@ -8,7 +8,7 @@ use super::*;
 fn quiet() -> Probes {
     Probes {
         listeners: || Some(Vec::new()),
-        disk_encrypted: || Some(true),
+        disk_encrypted: |_| Some(true),
     }
 }
 
@@ -132,7 +132,7 @@ fn a_distill_process_listening_on_a_port_fails() {
     let (_dir, user, home) = machine();
     let listening = Probes {
         listeners: || Some(vec!["distill-mcp (pid 41) on 127.0.0.1:7000".into()]),
-        disk_encrypted: || None,
+        disk_encrypted: |_| None,
     };
     let e = check_at(&home, &user, &listening);
     let r = rule(&e, Rule::NoListener);
@@ -142,7 +142,7 @@ fn a_distill_process_listening_on_a_port_fails() {
 
     let unknown = Probes {
         listeners: || None,
-        disk_encrypted: || Some(false),
+        disk_encrypted: |_| Some(false),
     };
     let e = check_at(&home, &user, &unknown);
     assert_eq!(rule(&e, Rule::NoListener).outcome, Outcome::Unchecked);
@@ -256,4 +256,121 @@ fn a_spoke_has_no_fingerprint_key_because_it_never_scans() {
         key.message,
         "A spoke has no fingerprint key: it never scans, and the hub fingerprints what it pulls."
     );
+}
+
+/// A fake `/sys`: each device a folder under `devices/` with its `dm/uuid` (a dm device) and its
+/// `slaves/` linked to the devices below it, and `dev/block/<major>:<minor>` linked to it.
+fn sysfs(devices: &[(&str, Option<&str>, &[&str])], numbers: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = dir.path();
+    for (name, uuid, below) in devices {
+        let d = sys.join("devices/virtual/block").join(name);
+        fs::create_dir_all(&d).unwrap();
+        if let Some(uuid) = uuid {
+            fs::create_dir_all(d.join("dm")).unwrap();
+            fs::write(d.join("dm/uuid"), format!("{uuid}\n")).unwrap();
+        }
+        if !below.is_empty() {
+            fs::create_dir_all(d.join("slaves")).unwrap();
+            for b in *below {
+                std::os::unix::fs::symlink(format!("../../{b}"), d.join("slaves").join(b)).unwrap();
+            }
+        }
+    }
+    fs::create_dir_all(sys.join("dev/block")).unwrap();
+    for (number, name) in numbers {
+        std::os::unix::fs::symlink(
+            format!("../../devices/virtual/block/{name}"),
+            sys.join("dev/block").join(number),
+        )
+        .unwrap();
+    }
+    dir
+}
+
+#[test]
+fn the_disk_holding_the_home_is_encrypted_only_when_its_chain_reaches_a_crypt_device() {
+    // The home on dm-crypt over a partition.
+    let plain = sysfs(
+        &[
+            ("dm-0", Some("CRYPT-LUKS2-abc-root"), &["sda2"]),
+            ("sda2", None, &[]),
+        ],
+        &[("253:0", "dm-0")],
+    );
+    assert_eq!(crypt_below(plain.path(), 253, 0), Some(true));
+    // LVM on LUKS: a logical volume over the crypt device.
+    let lvm = sysfs(
+        &[
+            ("dm-1", Some("LVM-xyz"), &["dm-0"]),
+            ("dm-0", Some("CRYPT-LUKS2-abc-pv"), &["nvme0n1p3"]),
+            ("nvme0n1p3", None, &[]),
+        ],
+        &[("253:1", "dm-1")],
+    );
+    assert_eq!(crypt_below(lvm.path(), 253, 1), Some(true));
+    // The home on a plain partition, with an unrelated crypt device elsewhere.
+    let beside = sysfs(
+        &[
+            ("sdb1", None, &[]),
+            ("dm-0", Some("CRYPT-LUKS2-abc-data"), &["sdc1"]),
+            ("sdc1", None, &[]),
+        ],
+        &[("8:17", "sdb1"), ("253:0", "dm-0")],
+    );
+    assert_eq!(crypt_below(beside.path(), 8, 17), Some(false));
+    // A mirror with one member in the clear holds a readable copy.
+    let mirror = sysfs(
+        &[
+            ("md0", None, &["dm-0", "sdb"]),
+            ("dm-0", Some("CRYPT-LUKS2-abc-a"), &["sda"]),
+            ("sda", None, &[]),
+            ("sdb", None, &[]),
+        ],
+        &[("9:0", "md0")],
+    );
+    assert_eq!(crypt_below(mirror.path(), 9, 0), Some(false));
+    // dm-integrity alone encrypts nothing, though cryptsetup names it CRYPT-.
+    let integrity = sysfs(
+        &[
+            ("dm-1", Some("CRYPT-INTEGRITY-abc"), &["sda"]),
+            ("sda", None, &[]),
+        ],
+        &[("253:1", "dm-1")],
+    );
+    assert_eq!(crypt_below(integrity.path(), 253, 1), Some(false));
+    // A device below that leads nowhere can't be read.
+    let gone = sysfs(
+        &[("dm-1", Some("LVM-xyz"), &["dm-9"])],
+        &[("253:1", "dm-1")],
+    );
+    assert_eq!(crypt_below(gone.path(), 253, 1), None);
+    // A partition of an encrypted mirror: its disk lists the devices below.
+    let part = sysfs(
+        &[
+            ("md0", None, &["dm-0"]),
+            ("dm-0", Some("CRYPT-LUKS2-abc-a"), &["sda"]),
+            ("sda", None, &[]),
+        ],
+        &[],
+    );
+    let p1 = part.path().join("devices/virtual/block/md0/md0p1");
+    fs::create_dir_all(&p1).unwrap();
+    fs::write(p1.join("partition"), "1\n").unwrap();
+    std::os::unix::fs::symlink(
+        "../../devices/virtual/block/md0/md0p1",
+        part.path().join("dev/block/259:1"),
+    )
+    .unwrap();
+    assert_eq!(crypt_below(part.path(), 259, 1), Some(true));
+    // A device sysfs doesn't list (a btrfs subvolume's, say): can't tell.
+    assert_eq!(crypt_below(beside.path(), 0, 42), None);
+    // Nor when a device below can't be read.
+    let hidden = beside.path().join("devices/virtual/block/sdb1");
+    fs::create_dir_all(hidden.join("dm")).unwrap();
+    fs::write(hidden.join("dm/uuid"), "LVM-x\n").unwrap();
+    chmod(&hidden.join("dm/uuid"), 0o000);
+    let unreadable = crypt_below(beside.path(), 8, 17);
+    chmod(&hidden.join("dm/uuid"), 0o600);
+    assert_eq!(unreadable, None);
 }
