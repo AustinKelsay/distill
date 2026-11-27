@@ -94,7 +94,7 @@ Agents on several machines (ADR 0010, `docs/machines.md`): on each other machine
 | `distill reads`, `distill runs` | The read log (every read, refusal and reveal) and the run log. |
 | `distill init`, `harnesses`, `sweep`, `parse`, `scan`, `verify`, `schedule`, `gui` | Setup, and each step on its own. |
 
-`distill <command> --help` lists every flag. `search`, `tags` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values leave DISTILL only through the read path: `read`, `search`, `tags`, `reveal collect`, the window, the MCP tools, and the tick's model steps. Two other ways out are not reads, and no reader gets text from them: a backup carries the archive encrypted on this machine (ADR 0009), and a spoke's export carries its raw captures to its hub over SSH (ADR 0010).
+`distill <command> --help` lists every flag. `search`, `tags` and `read` answer only a reader named with `--provider` (or `DISTILL_PROVIDER`). Session text and secret values reach a reader only through the read path: `read`, `search`, `tags`, `reveal collect`, the window, the MCP tools, and the tick's model steps. Two other ways out of the home are not reads, and no reader gets text from them: a backup carries the archive encrypted on this machine (ADR 0009), and a spoke's export carries its raw captures to its hub over SSH (ADR 0010).
 
 ## The MCP server
 
@@ -126,7 +126,7 @@ DISTILL makes outbound connections only to what you set:
 - **Your backup targets,** for `[[backup]]` entries that are adapters: ciphertext only, under keyed names (ADR 0009).
 - **Your spokes, over SSH,** on a hub with `[[machines]]`: each pull runs the export there and takes its new raw captures (ADR 0010).
 
-On several machines, trust is still one tier, checked on the hub's read path: a spoke's read path serves no reader, and it runs no model. Run `distill exposure` on each spoke too; a spoke has no fingerprint key. Limit the hub's key to the export on the spoke (`docs/machines.md`); its private key stays in the hub's `~/.ssh`, where SSH refuses to use one other accounts can read. Each pull is recorded in the hub's run log, and each export in the spoke's `log/exports.jsonl`. Captures cross the network protected by SSH alone, and the spoke keeps every capture it makes, readable to whoever holds its disk.
+On several machines, trust is still one tier, checked on the hub's read path: a spoke's read path serves no reader, and it runs no model. Run `distill exposure` on each spoke too; a spoke has no fingerprint key. Give the hub a key of its own for pulls, limited to the export on the spoke (`docs/machines.md`); it stays in the hub's `~/.ssh`, where SSH refuses a key file other accounts can read. Each pull is recorded in the hub's run log, and each export in the spoke's `log/exports.jsonl`. Captures cross the network protected by SSH alone, and the spoke keeps every capture it makes, readable to whoever holds its disk unless that disk is encrypted.
 
 What DISTILL does not defend against: anything running as the owner (the archive is not encrypted at rest), someone holding the disk (that is disk encryption's job: FileVault, or dm-crypt on Linux), copies of the home other than DISTILL's own encrypted backups, such as a disk backup (they carry the archive readable; keep them encrypted), and an administrator on the machine.
 

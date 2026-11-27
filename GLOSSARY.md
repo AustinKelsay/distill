@@ -105,7 +105,7 @@ The record of which reader read which sessions, and when. Each line is chained t
 _Avoid_: Audit trail, activity
 
 **Read path**:
-The one way session text leaves DISTILL readable. It decides what a given reader gets and records the read. A backup is the only other way out, and leaves only as ciphertext.
+The one way session text reaches a reader. It decides what a given reader gets and records the read. The only other ways out are not reads: a backup, which leaves only as ciphertext, and a spoke's export to its hub.
 _Avoid_: API, accessor, gate
 
 **Detector**:

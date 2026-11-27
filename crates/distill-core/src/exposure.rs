@@ -255,7 +255,7 @@ fn owner_only(home: &Home) -> RuleResult {
 fn key_owner_only(home: &Home) -> RuleResult {
     let path = home.fingerprint_key_path();
     let Ok(meta) = fs::metadata(&path) else {
-        if home.load_config().is_ok_and(|c| c.spoke.is_some()) {
+        if home.spoke().is_ok_and(|s| s.is_some()) {
             return pass(
                 Rule::KeyOwnerOnly,
                 "A spoke has no fingerprint key: it never scans, and the hub fingerprints what it pulls.",
