@@ -39,19 +39,20 @@
           spokes: Spokes
               title: Spokes
             text: nas
-            text: me@nas.example
+              host: me@nas.example
               checked: me@nas.example answers as nas, with captures to pull
               check: Check
                 label: Check
               remove: Remove
                 label: Remove
             text: build-box
-            text: build-box
+              host: build-box · /opt/distill/bin/distill
               checked: ssh build-box: Permission denied (publickey).
               check: Check
                 label: Check
               remove: Remove
                 label: Remove
+                input: 
                 input: 
                 input: 
             add-machine: Add

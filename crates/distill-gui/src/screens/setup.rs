@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use distill_core::backup::{self, BackupKey, Place};
-use distill_core::config::{GenerationConfig, ProviderKind};
+use distill_core::config::{GenerationConfig, MachineConfig, ProviderKind};
 use distill_core::harness::{self, Detection};
 use distill_core::runtime::{RuntimeState, Stored};
 use distill_core::trust::{self, OLLAMA, OLLAMA_CLOUD, Provider, Trust};
@@ -129,10 +129,12 @@ pub struct SetupState {
     pub backup_error: Option<String>,
     pub machine_name: TextEdit,
     pub machine_host: TextEdit,
+    pub machine_command: TextEdit,
     pub machine_error: Option<String>,
     /// Each spoke's last check, by name: what it answered, or why it couldn't be reached.
     pub checks: BTreeMap<String, Result<String, String>>,
-    pub checking_machines: BTreeSet<String>,
+    /// The spokes being checked, each as it was when Check was pressed.
+    pub checking_machines: Vec<MachineConfig>,
     /// Each target's last test, by name: what it holds, or why a backup there would fail.
     pub tests: BTreeMap<String, Result<String, String>>,
     pub testing: BTreeSet<String>,
@@ -197,9 +199,10 @@ impl SetupState {
             backup_error: None,
             machine_name: TextEdit::new(""),
             machine_host: TextEdit::new(""),
+            machine_command: TextEdit::new(""),
             machine_error: None,
             checks: BTreeMap::new(),
-            checking_machines: BTreeSet::new(),
+            checking_machines: Vec::new(),
             tests: BTreeMap::new(),
             testing: BTreeSet::new(),
             has_key: None,
@@ -292,10 +295,12 @@ impl SetupState {
             &mut self.draft,
             &self.machine_name.text,
             &self.machine_host.text,
+            &self.machine_command.text,
         ) {
             Ok(()) => {
                 self.machine_name.clear();
                 self.machine_host.clear();
+                self.machine_command.clear();
                 self.machine_error = None;
             }
             Err(e) => self.machine_error = Some(jobs::line(e)),
@@ -514,31 +519,25 @@ fn test_backup(s: &mut State, name: String) {
     }));
 }
 
-/// Check a spoke the way a pull starts, off the frame loop: it can take up to a connect timeout.
-fn check_machine(s: &mut State, name: String) {
-    let Some(m) = s
-        .setup
-        .draft
-        .machines
-        .iter()
-        .find(|m| m.name == name)
-        .cloned()
-    else {
-        return;
-    };
-    if !s.setup.checking_machines.insert(name.clone()) {
+/// Check spoke `m` the way a pull starts, off the frame loop: it can take up to 30s.
+fn check_machine(s: &mut State, m: MachineConfig) {
+    if !s.setup.draft.machines.contains(&m) || s.setup.checking_machines.contains(&m) {
         return;
     }
+    s.setup.checking_machines.push(m.clone());
     s.ask(Job::apart("check machine", move |core| {
         let r = jobs::caught(|| machines::check(&core.home, &m));
-        Box::new(move |s: &mut State| {
-            s.setup.checking_machines.remove(&name);
-            // Removed, or added again at another host, while the check ran: not its result.
-            if s.setup.draft.machines.contains(&m) {
-                s.setup.checks.insert(name, r);
-            }
-        })
+        Box::new(move |s: &mut State| land_check(s, &m, r))
     }));
+}
+
+/// The result of checking spoke `m`, as it was when Check was pressed. A spoke removed or
+/// changed while the check ran isn't the one checked, so the result is dropped.
+pub(crate) fn land_check(s: &mut State, m: &MachineConfig, r: Result<String, String>) {
+    s.setup.checking_machines.retain(|c| c != m);
+    if s.setup.draft.machines.contains(m) {
+        s.setup.checks.insert(m.name.clone(), r);
+    }
 }
 
 /// Make the home's backup key now, and show it.
@@ -1813,7 +1812,8 @@ fn backup_row(d: &SetupState, p: &Paint, i: usize, t: &distill_core::config::Bac
         .child(row().gap(6.0).child(test).child(remove))
 }
 
-/// The spokes this hub pulls from: add one by name and SSH host, check it, or remove it.
+/// The spokes this hub pulls from: add one by name, SSH host and, when `distill` isn't on the
+/// PATH SSH gives it, the command there; check it, or remove it.
 fn machines_step(d: &SetupState, p: &Paint) -> El {
     let mut list = p.section("spokes", "Spokes", None).gap(0.0);
     if d.draft.machines.is_empty() {
@@ -1843,6 +1843,14 @@ fn machines_step(d: &SetupState, p: &Paint) -> El {
         .key("machine-host")
         .grow(1.0)
         .shrink();
+    let command = TextInput::new(&d.machine_command)
+        .label("Command on the spoke")
+        .placeholder("distill, on its PATH")
+        .width(Some(160.0))
+        .on_edit(|s: &mut State| &mut s.setup.machine_command)
+        .on_submit(|s: &mut State, _: &mut Tx| s.setup.add_machine())
+        .build(&p.k)
+        .key("machine-command");
     let add = Button::new("Add")
         .disabled(d.machine_name.text.trim().is_empty() || d.machine_host.text.trim().is_empty())
         .on_press(|s: &mut State| s.setup.add_machine())
@@ -1856,6 +1864,7 @@ fn machines_step(d: &SetupState, p: &Paint) -> El {
             .center_y()
             .child(name)
             .child(host)
+            .child(command)
             .child(add),
     );
     if let Some(e) = &d.machine_error {
@@ -1883,13 +1892,13 @@ fn machines_step(d: &SetupState, p: &Paint) -> El {
         ))
 }
 
-fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &distill_core::config::MachineConfig) -> El {
-    let name = m.name.clone();
-    let checking = d.checking_machines.contains(&m.name);
+fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &MachineConfig) -> El {
+    let checking = d.checking_machines.contains(m);
+    let checked = m.clone();
     let check = Button::new(if checking { "Checking…" } else { "Check" })
         .control_size(ControlSize::Small)
         .disabled(checking)
-        .on_press(move |s: &mut State| check_machine(s, name.clone()))
+        .on_press(move |s: &mut State| check_machine(s, checked.clone()))
         .build(&p.k)
         .key("check");
     let remove = Button::new("Remove")
@@ -1904,10 +1913,14 @@ fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &distill_core::config::Ma
         .shrink()
         .child(text(m.name.clone()).font(p.k.ty.ui_medium).color(p.ink()))
         .child(
-            text(m.host.clone())
-                .font(p.mono())
-                .color(p.muted())
-                .truncate(),
+            text(match &m.command {
+                Some(c) => format!("{} · {c}", m.host),
+                None => m.host.clone(),
+            })
+            .key("host")
+            .font(p.mono())
+            .color(p.muted())
+            .truncate(),
         );
     if let Some(r) = d.checks.get(&m.name) {
         let (line, color) = match r {

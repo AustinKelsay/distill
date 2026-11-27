@@ -42,14 +42,14 @@
             size: 48.0 MB
             last: 20 min ago
             pulled: 5 min ago
-            note: me@nas.example
+            note: me@nas.example · 230 captures
           text: build-box
             health: Warning
             sessions: 37
             size: 6.2 MB
             last: yesterday
             pulled: yesterday
-            note: me@build-box.example · the last pull failed: ssh me@build-box.example: Connection refused
+            note: me@build-box.example · 41 captures · the last pull failed: ssh me@build-box.example: Connection refused
         progress: Progress
             title: Progress
           text: Scan for findings

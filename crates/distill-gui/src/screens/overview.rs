@@ -1203,15 +1203,18 @@ fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 6]) -> El {
         .child(when("last", m.last_capture.as_deref(), w[4]))
         .child(when("pulled", m.last_pull.as_deref(), w[5]));
     let mut notes: Vec<String> = m.host.iter().cloned().collect();
+    notes.push(match m.captures {
+        1 => "1 capture".to_string(),
+        n => format!("{} captures", thousands(n)),
+    });
     notes.extend(m.note.iter().cloned());
-    let mut c = col()
+    col()
         .key(format!("machine-{}", m.machine))
         .w_full()
         .py(8.0)
         .gap(2.0)
-        .child(line);
-    if !notes.is_empty() {
-        c = c.child(
+        .child(line)
+        .child(
             text(notes.join(" · "))
                 .key("note")
                 .font(p.caption())
@@ -1222,9 +1225,7 @@ fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 6]) -> El {
                 })
                 .wrap()
                 .pl(w[0] + 8.0),
-        );
-    }
-    c
+        )
 }
 
 fn rule_id(r: Rule) -> &'static str {

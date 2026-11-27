@@ -652,6 +652,11 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
     assert!(rt.state.setup.recovery.is_none());
     type_into(&mut rt, |s| &mut s.setup.machine_name, "nas");
     type_into(&mut rt, |s| &mut s.setup.machine_host, "me@nas");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "/opt/bin/distill",
+    );
     press(&mut rt, "add-machine");
     step(&mut rt, "Schedule");
     press(&mut rt, "finish");
@@ -669,9 +674,9 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
         saved
             .machines
             .iter()
-            .map(|m| (m.name.as_str(), m.host.as_str()))
+            .map(|m| (m.name.as_str(), m.host.as_str(), m.command.as_deref()))
             .collect::<Vec<_>>(),
-        [("nas", "me@nas")]
+        [("nas", "me@nas", Some("/opt/bin/distill"))]
     );
     assert_eq!(rt.state.screen, Screen::Overview);
     assert!(rt.state.overview.backing_up.contains("drive"));
@@ -992,9 +997,71 @@ fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
     type_into(&mut rt, |s| &mut s.setup.machine_host, "-oProxyCommand=x");
     press(&mut rt, "add-machine");
     assert!(shows(&rt, "is not a host"), "{:?}", texts(&rt));
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "me@box");
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "-oProxyCommand=x",
+    );
+    press(&mut rt, "add-machine");
+    assert!(shows(&rt, "is not a command"), "{:?}", texts(&rt));
     assert_eq!(rt.state.setup.draft.machines.len(), 1);
+    // Where distill is on the spoke, when it isn't on the PATH SSH gives it.
+    type_into(
+        &mut rt,
+        |s| &mut s.setup.machine_command,
+        "/opt/bin/distill",
+    );
+    press(&mut rt, "add-machine");
+    assert_eq!(
+        rt.state.setup.draft.machines[1].command.as_deref(),
+        Some("/opt/bin/distill")
+    );
+    assert_eq!(text_of(&rt, "machine-1/host"), "me@box · /opt/bin/distill");
+    assert_eq!(text_of(&rt, "machine-0/host"), "me@nas");
+    assert_eq!(rt.state.setup.machine_command.text, "", "the fields clear");
 
+    press(&mut rt, "machine-1/remove");
     press(&mut rt, "remove");
     assert!(rt.state.setup.draft.machines.is_empty());
     assert!(shows(&rt, "No other machine yet."));
+}
+
+#[test]
+fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
+    let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1600.0));
+    step(&mut rt, "Machines");
+    let add = |rt: &mut Runtime<State>, host: &str| {
+        type_into(rt, |s| &mut s.setup.machine_name, "nas");
+        type_into(rt, |s| &mut s.setup.machine_host, host);
+        press(rt, "add-machine");
+    };
+    add(&mut rt, "me@nas");
+    let first = rt.state.setup.draft.machines[0].clone();
+    press(&mut rt, "check");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+
+    // Removed while it is checked, and added again at the right host: it can be checked at once.
+    press(&mut rt, "remove");
+    add(&mut rt, "me@nas.lan");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    press(&mut rt, "check");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    let second = rt.state.setup.draft.machines[0].clone();
+    // The checks would run ssh; their results are handed in as they would land.
+    let asked = std::mem::take(&mut rt.state.outbox);
+    assert_eq!(
+        asked.iter().map(|j| j.what).collect::<Vec<_>>(),
+        ["check machine", "check machine"]
+    );
+    let land = |rt: &mut Runtime<State>, m: &distill_core::config::MachineConfig, r| {
+        rt.update(|s, _| crate::screens::setup::land_check(s, m, r));
+        settle(rt);
+    };
+    land(&mut rt, &first, Ok("me@nas answers as nas".into()));
+    assert!(!on(&rt, "checked"), "the first spoke's result is dropped");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    land(&mut rt, &second, Err("ssh me@nas.lan: refused".into()));
+    assert_eq!(text_of(&rt, "machine-0/checked"), "ssh me@nas.lan: refused");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
 }

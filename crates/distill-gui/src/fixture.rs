@@ -122,8 +122,12 @@ fn setup_step(s: &mut State, step: usize) {
         s.setup.has_key = Some(false);
     }
     if step == setup::MACHINES {
-        for (name, host) in [("nas", "me@nas.example"), ("build-box", "build-box")] {
-            distill_core::machines::add(&mut s.setup.draft, name, host).expect("valid machine");
+        for (name, host, command) in [
+            ("nas", "me@nas.example", ""),
+            ("build-box", "build-box", "/opt/distill/bin/distill"),
+        ] {
+            distill_core::machines::add(&mut s.setup.draft, name, host, command)
+                .expect("valid machine");
         }
         s.setup.checks.insert(
             "nas".into(),
