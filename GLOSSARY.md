@@ -185,3 +185,7 @@ _Avoid_: Client, agent, satellite
 **Pull**:
 The hub taking a spoke's new captures over SSH, into that machine's raw archive on the hub.
 _Avoid_: Sync, push, export (the spoke's half)
+
+**Export**:
+The spoke's half of a pull: its raw captures, as they are, sent over SSH to its hub. Like a backup, it is not a read: no reader gets text from it.
+_Avoid_: Sync, push

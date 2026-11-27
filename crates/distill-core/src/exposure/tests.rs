@@ -240,3 +240,20 @@ fn fix_tightens_every_mode_in_an_existing_home() {
     assert!(e.passes(), "{e:?}");
     assert_eq!(fix(&home).unwrap(), 0);
 }
+
+#[test]
+fn a_spoke_has_no_fingerprint_key_because_it_never_scans() {
+    let (_dir, user, home) = machine();
+    let mut config = crate::Config::default();
+    config.spoke = Some(crate::config::Spoke {
+        machine: "nas".into(),
+    });
+    config.save(&home.config_path()).unwrap();
+    let e = check_at(&home, &user, &quiet());
+    let key = rule(&e, Rule::KeyOwnerOnly);
+    assert_eq!(key.outcome, Outcome::Pass);
+    assert_eq!(
+        key.message,
+        "A spoke has no fingerprint key: it never scans, and the hub fingerprints what it pulls."
+    );
+}

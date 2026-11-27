@@ -4,7 +4,8 @@
 //! the parse step wrote. The scan (`findings`) reads events like the parsers do, because it is what
 //! produces findings. Core also keeps those readers
 //! crate-private, so a face that called one would not compile; this catches the ways around
-//! that, such as joining `events.jsonl` onto a path by hand.
+//! that, such as joining `events.jsonl` onto a path by hand. A backup (ADR 0009) and a spoke's
+//! export (ADR 0010) carry captures out through the archive, but neither is a read.
 
 use std::fs;
 use std::path::{Path, PathBuf};

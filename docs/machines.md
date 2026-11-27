@@ -43,7 +43,9 @@ command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 
 ## What leaves the spoke
 
-An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went.
+An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went. The hub records each pull in its run log the same way, with why it failed, if it did (`distill status` shows each spoke's last).
+
+Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model. `distill exposure` on a spoke checks its modes, its disk and that nothing listens; it has no fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses to use one other accounts can read.
 
 ## Checking on them
 
