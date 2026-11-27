@@ -37,8 +37,10 @@ pub const SCENES: &[Scene] = &[
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
     ("overview-new", |s| *s = just_set_up()),
+    ("overview-machines", |s| *s = hub()),
     ("sessions", |s| *s = sessions_listed()),
     ("sessions-search", |s| *s = sessions_searched()),
+    ("sessions-machines", |s| *s = sessions_on_a_hub()),
     ("sessions-open", |s| *s = session_covered()),
     ("sessions-open-shown", |s| *s = session_revealed()),
     ("findings", |s| *s = findings_listed()),
@@ -538,6 +540,30 @@ pub fn troubled() -> State {
         Some("the backup folder /Volumes/Share does not exist (is the drive connected?)".into());
     st.exposure = exposure(false);
     st.cards.skipped = Some("the local runtime is not running".into());
+    s
+}
+
+/// A hub with two spokes: one pulled from a few minutes ago, one whose last pull failed.
+pub fn hub() -> State {
+    let mut s = running();
+    let st = s.overview.status.as_mut().expect("a status");
+    st.machines = serde_json::from_value(serde_json::json!([
+        {
+            "machine": "nas", "host": "me@nas.example", "health": "ok",
+            "sessions": 212, "captures": 230, "archive_bytes": 48_000_000u64,
+            "last_capture": at(20), "last_pull": at(5),
+            "harnesses": [], "note": null,
+        },
+        {
+            "machine": "build-box", "host": "me@build-box.example", "health": "warn",
+            "sessions": 37, "captures": 41, "archive_bytes": 6_200_000u64,
+            "last_capture": at(60 * 26), "last_pull": at(60 * 25),
+            "pull_error": "ssh me@build-box.example: Connection refused",
+            "harnesses": [],
+            "note": "the last pull failed: ssh me@build-box.example: Connection refused",
+        },
+    ]))
+    .expect("machine rows");
     s
 }
 

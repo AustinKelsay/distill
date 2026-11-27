@@ -2,8 +2,9 @@
 //! health per harness, format drift, the last sweep, warnings, each step's progress (scan, word
 //! index, cards, vectors and the model detection pass), the reveal
 //! requests waiting, the recent runs, the backup targets (each with Back up now and Verify) and
-//! the exposure check, with a Fix button that calls `exposure::fix`. A step with nothing to report says it is not yet available. No session text
-//! is shown.
+//! the exposure check, with a Fix button that calls `exposure::fix`. On a hub, its spokes, each
+//! with its health and last pull. A step with nothing to report says it is not yet available. No
+//! session text is shown.
 //!
 //! When a ticket adds a field to `Status`, it adds its line here: a step's progress goes in
 //! [`steps`], anything else in its own section of [`report`].
@@ -14,7 +15,9 @@ use distill_core::backup::{self, BackupKey, TargetStatus};
 use distill_core::exposure::{self, Exposure, Outcome, Rule};
 use distill_core::runlog::{RunGroup, StepResult};
 use distill_core::schedule;
-use distill_core::status::{self, HarnessStatus, Health, Status, Warning, WarningKind};
+use distill_core::status::{
+    self, HarnessStatus, Health, MachineStatus, Status, Warning, WarningKind,
+};
 use rune::{Align, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize};
 
@@ -294,6 +297,9 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
         .collect();
     if !shown.is_empty() {
         body = body.child(warnings(&shown, p));
+    }
+    if let Some(m) = machines(s, st, p) {
+        body = body.child(m);
     }
     body.child(progress(st, p))
         .child(backups(s, st, p))
@@ -1111,6 +1117,110 @@ fn harness_row(s: &State, h: &HarnessStatus, p: &Paint, w: &[f32; 7]) -> El {
                 .key("note")
                 .font(p.caption())
                 .color(p.muted())
+                .pl(w[0] + 8.0),
+        );
+    }
+    c
+}
+
+/// The spokes this hub pulls from (ADR 0010), a row each; none on a home without spokes.
+fn machines(s: &State, st: &Status, p: &Paint) -> Option<El> {
+    if st.machines.is_empty() {
+        return None;
+    }
+    let mut card = p
+        .section(
+            "machines",
+            "Machines",
+            Some(
+                text("Spokes this hub pulls captures from over SSH")
+                    .key("machines-note")
+                    .font(p.caption())
+                    .color(p.muted()),
+            ),
+        )
+        .gap(0.0);
+    // Narrower than the harness table, so it fits the narrowest window.
+    let col_w = [140.0, 90.0, 80.0, 80.0, 100.0, 100.0];
+    let head = [
+        "Machine",
+        "Health",
+        "Sessions",
+        "Archive",
+        "Last capture",
+        "Last pull",
+    ];
+    let mut header = row().key("machine-columns").w_full().py(8.0).gap(8.0);
+    for (h, w) in head.iter().zip(col_w) {
+        header = header.child(text(*h).font(p.caption()).color(p.faint()).w(w));
+    }
+    card = card.child(header).child(p.separator());
+    for m in &st.machines {
+        card = card.child(machine_row(s, m, p, &col_w));
+    }
+    Some(card)
+}
+
+fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 6]) -> El {
+    let color = match m.health {
+        Health::Ok => p.good(),
+        Health::Warn => p.warn(),
+        Health::Missing | Health::Disabled => p.off(),
+    };
+    let num = |key: &str, v: String, w: f32| text(v).key(key).font(p.num()).color(p.ink()).w(w);
+    let when = |key: &str, at: Option<&str>, w: f32| {
+        text(at.map_or("Not yet".to_string(), |at| ago(at, s.now())))
+            .key(key)
+            .font(p.text())
+            .color(p.muted())
+            .w(w)
+    };
+    let line = row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(
+            text(m.machine.clone())
+                .font(p.k.ty.ui_medium)
+                .color(p.ink())
+                .w(w[0]),
+        )
+        .child(
+            row()
+                .w(w[1])
+                .gap(6.0)
+                .center_y()
+                .child(dot(color, 7.0))
+                .child(
+                    text(health(m.health))
+                        .key("health")
+                        .font(p.text())
+                        .color(p.ink()),
+                ),
+        )
+        .child(num("sessions", thousands(m.sessions), w[2]))
+        .child(num("size", human_bytes(m.archive_bytes), w[3]))
+        .child(when("last", m.last_capture.as_deref(), w[4]))
+        .child(when("pulled", m.last_pull.as_deref(), w[5]));
+    let mut notes: Vec<String> = m.host.iter().cloned().collect();
+    notes.extend(m.note.iter().cloned());
+    let mut c = col()
+        .key(format!("machine-{}", m.machine))
+        .w_full()
+        .py(8.0)
+        .gap(2.0)
+        .child(line);
+    if !notes.is_empty() {
+        c = c.child(
+            text(notes.join(" · "))
+                .key("note")
+                .font(p.caption())
+                .color(if m.health == Health::Warn {
+                    p.warn()
+                } else {
+                    p.muted()
+                })
+                .wrap()
                 .pl(w[0] + 8.0),
         );
     }

@@ -228,7 +228,7 @@ pub fn view(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
         .h_full()
         .child(header(&s.findings, p, layer))
         .child(p.separator())
-        .child(list(&s.findings, p))
+        .child(list(s, p))
 }
 
 fn day_field(
@@ -373,7 +373,8 @@ fn header(st: &FindingsState, p: &Paint, layer: &mut Vec<El>) -> El {
     c
 }
 
-fn list(st: &FindingsState, p: &Paint) -> El {
+fn list(s: &State, p: &Paint) -> El {
+    let st = &s.findings;
     let body = col()
         .key("results")
         .w_full()
@@ -466,7 +467,7 @@ fn list(st: &FindingsState, p: &Paint) -> El {
             );
         let mut item = col().w_full().gap(6.0).child(p.k.interactive(head));
         if open {
-            item = item.child(where_found(st, p));
+            item = item.child(where_found(s, p));
         }
         rows = rows.child(item);
     }
@@ -485,13 +486,15 @@ fn list(st: &FindingsState, p: &Paint) -> El {
 }
 
 /// The sessions the selected fingerprint appears in, each with a button that opens it.
-fn where_found(st: &FindingsState, p: &Paint) -> El {
+fn where_found(s: &State, p: &Paint) -> El {
+    let st = &s.findings;
     let mut c = col().key("where").w_full().pl(16.0).gap(6.0);
     if st.lookup.is_none() {
         return c.child(p.note("Looking for its sessions…"));
     }
     for (n, a) in appearances(st).into_iter().enumerate() {
-        let mut facts = vec![a.harness.label().to_string()];
+        let mut facts: Vec<String> = s.machine_label(a.machine.as_deref()).into_iter().collect();
+        facts.push(a.harness.label().to_string());
         if let Some(pr) = &a.project {
             facts.push(pr.clone());
         }

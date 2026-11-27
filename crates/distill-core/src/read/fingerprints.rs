@@ -38,8 +38,11 @@ pub struct Appearances {
 /// One session a fingerprint appears in: its facts, and the events it is in. No text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Appearance {
-    /// The session's key, `harness/id`.
+    /// The session's key, `harness/id`, or `machine:harness/id` for a spoke's.
     pub session: String,
+    /// The spoke it was captured on; none for the home's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
     pub harness: Harness,
     pub project: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
@@ -348,6 +351,7 @@ pub fn where_found(
                     .1
                     .push(Appearance {
                         session: facts.key(),
+                        machine: facts.machine.clone(),
                         harness: facts.harness,
                         project: facts.cwd.clone(),
                         started_at,

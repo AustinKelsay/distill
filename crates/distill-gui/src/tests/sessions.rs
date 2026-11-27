@@ -914,3 +914,117 @@ fn a_tag_with_a_comma_in_it_filters_whole_and_its_owner_can_hide_it() {
     assert_eq!(place(&rt), None);
     assert!(rt.state.sessions.open.as_ref().unwrap().tag_error.is_none());
 }
+
+/// Copy a folder's files, keeping its layout.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+/// A hub whose spoke `nas` holds the same captures as its own, with Sessions open.
+fn hub_window(dir: &std::path::Path) -> (Core, Runtime<State>) {
+    let core = archive(dir);
+    copy_tree(
+        &core.home.raw_dir_of(None),
+        &core.home.raw_dir_of(Some("nas")),
+    );
+    let config = core.home.load_config().unwrap();
+    distill_core::tick::tick_with(&core.home, &config, &core.runtime).unwrap();
+    // Opening Sessions first reads the status report, which names the spokes.
+    let rt = window(&core);
+    (core, rt)
+}
+
+fn machines_listed(rt: &Runtime<State>) -> Vec<Option<String>> {
+    let r = rt.state.sessions.results.as_ref().unwrap();
+    r.rows.iter().map(|r| r.facts.machine.clone()).collect()
+}
+
+#[test]
+fn on_a_hub_the_list_filters_by_machine_and_names_each_sessions_machine() {
+    let dir = tempfile::tempdir().unwrap();
+    let (core, mut rt) = hub_window(dir.path());
+    assert!(
+        rt.find("filter-machine-trigger").is_some(),
+        "{:?}",
+        texts(&rt)
+    );
+    // Each session says where it was captured: the spoke, or this hub.
+    let facts: Vec<String> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| e.key.as_deref() == Some("facts"))
+        .filter_map(|e| e.text)
+        .collect();
+    assert_eq!(facts.len(), 4, "{facts:?}");
+    assert_eq!(
+        facts
+            .iter()
+            .filter(|l| l.starts_with("nas · Claude Code · /work/"))
+            .count(),
+        2,
+        "{facts:?}"
+    );
+    assert_eq!(
+        facts
+            .iter()
+            .filter(|l| l.starts_with("This hub · "))
+            .count(),
+        2,
+        "{facts:?}"
+    );
+
+    let mut pick = |m: Option<&str>| {
+        rt.update(|s, _| {
+            s.sessions.filters.machine = m.map(str::to_string);
+            sessions::search(s);
+        });
+        run_jobs(&mut rt, &core);
+        machines_listed(&rt)
+    };
+    assert_eq!(pick(None).len(), 4);
+    let nas = Some("nas".to_string());
+    assert_eq!(pick(Some("nas")), [nas.clone(), nas]);
+    assert_eq!(pick(Some(distill_core::home::HUB)), [None, None]);
+}
+
+#[test]
+fn a_machine_picked_while_a_search_runs_applies_once_it_lands() {
+    let dir = tempfile::tempdir().unwrap();
+    let (core, mut rt) = hub_window(dir.path());
+    rt.update(|s, _| sessions::search(s));
+    settle(&mut rt);
+    assert!(rt.state.sessions.loading);
+    press(&mut rt, "filter-machine-trigger");
+    press(&mut rt, "option2");
+    assert_eq!(rt.state.sessions.filters.machine.as_deref(), Some("nas"));
+    run_jobs(&mut rt, &core);
+    let nas = Some("nas".to_string());
+    assert_eq!(machines_listed(&rt), [nas.clone(), nas]);
+}
+
+#[test]
+fn a_hub_whose_only_spoke_is_named_hub_is_still_a_hub() {
+    let mut s = fixture::sessions_listed();
+    let mut hub = fixture::hub();
+    let st = hub.overview.status.as_mut().unwrap();
+    st.machines.truncate(1);
+    st.machines[0].machine = distill_core::home::HUB.into();
+    s.overview.status = hub.overview.status.take();
+    assert_eq!(s.machine_label(None).as_deref(), Some("This hub"));
+    assert!(s.spokes().is_empty(), "a spoke named hub isn't a choice");
+    let rt = runtime_sized(s, (1080.0, 1400.0));
+    assert!(
+        rt.find("filter-machine-trigger").is_some(),
+        "{:?}",
+        texts(&rt)
+    );
+}

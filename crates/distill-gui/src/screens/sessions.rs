@@ -66,6 +66,8 @@ pub struct SessionsState {
 #[derive(Default)]
 pub struct Filters {
     pub harness: Option<Harness>,
+    /// A spoke's name, or [`distill_core::home::HUB`] for the hub's own sessions.
+    pub machine: Option<String>,
     pub model: TextEdit,
     pub project: TextEdit,
     pub since: TextEdit,
@@ -79,6 +81,7 @@ impl Filters {
         let words = |t: &TextEdit| Some(t.text.trim().to_string()).filter(|s| !s.is_empty());
         Ok(Filter {
             harness: self.harness,
+            machine: self.machine.clone(),
             project: words(&self.project),
             model: words(&self.model),
             since: parse_day(&self.since, "from")?,
@@ -101,6 +104,7 @@ impl Filters {
 
     fn any(&self) -> bool {
         self.harness.is_some()
+            || self.machine.is_some()
             || self.outcome.is_some()
             || [
                 &self.model,
@@ -180,6 +184,10 @@ pub enum Loaded {
 /// Moving to the screen covers every finding again, and loads the list when no session is open.
 pub fn open(s: &mut State) {
     s.sessions.menu = None;
+    // The machine filter lists the spokes the status report names.
+    if s.overview.status.is_none() {
+        crate::screens::overview::load(s);
+    }
     match &mut s.sessions.open {
         Some(o) => o.revealed.clear(),
         None => search(s),
@@ -217,6 +225,8 @@ fn ask_page(s: &mut State, offset: usize) {
     };
     st.filter_error = None;
     if st.loading {
+        // A new search (a filter just changed) runs once the page in flight lands.
+        st.refresh |= offset == 0;
         return;
     }
     if offset == 0 {
