@@ -170,7 +170,7 @@ impl Archive {
     ) -> Result<Option<CaptureRecord>> {
         let previous = self.latest.get(origin).cloned();
         create_dir_private(&self.raw)?;
-        let tmp = self.raw.join(format!(".incoming-{}", std::process::id()));
+        let tmp = self.raw.join(format!("{INCOMING}{}", std::process::id()));
         let mut out = private_file()
             .write(true)
             .create(true)
@@ -345,13 +345,13 @@ pub(crate) fn parse_manifest(bytes: &[u8]) -> Vec<CaptureRecord> {
         .collect()
 }
 
-/// What a writer of a raw archive stages there before a rename, each named for its process.
-const STAGING: [&str; 4] = [
-    ".incoming-",
-    ".pulling-",
-    ".restoring-",
-    ".manifest.jsonl.tmp-",
-];
+/// What a writer of a raw archive stages there before a rename, each named for its process: a
+/// capture the sweep is taking, a blob a pull or a restore is taking, and the copy's manifest a
+/// pull rewrites ([`write_atomic_with`]'s name for it).
+const INCOMING: &str = ".incoming-";
+const PULLING: &str = ".pulling-";
+const RESTORING: &str = ".restoring-";
+const STAGING: [&str; 4] = [INCOMING, PULLING, RESTORING, ".manifest.jsonl.tmp-"];
 
 /// Remove the staging files a writer that died left in `home`'s raw archives, its own and each
 /// spoke's, keeping any whose process still runs. Take the archive lock first. Returns how many
@@ -422,7 +422,7 @@ pub fn restore_of(
     }
     create_dir_private(&raw)?;
     set_private(&raw);
-    let tmp = raw.join(format!(".restoring-{}", std::process::id()));
+    let tmp = raw.join(format!("{RESTORING}{}", std::process::id()));
     let mut missing = Vec::new();
     let mut shards = BTreeSet::new();
     for (sha, size) in expected_blobs(&parse_manifest(manifest)) {
@@ -799,7 +799,7 @@ pub fn take_into(
     }
     let mut archive = Archive::open_of(home, Some(machine))?;
     create_dir_private(&archive.raw)?;
-    let tmp = archive.raw.join(format!(".pulling-{}", std::process::id()));
+    let tmp = archive.raw.join(format!("{PULLING}{}", std::process::id()));
     // Folders of blobs already here that this pull has synced: an earlier pull may have renamed
     // one in and failed before its sync, so it is synced once before a line names it.
     let mut synced = HashSet::new();
@@ -1122,6 +1122,15 @@ mod tests {
         assert_eq!(clear_staging(&home).unwrap(), 3);
         let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
         assert_eq!(left, [false, true, true, false, false, true]);
+        // The sweep clears it once it holds the archive.
+        fs::write(&files[0], b"half").unwrap();
+        // No harness on, so it sweeps nothing of this machine's.
+        let none = crate::Config {
+            harnesses: vec![],
+            ..crate::Config::default()
+        };
+        crate::sweep::sweep(&home, &none, None).unwrap();
+        assert!(!files[0].exists());
     }
 
     #[test]
