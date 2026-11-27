@@ -655,6 +655,8 @@ pub struct Copy {
 
 /// Read `machine`'s copy here; none yet is an empty one.
 pub fn copy_of(home: &Home, machine: &str) -> Result<Copy> {
+    // Before its name makes a path.
+    crate::home::machine_name(machine)?;
     let bytes = match fs::read(home.manifest_path_of(Some(machine))) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -1032,6 +1034,15 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn a_name_that_isnt_a_machines_reads_no_copy() {
+        let (_h, hub) = home();
+        for bad in ["../x", "/etc", ""] {
+            assert!(copy_of(&hub, bad).is_err(), "{bad}");
+            assert!(take(&hub, bad, &mut &b""[..], &|| false).is_err(), "{bad}");
+        }
     }
 
     #[test]
