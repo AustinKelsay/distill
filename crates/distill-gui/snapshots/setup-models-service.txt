@@ -28,9 +28,11 @@
           text: 5 Privacy
           step-5: Backups
           text: 6 Backups
-          step-6: Schedule
-          text: 7 Schedule
-        text: Step 4 of 7
+          step-6: Machines
+          text: 7 Machines
+          step-7: Schedule
+          text: 8 Schedule
+        text: Step 4 of 8
           step-title: Models
         text: The models that organize the archive
             text: Run models on

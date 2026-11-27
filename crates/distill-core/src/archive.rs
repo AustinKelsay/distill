@@ -598,16 +598,6 @@ pub fn export(
     Ok(())
 }
 
-/// The length of the whole lines of `machine`'s manifest here: where its next pull starts.
-pub fn copy_length(home: &Home, machine: &str) -> Result<u64> {
-    let ours = match fs::read(home.manifest_path_of(Some(machine))) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
-    };
-    Ok(whole_lines(&ours) as u64)
-}
-
 /// The length of `bytes` up to the end of its last line.
 fn whole_lines(bytes: &[u8]) -> usize {
     bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
@@ -641,6 +631,88 @@ fn is_blob_name(sha: &str) -> bool {
     sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Read an export's next frame line into `frame`, without its newline: at most [`MAX_FRAME`].
+fn read_frame(frame: &mut String, input: &mut dyn std::io::BufRead) -> Result<()> {
+    use std::io::BufRead;
+    frame.clear();
+    if Read::take(&mut *input, MAX_FRAME).read_line(frame)? == 0 {
+        bail!(ENDED_EARLY);
+    }
+    if frame.pop() != Some('\n') {
+        bail!(ENDED_EARLY);
+    }
+    Ok(())
+}
+
+/// `machine`'s copy of its manifest here, as a pull starts from it: its bytes, the length of its
+/// whole lines (the byte its export is asked to start at), and their SHA-256, which the spoke's
+/// manifest must start with.
+pub struct Copy {
+    bytes: Vec<u8>,
+    pub since: u64,
+    prefix: String,
+}
+
+/// Read `machine`'s copy here; none yet is an empty one.
+pub fn copy_of(home: &Home, machine: &str) -> Result<Copy> {
+    // Before its name makes a path.
+    crate::home::machine_name(machine)?;
+    let bytes = match fs::read(home.manifest_path_of(Some(machine))) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+    };
+    let whole = whole_lines(&bytes);
+    let prefix = hex::encode(Sha256::digest(&bytes[..whole]));
+    let since = whole as u64;
+    Ok(Copy {
+        bytes,
+        since,
+        prefix,
+    })
+}
+
+/// Read the start of `machine`'s export from `input`: the export's first line, then its header,
+/// which must name `machine` and continue `copy`. Writes nothing.
+fn export_header(
+    machine: &str,
+    copy: &Copy,
+    input: &mut dyn std::io::BufRead,
+) -> Result<ExportHeader> {
+    crate::home::machine_name(machine)?;
+    let mut frame = String::new();
+    read_frame(&mut frame, input)?;
+    if frame != EXPORT_START {
+        bail!(
+            "not an export from DISTILL: {:?}",
+            frame.chars().take(80).collect::<String>()
+        );
+    }
+    read_frame(&mut frame, input)?;
+    let header: ExportHeader = serde_json::from_str(&frame).context("read the export's header")?;
+    if header.machine != machine {
+        bail!(
+            "the machine there is \"{}\", not \"{machine}\"",
+            header.machine
+        );
+    }
+    if header.since != copy.since || header.prefix != copy.prefix {
+        bail!(
+            "\"{machine}\"'s archive there does not continue its copy here: is another machine \
+             using the name \"{machine}\"?"
+        );
+    }
+    Ok(header)
+}
+
+/// Check the start of `machine`'s export from `input` as a pull would (see [`export_header`]),
+/// against `copy` as it was when the export was asked for, without taking anything: whether the
+/// spoke has captures `copy` lacks.
+pub fn check_export(machine: &str, copy: &Copy, input: &mut dyn std::io::BufRead) -> Result<bool> {
+    let header = export_header(machine, copy, input)?;
+    Ok(header.end > header.since)
+}
+
 /// Take `machine`'s export from `input` into its raw archive here (ADR 0010), which it must
 /// continue: the export starts where this copy ends, and from the same bytes. Each blob is
 /// checked against its name, and one already here is skipped, before the line that names it is
@@ -664,48 +736,11 @@ pub fn take_into(
     stop: &dyn Fn() -> bool,
     t: &mut Transfer,
 ) -> Result<()> {
-    use std::io::BufRead;
-    crate::home::machine_name(machine)?;
-    let mut frame = String::new();
-    let next = |frame: &mut String, input: &mut dyn std::io::BufRead| -> Result<()> {
-        frame.clear();
-        if Read::take(&mut *input, MAX_FRAME).read_line(frame)? == 0 {
-            bail!(ENDED_EARLY);
-        }
-        if frame.pop() != Some('\n') {
-            bail!(ENDED_EARLY);
-        }
-        Ok(())
-    };
-    next(&mut frame, input)?;
-    if frame != EXPORT_START {
-        bail!(
-            "not an export from DISTILL: {:?}",
-            frame.chars().take(80).collect::<String>()
-        );
-    }
-    next(&mut frame, input)?;
-    let header: ExportHeader = serde_json::from_str(&frame).context("read the export's header")?;
-    if header.machine != machine {
-        bail!(
-            "the machine there is \"{}\", not \"{machine}\"",
-            header.machine
-        );
-    }
+    let copy = copy_of(home, machine)?;
+    let header = export_header(machine, &copy, input)?;
+    let (ours, whole) = (copy.bytes, copy.since as usize);
     let path = home.manifest_path_of(Some(machine));
-    let ours = match fs::read(&path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
-    };
-    let whole = whole_lines(&ours);
-    if header.since != whole as u64 || header.prefix != hex::encode(Sha256::digest(&ours[..whole]))
-    {
-        bail!(
-            "\"{machine}\"'s archive there does not continue its copy here: is another machine \
-             using the name \"{machine}\"?"
-        );
-    }
+    let mut frame = String::new();
     // A line cut short by a write that failed here (a full disk) is dropped: the export sends it
     // again whole.
     if whole < ours.len() {
@@ -737,7 +772,7 @@ pub fn take_into(
     };
     let result = (|| -> Result<()> {
         loop {
-            next(&mut frame, input)?;
+            read_frame(&mut frame, input)?;
             let words: Vec<&str> = frame.split(' ').collect();
             match words.as_slice() {
                 ["blob", sha, len] => {
@@ -940,7 +975,7 @@ mod tests {
 
     /// What `export` writes from `spoke` for the hub's copy of `nas` as it is now.
     fn export_for(spoke: &Home, hub: &Home) -> Vec<u8> {
-        let since = copy_length(hub, "nas").unwrap();
+        let since = copy_of(hub, "nas").unwrap().since;
         let mut out = Vec::new();
         export(spoke, "nas", since, &mut out, &mut Transfer::default()).unwrap();
         out
@@ -999,6 +1034,35 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn a_name_that_isnt_a_machines_reads_no_copy() {
+        let (_h, hub) = home();
+        for bad in ["../x", "/etc", ""] {
+            assert!(copy_of(&hub, bad).is_err(), "{bad}");
+            assert!(take(&hub, bad, &mut &b""[..], &|| false).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_check_reads_the_header_against_the_copy_it_asked_from_while_a_pull_grows_it() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        // The check asks for an export from the copy as it is (empty); a pull lands first.
+        let asked = copy_of(&hub, "nas").unwrap();
+        let export = export_for(&spoke, &hub);
+        pull(&spoke, &hub);
+        assert!(check_export("nas", &asked, &mut &export[..]).unwrap());
+        // Against the copy as it is now, the same header doesn't continue it.
+        let now = copy_of(&hub, "nas").unwrap();
+        let e = check_export("nas", &now, &mut &export[..]).unwrap_err();
+        assert!(format!("{e:#}").contains("does not continue"), "{e:#}");
+        // And with nothing new on the spoke, the check says so.
+        let none = export_for(&spoke, &hub);
+        assert!(!check_export("nas", &now, &mut &none[..]).unwrap());
     }
 
     #[test]

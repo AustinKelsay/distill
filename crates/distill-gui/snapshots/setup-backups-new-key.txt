@@ -28,9 +28,11 @@
           text: 5 Privacy
           step-5: Backups
           text: 6 Backups
-          step-6: Schedule
-          text: 7 Schedule
-        text: Step 6 of 7
+          step-6: Machines
+          text: 7 Machines
+          step-7: Schedule
+          text: 8 Schedule
+        text: Step 6 of 8
           step-title: Backups
         text: Where encrypted copies of the archive go
         text: The raw archive is the one part of DISTILL that can't be rebuilt. A backup copies it, with your settings and logs, to folders you choose: an external drive, a mounted share, or a cloud folder that syncs (Google Drive, iCloud, Dropbox). Everything is encrypted on this machine first, so the folder, and the cloud behind it, only ever sees scrambled files.
