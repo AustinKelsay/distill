@@ -92,22 +92,34 @@ pub fn record(home: &Home, entry: &RunEntry) -> Result<()> {
 
 /// The most recent entries, newest first.
 pub fn recent(home: &Home, limit: usize) -> Result<Vec<RunEntry>> {
+    let mut out = Vec::new();
+    if limit == 0 {
+        return Ok(out);
+    }
+    scan(home, |e| {
+        out.push(e);
+        out.len() < limit
+    })?;
+    Ok(out)
+}
+
+/// Hand each entry to `f`, newest first, one day's file at a time, until it returns false or
+/// the log ends.
+pub fn scan(home: &Home, mut f: impl FnMut(RunEntry) -> bool) -> Result<()> {
     let mut files: Vec<_> = std::fs::read_dir(home.runs_dir())
         .map(|rd| rd.filter_map(Result::ok).map(|e| e.path()).collect())
         .unwrap_or_default();
     files.retain(|p| p.extension().is_some_and(|e| e == "jsonl"));
     files.sort();
-    let mut out = Vec::new();
-    for f in files.iter().rev() {
-        let mut entries: Vec<RunEntry> = read_jsonl(f)?;
-        entries.reverse();
-        out.extend(entries);
-        if out.len() >= limit {
-            break;
+    for file in files.iter().rev() {
+        let entries: Vec<RunEntry> = read_jsonl(file)?;
+        for e in entries.into_iter().rev() {
+            if !f(e) {
+                return Ok(());
+            }
         }
     }
-    out.truncate(limit);
-    Ok(out)
+    Ok(())
 }
 
 /// The newest run that ran `step` and it succeeded, with when it ran.

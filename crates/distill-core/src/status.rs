@@ -390,12 +390,31 @@ fn machines(
     type When = chrono::DateTime<chrono::FixedOffset>;
     let mut newest: BTreeMap<String, (When, Option<String>)> = BTreeMap::new();
     let mut last_ok: BTreeMap<String, When> = BTreeMap::new();
-    for e in runlog::recent(home, 500)? {
-        let Some(o) = e.outcome("pull") else { continue };
-        let Ok(r) = serde_json::from_value::<crate::machines::PullReport>(o.report) else {
-            continue;
-        };
-        for p in r.machines {
+    // The whole log if need be: a spoke pulled from rarely, or failing, is still found. A run is
+    // logged, to the second, after its pulls end, into the file of the day it was logged, but
+    // not always in order within that day. So once a day is read whole, and each machine's
+    // newest pull that took ended a second or more after that day began, no earlier day holds a
+    // newer one: the newest pull, failed or not, is never older than that one.
+    let mut day: Option<String> = None;
+    runlog::scan(home, |e| {
+        let this_day = e.at.get(..10).unwrap_or_default().to_string();
+        if let Some(read) = day.as_deref().filter(|d| *d != this_day) {
+            let began = chrono::DateTime::parse_from_rfc3339(&format!("{read}T00:00:00Z"));
+            if let Ok(began) = began {
+                let bound = began + chrono::Duration::seconds(1);
+                if names
+                    .keys()
+                    .all(|m| last_ok.get(m).is_some_and(|t| *t >= bound))
+                {
+                    return false;
+                }
+            }
+        }
+        day = Some(this_day);
+        let report = e
+            .outcome("pull")
+            .and_then(|o| serde_json::from_value::<crate::machines::PullReport>(o.report).ok());
+        for p in report.map(|r| r.machines).unwrap_or_default() {
             let at = p.at.as_deref().unwrap_or(&e.at);
             let Ok(at) = chrono::DateTime::parse_from_rfc3339(at) else {
                 continue;
@@ -407,7 +426,8 @@ fn machines(
                 newest.insert(p.machine, (at, p.error));
             }
         }
-    }
+        true
+    })?;
     let mut out = Vec::new();
     for (machine, host) in names {
         let archive = Archive::open_of(home, Some(&machine))?;
@@ -453,14 +473,29 @@ fn machines(
         let last_pull = last_ok
             .get(&machine)
             .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-        let warned = harnesses.iter().find(|h| h.health == Health::Warn);
+        let warned: Vec<_> = harnesses
+            .iter()
+            .filter(|h| h.health == Health::Warn)
+            .collect();
         let (health, note) = if let Some(e) = &pull_error {
             (Health::Warn, Some(format!("the last pull failed: {e}")))
-        } else if let Some(h) = warned {
+        } else if let [h] = &warned[..] {
             (
                 Health::Warn,
                 Some(format!("{}: {}", h.label, h.note.as_deref().unwrap_or(""))),
             )
+        } else if !warned.is_empty() {
+            let labels: Vec<_> = warned.iter().map(|h| h.label.as_str()).collect();
+            (
+                Health::Warn,
+                Some(format!(
+                    "{} harnesses warn: {}",
+                    warned.len(),
+                    labels.join(", ")
+                )),
+            )
+        } else if last_pull.is_none() && harnesses.is_empty() && host.is_some() {
+            (Health::Warn, Some("never pulled".into()))
         } else if last_pull.is_none() && harnesses.is_empty() {
             (Health::Missing, Some("not pulled from yet".into()))
         } else {
@@ -883,6 +918,151 @@ mod tests {
         assert_eq!(
             drift_note(&f),
             "2 look like format drift; record types the parser doesn't know: a, b, c, d, e, 2 more"
+        );
+    }
+
+    #[test]
+    fn a_spokes_last_pull_is_found_past_the_newest_500_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let config = Config {
+            machines: vec![crate::config::MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Config::default()
+        };
+        config.save(&home.config_path()).unwrap();
+        // Pulled 30 days ago, then 600 hourly runs that pulled nothing.
+        pulled(&home, "nas", 30 * 24 * 60, None);
+        for h in (0..600).rev() {
+            let mut e = runlog::RunEntry::of("tick", vec![]);
+            e.at = ago(h * 60);
+            runlog::record(&home, &e).unwrap();
+        }
+        let nas = &status(&home).unwrap().machines[0];
+        let last = chrono::DateTime::parse_from_rfc3339(nas.last_pull.as_deref().unwrap()).unwrap();
+        let days = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_days();
+        assert_eq!(days, 30, "{nas:?}");
+    }
+
+    #[test]
+    fn a_spokes_newest_pull_is_found_when_runs_were_logged_out_of_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        Config {
+            machines: vec![crate::config::MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Config::default()
+        }
+        .save(&home.config_path())
+        .unwrap();
+        let run = |logged: &str, ended: Option<&str>| {
+            let outcomes = ended
+                .map(|ended| {
+                    let report = crate::machines::PullReport {
+                        machines: vec![crate::machines::Pulled {
+                            machine: "nas".into(),
+                            at: Some(format!("2026-11-01T{ended}Z")),
+                            took: Default::default(),
+                            error: None,
+                        }],
+                        skipped: None,
+                    };
+                    vec![crate::tick::pull_outcome(&report).unwrap()]
+                })
+                .unwrap_or_default();
+            let mut e = runlog::RunEntry::of("tick", outcomes);
+            e.at = format!("2026-11-01T{logged}Z");
+            runlog::record(&home, &e).unwrap();
+        };
+        // An earlier day, then a day whose runs were appended out of order.
+        let mut e = runlog::RunEntry::of("tick", vec![]);
+        e.at = "2026-10-31T23:00:00Z".into();
+        runlog::record(&home, &e).unwrap();
+        run("10:00:20", Some("10:00:19.900"));
+        run("10:00:10", None);
+        run("10:00:22", Some("10:00:15.100"));
+        let s = status(&home).unwrap();
+        let nas = s.machines.iter().find(|m| m.machine == "nas").unwrap();
+        assert_eq!(nas.last_pull.as_deref(), Some("2026-11-01T10:00:19Z"));
+    }
+
+    #[test]
+    fn a_spoke_in_the_config_never_pulled_warns_but_one_with_captures_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let spoke = |name: &str| crate::config::MachineConfig {
+            name: name.into(),
+            host: format!("me@{name}"),
+            command: None,
+        };
+        let config = Config {
+            machines: vec![spoke("nas"), spoke("box")],
+            ..Config::default()
+        };
+        config.save(&home.config_path()).unwrap();
+        // box's captures came another way, as a restored hub's do: its run log isn't restored.
+        let capture = br#"{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}
+"#;
+        Archive::open_of(&home, Some("box"))
+            .unwrap()
+            .put(Harness::ClaudeCode, "/x/-w/s1.jsonl", "1", &capture[..])
+            .unwrap();
+        let s = status(&home).unwrap();
+        let of = |m: &str| s.machines.iter().find(|x| x.machine == m).unwrap();
+        assert_eq!(
+            (of("nas").health, of("nas").note.as_deref()),
+            (Health::Warn, Some("never pulled"))
+        );
+        assert_eq!(of("box").health, Health::Ok, "{:?}", of("box"));
+    }
+
+    #[test]
+    fn a_spokes_note_counts_every_harness_that_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        Config::default().save(&home.config_path()).unwrap();
+        let mut archive = Archive::open_of(&home, Some("nas")).unwrap();
+        // Each holds a record type its parser doesn't know.
+        let claude = br#"{"type":"user","cwd":"/w","sessionId":"s1","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":"hi"}}
+{"type":"tool-output.v2","timestamp":"2026-11-01T00:00:03Z","text":"done"}
+"#;
+        let codex = br#"{"timestamp":"2026-11-03T08:30:53Z","type":"session_meta","payload":{"id":"abc","cwd":"/r","cli_version":"0.169.0"}}
+{"timestamp":"2026-11-03T08:30:54Z","type":"brand_new_kind","payload":{}}
+"#;
+        archive
+            .put(Harness::ClaudeCode, "/x/-w/s1.jsonl", "1", &claude[..])
+            .unwrap();
+        archive
+            .put(
+                Harness::Codex,
+                "/x/2026/11/03/rollout-abc.jsonl",
+                "1",
+                &codex[..],
+            )
+            .unwrap();
+        normalize::normalize(&home, false).unwrap();
+        let nas = &status(&home).unwrap().machines[0];
+        let warned: Vec<_> = nas
+            .harnesses
+            .iter()
+            .filter(|h| h.health == Health::Warn)
+            .map(|h| h.label.as_str())
+            .collect();
+        assert_eq!(warned.len(), 2, "{nas:?}");
+        assert_eq!(nas.health, Health::Warn);
+        assert_eq!(
+            nas.note.as_deref(),
+            Some(format!("2 harnesses warn: {}", warned.join(", ")).as_str())
         );
     }
 }
