@@ -81,14 +81,7 @@ fn header(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
         })
         .build(&p.k, layer);
     // On a hub, its spokes and its own sessions; a home without spokes has no machine filter.
-    let spokes: Vec<&str> = s
-        .overview
-        .status
-        .iter()
-        .flat_map(|st| st.machines.iter().map(|m| m.machine.as_str()))
-        // A spoke named `hub` can't be picked apart from the hub's own (docs/known-gaps.md).
-        .filter(|m| *m != HUB)
-        .collect();
+    let spokes = s.spokes();
     let machine = (!spokes.is_empty() || f.machine.is_some()).then(|| {
         let names: Vec<&str> = [ANY_MACHINE, THIS_HUB]
             .into_iter()
@@ -505,10 +498,9 @@ fn result_row(s: &State, r: &ResultRow, i: usize, p: &Paint) -> El {
     col().w_full().pb(10.0).child(p.k.interactive(item))
 }
 
-/// `Claude Code · /work/app · claude-opus-5-5 · Nov 10 · 6 events`, after the machine for a
-/// spoke's session.
+/// `Claude Code · /work/app · claude-opus-5-5 · Nov 10 · 6 events`, after the machine on a hub.
 pub fn facts_line(s: &State, f: &distill_core::model::SessionMeta) -> String {
-    let mut parts: Vec<String> = f.machine.iter().cloned().collect();
+    let mut parts: Vec<String> = s.machine_label(f.machine.as_deref()).into_iter().collect();
     parts.push(f.harness.label().to_string());
     if let Some(cwd) = &f.cwd {
         parts.push(cwd.clone());

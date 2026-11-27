@@ -88,6 +88,26 @@ impl State {
         self.clock.unwrap_or_else(Utc::now)
     }
 
+    /// The spokes the last status report names, by machine; none on a home without spokes. A
+    /// spoke named `hub` is left out: a filter's `hub` is the hub's own (docs/known-gaps.md).
+    pub fn spokes(&self) -> Vec<&str> {
+        self.overview
+            .status
+            .iter()
+            .flat_map(|st| st.machines.iter().map(|m| m.machine.as_str()))
+            .filter(|m| *m != distill_core::home::HUB)
+            .collect()
+    }
+
+    /// Where a session was captured, as the window names it: its spoke, or `This hub` for the
+    /// hub's own once the hub has spokes; none on a home without spokes.
+    pub fn machine_label(&self, machine: Option<&str>) -> Option<String> {
+        match machine {
+            Some(m) => Some(m.to_string()),
+            None => (!self.spokes().is_empty()).then(|| "This hub".to_string()),
+        }
+    }
+
     /// Reveal requests waiting for the owner, from the last status report.
     pub fn pending_reveals(&self) -> u64 {
         self.overview

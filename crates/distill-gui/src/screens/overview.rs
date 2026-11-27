@@ -298,17 +298,16 @@ fn report(s: &State, st: &Status, p: &Paint) -> El {
     if !shown.is_empty() {
         body = body.child(warnings(&shown, p));
     }
-    body = body
-        .child(progress(st, p))
+    if let Some(m) = machines(s, st, p) {
+        body = body.child(m);
+    }
+    body.child(progress(st, p))
         .child(backups(s, st, p))
         .child(runs(s, st, p))
         .child(reveals(st, p))
         .child(left(st, p))
-        .child(harnesses(s, st, p));
-    if let Some(m) = machines(s, st, p) {
-        body = body.child(m);
-    }
-    body.child(exposure_section(s, &st.exposure, p))
+        .child(harnesses(s, st, p))
+        .child(exposure_section(s, &st.exposure, p))
 }
 
 fn tiles(st: &Status, p: &Paint) -> El {
@@ -1141,12 +1140,12 @@ fn machines(s: &State, st: &Status, p: &Paint) -> Option<El> {
             ),
         )
         .gap(0.0);
-    let col_w = [140.0, 90.0, 80.0, 80.0, 80.0, 100.0, 100.0];
+    // Narrower than the harness table, so it fits the narrowest window.
+    let col_w = [140.0, 90.0, 80.0, 80.0, 100.0, 100.0];
     let head = [
         "Machine",
         "Health",
         "Sessions",
-        "Captures",
         "Archive",
         "Last capture",
         "Last pull",
@@ -1162,7 +1161,7 @@ fn machines(s: &State, st: &Status, p: &Paint) -> Option<El> {
     Some(card)
 }
 
-fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 7]) -> El {
+fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 6]) -> El {
     let color = match m.health {
         Health::Ok => p.good(),
         Health::Warn => p.warn(),
@@ -1200,10 +1199,9 @@ fn machine_row(s: &State, m: &MachineStatus, p: &Paint, w: &[f32; 7]) -> El {
                 ),
         )
         .child(num("sessions", thousands(m.sessions), w[2]))
-        .child(num("captures", thousands(m.captures), w[3]))
-        .child(num("size", human_bytes(m.archive_bytes), w[4]))
-        .child(when("last", m.last_capture.as_deref(), w[5]))
-        .child(when("pulled", m.last_pull.as_deref(), w[6]));
+        .child(num("size", human_bytes(m.archive_bytes), w[3]))
+        .child(when("last", m.last_capture.as_deref(), w[4]))
+        .child(when("pulled", m.last_pull.as_deref(), w[5]));
     let mut notes: Vec<String> = m.host.iter().cloned().collect();
     notes.extend(m.note.iter().cloned());
     let mut c = col()

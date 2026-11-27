@@ -27,6 +27,29 @@
             value: 2.6 GB
           text: Harnesses captured
             value: 6
+        machines: Machines
+            title: Machines
+            machines-note: Spokes this hub pulls captures from over SSH
+          text: Machine
+          text: Health
+          text: Sessions
+          text: Archive
+          text: Last capture
+          text: Last pull
+          text: nas
+            health: OK
+            sessions: 212
+            size: 48.0 MB
+            last: 20 min ago
+            pulled: 5 min ago
+            note: me@nas.example
+          text: build-box
+            health: Warning
+            sessions: 37
+            size: 6.2 MB
+            last: yesterday
+            pulled: yesterday
+            note: me@build-box.example · the last pull failed: ssh me@build-box.example: Connection refused
         progress: Progress
             title: Progress
           text: Scan for findings
@@ -175,32 +198,6 @@
             last: 12 min ago
             drift: 0
           off: Not captured: Cursor, Grok, Antigravity, Hermes, Goose.
-        machines: Machines
-            title: Machines
-            machines-note: Spokes this hub pulls captures from over SSH
-          text: Machine
-          text: Health
-          text: Sessions
-          text: Captures
-          text: Archive
-          text: Last capture
-          text: Last pull
-          text: nas
-            health: OK
-            sessions: 212
-            captures: 230
-            size: 48.0 MB
-            last: 20 min ago
-            pulled: 5 min ago
-            note: me@nas.example
-          text: build-box
-            health: Warning
-            sessions: 37
-            captures: 41
-            size: 6.2 MB
-            last: yesterday
-            pulled: yesterday
-            note: me@build-box.example · the last pull failed: ssh me@build-box.example: Connection refused
         exposure: Exposure
             title: Exposure
             outcome: Pass

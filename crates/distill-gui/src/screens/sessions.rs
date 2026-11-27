@@ -225,6 +225,8 @@ fn ask_page(s: &mut State, offset: usize) {
     };
     st.filter_error = None;
     if st.loading {
+        // A new search (a filter just changed) runs once the page in flight lands.
+        st.refresh |= offset == 0;
         return;
     }
     if offset == 0 {
