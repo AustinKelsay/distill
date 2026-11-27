@@ -481,7 +481,7 @@ fn system_disk_encrypted(home: &Path) -> Option<bool> {
 /// Whether block device `major:minor`, as `sys` (sysfs) lists it, is encrypted: a dm-crypt
 /// device, or one whose devices below (`slaves/`, so LVM on LUKS counts) all are; one in the clear
 /// below a mirror holds a readable copy. None when sysfs doesn't list it, or part of the chain
-/// can't be read.
+/// can't be read or is missing.
 fn crypt_below(sys: &Path, major: u64, minor: u64) -> Option<bool> {
     fn crypt(dev: &Path, depth: u8) -> Option<bool> {
         let missing = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
@@ -504,11 +504,8 @@ fn crypt_below(sys: &Path, major: u64, minor: u64) -> Option<bool> {
             Err(e) if !missing(&e) => return None,
             _ => {}
         }
-        let below = match fs::read_dir(dev.join("slaves")) {
-            Ok(below) => below,
-            Err(e) if missing(&e) => return Some(false),
-            Err(_) => return None,
-        };
+        // Every disk sysfs lists has `slaves/`, empty when nothing is below it.
+        let below = fs::read_dir(dev.join("slaves")).ok()?;
         // Deeper than any real stack: a loop.
         if depth >= 16 {
             return None;

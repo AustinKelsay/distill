@@ -270,11 +270,9 @@ fn sysfs(devices: &[(&str, Option<&str>, &[&str])], numbers: &[(&str, &str)]) ->
             fs::create_dir_all(d.join("dm")).unwrap();
             fs::write(d.join("dm/uuid"), format!("{uuid}\n")).unwrap();
         }
-        if !below.is_empty() {
-            fs::create_dir_all(d.join("slaves")).unwrap();
-            for b in *below {
-                std::os::unix::fs::symlink(format!("../../{b}"), d.join("slaves").join(b)).unwrap();
-            }
+        fs::create_dir_all(d.join("slaves")).unwrap();
+        for b in *below {
+            std::os::unix::fs::symlink(format!("../../{b}"), d.join("slaves").join(b)).unwrap();
         }
     }
     fs::create_dir_all(sys.join("dev/block")).unwrap();
@@ -365,12 +363,13 @@ fn the_disk_holding_the_home_is_encrypted_only_when_its_chain_reaches_a_crypt_de
     assert_eq!(crypt_below(part.path(), 259, 1), Some(true));
     // A device sysfs doesn't list (a btrfs subvolume's, say): can't tell.
     assert_eq!(crypt_below(beside.path(), 0, 42), None);
-    // Nor when a device below can't be read.
+    // Nor when a device's uuid can't be read (a folder, so even root can't).
     let hidden = beside.path().join("devices/virtual/block/sdb1");
-    fs::create_dir_all(hidden.join("dm")).unwrap();
-    fs::write(hidden.join("dm/uuid"), "LVM-x\n").unwrap();
-    chmod(&hidden.join("dm/uuid"), 0o000);
-    let unreadable = crypt_below(beside.path(), 8, 17);
-    chmod(&hidden.join("dm/uuid"), 0o600);
-    assert_eq!(unreadable, None);
+    fs::create_dir_all(hidden.join("dm/uuid")).unwrap();
+    fs::create_dir_all(hidden.join("slaves")).unwrap();
+    assert_eq!(crypt_below(beside.path(), 8, 17), None);
+    // Nor when a device has no `slaves/`, as one gone since its link was read.
+    fs::remove_dir(hidden.join("dm/uuid")).unwrap();
+    fs::remove_dir(hidden.join("slaves")).unwrap();
+    assert_eq!(crypt_below(beside.path(), 8, 17), None);
 }
