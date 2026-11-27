@@ -331,12 +331,17 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
-            && self.machine.as_deref().is_none_or(|want| {
-                m.machine
-                    .as_deref()
-                    .unwrap_or(crate::home::HUB)
-                    .eq_ignore_ascii_case(want.trim())
-            })
+            && self
+                .machine
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(|want| match &m.machine {
+                    None => want.eq_ignore_ascii_case(crate::home::HUB),
+                    Some(have) => {
+                        !want.eq_ignore_ascii_case(crate::home::HUB)
+                            && have.eq_ignore_ascii_case(want)
+                    }
+                })
             && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
                 m.cwd
@@ -740,9 +745,17 @@ mod tests {
                 machine: Some("nas"),
                 ..Session::new("b", "2026-11-04T10:00:00Z")
             },
+            // A spoke may be named `hub`; the filter's `hub` is still the hub's own.
+            Session {
+                machine: Some("hub"),
+                ..Session::new("c", "2026-11-05T10:00:00Z")
+            },
         ]);
         let all = Filter::default();
-        assert_eq!(keys(&home, &all), ["nas:claude-code/b", "claude-code/a"]);
+        assert_eq!(
+            keys(&home, &all),
+            ["hub:claude-code/c", "nas:claude-code/b", "claude-code/a"]
+        );
         let on = |m: &str| {
             keys(
                 &home,
