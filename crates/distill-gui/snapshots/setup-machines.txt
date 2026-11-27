@@ -56,7 +56,7 @@
                 input: 
             add-machine: Add
               label: Add
-        text: SSH never asks for a password here: this machine's key must be in the spoke's authorized_keys (limited to the export, as docs/machines.md shows), and the spoke in known_hosts. Check connects as a pull does and takes nothing.
+        text: SSH never asks for a password here: this machine's key must be in the spoke's authorized_keys (limited to the export, as docs/machines.md shows), and the spoke in known_hosts. Check connects as a pull does and takes nothing; Finish saves the list.
         back: Back
           label: Back
         next: Next

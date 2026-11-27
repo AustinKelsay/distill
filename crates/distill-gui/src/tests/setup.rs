@@ -646,10 +646,14 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
     run_jobs(&mut rt, &t.core);
     assert!(shows(&rt, &recovery));
 
-    // Leaving the step hides it; Finish saves the folder and starts its first backup, which the
-    // overview shows running until it lands.
-    step(&mut rt, "Schedule");
+    // Leaving the step hides it; Finish saves the folder and a spoke added on the Machines step,
+    // and starts the folder's first backup, which the overview shows running until it lands.
+    step(&mut rt, "Machines");
     assert!(rt.state.setup.recovery.is_none());
+    type_into(&mut rt, |s| &mut s.setup.machine_name, "nas");
+    type_into(&mut rt, |s| &mut s.setup.machine_host, "me@nas");
+    press(&mut rt, "add-machine");
+    step(&mut rt, "Schedule");
     press(&mut rt, "finish");
     let core = t.core.clone();
     rt.update(|s, _| {
@@ -661,6 +665,14 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
     let saved = t.core.home.load_config().unwrap();
     assert_eq!(saved.backups.len(), 1);
     assert_eq!(saved.backups[0].path.as_deref(), Some(drive.as_path()));
+    assert_eq!(
+        saved
+            .machines
+            .iter()
+            .map(|m| (m.name.as_str(), m.host.as_str()))
+            .collect::<Vec<_>>(),
+        [("nas", "me@nas")]
+    );
     assert_eq!(rt.state.screen, Screen::Overview);
     assert!(rt.state.overview.backing_up.contains("drive"));
     // The overview's report lands while the backup still runs.

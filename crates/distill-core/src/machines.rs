@@ -236,6 +236,15 @@ pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
     if home.spoke()?.is_some() {
         bail!("a spoke pulls from no machine: it only captures");
     }
+    // A pull under way grows the copy the header is checked against. A home not made yet (setup
+    // before Finish) has no copy, and gets no lock file.
+    let _lock = match home.state_dir().is_dir() {
+        true => match home.try_lock("archive")? {
+            Some(lock) => Some(lock),
+            None => bail!("a sweep, a backup or a pull holds the archive: check again shortly"),
+        },
+        false => None,
+    };
     let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET);
     match (pulled.error, waiting) {
         (Some(e), _) => bail!(e),
@@ -519,6 +528,16 @@ mod tests {
             p.error.unwrap(),
             "ssh me@nas: ssh: connect to host nas port 22: Connection refused"
         );
+    }
+
+    #[test]
+    fn a_check_waits_for_no_pull_and_reads_no_copy_a_pull_is_growing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, config) = hub_of(dir.path());
+        let _held = home.lock_archive().unwrap();
+        // Refused before ssh runs.
+        let e = check(&home, &config.machines[0]).unwrap_err();
+        assert!(format!("{e:#}").contains("holds the archive"), "{e:#}");
     }
 
     #[test]

@@ -1879,7 +1879,7 @@ fn machines_step(d: &SetupState, p: &Paint) -> El {
         .child(p.note(
             "SSH never asks for a password here: this machine's key must be in the spoke's \
              authorized_keys (limited to the export, as docs/machines.md shows), and the spoke in \
-             known_hosts. Check connects as a pull does and takes nothing.",
+             known_hosts. Check connects as a pull does and takes nothing; Finish saves the list.",
         ))
 }
 
@@ -1911,7 +1911,7 @@ fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &distill_core::config::Ma
         );
     if let Some(r) = d.checks.get(&m.name) {
         let (line, color) = match r {
-            Ok(m) => (m.clone(), p.good()),
+            Ok(said) => (said.clone(), p.good()),
             Err(e) => (e.clone(), p.bad()),
         };
         about = about.child(

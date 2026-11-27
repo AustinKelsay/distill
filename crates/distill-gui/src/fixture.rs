@@ -11,6 +11,7 @@ use distill_core::status::{HarnessStatus, Health, Status, Warning, WarningKind};
 use distill_core::{Config, Harness, Home};
 
 use crate::State;
+use crate::screens::setup;
 
 mod reveals;
 mod sessions;
@@ -33,8 +34,8 @@ pub const SCENES: &[Scene] = &[
     ("setup-backups-key", backups_key_shown),
     ("setup-backups-empty", backups_empty),
     ("setup-backups-new-key", backups_new_key),
-    ("setup-machines", |s| setup_step(s, 6)),
-    ("setup-schedule", |s| setup_step(s, 7)),
+    ("setup-machines", |s| setup_step(s, setup::MACHINES)),
+    ("setup-schedule", |s| setup_step(s, setup::MACHINES + 1)),
     ("overview", |s| *s = running()),
     ("overview-warnings", |s| *s = troubled()),
     ("overview-new", |s| *s = just_set_up()),
@@ -120,7 +121,7 @@ fn setup_step(s: &mut State, step: usize) {
         );
         s.setup.has_key = Some(false);
     }
-    if step == 6 {
+    if step == setup::MACHINES {
         for (name, host) in [("nas", "me@nas.example"), ("build-box", "build-box")] {
             distill_core::machines::add(&mut s.setup.draft, name, host).expect("valid machine");
         }

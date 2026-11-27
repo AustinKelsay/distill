@@ -642,7 +642,7 @@ fn is_blob_name(sha: &str) -> bool {
 }
 
 /// Read an export's next frame line into `frame`, without its newline: at most [`MAX_FRAME`].
-fn next(frame: &mut String, input: &mut dyn std::io::BufRead) -> Result<()> {
+fn read_frame(frame: &mut String, input: &mut dyn std::io::BufRead) -> Result<()> {
     use std::io::BufRead;
     frame.clear();
     if Read::take(&mut *input, MAX_FRAME).read_line(frame)? == 0 {
@@ -664,14 +664,14 @@ fn export_header(
 ) -> Result<(ExportHeader, Vec<u8>, usize)> {
     crate::home::machine_name(machine)?;
     let mut frame = String::new();
-    next(&mut frame, input)?;
+    read_frame(&mut frame, input)?;
     if frame != EXPORT_START {
         bail!(
             "not an export from DISTILL: {:?}",
             frame.chars().take(80).collect::<String>()
         );
     }
-    next(&mut frame, input)?;
+    read_frame(&mut frame, input)?;
     let header: ExportHeader = serde_json::from_str(&frame).context("read the export's header")?;
     if header.machine != machine {
         bail!(
@@ -759,7 +759,7 @@ pub fn take_into(
     };
     let result = (|| -> Result<()> {
         loop {
-            next(&mut frame, input)?;
+            read_frame(&mut frame, input)?;
             let words: Vec<&str> = frame.split(' ').collect();
             match words.as_slice() {
                 ["blob", sha, len] => {
