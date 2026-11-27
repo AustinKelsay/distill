@@ -27,6 +27,9 @@ pub const PAGE_MAX: usize = 50;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
     pub harness: Option<Harness>,
+    /// Only the sessions of this machine: a spoke by its name, or [`crate::home::HUB`] for the
+    /// hub's own (ADR 0010).
+    pub machine: Option<String>,
     /// The project, matched by path prefix a whole folder at a time.
     pub project: Option<String>,
     /// Part of the name of a model the session used, ignoring case.
@@ -328,6 +331,10 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
+            && self
+                .machine
+                .as_deref()
+                .is_none_or(|want| m.machine.as_deref().unwrap_or(crate::home::HUB) == want.trim())
             && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
                 m.cwd
@@ -429,6 +436,9 @@ fn render(rows: &Rows, offset: usize) -> String {
 /// A session's facts on one line, for a model.
 pub(super) fn facts_line(f: &SessionMeta) -> String {
     let mut line = format!("{} · {}", f.key(), f.harness.label());
+    if let Some(m) = &f.machine {
+        line += &format!(" · on {m}");
+    }
     if let Some(cwd) = &f.cwd {
         line += &format!(" · project {cwd}");
     }
@@ -487,6 +497,7 @@ mod tests {
 
     /// A session as the parse step would leave it, written straight into `home`.
     struct Session {
+        machine: Option<&'static str>,
         harness: Harness,
         id: &'static str,
         cwd: &'static str,
@@ -500,6 +511,7 @@ mod tests {
     impl Session {
         fn new(id: &'static str, started: &'static str) -> Self {
             Self {
+                machine: None,
                 harness: Harness::ClaudeCode,
                 id,
                 cwd: "/work/app",
@@ -526,7 +538,7 @@ mod tests {
                 e.seq = i as u64;
             }
             let facts = SessionMeta {
-                machine: None,
+                machine: s.machine.map(str::to_string),
                 harness: s.harness,
                 session_id: s.id.into(),
                 cwd: Some(s.cwd.into()),
@@ -557,10 +569,13 @@ mod tests {
                 mirror_refs: s.mirror_of.map(str::to_string).into_iter().collect(),
                 mirror_unresolved: Vec::new(),
             };
-            let dir = home.session_dir(None, s.harness, s.id);
+            if s.machine.is_some() {
+                std::fs::create_dir_all(home.raw_dir_of(s.machine)).unwrap();
+            }
+            let dir = home.session_dir(s.machine, s.harness, s.id);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
-                home.meta_path(None, s.harness, s.id),
+                home.meta_path(s.machine, s.harness, s.id),
                 serde_json::to_string(&facts).unwrap(),
             )
             .unwrap();
@@ -569,7 +584,7 @@ mod tests {
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
             std::fs::write(
-                home.events_path(None, s.harness, s.id),
+                home.events_path(s.machine, s.harness, s.id),
                 lines.join("\n") + "\n",
             )
             .unwrap();
@@ -713,6 +728,49 @@ mod tests {
             ["claude-code/a"]
         );
         assert!(date("Nov 3").is_err());
+    }
+
+    #[test]
+    fn filters_by_machine_with_hub_for_this_homes_own() {
+        let (_d, home) = home_with(&[
+            Session::new("a", "2026-11-03T10:00:00Z"),
+            Session {
+                machine: Some("nas"),
+                ..Session::new("b", "2026-11-04T10:00:00Z")
+            },
+        ]);
+        let all = Filter::default();
+        assert_eq!(keys(&home, &all), ["nas:claude-code/b", "claude-code/a"]);
+        let on = |m: &str| {
+            keys(
+                &home,
+                &Filter {
+                    machine: Some(m.into()),
+                    ..all.clone()
+                },
+            )
+        };
+        assert_eq!(on("nas"), ["nas:claude-code/b"]);
+        assert_eq!(on("hub"), ["claude-code/a"]);
+        assert!(on("box").is_empty());
+        // A model sees where each session was captured, and the filter it asked for.
+        let t = text(
+            list(
+                &home,
+                &local(),
+                &ollama(),
+                &Filter {
+                    machine: Some("nas".into()),
+                    ..all.clone()
+                },
+                Page::default(),
+            )
+            .unwrap(),
+        );
+        assert!(
+            t.contains("nas:claude-code/b · Claude Code · on nas · "),
+            "{t}"
+        );
     }
 
     #[test]

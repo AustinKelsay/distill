@@ -262,6 +262,28 @@ fn a_hub_pulls_a_spokes_new_captures_over_ssh() {
         (&1.into(), &1.into()),
         "{s}"
     );
+    // A search keeps to one machine's sessions, and says which machine each is from.
+    let search = |machine: &str| {
+        let r = json(
+            &user,
+            &home,
+            &[
+                "search",
+                "failing",
+                "--provider",
+                "ollama",
+                "--machine",
+                machine,
+            ],
+        );
+        r["text"].as_str().unwrap().to_string()
+    };
+    assert!(
+        search("nas").contains("nas:claude-code/s1 · Claude Code · on nas · "),
+        "{}",
+        search("nas")
+    );
+    assert!(!search("hub").contains("nas:"), "{}", search("hub"));
 
     // Through a forced command the same; and the spoke logged every export.
     let forced = tmp.path().join("forced");

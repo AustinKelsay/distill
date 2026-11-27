@@ -415,13 +415,19 @@ impl Home {
     }
 }
 
-/// Refuse a machine name that isn't lowercase letters, digits and `-` (ADR 0010).
+/// What a filter calls the hub's own sessions, which carry no machine; so no spoke has the name.
+pub const HUB: &str = "hub";
+
+/// Refuse a machine name that isn't lowercase letters, digits and `-`, or is [`HUB`] (ADR 0010).
 pub fn machine_name(name: &str) -> Result<()> {
     let fits = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
     if name.is_empty() || name.len() > 64 || name.starts_with('-') || !name.bytes().all(fits) {
         anyhow::bail!(
             "{name:?} is not a machine name: lowercase letters, digits and -, at most 64"
         );
+    }
+    if name == HUB {
+        anyhow::bail!("\"{HUB}\" names the hub's own sessions, so a spoke can't be called that");
     }
     Ok(())
 }
@@ -505,7 +511,16 @@ mod tests {
         for ok in ["nas", "build-box-2"] {
             assert!(machine_name(ok).is_ok(), "{ok}");
         }
-        for bad in ["", "-nas", "Nas", "nas/x", "..", "a:b", &"x".repeat(65)] {
+        for bad in [
+            "",
+            "-nas",
+            "Nas",
+            "nas/x",
+            "..",
+            "a:b",
+            "hub",
+            &"x".repeat(65),
+        ] {
             assert!(machine_name(bad).is_err(), "{bad}");
         }
     }

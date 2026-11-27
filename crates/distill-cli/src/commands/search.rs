@@ -26,6 +26,9 @@ pub struct Args {
     /// Only this harness's sessions
     #[arg(long)]
     harness: Option<String>,
+    /// Only this machine's sessions: a spoke by its name, or `hub` for this hub's own
+    #[arg(long)]
+    machine: Option<String>,
     /// Only sessions that worked in this folder or one inside it
     #[arg(long)]
     project: Option<String>,
@@ -67,6 +70,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
     };
     let filter = Filter {
         harness: a.harness.as_deref().map(parse_harness).transpose()?,
+        machine: a.machine,
         project: a.project,
         model: a.used_model,
         since: day(&a.since)?,

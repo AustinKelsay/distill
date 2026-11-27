@@ -8,7 +8,7 @@ On the machine that runs agents:
 
 ```sh
 scripts/install.sh --spoke          # `distill` alone: no window, no MCP server
-distill init --spoke nas            # this machine's name: lowercase letters, digits and -
+distill init --spoke nas            # this machine's name: lowercase letters, digits and -, not hub
 distill schedule install            # its timer only sweeps
 ```
 
@@ -44,5 +44,7 @@ command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went.
 
 ## Checking on them
+
+`distill search` and `distill tags` take `--machine <name>` to keep to one spoke's sessions, or `--machine hub` for the hub's own, so no spoke can be named `hub`; the MCP tools take `machine` the same way.
 
 On the hub, `distill status` has a line for each spoke: its health, its sessions and when a pull last took from it, then its harnesses as the hub's own are shown. A spoke whose newest pull failed says why. When a spoke in `[[machines]]` hasn't been pulled from for twice the timer's interval, status warns. On a spoke, the exports count among what left it, as `the hub, over ssh`.

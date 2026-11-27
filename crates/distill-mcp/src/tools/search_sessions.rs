@@ -29,7 +29,7 @@ impl Tool for SearchSessions {
              facts (harness, project, branch, models, times, counts; for a session an agent started, the session it was started from), its card (a title, a \
              summary, tags and an outcome, written by a model) or, with no card yet, the \
              opening of what the owner first wrote, and the passage that matched. Filter by \
-             harness, project (a folder; sessions in it and below), model (part of its name), \
+             harness, machine, project (a folder; sessions in it and below), model (part of its name), \
              start date, and the card's tag and outcome. At most {PAGE_MAX} results per call \
              ({SEARCH_DEFAULT} unless asked); the first line says how many match and the offset \
              where the next page starts. Mirrors of sessions already in the archive, and \
