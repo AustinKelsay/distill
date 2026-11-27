@@ -208,6 +208,8 @@ fn sort_of(r: &ReadResult) -> &'static str {
     match r {
         ReadResult::Served { .. }
         | ReadResult::Listed { .. }
+        | ReadResult::StreamStarted { .. }
+        | ReadResult::StreamCompleted { .. }
         | ReadResult::Indexed { .. }
         | ReadResult::Findings { .. }
         | ReadResult::Tags { .. } => "Read",
@@ -275,6 +277,9 @@ fn lines(s: &State, p: &Paint) -> El {
         let session = e.session.clone().unwrap_or_else(|| {
             match e.result {
                 ReadResult::Listed { .. } => "a list of sessions",
+                ReadResult::StreamStarted { .. } | ReadResult::StreamCompleted { .. } => {
+                    "a structured stream"
+                }
                 ReadResult::Findings { .. } => "findings",
                 ReadResult::Tags { .. } => "the tags in use",
                 ReadResult::Indexed { .. } => "the index",

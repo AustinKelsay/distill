@@ -258,6 +258,10 @@ pub struct Findings {
     /// The session's key (`harness/id`).
     pub session: String,
     pub made_from: MadeFrom,
+    /// SHA-256 of the normalized events this scan was computed over ([`events_digest`]), so a
+    /// torn or replaced `events.jsonl` can never be served under an older scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events_sha256: Option<String>,
     /// In event order.
     pub findings: Vec<Finding>,
     /// What the detector found in the session's card, when it has one (`crate::cards`).
@@ -292,14 +296,20 @@ pub struct ModelMadeFrom {
     pub parser: u32,
     /// The fingerprint key's [`id`](FingerprintKey::id).
     pub key: String,
+    /// SHA-256 of the normalized events the model pass read ([`events_digest`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events_sha256: Option<String>,
 }
 
 impl ModelMadeFrom {
-    /// Whether findings made from this fit the events and key that `pattern` was made from.
-    pub(crate) fn fits(&self, pattern: &MadeFrom) -> bool {
+    /// Whether findings made from this fit the events and key that `pattern` and `events_sha256`
+    /// were made from.
+    pub(crate) fn fits(&self, pattern: &MadeFrom, events_sha256: Option<&str>) -> bool {
         self.capture_hash == pattern.capture_hash
             && self.parser == pattern.parser
             && self.key == pattern.key
+            && self.events_sha256.is_some()
+            && self.events_sha256.as_deref() == events_sha256
     }
 }
 
@@ -388,17 +398,43 @@ pub(crate) fn set_card(home: &Home, facts: &SessionMeta, card: CardFindings) -> 
     )
 }
 
+/// SHA-256 of `events` in their JSONL representation, binding a session's stored findings to the
+/// exact normalized events they were scanned from.
+pub(crate) fn events_digest(events: &[Event]) -> String {
+    use sha2::Digest;
+    let mut h = Sha256::new();
+    for e in events {
+        let line = serde_json::to_vec(e).expect("Event serializes to JSON");
+        h.update(&line);
+        h.update(b"\n");
+    }
+    hex::encode(h.finalize())
+}
+
 impl Findings {
     /// Whether these findings are current for `facts` with `key` and `config`. Only the pattern
     /// scan's count: a missing or out-of-date model section never holds up a read, because
     /// personal details are never masked.
     pub fn is_current(&self, facts: &SessionMeta, key: &FingerprintKey, config: &Config) -> bool {
-        self.session == facts.key() && self.made_from == MadeFrom::current(facts, key, config)
+        self.session == facts.key()
+            && self.made_from == MadeFrom::current(facts, key, config)
+            && self.events_sha256.is_some()
+    }
+    /// Whether these findings were computed over the exact `events` passed in.
+    pub(crate) fn matches_events(&self, events: &[Event]) -> bool {
+        self.events_sha256
+            .as_deref()
+            .is_some_and(|have| have == events_digest(events))
     }
     /// The model's findings, when they fit the events the pattern findings were made from.
     pub fn model_findings(&self) -> &[Finding] {
         match &self.model {
-            Some(m) if m.made_from.fits(&self.made_from) => &m.findings,
+            Some(m)
+                if m.made_from
+                    .fits(&self.made_from, self.events_sha256.as_deref()) =>
+            {
+                &m.findings
+            }
             _ => &[],
         }
     }
@@ -433,12 +469,20 @@ pub(crate) fn set_model(
     facts: &SessionMeta,
     model: &str,
     answers: &[(Kind, String)],
+    expected_events_sha256: &str,
 ) -> Result<Placed> {
     let key = FingerprintKey::open(home)?;
     let events = normalize::read_events(home, facts)?;
+    if events_digest(&events) != expected_events_sha256 {
+        bail!("{} changed while the model read it", facts.key());
+    }
     let _lock = home.lock_findings(facts.harness, &facts.session_id)?;
     let mut f = load(home, facts)
-        .filter(|f| f.is_current(facts, &key, config))
+        .filter(|f| {
+            f.is_current(facts, &key, config)
+                && f.matches_events(&events)
+                && f.events_sha256.as_deref() == Some(expected_events_sha256)
+        })
         .with_context(|| format!("{} changed while the model read it", facts.key()))?;
     let (findings, unplaced) = place_answers(&events, answers, &key, &f.findings);
     let placed = Placed {
@@ -452,6 +496,7 @@ pub(crate) fn set_model(
             capture_hash: f.made_from.capture_hash.clone(),
             parser: f.made_from.parser,
             key: f.made_from.key.clone(),
+            events_sha256: Some(expected_events_sha256.to_string()),
         },
         findings,
     });
@@ -611,7 +656,9 @@ pub(crate) fn current_or_scan(
     events: &[Event],
 ) -> Result<Findings> {
     let key = FingerprintKey::open(home)?;
-    if let Some(f) = load(home, facts).filter(|f| f.is_current(facts, &key, config)) {
+    if let Some(f) =
+        load(home, facts).filter(|f| f.is_current(facts, &key, config) && f.matches_events(events))
+    {
         return Ok(f);
     }
     let detector = Detector::new(&owner(config));
@@ -631,6 +678,7 @@ fn scan(
     let mut findings = Findings {
         session: facts.key(),
         made_from: MadeFrom::current(facts, key, config),
+        events_sha256: Some(events_digest(events)),
         findings: find(events, key, detector),
         // The card is scanned with the session; one that holds a secret is discarded.
         card: crate::cards::rescan(home, facts, key, detector),
@@ -642,7 +690,10 @@ fn scan(
     // touch a pattern finding are dropped: a model finding never overrides a secret's place.
     findings.model = load(home, facts)
         .and_then(|old| old.model)
-        .filter(|m| m.made_from.fits(&findings.made_from))
+        .filter(|m| {
+            m.made_from
+                .fits(&findings.made_from, findings.events_sha256.as_deref())
+        })
         .map(|mut m| {
             let taken = &findings.findings;
             m.findings.retain(|f| {

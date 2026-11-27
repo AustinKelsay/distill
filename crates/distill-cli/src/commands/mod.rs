@@ -7,6 +7,7 @@ pub mod findings;
 pub mod gui;
 pub mod harnesses;
 pub mod init;
+pub mod list;
 pub mod parse;
 pub mod providers;
 pub mod pull;
@@ -36,7 +37,7 @@ pub struct Ctx {
     pub json: bool,
 }
 
-/// Shared session filter flags for `search` and `tags`.
+/// Shared session filter flags for `list`, `search` and `tags`.
 #[derive(clap::Args, Debug, Clone)]
 pub struct FilterArgs {
     /// Only this harness's sessions

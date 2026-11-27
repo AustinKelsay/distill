@@ -7,10 +7,11 @@ use std::path::Path;
 use anyhow::Result;
 use chrono::NaiveDate;
 
-use super::{NOTICE_END, NOTICE_START, defuse, mask, scanned};
+use super::{NOTICE_END, NOTICE_START, defuse, mask, replace_fact_secrets, scanned};
 use crate::cards::{self, Outcome, Shown};
 use crate::config::Config;
-use crate::findings::{Field, Finding, Findings, FingerprintKey};
+use crate::detect::Detector;
+use crate::findings::{self, Field, Finding, Findings, FingerprintKey};
 use crate::harness::Harness;
 use crate::home::Home;
 use crate::model::{Event, EventKind, Originals, SessionMeta};
@@ -135,6 +136,20 @@ pub fn date(day: &str) -> Result<NaiveDate> {
     Ok(NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d")?)
 }
 
+/// What a key-only listing returns (`distill list --keys`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListedKeys {
+    Keys {
+        keys: Vec<String>,
+        /// How many sessions match in all.
+        total: u64,
+        /// Where the next page starts, when paginated and more remain.
+        next: Option<usize>,
+    },
+    /// No keys and no counts, and why.
+    Refused(String),
+}
+
 /// List the sessions that match `filter`, newest first, the rows in `page`, prepared for
 /// `reader`. A reader that may not read is refused before anything is counted. Every call appends
 /// one line to the read log with how many sessions it listed.
@@ -145,8 +160,39 @@ pub fn list(
     filter: &Filter,
     page: Page,
 ) -> Result<Listed> {
+    list_inner(home, runtime, reader, filter, Some(page), 0)
+}
+
+/// Like [`list`], without the [`PAGE_MAX`] cap, starting at `offset`: for unpaginated CLI listing
+/// (`distill list --all`) through the read path with a single read-log line.
+pub fn list_all(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    filter: &Filter,
+    offset: usize,
+) -> Result<Listed> {
+    list_inner(home, runtime, reader, filter, None, offset)
+}
+
+fn list_inner(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    filter: &Filter,
+    page: Option<Page>,
+    offset: usize,
+) -> Result<Listed> {
     let mut listed_rows = 0;
-    let listed = serve(home, runtime, reader, filter, page, &mut listed_rows);
+    let listed = serve(
+        home,
+        runtime,
+        reader,
+        filter,
+        page,
+        offset,
+        &mut listed_rows,
+    );
     let result = match &listed {
         Ok(Listed::Text(_) | Listed::Rows(_)) => ReadResult::Listed {
             sessions: listed_rows,
@@ -171,35 +217,121 @@ pub fn list(
     listed
 }
 
+/// List only the matching session keys (`<harness>/<id>` or `<machine>:<harness>/<id>`), newest
+/// first, through the read path with a single read-log line. When `limit` is `None`, returns all
+/// matching keys from `offset` onward without reading session event files.
+pub fn list_keys(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    filter: &Filter,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<ListedKeys> {
+    let mut listed_rows = 0;
+    let listed = serve_keys(
+        home,
+        runtime,
+        reader,
+        filter,
+        offset,
+        limit,
+        &mut listed_rows,
+    );
+    let result = match &listed {
+        Ok(ListedKeys::Keys { .. }) => ReadResult::Listed {
+            sessions: listed_rows,
+        },
+        Ok(ListedKeys::Refused(reason)) => ReadResult::Refused {
+            reason: reason.clone(),
+        },
+        Err(e) => ReadResult::Failed {
+            error: format!("{e:#}"),
+        },
+    };
+    readlog::append(
+        home,
+        Some(runtime),
+        &ReadEntry {
+            at: now_rfc3339(),
+            reader: reader.clone(),
+            session: None,
+            result,
+        },
+    )?;
+    listed
+}
+
+fn matching_sessions(home: &Home, config: &Config, filter: &Filter) -> Result<Vec<SessionMeta>> {
+    let all = normalize::read_session_list(home)?;
+    let originals = Originals::of(&all);
+    let key = FingerprintKey::existing(home).ok().flatten();
+    let finds = cards::finder(config);
+    Ok(all
+        .iter()
+        .filter(|m| filter.matches(m, &originals))
+        .filter(|m| filter.card_matches(home, config, key.as_ref(), m, &finds))
+        .cloned()
+        .collect())
+}
+
+fn serve_keys(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    filter: &Filter,
+    offset: usize,
+    limit: Option<usize>,
+    listed_rows: &mut u64,
+) -> Result<ListedKeys> {
+    let (config, trust) = Trust::of(home);
+    if let Access::Refused(why) = trust.check(reader, runtime) {
+        return Ok(ListedKeys::Refused(why));
+    }
+    let matching = matching_sessions(home, &config, filter)?;
+    let total = matching.len() as u64;
+    let capped = limit.map(|n| n.min(PAGE_MAX));
+    let iter = matching.into_iter().skip(offset);
+    let keys: Vec<String> = match capped {
+        Some(n) => iter.take(n).map(|m| m.key()).collect(),
+        None => iter.map(|m| m.key()).collect(),
+    };
+    *listed_rows = keys.len() as u64;
+    let end = offset + keys.len();
+    Ok(ListedKeys::Keys {
+        next: (capped.is_some() && (end as u64) < total && !keys.is_empty()).then_some(end),
+        keys,
+        total,
+    })
+}
+
 /// What `reader` gets.
 fn serve(
     home: &Home,
     runtime: &LocalRuntime,
     reader: &Reader,
     filter: &Filter,
-    page: Page,
+    page: Option<Page>,
+    offset: usize,
     listed_rows: &mut u64,
 ) -> Result<Listed> {
     let (config, trust) = Trust::of(home);
     if let Access::Refused(why) = trust.check(reader, runtime) {
         return Ok(Listed::Refused(why));
     }
-    let all = normalize::read_session_list(home)?;
-    let originals = Originals::of(&all);
-    let key = FingerprintKey::existing(home).ok().flatten();
-    let finds = cards::finder(&config);
-    let matching: Vec<SessionMeta> = all
-        .iter()
-        .filter(|m| filter.matches(m, &originals))
-        .filter(|m| filter.card_matches(home, &config, key.as_ref(), m, &finds))
-        .cloned()
-        .collect();
+    let matching = matching_sessions(home, &config, filter)?;
     let total = matching.len() as u64;
-    let limit = page.limit.min(PAGE_MAX);
-    let rows: Vec<Row> = matching
+    let (start, limit) = match page {
+        Some(p) => (p.offset, Some(p.limit.min(PAGE_MAX))),
+        None => (offset, None),
+    };
+    let iter = matching.into_iter().skip(start);
+    let selected: Vec<SessionMeta> = match limit {
+        Some(n) => iter.take(n).collect(),
+        None => iter.collect(),
+    };
+    let rows: Vec<Row> = selected
         .into_iter()
-        .skip(page.offset)
-        .take(limit)
         .map(|facts| {
             let (card, (opening, opening_findings)) = opening(home, &config, reader, &facts);
             Row {
@@ -211,14 +343,18 @@ fn serve(
         })
         .collect();
     *listed_rows = rows.len() as u64;
-    let end = page.offset + rows.len();
+    let end = start + rows.len();
     let rows = Rows {
-        next: ((end as u64) < total && !rows.is_empty()).then_some(end),
+        next: (page.is_some() && (end as u64) < total && !rows.is_empty()).then_some(end),
         rows,
         total,
     };
     Ok(match reader {
-        Reader::Model { .. } => Listed::Text(render(&rows, page.offset)),
+        Reader::Model { .. } => {
+            let detector = Detector::new(&findings::owner(&config));
+            let key = FingerprintKey::existing(home).ok().flatten();
+            Listed::Text(render(&rows, start, &detector, key.as_ref()))
+        }
         Reader::Owner | Reader::Distill => Listed::Rows(Box::new(rows)),
     })
 }
@@ -442,7 +578,7 @@ impl Filter {
 
 /// A page of rows as text for a model: a line about the page, then the rows between the two
 /// notices.
-fn render(rows: &Rows, offset: usize) -> String {
+fn render(rows: &Rows, offset: usize, detector: &Detector, key: Option<&FingerprintKey>) -> String {
     if rows.rows.is_empty() {
         return if rows.total == 0 {
             format!("No sessions match. {LEFT_OUT}\n")
@@ -467,7 +603,7 @@ fn render(rows: &Rows, offset: usize) -> String {
     for r in &rows.rows {
         body += &format!(
             "\n{}\n{}",
-            facts_line(&r.facts),
+            facts_line_for_model(&r.facts, detector, key),
             card_or_opening(r.card.as_ref(), &r.opening)
         );
     }
@@ -483,6 +619,46 @@ pub(super) fn on_machine(want: Option<&str>, m: &SessionMeta) -> bool {
             !want.eq_ignore_ascii_case(crate::home::HUB) && have.eq_ignore_ascii_case(want)
         }
     })
+}
+
+/// A session's facts on one line, for a model, replacing detected secrets in project paths and
+/// git branch names with placeholders.
+pub(super) fn facts_line_for_model(
+    f: &SessionMeta,
+    detector: &Detector,
+    key: Option<&FingerprintKey>,
+) -> String {
+    let mut line = format!("{} · {}", f.key(), f.harness.label());
+    if let Some(m) = &f.machine {
+        line += &format!(" · on {m}");
+    }
+    if let Some(cwd) = &f.cwd {
+        line += &format!(" · project {}", replace_fact_secrets(cwd, detector, key));
+    }
+    if let Some(branch) = &f.git_branch {
+        line += &format!(" · branch {}", replace_fact_secrets(branch, detector, key));
+    }
+    if !f.models.is_empty() {
+        line += &format!(" · models {}", f.models.join(", "));
+    }
+    if let Some(at) = &f.started_at {
+        line += &format!(" · started {at}");
+    }
+    if let Some(at) = &f.ended_at {
+        line += &format!(" · ended {at}");
+    }
+    line += &format!(
+        " · {}, {}",
+        count(f.counts.events, "event"),
+        count(f.counts.tool_calls, "tool call")
+    );
+    if f.mirror {
+        line += " · mirror";
+    }
+    if f.steward {
+        line += " · previous steward";
+    }
+    line
 }
 
 /// A session's facts on one line, for a model.
@@ -1405,5 +1581,120 @@ mod tests {
             }),
             ["claude-code/s1"]
         );
+    }
+
+    #[test]
+    fn list_all_and_list_keys_cover_bulk_listing_and_replace_fact_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        let fake_secret = ["sk-ant-", "api03-1234567890abcdefghij1234567890"].concat();
+        let write_session = |harness: Harness,
+                             id: &str,
+                             cwd: &str,
+                             branch: Option<&str>,
+                             started: &str,
+                             text: &str| {
+            let mut ev = Event::text(EventKind::User, text);
+            ev.seq = 1;
+            let facts = SessionMeta {
+                harness,
+                machine: None,
+                session_id: id.into(),
+                cwd: Some(cwd.into()),
+                git_branch: branch.map(String::from),
+                models: Vec::new(),
+                harness_version: None,
+                started_at: Some(started.into()),
+                ended_at: Some(started.into()),
+                duration_secs: Some(0),
+                parent_session: None,
+                counts: crate::model::Counts::of(std::slice::from_ref(&ev)),
+                tools: Vec::new(),
+                raw: crate::model::RawRef {
+                    origin: format!("/src/{id}.jsonl"),
+                    sha256: format!("hash-{id}"),
+                    size: 10,
+                    attached: Vec::new(),
+                },
+                normalizer: crate::model::Producer {
+                    name: harness.id().into(),
+                    version: 1,
+                },
+                steward: false,
+                mirror: false,
+                mirror_of: Vec::new(),
+                mirror_refs: Vec::new(),
+                mirror_unresolved: Vec::new(),
+            };
+            let sdir = home.session_dir(None, harness, id);
+            std::fs::create_dir_all(&sdir).unwrap();
+            std::fs::write(
+                home.meta_path(None, harness, id),
+                serde_json::to_string(&facts).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                home.events_path(None, harness, id),
+                serde_json::to_string(&ev).unwrap() + "\n",
+            )
+            .unwrap();
+            facts
+        };
+        let a = write_session(
+            Harness::ClaudeCode,
+            "s1",
+            &format!("/work/{fake_secret}/app"),
+            Some(&format!("feature/{fake_secret}")),
+            "2026-11-01T00:00:00Z",
+            "first",
+        );
+        let b = write_session(
+            Harness::Codex,
+            "s2",
+            "/work/app",
+            None,
+            "2026-11-02T00:00:00Z",
+            "second",
+        );
+        let list_jsonl = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&b).unwrap(),
+            serde_json::to_string(&a).unwrap()
+        );
+        std::fs::write(home.session_list_path(), list_jsonl).unwrap();
+
+        let fake_rt = crate::runtime::FakeRuntime::running()
+            .with_model("small:8b", crate::runtime::Stored::Here);
+        let runtime = fake_rt.runtime();
+        let reader = Reader::model(Some("ollama"), Some("small:8b"));
+
+        let ListedKeys::Keys { keys, total, next } =
+            list_keys(&home, &runtime, &reader, &Filter::default(), 0, None).unwrap()
+        else {
+            panic!("expected keys");
+        };
+        assert_eq!(keys, ["codex/s2", "claude-code/s1"]);
+        assert_eq!(total, 2);
+        assert_eq!(next, None);
+
+        let ListedKeys::Keys { keys, total, next } =
+            list_keys(&home, &runtime, &reader, &Filter::default(), 0, Some(1)).unwrap()
+        else {
+            panic!("expected paged keys");
+        };
+        assert_eq!(keys, ["codex/s2"]);
+        assert_eq!(total, 2);
+        assert_eq!(next, Some(1));
+
+        let Listed::Text(text) = list_all(&home, &runtime, &reader, &Filter::default(), 0).unwrap()
+        else {
+            panic!("expected rendered list");
+        };
+        assert!(
+            !text.contains(&fake_secret),
+            "raw secret must not appear in model list output: {text}"
+        );
+        assert!(text.contains("[secret:"), "{text}");
     }
 }

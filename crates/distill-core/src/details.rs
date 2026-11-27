@@ -178,7 +178,8 @@ fn is_current(
         && findings.model.as_ref().is_some_and(|m| {
             m.made_from.detector == MODEL_DETECTOR_VERSION
                 && m.made_from.model == model
-                && m.made_from.fits(&findings.made_from)
+                && m.made_from
+                    .fits(&findings.made_from, findings.events_sha256.as_deref())
         })
 }
 
@@ -340,7 +341,11 @@ fn find_one(
     facts: &SessionMeta,
     deadline: Deadline,
 ) -> std::result::Result<findings::Placed, Failed> {
-    let text = model_step::served_text(read::read_written(home, runtime, reader, &facts.key()))?;
+    let (read, events_sha256) = read::read_written(home, runtime, reader, &facts.key())
+        .map_err(|e| Failed::new(format!("the read path could not read the session: {e:#}")))?;
+    let text = model_step::served_text(Ok(read))?;
+    let events_sha256 = events_sha256
+        .ok_or_else(|| Failed::new("the session scan lacks an event snapshot digest"))?;
     let mut answers = Vec::new();
     for (i, part) in parts(&text).into_iter().enumerate() {
         if i > 0 && deadline.over() {
@@ -353,7 +358,7 @@ fn find_one(
             Failed::new(format!("the model's answer is not a usable list: {why}"))
         })?);
     }
-    findings::set_model(home, config, facts, model, &answers)
+    findings::set_model(home, config, facts, model, &answers, &events_sha256)
         .map_err(|e| Failed::new(format!("the findings could not be stored: {e:#}")))
 }
 

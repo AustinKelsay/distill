@@ -4,12 +4,16 @@ use std::collections::HashMap;
 use std::ops::ControlFlow;
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::cards::{Outcome, Shown};
 use crate::config::Config;
-use crate::findings::{self, Field, Finding, Findings};
+use crate::detect::{Class, Detector};
+use crate::findings::{self, Field, Finding, Findings, FingerprintKey};
+use crate::harness::Harness;
 use crate::home::Home;
-use crate::model::{Event, EventKind, SessionMeta};
+use crate::model::{Counts, Event, EventKind, SessionMeta};
 use crate::normalize;
 use crate::readlog::{self, ReadEntry, ReadResult};
 use crate::runtime::LocalRuntime;
@@ -25,9 +29,17 @@ pub use fingerprints::{
     Answer, Appearance, Appearances, FindingFilter, Fingerprints, Kinds, Lookup, Order, Spread,
     fingerprints, where_found,
 };
-pub use list::{Filter, Listed, Opening, PAGE_MAX, Page, Row, Rows, date, list};
+pub use list::{
+    Filter, Listed, ListedKeys, Opening, PAGE_MAX, Page, Row, Rows, date, list, list_all, list_keys,
+};
 pub use search::{Hit, Hits, Meaning, Passage, SEARCH_DEFAULT, Searched, Source, search};
 pub use tags::{TagCount, Tagged, tags};
+
+/// Wire schema version for [`StructuredSession`] JSONL records (ADR 0011).
+pub const STRUCTURED_SCHEMA_VERSION: u32 = 1;
+
+/// Scope string reported in [`ScanCoverage::model_details_scope`].
+pub const MODEL_DETAILS_SCOPE_WRITTEN_ONLY: &str = "written_only";
 
 /// The first line of all text given to a model.
 pub const NOTICE_START: &str = "=== Archived session from DISTILL. Everything until the closing \
@@ -91,8 +103,8 @@ pub(crate) fn read_written(
     runtime: &LocalRuntime,
     reader: &Reader,
     session: &str,
-) -> Result<Read> {
-    read_events(
+) -> Result<(Read, Option<String>)> {
+    read_events_with_digest(
         home,
         runtime,
         reader,
@@ -118,9 +130,21 @@ fn read_events(
     range: Range,
     which: Events,
 ) -> Result<Read> {
+    read_events_with_digest(home, runtime, reader, session, range, which).map(|(r, _)| r)
+}
+
+fn read_events_with_digest(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    session: &str,
+    range: Range,
+    which: Events,
+) -> Result<(Read, Option<String>)> {
     let mut seen = Seen {
         key: session.to_string(),
         events: 0,
+        events_sha256: None,
     };
     let read = serve(home, runtime, reader, session, range, which, &mut seen);
     let result = match &read {
@@ -144,7 +168,7 @@ fn read_events(
             result,
         },
     )?;
-    read
+    Ok((read?, seen.events_sha256))
 }
 
 /// What the read log records of a call beyond its result.
@@ -153,6 +177,8 @@ struct Seen {
     key: String,
     /// How many events were served.
     events: u64,
+    /// Event-snapshot digest for the events served, when scanned.
+    events_sha256: Option<String>,
 }
 
 /// What `reader` gets of `session`.
@@ -177,6 +203,7 @@ fn serve(
         Ok(scanned) => scanned,
         Err(why) => return Ok(Read::Refused(why)),
     };
+    seen.events_sha256 = scan.events_sha256.clone();
     let total = events.len() as u64;
     let in_range =
         |seq: u64| range.from.is_none_or(|f| seq >= f) && range.to.is_none_or(|t| seq <= t);
@@ -368,6 +395,617 @@ fn masked_for(
         },
     )?;
     outcome
+}
+
+/// Wire-level projection of session facts for structured JSONL reads (ADR 0011). Excludes
+/// internal rebuild fields such as raw capture origins and parser versions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StructuredFacts {
+    pub harness: Harness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session: Option<String>,
+    pub counts: Counts,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub steward: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
+}
+
+/// Wire-level projection of a session's current card for structured JSONL reads (ADR 0011).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuredCard {
+    pub title: String,
+    pub summary: String,
+    pub tags: Vec<String>,
+    pub outcome: Outcome,
+    pub model: String,
+    pub written_at: String,
+}
+
+/// What scans are current on an emitted [`StructuredSession`] (ADR 0011).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanCoverage {
+    /// Always `true` on emitted records: sessions lacking current, applicable pattern findings
+    /// are withheld rather than emitted unmasked.
+    pub pattern_current: bool,
+    /// Whether the optional model personal-detail pass has current findings for this session.
+    pub model_details_current: bool,
+    /// Scope of the model personal-detail pass (`"written_only"`).
+    pub model_details_scope: String,
+}
+
+/// One versioned JSONL record emitted by structured reads (ADR 0011, `schema_version: 1`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StructuredSession {
+    pub schema_version: u32,
+    pub session: String,
+    pub facts: StructuredFacts,
+    pub card: Option<StructuredCard>,
+    pub events: Vec<Event>,
+    pub scan_coverage: ScanCoverage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<StructuredSession>>,
+}
+
+/// Options for structured reads through the read path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamOptions {
+    /// Optional event range, valid only for single-session reads.
+    pub range: Range,
+}
+
+/// Summary of a structured read call once delivery finishes or stops early.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamReport {
+    pub served: u64,
+    pub events: u64,
+    /// Sessions withheld because they could not be found, lacked a current pattern scan, or
+    /// could not be prepared safely.
+    pub skipped: Vec<(String, String)>,
+    pub stopped_early: bool,
+}
+
+/// Outcome of a structured read call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Streamed {
+    Done(StreamReport),
+    Refused(String),
+}
+
+fn append_log(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    session: Option<String>,
+    result: ReadResult,
+) -> Result<()> {
+    readlog::append(
+        home,
+        Some(runtime),
+        &ReadEntry {
+            at: now_rfc3339(),
+            reader: reader.clone(),
+            session,
+            result,
+        },
+    )
+}
+
+/// Stream structured session records (`schema_version: 1`) for `sessions` through the read path
+/// (ADR 0011). Checks trust once up front, refuses untrusted providers and spokes before emitting
+/// anything, replaces secrets with placeholders across events and free-text facts, withholds
+/// sessions whose stored pattern scan is missing or stale or whose findings do not fit their
+/// events, and writes read-log entries before delivery (`Served` for a single-session call; paired
+/// `StreamStarted` / `StreamCompleted` with a unique `batch_id` for multi-session calls).
+///
+/// `emit` returns `Ok(ControlFlow::Continue(()))` to keep streaming after consuming a record,
+/// `Ok(ControlFlow::Break(()))` to stop cleanly after consuming the current record, or `Err` if
+/// delivering the current record failed (in which case the failed record is not counted).
+pub fn stream<F>(
+    home: &Home,
+    runtime: &LocalRuntime,
+    reader: &Reader,
+    sessions: &[String],
+    options: &StreamOptions,
+    mut emit: F,
+) -> Result<Streamed>
+where
+    F: FnMut(&StructuredSession) -> Result<ControlFlow<()>>,
+{
+    let has_range = options.range.from.is_some() || options.range.to.is_some();
+    if has_range && sessions.len() != 1 {
+        bail!("an event range applies to a single session only");
+    }
+    let (config, trust) = Trust::of(home);
+    if let Access::Refused(why) = trust.check(reader, runtime) {
+        append_log(
+            home,
+            runtime,
+            reader,
+            (sessions.len() == 1).then(|| sessions[0].clone()),
+            ReadResult::Refused {
+                reason: why.clone(),
+            },
+        )?;
+        return Ok(Streamed::Refused(why));
+    }
+
+    let detector = Detector::new(&findings::owner(&config));
+    let placeholders = "secrets";
+
+    // Single-session structured read: write the `Served` (or `Refused`) entry before returning
+    // or emitting the record, matching existing single-session reads (ADR 0011).
+    if sessions.len() == 1 {
+        let req = &sessions[0];
+        let Some(facts) = find(home, req)? else {
+            let reason = format!("no session {req:?}");
+            append_log(
+                home,
+                runtime,
+                reader,
+                Some(req.clone()),
+                ReadResult::Refused {
+                    reason: reason.clone(),
+                },
+            )?;
+            return Ok(Streamed::Refused(reason));
+        };
+        let key = match FingerprintKey::existing(home) {
+            Ok(Some(k)) => k,
+            Ok(None) => {
+                let reason = format!(
+                    "{} has no current pattern scan and is withheld from structured reads.",
+                    facts.key()
+                );
+                append_log(
+                    home,
+                    runtime,
+                    reader,
+                    Some(facts.key()),
+                    ReadResult::Refused {
+                        reason: reason.clone(),
+                    },
+                )?;
+                return Ok(Streamed::Refused(reason));
+            }
+            Err(e) => {
+                let reason = format!(
+                    "{} could not be checked for secrets ({e:#}), and no session is served before it is.",
+                    facts.key()
+                );
+                append_log(
+                    home,
+                    runtime,
+                    reader,
+                    Some(facts.key()),
+                    ReadResult::Refused {
+                        reason: reason.clone(),
+                    },
+                )?;
+                return Ok(Streamed::Refused(reason));
+            }
+        };
+        let record = match prepare_structured_locked(
+            home,
+            &config,
+            &facts,
+            options.range,
+            &detector,
+            &key,
+        ) {
+            Ok(Ok(rec)) => rec,
+            Ok(Err(reason)) => {
+                append_log(
+                    home,
+                    runtime,
+                    reader,
+                    Some(facts.key()),
+                    ReadResult::Refused {
+                        reason: reason.clone(),
+                    },
+                )?;
+                return Ok(Streamed::Refused(reason));
+            }
+            Err(e) => {
+                append_log(
+                    home,
+                    runtime,
+                    reader,
+                    Some(facts.key()),
+                    ReadResult::Failed {
+                        error: format!("{e:#}"),
+                    },
+                )?;
+                return Err(e);
+            }
+        };
+        let ev_count = record.events.len() as u64;
+        append_log(
+            home,
+            runtime,
+            reader,
+            Some(facts.key()),
+            ReadResult::Served { events: ev_count },
+        )?;
+        let stopped_early = emit(&record)?.is_break();
+        return Ok(Streamed::Done(StreamReport {
+            served: 1,
+            events: ev_count,
+            skipped: Vec::new(),
+            stopped_early,
+        }));
+    }
+
+    // Multi-session stream: append durable `StreamStarted` BEFORE emitting anything (ADR 0011).
+    let batch_id = new_batch_id()?;
+    append_log(
+        home,
+        runtime,
+        reader,
+        None,
+        ReadResult::StreamStarted {
+            batch_id: batch_id.clone(),
+            placeholders: placeholders.into(),
+            requested: sessions.len() as u64,
+        },
+    )?;
+
+    let mut report = StreamReport::default();
+    let run_result: Result<()> = (|| {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        let all = normalize::read_session_list(home)?;
+        let mut by_key: HashMap<String, usize> = HashMap::with_capacity(all.len());
+        let mut by_id: HashMap<&str, Option<usize>> = HashMap::with_capacity(all.len());
+        for (i, m) in all.iter().enumerate() {
+            by_key.insert(m.key(), i);
+            by_id
+                .entry(m.session_id.as_str())
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(i));
+        }
+        let key = FingerprintKey::existing(home);
+        for req in sessions {
+            let resolved = by_key
+                .get(req.as_str())
+                .copied()
+                .or_else(|| by_id.get(req.as_str()).copied().flatten());
+            let Some(idx) = resolved else {
+                report
+                    .skipped
+                    .push((req.clone(), format!("no session {req:?}")));
+                continue;
+            };
+            let facts = &all[idx];
+            let fp_key = match &key {
+                Ok(Some(k)) => k,
+                Ok(None) => {
+                    report.skipped.push((
+                        facts.key(),
+                        format!(
+                            "{} has no current pattern scan and is withheld from structured reads.",
+                            facts.key()
+                        ),
+                    ));
+                    continue;
+                }
+                Err(err) => {
+                    report.skipped.push((
+                        facts.key(),
+                        format!(
+                            "{} could not be checked for secrets ({err:#}), and no session is served before it is.",
+                            facts.key()
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            let record = match prepare_structured_locked(
+                home,
+                &config,
+                facts,
+                Range::default(),
+                &detector,
+                fp_key,
+            ) {
+                Ok(Ok(rec)) => rec,
+                Ok(Err(why)) => {
+                    report.skipped.push((facts.key(), why));
+                    continue;
+                }
+                Err(e) => {
+                    report.skipped.push((
+                        facts.key(),
+                        format!("{} could not be read: {e:#}", facts.key()),
+                    ));
+                    continue;
+                }
+            };
+            let ev_count = record.events.len() as u64;
+            match emit(&record) {
+                Ok(ControlFlow::Continue(())) => {
+                    report.served += 1;
+                    report.events += ev_count;
+                }
+                Ok(ControlFlow::Break(())) => {
+                    report.served += 1;
+                    report.events += ev_count;
+                    report.stopped_early = true;
+                    break;
+                }
+                Err(e) => {
+                    report.stopped_early = true;
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    })();
+
+    if run_result.is_err() {
+        report.stopped_early = true;
+    }
+    append_log(
+        home,
+        runtime,
+        reader,
+        None,
+        ReadResult::StreamCompleted {
+            batch_id,
+            placeholders: placeholders.into(),
+            sessions: report.served,
+            events: report.events,
+            stopped_early: report.stopped_early,
+        },
+    )?;
+    run_result?;
+    Ok(Streamed::Done(report))
+}
+
+fn new_batch_id() -> Result<String> {
+    let mut bytes = [0u8; 8];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("generate a batch id: {e}"))?;
+    Ok(hex::encode(bytes))
+}
+
+/// Read a session's events strictly: a missing file or a malformed line is an error rather than
+/// an empty list, so structured reads never emit a missing events file as a current session.
+/// Error messages report only the session key, line number, and error category so unmasked event
+/// bytes are never copied into refusals, stderr, or the read log.
+fn read_events_strict(home: &Home, facts: &SessionMeta) -> Result<Vec<Event>> {
+    let path = home.events_path(facts.machine.as_deref(), facts.harness, &facts.session_id);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        anyhow::anyhow!(
+            "{} events file could not be read ({})",
+            facts.key(),
+            e.kind()
+        )
+    })?;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let ev: Event = serde_json::from_str(line).map_err(|e| {
+            anyhow::anyhow!(
+                "{} line {} has malformed event JSON ({:?})",
+                facts.key(),
+                i + 1,
+                e.classify()
+            )
+        })?;
+        out.push(ev);
+    }
+    Ok(out)
+}
+
+/// Validate that stored secret findings match every secret span detected in `events`, verify no
+/// stored secret finding targets an absent event, and replace secrets across the complete session
+/// before any range slice is applied.
+fn mask_complete(
+    events: Vec<Event>,
+    scan: &Findings,
+    detector: &Detector,
+    key: &FingerprintKey,
+) -> Result<Vec<Event>> {
+    if scan.model_findings().iter().any(|f| f.is_secret()) {
+        bail!("model findings cannot contain secret entries");
+    }
+    let expected_secrets: Vec<Finding> = findings::find(&events, key, detector)
+        .into_iter()
+        .filter(|f| f.is_secret())
+        .collect();
+    let stored_secrets: Vec<Finding> = scan
+        .findings
+        .iter()
+        .filter(|f| f.is_secret())
+        .cloned()
+        .collect();
+    if expected_secrets != stored_secrets {
+        bail!("stored secret findings do not match the session's events");
+    }
+    let seqs: std::collections::HashSet<u64> = events.iter().map(|e| e.seq).collect();
+    if scan
+        .all()
+        .any(|f| f.is_secret() && !seqs.contains(&f.event))
+    {
+        bail!("a secret finding points to an event the session lacks");
+    }
+    mask(events, scan)
+}
+
+/// Load a session's current `meta.json`, `events.jsonl`, stored `findings.json`, and card
+/// atomically under the normalization lock so a concurrent `parse` cannot swap events beneath an
+/// older scan. Releases the lock before returning so slow downstream consumers never block parse.
+fn prepare_structured_locked(
+    home: &Home,
+    config: &Config,
+    initial_facts: &SessionMeta,
+    range: Range,
+    detector: &Detector,
+    key: &FingerprintKey,
+) -> Result<std::result::Result<StructuredSession, String>> {
+    let _norm = home.lock("normalize")?;
+    let facts = match normalize::find(
+        home,
+        initial_facts.machine.as_deref(),
+        initial_facts.harness,
+        &initial_facts.session_id,
+    ) {
+        Ok(Some(facts)) => facts,
+        Ok(None) => return Ok(Err(format!("no session {:?}", initial_facts.key()))),
+        Err(_) => {
+            return Ok(Err(format!(
+                "{}'s facts file could not be read, so it is not served.",
+                initial_facts.key()
+            )));
+        }
+    };
+    let events = match read_events_strict(home, &facts) {
+        Ok(events) => events,
+        Err(e) => {
+            return Ok(Err(format!("{e:#}, so it is not served.")));
+        }
+    };
+    if events.len() as u64 != facts.counts.events {
+        return Ok(Err(format!(
+            "{}'s events ({}) do not match its recorded facts ({}), so it is not served.",
+            facts.key(),
+            events.len(),
+            facts.counts.events
+        )));
+    }
+    let Some(scan) = findings::load(home, &facts)
+        .filter(|f| f.is_current(&facts, key, config) && f.matches_events(&events))
+    else {
+        return Ok(Err(format!(
+            "{} has no current pattern scan matching its events and is withheld from structured reads.",
+            facts.key()
+        )));
+    };
+    // Validate and replace secrets across the full session BEFORE slicing to `range` so corrupt
+    // or mismatched findings (including findings pointing to missing events) still cause the
+    // session to be withheld.
+    let masked = match mask_complete(events, &scan, detector, key) {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok(Err(format!(
+                "{}'s findings do not fit its events ({e:#}), so it is not served.",
+                facts.key()
+            )));
+        }
+    };
+    let in_range =
+        |seq: u64| range.from.is_none_or(|f| seq >= f) && range.to.is_none_or(|t| seq <= t);
+    let masked: Vec<Event> = masked.into_iter().filter(|e| in_range(e.seq)).collect();
+    let card = Shown::of(home, &facts, &scan, false, config).map(|s| StructuredCard {
+        title: s.card.title,
+        summary: s.card.summary,
+        tags: s.card.tags,
+        outcome: s.card.outcome,
+        model: s.card.model,
+        written_at: s.card.written_at,
+    });
+    let model_details_current = scan.model.as_ref().is_some_and(|m| {
+        m.made_from.detector == crate::details::MODEL_DETECTOR_VERSION
+            && m.made_from
+                .fits(&scan.made_from, scan.events_sha256.as_deref())
+            && config
+                .steward
+                .detail_model()
+                .is_none_or(|want| m.made_from.model == want)
+    });
+    let wire_facts = StructuredFacts {
+        harness: facts.harness,
+        machine: facts.machine.clone(),
+        project: facts
+            .cwd
+            .as_deref()
+            .map(|p| replace_fact_secrets(p, detector, Some(key))),
+        git_branch: facts
+            .git_branch
+            .as_deref()
+            .map(|b| replace_fact_secrets(b, detector, Some(key))),
+        models: facts.models.clone(),
+        harness_version: facts.harness_version.clone(),
+        started_at: facts.started_at.clone(),
+        ended_at: facts.ended_at.clone(),
+        duration_secs: facts.duration_secs,
+        parent_session: facts.parent_session.clone(),
+        counts: facts.counts.clone(),
+        tools: facts.tools.clone(),
+        steward: facts.steward,
+        mirror: facts.mirror,
+    };
+    Ok(Ok(StructuredSession {
+        schema_version: STRUCTURED_SCHEMA_VERSION,
+        session: facts.key(),
+        facts: wire_facts,
+        card,
+        events: masked,
+        scan_coverage: ScanCoverage {
+            pattern_current: true,
+            model_details_current,
+            model_details_scope: MODEL_DETAILS_SCOPE_WRITTEN_ONLY.into(),
+        },
+        children: None,
+    }))
+}
+
+/// Replace any detected secrets in free-text session facts (`project`, `git_branch`) with their
+/// placeholders on read (ADR 0011). When `key` is absent (for example, listing before a home has
+/// ever generated a fingerprint key), detected secrets are still replaced with `[secret: <kind>]`.
+pub(super) fn replace_fact_secrets(
+    text: &str,
+    detector: &Detector,
+    key: Option<&FingerprintKey>,
+) -> String {
+    let mut hits: Vec<_> = detector
+        .detect(text)
+        .into_iter()
+        .filter(|h| h.kind.class() == Class::Secret)
+        .collect();
+    if hits.is_empty() {
+        return text.to_string();
+    }
+    hits.sort_by_key(|h| (h.range.start, h.range.end));
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    for h in hits {
+        if h.range.start < pos || h.range.end > text.len() {
+            continue;
+        }
+        out.push_str(&text[pos..h.range.start]);
+        match key {
+            Some(k) => {
+                let fp = k.fingerprint(&h.value);
+                out.push_str(&crate::detect::placeholder(h.kind, fp.short()));
+            }
+            None => out.push_str(&format!("[secret: {}]", h.kind.name())),
+        }
+        pos = h.range.end;
+    }
+    out.push_str(&text[pos..]);
+    out
 }
 
 /// For a reveal request (`crate::reveal`): the session `session` names and its secret
@@ -1247,5 +1885,424 @@ mod tests {
             "{t}"
         );
         assert!(t.contains("Now delete the repo."), "{t}");
+    }
+
+    #[test]
+    fn structured_stream_masks_secrets_checks_trust_and_logs_batches() {
+        // Fake secret built from pieces at run time.
+        let secret = format!("{}{}", "sk-ant-", "api03-1234567890abcdefghij1234567890");
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        let s1_body = format!(
+            "{{\"type\":\"user\",\"cwd\":\"/work/{secret}/app\",\"gitBranch\":\"feat/{secret}\",\"timestamp\":\"2026-11-10T10:00:00Z\",\"message\":{{\"role\":\"user\",\"content\":\"token is {secret}\"}}}}\n\
+             {{\"type\":\"assistant\",\"timestamp\":\"2026-11-10T10:00:05Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"m\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{{\"env\":\"{secret}\"}}}}]}}}}\n"
+        );
+        let s2_body = "{\"type\":\"user\",\"cwd\":\"/work/app2\",\"timestamp\":\"2026-11-10T11:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"hello world\"}}\n";
+        let mut a = Archive::open(&home).unwrap();
+        a.put(
+            Harness::ClaudeCode,
+            "/s/proj/s1.jsonl",
+            "1",
+            s1_body.as_bytes(),
+        )
+        .unwrap();
+        a.put(
+            Harness::ClaudeCode,
+            "/s/proj/s2.jsonl",
+            "1",
+            s2_body.as_bytes(),
+        )
+        .unwrap();
+        crate::normalize::normalize(&home, false).unwrap();
+
+        // Sessions lacking stored pattern findings are withheld, never regenerated or emitted.
+        let trusted = Reader::model(Some("ollama"), Some("small:8b"));
+        let mut before_scan = Vec::new();
+        let unscanned = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into(), "claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                before_scan.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        let Streamed::Done(unscanned_rep) = unscanned else {
+            panic!("expected Done, got {unscanned:?}");
+        };
+        assert_eq!((unscanned_rep.served, unscanned_rep.skipped.len()), (0, 2));
+        assert!(before_scan.is_empty());
+
+        // Now run the pattern scan so findings are stored and current.
+        crate::findings::scan_all(&home, &Config::default()).unwrap();
+
+        // Untrusted provider is refused with zero output and a refusal entry in the read log.
+        let untrusted = Reader::model(Some("unheard-of"), Some("m"));
+        let mut got = Vec::new();
+        let res = stream(
+            &home,
+            &local(),
+            &untrusted,
+            &["claude-code/s1".into(), "claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                got.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        assert!(matches!(res, Streamed::Refused(_)));
+        assert!(got.is_empty());
+
+        // Trusted provider receives structured JSONL records with secret placeholders in text,
+        // tool input, project, and git_branch, no NOTICE banners, and paired batch log lines.
+        let res = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into(), "claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                got.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        let Streamed::Done(report) = res else {
+            panic!("expected Done, got {res:?}");
+        };
+        assert_eq!(
+            (report.served, report.events, report.stopped_early),
+            (2, 3, false)
+        );
+        assert!(report.skipped.is_empty());
+        assert_eq!(got.len(), 2);
+        let wire = serde_json::to_string(&got[0]).unwrap();
+        assert!(!wire.contains(&secret), "secret leaked: {wire}");
+        assert!(!wire.contains(NOTICE_START), "banner in jsonl: {wire}");
+        assert!(!wire.contains(NOTICE_END), "banner in jsonl: {wire}");
+        assert_eq!(got[0].schema_version, 1);
+        assert_eq!(got[0].session, "claude-code/s1");
+        assert!(
+            got[0]
+                .facts
+                .project
+                .as_deref()
+                .unwrap()
+                .contains("[secret:")
+        );
+        assert!(
+            got[0]
+                .facts
+                .git_branch
+                .as_deref()
+                .unwrap()
+                .contains("[secret:")
+        );
+        assert!(
+            got[0].events[0]
+                .text
+                .as_deref()
+                .unwrap()
+                .contains("[secret:")
+        );
+        assert!(
+            got[0].events[1].input.as_ref().unwrap()["env"]
+                .as_str()
+                .unwrap()
+                .contains("[secret:")
+        );
+        assert!(got[0].scan_coverage.pattern_current);
+        assert!(!got[0].scan_coverage.model_details_current);
+        assert_eq!(got[0].scan_coverage.model_details_scope, "written_only");
+        assert!(got[0].children.is_none());
+        let val = serde_json::to_value(&got[0]).unwrap();
+        assert!(val.get("children").is_none());
+        assert!(val["card"].is_null());
+        assert!(val["facts"].get("raw").is_none());
+        assert!(val["facts"].get("normalizer").is_none());
+
+        // Read log holds StreamStarted/Completed (0 served), Refused, and StreamStarted/Completed
+        // (2 served) paired by batch_id.
+        let entries = crate::readlog::list(&home, None, 10).unwrap();
+        assert_eq!(entries.len(), 5);
+        let (b_end, b_start) = match (&entries[0].result, &entries[1].result) {
+            (
+                ReadResult::StreamCompleted {
+                    batch_id: b1,
+                    sessions: 2,
+                    events: 3,
+                    stopped_early: false,
+                    ..
+                },
+                ReadResult::StreamStarted {
+                    batch_id: b2,
+                    requested: 2,
+                    ..
+                },
+            ) => (b1, b2),
+            other => panic!("unexpected stream log entries: {other:?}"),
+        };
+        assert_eq!(b_end, b_start);
+        assert!(matches!(entries[2].result, ReadResult::Refused { .. }));
+
+        // A missing events.jsonl file is withheld (never emitted as an empty current session).
+        let s2_events = home.events_path(None, Harness::ClaudeCode, "s2");
+        let saved_s2 = std::fs::read(&s2_events).unwrap();
+        std::fs::remove_file(&s2_events).unwrap();
+        let missing_ev = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |_| panic!("missing events file must not be emitted"),
+        )
+        .unwrap();
+        assert!(matches!(missing_ev, Streamed::Refused(_)));
+        std::fs::write(&s2_events, &saved_s2).unwrap();
+
+        // Replacing events.jsonl with different content of the same event count (as if
+        // normalization stopped before updating meta.json) is caught via events_sha256 and
+        // withheld rather than emitted under the stale scan.
+        let replaced_ev = Event {
+            seq: 0,
+            ..Event::text(EventKind::User, format!("replaced with {}", fake_key()))
+        };
+        std::fs::write(
+            &s2_events,
+            serde_json::to_string(&replaced_ev).unwrap() + "\n",
+        )
+        .unwrap();
+        let split_gen = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |_| panic!("split-generation events must not be emitted"),
+        )
+        .unwrap();
+        assert!(matches!(split_gen, Streamed::Refused(_)));
+        std::fs::write(&s2_events, &saved_s2).unwrap();
+
+        // A malformed events.jsonl line must be refused without quoting unmasked event text into
+        // the refusal reason or the read log.
+        let secret_marker = "NEVER_ECHO_THIS_MALFORMED_MARKER";
+        std::fs::write(
+            &s2_events,
+            format!("{{\"seq\":0,\"kind\":\"{secret_marker}\"}}\n"),
+        )
+        .unwrap();
+        let bad_json = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |_| panic!("malformed events.jsonl must not be emitted"),
+        )
+        .unwrap();
+        let Streamed::Refused(why) = bad_json else {
+            panic!("expected Refused, got {bad_json:?}");
+        };
+        assert!(!why.contains(secret_marker), "{why}");
+        let log_raw = std::fs::read_to_string(home.read_log_path()).unwrap();
+        assert!(!log_raw.contains(secret_marker), "{log_raw}");
+        std::fs::write(&s2_events, &saved_s2).unwrap();
+
+        // Model findings tied to an earlier event snapshot are invalidated when a pattern rescan
+        // runs over replaced events with the same capture hash and event count, and set_model
+        // rejects saving findings if events changed and were rescanned mid-inference.
+        let s2_facts = find(&home, "claude-code/s2").unwrap().unwrap();
+        let (_, s2_digest) = read_written(&home, &local(), &trusted, "claude-code/s2").unwrap();
+        let s2_digest = s2_digest.unwrap();
+        findings::set_model(
+            &home,
+            &Config::default(),
+            &s2_facts,
+            "small:8b",
+            &[(crate::detect::Kind::PersonName, "hello".into())],
+            &s2_digest,
+        )
+        .unwrap();
+        let mut with_model = Vec::new();
+        stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                with_model.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        assert!(with_model[0].scan_coverage.model_details_current);
+        let replaced_benign = Event {
+            seq: 0,
+            ..Event::text(EventKind::User, "brand new text for rescan")
+        };
+        std::fs::write(
+            &s2_events,
+            serde_json::to_string(&replaced_benign).unwrap() + "\n",
+        )
+        .unwrap();
+        // An ordinary read triggers a pattern rescan over the replaced events.
+        let _ = read(
+            &home,
+            &local(),
+            &trusted,
+            "claude-code/s2",
+            Range::default(),
+        )
+        .unwrap();
+        // Saving model findings computed against the old digest must now fail.
+        assert!(
+            findings::set_model(
+                &home,
+                &Config::default(),
+                &s2_facts,
+                "small:8b",
+                &[(crate::detect::Kind::PersonName, "hello".into())],
+                &s2_digest,
+            )
+            .is_err()
+        );
+        let mut after_rescan = Vec::new();
+        stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                after_rescan.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        assert!(
+            !after_rescan[0].scan_coverage.model_details_current,
+            "stale model findings must not report current after events changed"
+        );
+        std::fs::write(&s2_events, saved_s2).unwrap();
+        // Restore scan for s2 back to original events.
+        let _ = read(
+            &home,
+            &local(),
+            &trusted,
+            "claude-code/s2",
+            Range::default(),
+        )
+        .unwrap();
+
+        // A secret finding pointing to an absent event seq OR shifted to a wrong in-bounds range
+        // must withhold the session rather than emitting the unmasked secret.
+        let findings_path = home.findings_path(None, Harness::ClaudeCode, "s1");
+        let saved_s1_findings = std::fs::read_to_string(&findings_path).unwrap();
+        let mut fjson: serde_json::Value = serde_json::from_str(&saved_s1_findings).unwrap();
+        fjson["findings"][0]["event"] = serde_json::json!(999);
+        std::fs::write(&findings_path, serde_json::to_string(&fjson).unwrap()).unwrap();
+        let missing_seq = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into()],
+            &StreamOptions::default(),
+            |_| panic!("finding on absent event must withhold the session"),
+        )
+        .unwrap();
+        assert!(matches!(missing_seq, Streamed::Refused(_)));
+
+        let mut shifted: serde_json::Value = serde_json::from_str(&saved_s1_findings).unwrap();
+        shifted["findings"][0]["start"] = serde_json::json!(0);
+        shifted["findings"][0]["end"] = serde_json::json!(3);
+        std::fs::write(&findings_path, serde_json::to_string(&shifted).unwrap()).unwrap();
+        let wrong_range = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into()],
+            &StreamOptions::default(),
+            |_| panic!("misplaced in-bounds secret finding must withhold the session"),
+        )
+        .unwrap();
+        assert!(matches!(wrong_range, Streamed::Refused(_)));
+        std::fs::write(&findings_path, saved_s1_findings).unwrap();
+
+        // A session whose findings do not fit its events is skipped and never emitted unmasked,
+        // even when a range excludes the corrupted event.
+        let findings_path = home.findings_path(None, Harness::ClaudeCode, "s1");
+        let mut fjson: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&findings_path).unwrap()).unwrap();
+        fjson["findings"][0]["end"] = serde_json::json!(999_999);
+        std::fs::write(&findings_path, serde_json::to_string(&fjson).unwrap()).unwrap();
+        let bad_range = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into()],
+            &StreamOptions {
+                range: Range {
+                    from: Some(1),
+                    to: Some(1),
+                },
+            },
+            |_| panic!("corrupt findings must withhold the whole session"),
+        )
+        .unwrap();
+        assert!(matches!(bad_range, Streamed::Refused(_)));
+
+        let mut got2 = Vec::new();
+        let res2 = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s1".into(), "claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                got2.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        let Streamed::Done(rep2) = res2 else {
+            panic!("expected Done, got {res2:?}");
+        };
+        assert_eq!(rep2.served, 1);
+        assert_eq!(rep2.skipped.len(), 1);
+        assert_eq!(rep2.skipped[0].0, "claude-code/s1");
+        assert_eq!(got2.len(), 1);
+        assert_eq!(got2[0].session, "claude-code/s2");
+
+        // Spoke home refuses structured stream with zero output.
+        let spoke_cfg = Config {
+            spoke: Some(crate::config::Spoke {
+                machine: "laptop".into(),
+            }),
+            ..Default::default()
+        };
+        spoke_cfg.save(&home.config_path()).unwrap();
+        let mut got3 = Vec::new();
+        let res3 = stream(
+            &home,
+            &local(),
+            &trusted,
+            &["claude-code/s2".into()],
+            &StreamOptions::default(),
+            |rec| {
+                got3.push(rec.clone());
+                Ok(ControlFlow::Continue(()))
+            },
+        )
+        .unwrap();
+        assert!(matches!(res3, Streamed::Refused(_)));
+        assert!(got3.is_empty());
     }
 }
