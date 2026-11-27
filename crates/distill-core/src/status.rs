@@ -387,17 +387,21 @@ fn machines(
     }
     // Each one's newest pull, and the newest that took without an error, by when each ended: a
     // tick logs its pulls only at its end, after a pull by hand that ran meanwhile.
-    let mut newest: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
-    let mut last_ok: BTreeMap<String, String> = BTreeMap::new();
+    type When = chrono::DateTime<chrono::FixedOffset>;
+    let mut newest: BTreeMap<String, (When, Option<String>)> = BTreeMap::new();
+    let mut last_ok: BTreeMap<String, When> = BTreeMap::new();
     for e in runlog::recent(home, 500)? {
         let Some(o) = e.outcome("pull") else { continue };
         let Ok(r) = serde_json::from_value::<crate::machines::PullReport>(o.report) else {
             continue;
         };
         for p in r.machines {
-            let at = p.at.unwrap_or_else(|| e.at.clone());
+            let at = p.at.as_deref().unwrap_or(&e.at);
+            let Ok(at) = chrono::DateTime::parse_from_rfc3339(at) else {
+                continue;
+            };
             if p.error.is_none() && last_ok.get(&p.machine).is_none_or(|t| *t < at) {
-                last_ok.insert(p.machine.clone(), at.clone());
+                last_ok.insert(p.machine.clone(), at);
             }
             if newest.get(&p.machine).is_none_or(|(t, _)| *t < at) {
                 newest.insert(p.machine, (at, p.error));
@@ -446,7 +450,9 @@ fn machines(
             });
         }
         let pull_error = newest.get(&machine).and_then(|(_, e)| e.clone());
-        let last_pull = last_ok.get(&machine).cloned();
+        let last_pull = last_ok
+            .get(&machine)
+            .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
         let warned = harnesses.iter().find(|h| h.health == Health::Warn);
         let (health, note) = if let Some(e) = &pull_error {
             (Health::Warn, Some(format!("the last pull failed: {e}")))
@@ -756,16 +762,23 @@ mod tests {
         pulled_at(home, machine, None, minutes_ago, error);
     }
 
-    /// A run that logged, `logged` minutes ago, a pull of `machine` that ended `ended` minutes ago.
-    fn pulled_at(home: &Home, machine: &str, ended: Option<i64>, logged: i64, error: Option<&str>) {
-        let ago = |m: i64| {
-            (chrono::Utc::now() - chrono::Duration::minutes(m))
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        };
+    fn ago(minutes: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::minutes(minutes))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    }
+
+    /// A run that logged, `logged` minutes ago, a pull of `machine` that ended at `ended`.
+    fn pulled_at(
+        home: &Home,
+        machine: &str,
+        ended: Option<String>,
+        logged: i64,
+        error: Option<&str>,
+    ) {
         let report = crate::machines::PullReport {
             machines: vec![crate::machines::Pulled {
                 machine: machine.into(),
-                at: ended.map(ago),
+                at: ended,
                 took: Default::default(),
                 error: error.map(Into::into),
             }],
@@ -838,10 +851,22 @@ mod tests {
         assert!(nas.note.as_deref().unwrap().contains("Connection refused"));
 
         // A tick whose pull ended before that one, logged once the tick was done, is older.
-        pulled_at(&home, "nas", Some(8), 1, None);
+        pulled_at(&home, "nas", Some(ago(8)), 1, None);
         let nas = &status(&home).unwrap().machines[0];
         assert_eq!(nas.health, Health::Warn, "{nas:?}");
         assert!(nas.pull_error.is_some(), "{nas:?}");
+        // Even when both end within the same second.
+        let second = ago(0).trim_end_matches('Z').to_string();
+        pulled_at(
+            &home,
+            "nas",
+            Some(format!("{second}.900Z")),
+            0,
+            Some("refused"),
+        );
+        pulled_at(&home, "nas", Some(format!("{second}.100Z")), 0, None);
+        let nas = &status(&home).unwrap().machines[0];
+        assert_eq!(nas.pull_error.as_deref(), Some("refused"), "{nas:?}");
     }
 
     #[test]

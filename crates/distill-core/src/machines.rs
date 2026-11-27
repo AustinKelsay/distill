@@ -164,7 +164,8 @@ pub fn pull(
             break;
         }
         let mut pulled = pull_one(home, m, deadline, "ssh", QUIET);
-        pulled.at = Some(now_rfc3339());
+        // To the millisecond, so a pull by hand that ends just after a tick's sorts after it.
+        pulled.at = Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         report.machines.push(pulled);
     }
     Ok(report)
