@@ -163,10 +163,9 @@ pub fn pull(
         if deadline.passed() {
             break;
         }
-        report.machines.push(Pulled {
-            at: Some(now_rfc3339()),
-            ..pull_one(home, m, deadline, "ssh", QUIET)
-        });
+        let mut pulled = pull_one(home, m, deadline, "ssh", QUIET);
+        pulled.at = Some(now_rfc3339());
+        report.machines.push(pulled);
     }
     Ok(report)
 }
