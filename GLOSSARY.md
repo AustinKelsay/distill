@@ -128,7 +128,7 @@ A short identifier for a finding's value. It is the same wherever that value app
 _Avoid_: Hash, ID
 
 **Placeholder**:
-What a model reads in place of a secret: the secret's kind and fingerprint.
+What a reader gets in place of a secret—or a personal detail, when asked—on the read path: the finding's kind and fingerprint.
 _Avoid_: Mask, redaction
 
 **Blur**:
