@@ -45,4 +45,6 @@ An export is the spoke's raw captures, as they are, to the owner's own hub: not 
 
 ## Checking on them
 
+`distill search` and `distill tags` take `--machine <name>` to keep to one spoke's sessions, or `--machine hub` for the hub's own (a spoke named `hub` can't be picked this way); the MCP tools take `machine` the same way.
+
 On the hub, `distill status` has a line for each spoke: its health, its sessions and when a pull last took from it, then its harnesses as the hub's own are shown. A spoke whose newest pull failed says why. When a spoke in `[[machines]]` hasn't been pulled from for twice the timer's interval, status warns. On a spoke, the exports count among what left it, as `the hub, over ssh`.

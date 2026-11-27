@@ -415,6 +415,10 @@ impl Home {
     }
 }
 
+/// What a filter calls the hub's own sessions, which carry no machine. A spoke named so is not
+/// picked by it.
+pub const HUB: &str = "hub";
+
 /// Refuse a machine name that isn't lowercase letters, digits and `-` (ADR 0010).
 pub fn machine_name(name: &str) -> Result<()> {
     let fits = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';

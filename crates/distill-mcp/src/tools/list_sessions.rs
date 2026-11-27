@@ -22,7 +22,7 @@ impl Tool for ListSessions {
             "List archived sessions, newest first, with each one's facts (harness, project, \
              branch, models, times, counts) and its card (a title, a summary, tags and an \
              outcome, written by a model), or the opening of what the owner first wrote \
-             when it has no card yet. Filter by harness, project (a folder; sessions in it and \
+             when it has no card yet. Filter by harness, machine, project (a folder; sessions in it and \
              below), model (part of its name), start date, and the card's tag and outcome. At \
              most {PAGE_MAX} rows per call; the first line says how \
              many match and the offset where the next page starts. Mirrors of sessions already \
@@ -61,6 +61,7 @@ pub(super) fn filter_properties() -> serde_json::Map<String, Value> {
     let outcomes: Vec<&str> = Outcome::ALL.iter().map(|o| o.id()).collect();
     let Value::Object(o) = json!({
         "harness": {"type": "string", "enum": harnesses, "description": "Only this harness's sessions."},
+        "machine": {"type": "string", "description": "Only sessions captured on this machine: a spoke by its name, or hub for the hub's own. A spoke's session keys start with its name and a colon."},
         "project": {"type": "string", "description": "Only sessions that worked in this folder or one inside it."},
         "model": {"type": "string", "description": "Only sessions that used a model whose name contains this, ignoring case."},
         "since": {"type": "string", "description": "Only sessions that started on or after this day, YYYY-MM-DD (UTC)."},
@@ -100,6 +101,7 @@ pub(super) fn day(args: &Value, name: &str) -> Result<Option<NaiveDate>, String>
 pub(super) fn filter(args: &Value) -> Result<Filter, String> {
     Ok(Filter {
         harness: harness(args)?,
+        machine: string(args, "machine")?,
         project: string(args, "project")?,
         model: string(args, "model")?,
         since: day(args, "since")?,

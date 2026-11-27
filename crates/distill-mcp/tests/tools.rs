@@ -121,6 +121,10 @@ fn a_trusted_model_lists_sessions_with_facts_and_opening() {
                "since": "2026-11-01", "until": "2026-11-30"}),
     );
     assert!(t.starts_with("No sessions match."), "{t}");
+    let (_, t) = call(&s, "list_sessions", json!({"machine": "nas"}));
+    assert!(t.starts_with("No sessions match."), "{t}");
+    let (_, t) = call(&s, "list_sessions", json!({"machine": "hub"}));
+    assert!(t.contains("claude-code/s1"), "{t}");
     let (_, t) = call(
         &s,
         "list_sessions",
