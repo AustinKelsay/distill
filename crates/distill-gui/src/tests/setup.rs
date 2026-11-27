@@ -1046,11 +1046,12 @@ fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
 fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
     let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1600.0));
     step(&mut rt, "Machines");
-    let add = |rt: &mut Runtime<State>| {
+    let add_at = |rt: &mut Runtime<State>, host: &str| {
         type_into(rt, |s| &mut s.setup.machine_name, "nas");
-        type_into(rt, |s| &mut s.setup.machine_host, "me@nas");
+        type_into(rt, |s| &mut s.setup.machine_host, host);
         press(rt, "add-machine");
     };
+    let add = |rt: &mut Runtime<State>| add_at(rt, "me@nas");
     // The checks would run ssh: each is taken from the queue, and its result handed in.
     let check = |rt: &mut Runtime<State>| {
         press(rt, "check");
@@ -1088,4 +1089,13 @@ fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
     land(&mut rt, new, "the newest row's");
     land(&mut rt, old, "the removed row's");
     assert_eq!(text_of(&rt, "machine-0/checked"), "the newest row's");
+    // Added again at the right host: checked at once, and the old check still lands nowhere.
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add_at(&mut rt, "me@nas.lan");
+    let new = check(&mut rt);
+    land(&mut rt, old, "me@nas's");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    land(&mut rt, new, "me@nas.lan's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "me@nas.lan's");
 }
