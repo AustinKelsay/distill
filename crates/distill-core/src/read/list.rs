@@ -331,10 +331,12 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
-            && self
-                .machine
-                .as_deref()
-                .is_none_or(|want| m.machine.as_deref().unwrap_or(crate::home::HUB) == want.trim())
+            && self.machine.as_deref().is_none_or(|want| {
+                m.machine
+                    .as_deref()
+                    .unwrap_or(crate::home::HUB)
+                    .eq_ignore_ascii_case(want.trim())
+            })
             && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
                 m.cwd
@@ -751,6 +753,7 @@ mod tests {
             )
         };
         assert_eq!(on("nas"), ["nas:claude-code/b"]);
+        assert_eq!(on(" NAS "), ["nas:claude-code/b"]);
         assert_eq!(on("hub"), ["claude-code/a"]);
         assert!(on("box").is_empty());
         // A model sees where each session was captured, and the filter it asked for.
