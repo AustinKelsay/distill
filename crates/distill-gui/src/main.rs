@@ -99,12 +99,20 @@ impl State {
             .collect()
     }
 
+    /// Whether this home is a hub: the last status report names a spoke.
+    pub fn is_hub(&self) -> bool {
+        self.overview
+            .status
+            .as_ref()
+            .is_some_and(|st| !st.machines.is_empty())
+    }
+
     /// Where a session was captured, as the window names it: its spoke, or `This hub` for the
-    /// hub's own once the hub has spokes; none on a home without spokes.
+    /// hub's own on a hub; none on a home without spokes.
     pub fn machine_label(&self, machine: Option<&str>) -> Option<String> {
         match machine {
             Some(m) => Some(m.to_string()),
-            None => (!self.spokes().is_empty()).then(|| "This hub".to_string()),
+            None => self.is_hub().then(|| "This hub".to_string()),
         }
     }
 

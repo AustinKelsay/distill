@@ -1010,3 +1010,21 @@ fn a_machine_picked_while_a_search_runs_applies_once_it_lands() {
     let nas = Some("nas".to_string());
     assert_eq!(machines_listed(&rt), [nas.clone(), nas]);
 }
+
+#[test]
+fn a_hub_whose_only_spoke_is_named_hub_is_still_a_hub() {
+    let mut s = fixture::sessions_listed();
+    let mut hub = fixture::hub();
+    let st = hub.overview.status.as_mut().unwrap();
+    st.machines.truncate(1);
+    st.machines[0].machine = distill_core::home::HUB.into();
+    s.overview.status = hub.overview.status.take();
+    assert_eq!(s.machine_label(None).as_deref(), Some("This hub"));
+    assert!(s.spokes().is_empty(), "a spoke named hub isn't a choice");
+    let rt = runtime_sized(s, (1080.0, 1400.0));
+    assert!(
+        rt.find("filter-machine-trigger").is_some(),
+        "{:?}",
+        texts(&rt)
+    );
+}

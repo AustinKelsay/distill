@@ -82,7 +82,7 @@ fn header(s: &State, p: &Paint, layer: &mut Vec<El>) -> El {
         .build(&p.k, layer);
     // On a hub, its spokes and its own sessions; a home without spokes has no machine filter.
     let spokes = s.spokes();
-    let machine = (!spokes.is_empty() || f.machine.is_some()).then(|| {
+    let machine = (s.is_hub() || f.machine.is_some()).then(|| {
         let names: Vec<&str> = [ANY_MACHINE, THIS_HUB]
             .into_iter()
             .chain(spokes.iter().copied())
