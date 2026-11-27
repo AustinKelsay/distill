@@ -39,7 +39,7 @@ On the spoke, the hub's key can run nothing but the export. Prefix its line in `
 command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 ```
 
-Give the hub a key kept for this (`ssh-keygen -t ed25519 -f ~/.ssh/distill`), and name it in the hub's `~/.ssh/config` for the spoke's host, so a pull can't log in with a key that has more access:
+Give the hub a key kept for this (`ssh-keygen -t ed25519 -f ~/.ssh/distill`), and name it in the hub's `~/.ssh/config` for the spoke's host, so a pull can't log in with a key that has more access. With `IdentitiesOnly`, SSH offers only the keys named for that host, so name no other one for it, such as in a `Host *` block:
 
 ```text
 Host nas
@@ -54,7 +54,7 @@ Host nas
 
 An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went. The hub records each pull in its run log: when it ended, the span of the manifest, the captures and blob bytes it stored, and why it failed, if it did (`distill --json runs`; `distill status` shows each spoke's last).
 
-Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model. `distill exposure` on a spoke checks its modes, that no DISTILL process listens on a port, and whether the disk is encrypted, as on the hub; a spoke has no fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses a key file other accounts can read.
+Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model; its read log holds only those refusals: who asked for which session, never text. `distill exposure` on a spoke checks its modes, that no DISTILL process listens on a port, and whether the machine's disk is encrypted, as on the hub (`docs/known-gaps.md` says where that check falls short); a spoke never makes a fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses a key file other accounts can read.
 
 ## Checking on them
 
