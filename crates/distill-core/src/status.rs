@@ -391,10 +391,26 @@ fn machines(
     let mut newest: BTreeMap<String, (When, Option<String>)> = BTreeMap::new();
     let mut last_ok: BTreeMap<String, When> = BTreeMap::new();
     // The whole log if need be: a spoke pulled from rarely, or failing, is still found. A run is
-    // logged after its pulls end, to the second, so once both of a machine's ended a second or
-    // more after a run was logged, no run before it holds a newer one.
+    // logged, to the second, after its pulls end, into the file of the day it was logged, but
+    // not always in order within that day. So once a day is read whole, and each machine's
+    // newest pull that took ended a second or more after that day began, no earlier day holds a
+    // newer one: the newest pull, failed or not, is never older than that one.
+    let mut day: Option<String> = None;
     runlog::scan(home, |e| {
-        let logged = chrono::DateTime::parse_from_rfc3339(&e.at).ok();
+        let this_day = e.at.get(..10).unwrap_or_default().to_string();
+        if let Some(read) = day.as_deref().filter(|d| *d != this_day) {
+            let began = chrono::DateTime::parse_from_rfc3339(&format!("{read}T00:00:00Z"));
+            if let Ok(began) = began {
+                let bound = began + chrono::Duration::seconds(1);
+                if names
+                    .keys()
+                    .all(|m| last_ok.get(m).is_some_and(|t| *t >= bound))
+                {
+                    return false;
+                }
+            }
+        }
+        day = Some(this_day);
         let report = e
             .outcome("pull")
             .and_then(|o| serde_json::from_value::<crate::machines::PullReport>(o.report).ok());
@@ -410,13 +426,7 @@ fn machines(
                 newest.insert(p.machine, (at, p.error));
             }
         }
-        let Some(logged) = logged.map(|t| t + chrono::Duration::seconds(1)) else {
-            return true;
-        };
-        !names.keys().all(|m| {
-            newest.get(m).is_some_and(|(t, _)| *t >= logged)
-                && last_ok.get(m).is_some_and(|t| *t >= logged)
-        })
+        true
     })?;
     let mut out = Vec::new();
     for (machine, host) in names {
@@ -936,6 +946,52 @@ mod tests {
         let last = chrono::DateTime::parse_from_rfc3339(nas.last_pull.as_deref().unwrap()).unwrap();
         let days = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_days();
         assert_eq!(days, 30, "{nas:?}");
+    }
+
+    #[test]
+    fn a_spokes_newest_pull_is_found_when_runs_were_logged_out_of_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        home.ensure().unwrap();
+        Config {
+            machines: vec![crate::config::MachineConfig {
+                name: "nas".into(),
+                host: "me@nas".into(),
+                command: None,
+            }],
+            ..Config::default()
+        }
+        .save(&home.config_path())
+        .unwrap();
+        let run = |logged: &str, ended: Option<&str>| {
+            let outcomes = ended
+                .map(|ended| {
+                    let report = crate::machines::PullReport {
+                        machines: vec![crate::machines::Pulled {
+                            machine: "nas".into(),
+                            at: Some(format!("2026-11-01T{ended}Z")),
+                            took: Default::default(),
+                            error: None,
+                        }],
+                        skipped: None,
+                    };
+                    vec![crate::tick::pull_outcome(&report).unwrap()]
+                })
+                .unwrap_or_default();
+            let mut e = runlog::RunEntry::of("tick", outcomes);
+            e.at = format!("2026-11-01T{logged}Z");
+            runlog::record(&home, &e).unwrap();
+        };
+        // An earlier day, then a day whose runs were appended out of order.
+        let mut e = runlog::RunEntry::of("tick", vec![]);
+        e.at = "2026-10-31T23:00:00Z".into();
+        runlog::record(&home, &e).unwrap();
+        run("10:00:20", Some("10:00:19.900"));
+        run("10:00:10", None);
+        run("10:00:22", Some("10:00:15.100"));
+        let s = status(&home).unwrap();
+        let nas = s.machines.iter().find(|m| m.machine == "nas").unwrap();
+        assert_eq!(nas.last_pull.as_deref(), Some("2026-11-01T10:00:19Z"));
     }
 
     #[test]
