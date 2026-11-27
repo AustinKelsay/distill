@@ -72,5 +72,5 @@
       text: Give an agent the MCP server, named with the service it runs at:
       text: claude mcp add distill -- distill-mcp --provider <service>
       text: On other machines
-      text: Make each one a spoke, which only captures, then add it under Setup's Machines step: this machine pulls its sessions over SSH on every run.
+      text: Make each one a spoke, which only captures, and install its timer (`distill schedule install`); let this machine's SSH key in (docs/machines.md), then add it under Setup's Machines step: this machine pulls its sessions on every run.
       text: distill init --spoke <name>

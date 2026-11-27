@@ -231,20 +231,11 @@ pub fn add(config: &mut Config, name: &str, host: &str) -> Result<()> {
 
 /// Check that `m` answers over SSH as the spoke this hub has a copy of, as a pull would start:
 /// it runs the export there and reads only its header, so nothing is taken, and says whether
-/// it has captures to pull. The spoke logs it as an export cut short.
+/// it has captures to pull. The spoke logs the export it hung up on.
 pub fn check(home: &Home, m: &MachineConfig) -> Result<String> {
     if home.spoke()?.is_some() {
         bail!("a spoke pulls from no machine: it only captures");
     }
-    // A pull under way grows the copy the header is checked against. A home not made yet (setup
-    // before Finish) has no copy, and gets no lock file.
-    let _lock = match home.state_dir().is_dir() {
-        true => match home.try_lock("archive")? {
-            Some(lock) => Some(lock),
-            None => bail!("a sweep, a backup or a pull holds the archive: check again shortly"),
-        },
-        false => None,
-    };
     let (pulled, waiting) = over_ssh(home, m, Want::Check, "ssh", CHECK_QUIET);
     match (pulled.error, waiting) {
         (Some(e), _) => bail!(e),
@@ -295,13 +286,16 @@ fn over_ssh(
         took: Transfer::default(),
         error: None,
     };
-    let since = match archive::copy_length(home, &m.name) {
-        Ok(n) => n,
+    // A check compares the header with the copy as it was when the export was asked for: a pull
+    // can grow it meanwhile, and the check holds no lock.
+    let copy = match archive::copy_of(home, &m.name) {
+        Ok(c) => c,
         Err(e) => {
             pulled.error = Some(format!("{e:#}"));
             return (pulled, None);
         }
     };
+    let since = copy.since;
     pulled.took.since = since;
     pulled.took.to = since;
     let command = m.command.as_deref().unwrap_or("distill");
@@ -380,7 +374,7 @@ fn over_ssh(
             &|| deadline.passed(),
             &mut pulled.took,
         ),
-        Want::Check => archive::check_export(home, &m.name, &mut stdout).map(|w| {
+        Want::Check => archive::check_export(&m.name, &copy, &mut stdout).map(|w| {
             waiting = Some(w);
         }),
     };
@@ -528,16 +522,6 @@ mod tests {
             p.error.unwrap(),
             "ssh me@nas: ssh: connect to host nas port 22: Connection refused"
         );
-    }
-
-    #[test]
-    fn a_check_waits_for_no_pull_and_reads_no_copy_a_pull_is_growing() {
-        let dir = tempfile::tempdir().unwrap();
-        let (home, config) = hub_of(dir.path());
-        let _held = home.lock_archive().unwrap();
-        // Refused before ssh runs.
-        let e = check(&home, &config.machines[0]).unwrap_err();
-        assert!(format!("{e:#}").contains("holds the archive"), "{e:#}");
     }
 
     #[test]

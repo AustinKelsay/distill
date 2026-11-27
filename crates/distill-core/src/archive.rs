@@ -598,16 +598,6 @@ pub fn export(
     Ok(())
 }
 
-/// The length of the whole lines of `machine`'s manifest here: where its next pull starts.
-pub fn copy_length(home: &Home, machine: &str) -> Result<u64> {
-    let ours = match fs::read(home.manifest_path_of(Some(machine))) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
-    };
-    Ok(whole_lines(&ours) as u64)
-}
-
 /// The length of `bytes` up to the end of its last line.
 fn whole_lines(bytes: &[u8]) -> usize {
     bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1)
@@ -654,14 +644,39 @@ fn read_frame(frame: &mut String, input: &mut dyn std::io::BufRead) -> Result<()
     Ok(())
 }
 
+/// `machine`'s copy of its manifest here, as a pull starts from it: its bytes, the length of its
+/// whole lines (the byte its export is asked to start at), and their SHA-256, which the spoke's
+/// manifest must start with.
+pub struct Copy {
+    bytes: Vec<u8>,
+    pub since: u64,
+    prefix: String,
+}
+
+/// Read `machine`'s copy here; none yet is an empty one.
+pub fn copy_of(home: &Home, machine: &str) -> Result<Copy> {
+    let bytes = match fs::read(home.manifest_path_of(Some(machine))) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
+    };
+    let whole = whole_lines(&bytes);
+    let prefix = hex::encode(Sha256::digest(&bytes[..whole]));
+    let since = whole as u64;
+    Ok(Copy {
+        bytes,
+        since,
+        prefix,
+    })
+}
+
 /// Read the start of `machine`'s export from `input`: the export's first line, then its header,
-/// which must name `machine` and continue this home's copy of its archive. Returns the header,
-/// the copy's manifest and the length of its whole lines. Writes nothing.
+/// which must name `machine` and continue `copy`. Writes nothing.
 fn export_header(
-    home: &Home,
     machine: &str,
+    copy: &Copy,
     input: &mut dyn std::io::BufRead,
-) -> Result<(ExportHeader, Vec<u8>, usize)> {
+) -> Result<ExportHeader> {
     crate::home::machine_name(machine)?;
     let mut frame = String::new();
     read_frame(&mut frame, input)?;
@@ -679,26 +694,20 @@ fn export_header(
             header.machine
         );
     }
-    let ours = match fs::read(home.manifest_path_of(Some(machine))) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e).with_context(|| format!("read {machine}'s manifest")),
-    };
-    let whole = whole_lines(&ours);
-    if header.since != whole as u64 || header.prefix != hex::encode(Sha256::digest(&ours[..whole]))
-    {
+    if header.since != copy.since || header.prefix != copy.prefix {
         bail!(
             "\"{machine}\"'s archive there does not continue its copy here: is another machine \
              using the name \"{machine}\"?"
         );
     }
-    Ok((header, ours, whole))
+    Ok(header)
 }
 
 /// Check the start of `machine`'s export from `input` as a pull would (see [`export_header`]),
-/// without taking anything: whether it has captures this home's copy lacks.
-pub fn check_export(home: &Home, machine: &str, input: &mut dyn std::io::BufRead) -> Result<bool> {
-    let (header, _, _) = export_header(home, machine, input)?;
+/// against `copy` as it was when the export was asked for, without taking anything: whether the
+/// spoke has captures `copy` lacks.
+pub fn check_export(machine: &str, copy: &Copy, input: &mut dyn std::io::BufRead) -> Result<bool> {
+    let header = export_header(machine, copy, input)?;
     Ok(header.end > header.since)
 }
 
@@ -725,7 +734,9 @@ pub fn take_into(
     stop: &dyn Fn() -> bool,
     t: &mut Transfer,
 ) -> Result<()> {
-    let (header, ours, whole) = export_header(home, machine, input)?;
+    let copy = copy_of(home, machine)?;
+    let header = export_header(machine, &copy, input)?;
+    let (ours, whole) = (copy.bytes, copy.since as usize);
     let path = home.manifest_path_of(Some(machine));
     let mut frame = String::new();
     // A line cut short by a write that failed here (a full disk) is dropped: the export sends it
@@ -962,7 +973,7 @@ mod tests {
 
     /// What `export` writes from `spoke` for the hub's copy of `nas` as it is now.
     fn export_for(spoke: &Home, hub: &Home) -> Vec<u8> {
-        let since = copy_length(hub, "nas").unwrap();
+        let since = copy_of(hub, "nas").unwrap().since;
         let mut out = Vec::new();
         export(spoke, "nas", since, &mut out, &mut Transfer::default()).unwrap();
         out
@@ -1021,6 +1032,26 @@ mod tests {
         // Nothing new: nothing comes.
         let third = pull(&spoke, &hub);
         assert_eq!((third.lines, third.blobs), (0, 0), "{third:?}");
+    }
+
+    #[test]
+    fn a_check_reads_the_header_against_the_copy_it_asked_from_while_a_pull_grows_it() {
+        let (_s, spoke) = home();
+        let (_h, hub) = home();
+        let mut a = Archive::open(&spoke).unwrap();
+        a.put(Harness::Pi, "s", "1", &b"one\n"[..]).unwrap();
+        // The check asks for an export from the copy as it is (empty); a pull lands first.
+        let asked = copy_of(&hub, "nas").unwrap();
+        let export = export_for(&spoke, &hub);
+        pull(&spoke, &hub);
+        assert!(check_export("nas", &asked, &mut &export[..]).unwrap());
+        // Against the copy as it is now, the same header doesn't continue it.
+        let now = copy_of(&hub, "nas").unwrap();
+        let e = check_export("nas", &now, &mut &export[..]).unwrap_err();
+        assert!(format!("{e:#}").contains("does not continue"), "{e:#}");
+        // And with nothing new on the spoke, the check says so.
+        let none = export_for(&spoke, &hub);
+        assert!(!check_export("nas", &now, &mut &none[..]).unwrap());
     }
 
     #[test]

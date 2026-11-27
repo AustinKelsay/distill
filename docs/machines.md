@@ -25,7 +25,7 @@ host = "me@nas"         # what `ssh` reaches it by: a host, user@host, or a Host
 # command = "/home/me/.cargo/bin/distill"   # when `distill` isn't on the PATH SSH gives it
 ```
 
-Or add it in the window, under Setup's Machines step, with its name and SSH host. There, Check connects as a pull starts and reads only the export's header: it says whether the spoke answers as that name and has captures to pull, and takes nothing. The spoke logs a check as an export cut short.
+Or add it in the window, under Setup's Machines step, with its name and SSH host. There, Check connects as a pull starts and reads only the export's header: it says whether the spoke answers as that name and has captures to pull, and takes nothing. It hangs up on the export, which the spoke logs, usually as cut short.
 
 Each tick then runs `ssh <host> distill export --since <bytes>` for each machine, after the sweep, and the parse step turns what came into sessions. `<bytes>` is the length of the hub's copy of that spoke's manifest, so the copy is its own cursor: a restored or rebuilt hub goes on from where its copy ends. `distill pull` (or `distill pull nas`) runs it at once. The hub refuses a machine that names itself otherwise, or whose archive is not the one it has a copy of.
 

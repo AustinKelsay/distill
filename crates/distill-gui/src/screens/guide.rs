@@ -121,8 +121,9 @@ pub fn view(s: &State, p: &Paint, _: &mut Vec<El>) -> El {
         .child(line(
             p,
             "On other machines",
-            "Make each one a spoke, which only captures, then add it under Setup's Machines step: \
-             this machine pulls its sessions over SSH on every run.",
+            "Make each one a spoke, which only captures, and install its timer \
+             (`distill schedule install`); let this machine's SSH key in (docs/machines.md), then \
+             add it under Setup's Machines step: this machine pulls its sessions on every run.",
             Some("distill init --spoke <name>"),
         ));
     let start = Button::new(if set_up { "Open Setup" } else { "Start setup" })

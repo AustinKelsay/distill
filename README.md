@@ -71,7 +71,7 @@ vectors = false             # also carry vectors, which cost embedding time to r
 
 Any other kind runs an adapter, `distill-backup-<kind>` on `PATH` (`docs/backup-adapters.md`). Two are installed with DISTILL: `ssh`, to a folder on another machine you reach over SSH (`host`, `dir`), and `rclone`, to any rclone remote, such as an S3-compatible store (`remote`). Each script's header shows its settings.
 
-Agents on several machines (ADR 0010, `docs/machines.md`): on each other machine, `scripts/install.sh --spoke` and `distill init --spoke <name>` set up a spoke, which only captures. Add it to the machine that keeps the archive, the hub, under Setup's Machines step or as a `[[machines]]` table (`name`, and the `host` SSH reaches it by), and the hub's tick pulls its new captures over SSH. Its sessions are keyed `<name>:<harness>/<id>`; the window's overview shows each spoke's last pull, and `search` and `tags` take `--machine`.
+Agents on several machines (ADR 0010, `docs/machines.md`): on each other machine, `scripts/install.sh --spoke`, `distill init --spoke <name>` and `distill schedule install` set up a spoke, which only captures; give the hub's SSH key access to it as `docs/machines.md` shows. Add it to the machine that keeps the archive, the hub, under Setup's Machines step or as a `[[machines]]` table (`name`, and the `host` SSH reaches it by), and the hub's tick pulls its new captures over SSH. Its sessions are keyed `<name>:<harness>/<id>`; the window's overview shows each spoke's last pull, and `search` and `tags` take `--machine`.
 
 ## Commands
 
