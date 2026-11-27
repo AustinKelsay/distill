@@ -358,8 +358,17 @@ const STAGING: [&str; 4] = [INCOMING, PULLING, RESTORING, ".manifest.jsonl.tmp-"
 /// went. Best effort: what can't be read or removed stays, and nothing waits on it.
 pub fn clear_staging(home: &Home) -> u64 {
     let mut raws = vec![home.raw_dir_of(None)];
-    for m in home.machines().unwrap_or_default() {
-        raws.push(home.raw_dir_of(Some(&m)));
+    // Each spoke's folder on its own, so one entry that isn't a spoke's skips only itself.
+    for e in fs::read_dir(home.machines_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if let Some(m) = e.file_name().to_str()
+            && crate::home::machine_name(m).is_ok()
+        {
+            raws.push(home.raw_dir_of(Some(m)));
+        }
     }
     let mut cleared = 0;
     for raw in raws {
@@ -871,6 +880,7 @@ pub fn take_into(
                     fs::rename(&tmp, &dest)?;
                     crate::util::sync_dir(shard)?;
                     crate::util::sync_dir(&archive.raw)?;
+                    synced.insert(shard.to_path_buf());
                     t.blobs += 1;
                     t.bytes += len;
                 }
@@ -1136,6 +1146,7 @@ mod tests {
         // are doesn't stop it.
         fs::write(home.machines_dir().join("notes"), b"x").unwrap();
         fs::write(&files[0], b"half").unwrap();
+        fs::write(&files[4], b"half").unwrap();
         // No harness on, so it sweeps nothing of this machine's.
         let none = crate::Config {
             harnesses: vec![],
@@ -1143,6 +1154,7 @@ mod tests {
         };
         crate::sweep::sweep(&home, &none, None).unwrap();
         assert!(!files[0].exists());
+        assert!(!files[4].exists());
     }
 
     #[cfg(unix)]
