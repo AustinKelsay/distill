@@ -20,16 +20,19 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 
-use super::blocks::millis_to_rfc3339;
+use super::blocks::{
+    COMPACTION_MARKER, first_text, millis_to_rfc3339, normalize_stop_reason, parse_usage,
+    push_compaction,
+};
 use crate::harness::Candidate;
-use crate::model::{Event, EventKind, Parsed};
+use crate::model::{Event, EventKind, Parsed, TokenUsage};
 
-/// Part types the parser skips on purpose: a step's start and finish (its tokens and cost), and
+/// Part types the parser skips on purpose: a step's start marker, the compaction request marker
+/// (completed compaction summaries are flagged on their `summary: true` assistant message), and
 /// the file snapshots and patches OpenCode keeps to undo a step. Any other type it skips is
 /// reported as format drift.
 pub const IGNORED: &[&str] = &[
     "part:step-start",
-    "part:step-finish",
     "part:snapshot",
     "part:patch",
     "part:compaction",
@@ -453,6 +456,55 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     Ok(parse_with_spills(bytes, |_| Ok(None))?.0)
 }
 
+struct MessageState {
+    role: EventKind,
+    model: Option<String>,
+    at: Option<String>,
+    insert_at: usize,
+    order: usize,
+    compaction_summary: bool,
+    emitted_compaction: bool,
+    stop_reason: Option<String>,
+    error_reason: Option<String>,
+    usage: Option<TokenUsage>,
+    last_model_event: Option<usize>,
+    last_applied_event: Option<usize>,
+    step_stop_applied: bool,
+    step_usage_applied: bool,
+}
+
+fn error_stop_reason(d: &Value) -> Option<String> {
+    let err = d.get("error").filter(|e| !e.is_null())?;
+    let name = err
+        .get("name")
+        .or_else(|| err.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("abort") || lower.contains("cancel") || lower.contains("interrupt") {
+        Some("aborted".to_string())
+    } else if lower.contains("length") || lower.contains("max_tokens") {
+        Some("max_tokens".to_string())
+    } else {
+        Some("error".to_string())
+    }
+}
+
+fn assistant_outcome(d: &Value) -> (Option<String>, Option<String>, Option<TokenUsage>) {
+    let stop_reason = d
+        .get("finish")
+        .or_else(|| d.get("finishReason"))
+        .or_else(|| d.get("stopReason"))
+        .and_then(Value::as_str)
+        .and_then(normalize_stop_reason);
+    let error_reason = error_stop_reason(d);
+    let usage = d
+        .get("tokens")
+        .or_else(|| d.get("usage"))
+        .and_then(parse_usage);
+    (stop_reason, error_reason, usage)
+}
+
 /// Parse an export, giving each tool result whose output was spilled the full output, which
 /// `spilled` returns for a spill's file name when the archive holds it. Also returns the names
 /// of the spills the session names that `spilled` did not have.
@@ -462,7 +514,8 @@ pub fn parse_with_spills(
 ) -> Result<(Parsed, Vec<String>)> {
     let mut missing: Vec<String> = Vec::new();
     let mut out = Parsed::default();
-    let mut roles = std::collections::HashMap::<String, (EventKind, Option<String>)>::new();
+    let mut msgs = std::collections::HashMap::<String, MessageState>::new();
+    let mut next_order = 0usize;
     let text = String::from_utf8_lossy(bytes);
     for line in text.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -496,48 +549,118 @@ pub fn parse_with_spills(
                 if let Some(m) = &model {
                     out.add_model(m);
                 }
+                let (stop_reason, error_reason, usage) = if role == EventKind::Assistant {
+                    assistant_outcome(d)
+                } else {
+                    (None, None, None)
+                };
+                // OpenCode v1 records the compaction seam on the completed `summary: true`
+                // assistant message (not the user's `compaction` request part).
+                let compaction_summary = role == EventKind::Assistant
+                    && d.get("summary").and_then(Value::as_bool) == Some(true)
+                    && error_reason.is_none()
+                    && (d.pointer("/time/completed").is_some_and(|t| !t.is_null())
+                        || stop_reason.is_some());
                 let id = v
                     .get("id")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                roles.insert(id, (role, model));
+                let order = next_order;
+                next_order += 1;
+                msgs.insert(
+                    id,
+                    MessageState {
+                        role,
+                        model,
+                        at,
+                        insert_at: out.events.len(),
+                        order,
+                        compaction_summary,
+                        emitted_compaction: false,
+                        stop_reason,
+                        error_reason,
+                        usage,
+                        last_model_event: None,
+                        last_applied_event: None,
+                        step_stop_applied: false,
+                        step_usage_applied: false,
+                    },
+                );
             }
             "part" => {
                 let d = &v["data"];
                 let mid = v.get("message_id").and_then(Value::as_str).unwrap_or("");
-                let (role, model) = roles
+                let (role, model, compaction_summary) = msgs
                     .get(mid)
-                    .cloned()
-                    .unwrap_or((EventKind::Assistant, None));
+                    .map(|m| (m.role, m.model.clone(), m.compaction_summary))
+                    .unwrap_or((EventKind::Assistant, None, false));
                 let ty = d.get("type").and_then(Value::as_str).unwrap_or("");
                 match ty {
                     "text" => {
+                        let start = out.events.len();
+                        let kind = if compaction_summary {
+                            EventKind::System
+                        } else {
+                            role
+                        };
                         let mut e =
-                            Event::text(role, d.get("text").and_then(Value::as_str).unwrap_or(""))
+                            Event::text(kind, d.get("text").and_then(Value::as_str).unwrap_or(""))
                                 .at(at);
                         if role == EventKind::Assistant {
                             e.model = model;
                         }
+                        if compaction_summary {
+                            e.compaction = Some(true);
+                        }
                         out.push(e);
+                        if role == EventKind::Assistant
+                            && out.events.len() > start
+                            && let Some(m) = msgs.get_mut(mid)
+                        {
+                            let idx = out.events.len() - 1;
+                            m.last_model_event = Some(idx);
+                            m.last_applied_event = Some(idx);
+                            if compaction_summary {
+                                m.emitted_compaction = true;
+                            }
+                        }
                     }
-                    "reasoning" => out.push(
-                        Event::text(
-                            EventKind::Reasoning,
-                            d.get("text").and_then(Value::as_str).unwrap_or(""),
-                        )
-                        .at(at),
-                    ),
+                    "reasoning" => {
+                        let start = out.events.len();
+                        out.push(
+                            Event::text(
+                                EventKind::Reasoning,
+                                d.get("text").and_then(Value::as_str).unwrap_or(""),
+                            )
+                            .at(at),
+                        );
+                        if out.events.len() > start
+                            && let Some(m) = msgs.get_mut(mid)
+                        {
+                            let idx = out.events.len() - 1;
+                            m.last_model_event = Some(idx);
+                            m.last_applied_event = Some(idx);
+                        }
+                    }
                     "tool" => {
                         let state = &d["state"];
                         let call_id = d.get("callID").and_then(Value::as_str).map(str::to_string);
                         let tool = d.get("tool").and_then(Value::as_str).map(str::to_string);
+                        let start = out.events.len();
                         let mut call = Event::new(EventKind::ToolCall).at(at.clone());
                         call.tool = tool.clone();
                         call.call_id = call_id.clone();
                         call.input = state.get("input").cloned();
                         call.model = model;
                         out.push(call);
+                        if out.events.len() > start
+                            && let Some(m) = msgs.get_mut(mid)
+                        {
+                            let idx = out.events.len() - 1;
+                            m.last_model_event = Some(idx);
+                            m.last_applied_event = Some(idx);
+                        }
                         let status = state.get("status").and_then(Value::as_str).unwrap_or("");
                         if matches!(status, "completed" | "error") {
                             let mut res = Event::new(EventKind::ToolResult).at(at);
@@ -562,6 +685,30 @@ pub fn parse_with_spills(
                                 }
                             }
                             out.push(res);
+                        }
+                    }
+                    "step-finish" => {
+                        let stop_reason = d
+                            .get("reason")
+                            .or_else(|| d.get("finish"))
+                            .and_then(Value::as_str)
+                            .and_then(normalize_stop_reason);
+                        let usage = d
+                            .get("tokens")
+                            .or_else(|| d.get("usage"))
+                            .and_then(parse_usage);
+                        if (stop_reason.is_some() || usage.is_some())
+                            && let Some(m) = msgs.get_mut(mid)
+                            && let Some(idx) = m.last_model_event.take()
+                        {
+                            if let Some(r) = stop_reason {
+                                out.events[idx].stop_reason = Some(r);
+                                m.step_stop_applied = true;
+                            }
+                            if let Some(u) = usage {
+                                out.events[idx].usage = Some(u);
+                                m.step_usage_applied = true;
+                            }
                         }
                     }
                     "file" => out.push(
@@ -612,15 +759,47 @@ pub fn parse_with_spills(
                         if let Some(m) = &model {
                             out.add_model(m);
                         }
-                        roles.insert(id.to_string(), (EventKind::Assistant, model.clone()));
+                        let (stop_reason, error_reason, usage) = assistant_outcome(d);
+                        let mut last_model_event = None;
                         for item in d
                             .get("content")
                             .and_then(Value::as_array)
                             .into_iter()
                             .flatten()
                         {
-                            push_v2_item(&mut out, &mut missing, &mut spilled, item, &model, &at)?;
+                            let idx = push_v2_item(
+                                &mut out,
+                                &mut missing,
+                                &mut spilled,
+                                item,
+                                &model,
+                                &at,
+                            )?;
+                            if idx.is_some() {
+                                last_model_event = idx;
+                            }
                         }
+                        let order = next_order;
+                        next_order += 1;
+                        msgs.insert(
+                            id.to_string(),
+                            MessageState {
+                                role: EventKind::Assistant,
+                                model,
+                                at,
+                                insert_at: out.events.len(),
+                                order,
+                                compaction_summary: false,
+                                emitted_compaction: false,
+                                stop_reason,
+                                error_reason,
+                                usage,
+                                last_model_event,
+                                last_applied_event: last_model_event,
+                                step_stop_applied: false,
+                                step_usage_applied: false,
+                            },
+                        );
                     }
                     // Text OpenCode gave the model: the session's own, not the owner's.
                     "system" | "synthetic" | "skill" => {
@@ -631,13 +810,16 @@ pub fn parse_with_spills(
                     "compaction"
                         if d.get("status").and_then(Value::as_str) == Some("completed") =>
                     {
-                        out.push(
-                            Event::text(
-                                EventKind::System,
-                                d.get("summary").and_then(Value::as_str).unwrap_or(""),
-                            )
-                            .at(at),
-                        )
+                        let start = out.events.len();
+                        push_compaction(&mut out, first_text(d, &["summary", "text"]), at);
+                        if out.events.len() > start
+                            && let Some(u) = d
+                                .get("tokens")
+                                .or_else(|| d.get("usage"))
+                                .and_then(parse_usage)
+                        {
+                            out.events[start].usage = Some(u);
+                        }
                     }
                     // A shell command the owner ran: a call and, once it ends, its result.
                     "shell" => {
@@ -674,16 +856,79 @@ pub fn parse_with_spills(
             }
             "part_v2" => {
                 let mid = v.get("message_id").and_then(Value::as_str).unwrap_or("");
-                let model = roles.get(mid).and_then(|(_, m)| m.clone());
+                let model = msgs.get(mid).and_then(|m| m.model.clone());
                 // The row's `type` column is the part's type; `data` may not repeat it.
                 let mut item = v["data"].clone();
                 if let (Some(o), Some(t)) = (item.as_object_mut(), v.get("type")) {
                     o.entry("type").or_insert_with(|| t.clone());
                 }
-                push_v2_item(&mut out, &mut missing, &mut spilled, &item, &model, &at)?;
+                if let Some(idx) =
+                    push_v2_item(&mut out, &mut missing, &mut spilled, &item, &model, &at)?
+                    && let Some(m) = msgs.get_mut(mid)
+                {
+                    m.last_model_event = Some(idx);
+                    m.last_applied_event = Some(idx);
+                }
             }
             _ => out.skip(row, line.len()),
         }
+    }
+    let mut fallbacks: Vec<(usize, usize, Event)> = Vec::new();
+    for m in msgs.into_values() {
+        let needs_compaction_fallback = m.compaction_summary && !m.emitted_compaction;
+        if let Some(idx) = m.last_applied_event {
+            if !needs_compaction_fallback {
+                if !m.step_stop_applied && out.events[idx].stop_reason.is_none() {
+                    out.events[idx].stop_reason = m.stop_reason.clone();
+                }
+                if !m.step_usage_applied && out.events[idx].usage.is_none() {
+                    out.events[idx].usage = m.usage.clone();
+                }
+            }
+            // A recorded terminal error (e.g. MessageAbortedError) takes precedence on the
+            // message's final model event.
+            if let Some(err) = &m.error_reason {
+                out.events[idx].stop_reason = Some(err.clone());
+            }
+        }
+        if needs_compaction_fallback {
+            let mut e = Event::text(EventKind::System, COMPACTION_MARKER).at(m.at);
+            e.model = m.model;
+            e.compaction = Some(true);
+            if !m.step_stop_applied {
+                e.stop_reason = m.stop_reason;
+            }
+            if !m.step_usage_applied {
+                e.usage = m.usage;
+            }
+            let pos = m.last_applied_event.map_or(m.insert_at, |i| i + 1);
+            fallbacks.push((pos, m.order, e));
+        } else if m.last_applied_event.is_none()
+            && let Some(err) = m.error_reason
+        {
+            let mut e = Event::new(EventKind::Assistant).at(m.at);
+            e.model = m.model;
+            e.stop_reason = Some(err);
+            e.usage = m.usage;
+            fallbacks.push((m.insert_at, m.order, e));
+        }
+    }
+    if !fallbacks.is_empty() {
+        fallbacks.sort_by_key(|a| (a.0, a.1));
+        let old = std::mem::take(&mut out.events);
+        let mut merged = Vec::with_capacity(old.len() + fallbacks.len());
+        let mut fb = fallbacks.into_iter().peekable();
+        for (i, e) in old.into_iter().enumerate() {
+            while fb.peek().is_some_and(|(pos, _, _)| *pos <= i) {
+                merged.push(fb.next().unwrap().2);
+            }
+            merged.push(e);
+        }
+        merged.extend(fb.map(|(_, _, e)| e));
+        for (i, e) in merged.iter_mut().enumerate() {
+            e.seq = i as u64;
+        }
+        out.events = merged;
     }
     Ok((out, missing))
 }
@@ -705,7 +950,8 @@ fn file_note(f: &Value) -> String {
 }
 
 /// One entry of an OpenCode 2 assistant message's content: text, reasoning, or a tool (a call, and
-/// its result once the tool completed or failed).
+/// its result once the tool completed or failed). Returns the index of the model-side event
+/// (`Assistant`, `Reasoning`, or `ToolCall`) when one was pushed.
 fn push_v2_item(
     out: &mut Parsed,
     missing: &mut Vec<String>,
@@ -713,25 +959,40 @@ fn push_v2_item(
     item: &Value,
     model: &Option<String>,
     at: &Option<String>,
-) -> Result<()> {
+) -> Result<Option<usize>> {
     let text = item.get("text").and_then(Value::as_str).unwrap_or("");
+    let mut model_event = None;
     match item.get("type").and_then(Value::as_str).unwrap_or("") {
         "text" => {
+            let start = out.events.len();
             let mut e = Event::text(EventKind::Assistant, text).at(at.clone());
             e.model = model.clone();
             out.push(e);
+            if out.events.len() > start {
+                model_event = Some(out.events.len() - 1);
+            }
         }
-        "reasoning" => out.push(Event::text(EventKind::Reasoning, text).at(at.clone())),
+        "reasoning" => {
+            let start = out.events.len();
+            out.push(Event::text(EventKind::Reasoning, text).at(at.clone()));
+            if out.events.len() > start {
+                model_event = Some(out.events.len() - 1);
+            }
+        }
         "tool" => {
             let state = &item["state"];
             let tool = item.get("name").and_then(Value::as_str).map(str::to_string);
             let call_id = item.get("id").and_then(Value::as_str).map(str::to_string);
+            let start = out.events.len();
             let mut call = Event::new(EventKind::ToolCall).at(at.clone());
             call.tool = tool.clone();
             call.call_id = call_id.clone();
             call.input = state.get("input").cloned();
             call.model = model.clone();
             out.push(call);
+            if out.events.len() > start {
+                model_event = Some(out.events.len() - 1);
+            }
             let status = state.get("status").and_then(Value::as_str).unwrap_or("");
             // A streaming or running tool has no result yet.
             if matches!(status, "completed" | "error") {
@@ -773,7 +1034,7 @@ fn push_v2_item(
         // Ignored: any content type OpenCode adds.
         _ => {}
     }
-    Ok(())
+    Ok(model_event)
 }
 
 #[cfg(test)]
@@ -1345,5 +1606,109 @@ mod tests {
         let home = Home::new(dir.path().join("home"));
         let r = crate::sweep::sweep(&home, &opencode_config(&db), None).unwrap();
         assert_eq!((r.new, r.errors.len()), (1, 0), "{r:?}");
+    }
+
+    #[test]
+    fn preserves_v1_and_v2_usage_finish_reason_and_compaction_seams() {
+        let v1 = r#"{"row":"session","id":"s1","directory":"/r","version":"1.2.3","time_created":1000}
+{"row":"message","id":"m1","message_id":"m1","time_created":1000,"data":{"role":"user"}}
+{"row":"part","id":"p1","message_id":"m1","time_created":1001,"data":{"type":"text","text":"hi"}}
+{"row":"message","id":"m2","message_id":"m2","time_created":2000,"data":{"role":"assistant","modelID":"kimi-k3","finish":"stop","tokens":{"input":999,"output":999}}}
+{"row":"part","id":"p2","message_id":"m2","time_created":2001,"data":{"type":"tool","callID":"c1","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"a"}}}
+{"row":"part","id":"p3","message_id":"m2","time_created":2002,"data":{"type":"step-finish","reason":"tool-calls","tokens":{"input":120,"output":20,"cache":{"read":50,"write":10}}}}
+{"row":"part","id":"p4","message_id":"m2","time_created":2003,"data":{"type":"text","text":"listed"}}
+{"row":"part","id":"p5","message_id":"m2","time_created":2004,"data":{"type":"step-finish","reason":"stop","tokens":{"input":150,"output":30}}}
+{"row":"message","id":"m_req","message_id":"m_req","time_created":2005,"data":{"role":"user"}}
+{"row":"part","id":"p6","message_id":"m_req","time_created":2005,"data":{"type":"compaction","auto":true}}
+{"row":"message","id":"m_sum","message_id":"m_sum","time_created":2006,"data":{"role":"assistant","summary":true,"finish":"stop","time":{"completed":2007}}}
+{"row":"part","id":"p_sum","message_id":"m_sum","time_created":2006,"data":{"type":"text","text":"Earlier work summary"}}
+{"row":"message","id":"m_unfulfilled","message_id":"m_unfulfilled","time_created":2008,"data":{"role":"user"}}
+{"row":"part","id":"p_unfulfilled","message_id":"m_unfulfilled","time_created":2008,"data":{"type":"compaction","auto":true}}
+{"row":"message","id":"m3","message_id":"m3","time_created":3000,"data":{"role":"assistant","modelID":"kimi-k3","finish":"length","tokens":{"input":300,"output":400,"cache":{"read":100}}}}
+{"row":"part","id":"p7","message_id":"m3","time_created":3001,"data":{"type":"text","text":"cut short"}}
+{"row":"message","id":"m4","message_id":"m4","time_created":4000,"data":{"role":"assistant","modelID":"kimi-k3","error":{"name":"MessageAbortedError","data":{"message":"aborted"}}}}
+{"row":"part","id":"p8","message_id":"m4","time_created":4001,"data":{"type":"text","text":"interrupted"}}"#;
+        let p = parse(v1.as_bytes()).unwrap();
+        assert!(
+            p.skipped.keys().all(|k| IGNORED.contains(&k.as_str())),
+            "{:?}",
+            p.skipped
+        );
+        assert_eq!(p.events.len(), 7);
+        // Untouched user event omits optional seam fields on JSON serialization.
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        // ToolCall gets step-finish #1 (not ToolResult, and not overwritten by message totals).
+        assert_eq!(p.events[1].kind, EventKind::ToolCall);
+        assert_eq!(p.events[1].stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(
+            p.events[1].usage,
+            Some(TokenUsage {
+                input: Some(120),
+                output: Some(20),
+                cache_read: Some(50),
+                cache_write: Some(10),
+            })
+        );
+        // Assistant text gets step-finish #2.
+        assert_eq!(p.events[3].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p.events[3].usage.as_ref().unwrap().output, Some(30));
+        // Only the completed `summary: true` compaction message emits a seam; unfulfilled
+        // `part:compaction` requests emit nothing.
+        assert_eq!(p.events[4].kind, EventKind::System);
+        assert_eq!(p.events[4].compaction, Some(true));
+        assert_eq!(p.events[4].text.as_deref(), Some("Earlier work summary"));
+        // Message without step-finish falls back to message-level finish & tokens.
+        assert_eq!(p.events[5].stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(p.events[5].usage.as_ref().unwrap().cache_read, Some(100));
+        // Terminal MessageAbortedError maps to aborted.
+        assert_eq!(p.events[6].stop_reason.as_deref(), Some("aborted"));
+
+        // v2 compaction (including compaction tokens) and assistant outcome fields.
+        let v2 = r#"{"row":"session","id":"s2","directory":"/r","version":"2","time_created":1000}
+{"row":"message_v2","id":"m1","seq":1,"type":"assistant","time_created":1001,"data":{"model":{"id":"k"},"finishReason":"stop","usage":{"input":80,"output":12,"cacheRead":20},"content":[{"type":"text","text":"done"}]}}
+{"row":"message_v2","id":"m2","seq":2,"type":"compaction","time_created":1002,"data":{"status":"completed","summary":"condensed","tokens":{"input":400,"output":60,"cache":{"read":150,"write":25}}}}"#;
+        let p2 = parse(v2.as_bytes()).unwrap();
+        assert_eq!(p2.events.len(), 2);
+        assert_eq!(p2.events[0].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p2.events[0].usage.as_ref().unwrap().cache_read, Some(20));
+        assert_eq!(p2.events[1].kind, EventKind::System);
+        assert_eq!(p2.events[1].compaction, Some(true));
+        assert_eq!(p2.events[1].text.as_deref(), Some("condensed"));
+        assert_eq!(
+            p2.events[1].usage,
+            Some(TokenUsage {
+                input: Some(400),
+                output: Some(60),
+                cache_read: Some(150),
+                cache_write: Some(25),
+            })
+        );
+
+        // Part-less and reasoning-only completed compaction summaries and part-less aborted
+        // assistant messages keep their seam and abort stop_reason.
+        let partless = r#"{"row":"session","id":"s3","directory":"/r","version":"1.2.3","time_created":1000}
+{"row":"message","id":"m_sum","message_id":"m_sum","time_created":1001,"data":{"role":"assistant","summary":true,"finish":"stop","time":{"completed":1002}}}
+{"row":"message","id":"m_rsn","message_id":"m_rsn","time_created":1002,"data":{"role":"assistant","summary":true,"finish":"stop","tokens":{"input":50,"output":10},"time":{"completed":1003}}}
+{"row":"part","id":"p_rsn","message_id":"m_rsn","time_created":1002,"data":{"type":"reasoning","text":"summarizing"}}
+{"row":"part","id":"p_rsn_fin","message_id":"m_rsn","time_created":1003,"data":{"type":"step-finish","reason":"stop"}}
+{"row":"message","id":"m_ab","message_id":"m_ab","time_created":1004,"data":{"role":"assistant","modelID":"k","error":{"name":"MessageAbortedError"}}}"#;
+        let p3 = parse(partless.as_bytes()).unwrap();
+        assert_eq!(p3.events.len(), 4);
+        assert_eq!(p3.events[0].kind, EventKind::System);
+        assert_eq!(p3.events[0].compaction, Some(true));
+        assert_eq!(p3.events[0].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p3.events[1].kind, EventKind::Reasoning);
+        assert_eq!(p3.events[1].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p3.events[1].usage, None);
+        assert_eq!(p3.events[2].kind, EventKind::System);
+        assert_eq!(p3.events[2].compaction, Some(true));
+        assert_eq!(p3.events[2].stop_reason, None);
+        assert_eq!(p3.events[2].usage.as_ref().unwrap().input, Some(50));
+        assert_eq!(p3.events[2].usage.as_ref().unwrap().output, Some(10));
+        assert_eq!(p3.events[3].kind, EventKind::Assistant);
+        assert_eq!(p3.events[3].stop_reason.as_deref(), Some("aborted"));
     }
 }

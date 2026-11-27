@@ -5,7 +5,10 @@ use std::io::BufRead;
 use anyhow::Result;
 use serde_json::Value;
 
-use super::blocks::{each_line, push_content, ts};
+use super::blocks::{
+    attach_stop_and_usage, each_line, normalize_stop_reason, parse_usage, push_compaction,
+    push_content, ts,
+};
 use crate::model::{EventKind, Parsed};
 
 /// Record types the parser skips on purpose: the harness's bookkeeping (titles, summaries, file
@@ -45,6 +48,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
 /// the ones the parser skips still carry `cwd`, `gitBranch` and `version`.)
 pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
     let mut out = Parsed::default();
+    let mut last_assistant_msg: Option<(String, usize)> = None;
     each_line(reader, |line| {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return;
@@ -73,6 +77,10 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
             out.harness_version = Some(ver.to_string());
         }
         match ty {
+            "system" if v.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
+                push_compaction(&mut out, v.get("content").and_then(Value::as_str), ts(&v));
+                last_assistant_msg = None;
+            }
             "user" | "assistant" => {
                 let Some(msg) = v.get("message") else {
                     return;
@@ -81,14 +89,13 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
                 if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
                     return;
                 }
+                let is_compact = v.get("isCompactSummary").and_then(Value::as_bool) == Some(true);
                 let mut role = if ty == "user" {
                     EventKind::User
                 } else {
                     EventKind::Assistant
                 };
-                if v.get("isMeta").and_then(Value::as_bool) == Some(true)
-                    || v.get("isCompactSummary").and_then(Value::as_bool) == Some(true)
-                {
+                if v.get("isMeta").and_then(Value::as_bool) == Some(true) || is_compact {
                     role = EventKind::System;
                 }
                 let model = msg.get("model").and_then(Value::as_str);
@@ -97,6 +104,7 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
                 {
                     out.add_model(m);
                 }
+                let start = out.events.len();
                 push_content(
                     &mut out,
                     role,
@@ -104,6 +112,55 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
                     ts(&v),
                     model,
                 );
+                if is_compact {
+                    for e in &mut out.events[start..] {
+                        e.compaction = Some(true);
+                    }
+                    last_assistant_msg = None;
+                } else if ty == "assistant" {
+                    let stop = msg
+                        .get("stop_reason")
+                        .and_then(Value::as_str)
+                        .and_then(normalize_stop_reason);
+                    let usage = msg.get("usage").and_then(parse_usage);
+                    let msg_id = msg.get("id").and_then(Value::as_str);
+                    if let Some(id) = msg_id {
+                        let prev = last_assistant_msg
+                            .as_ref()
+                            .filter(|(prev_id, _)| prev_id == id)
+                            .map(|(_, idx)| *idx);
+                        if out.events.len() > start {
+                            let (carried_stop, carried_usage) = if let Some(prev_idx) = prev {
+                                (
+                                    out.events[prev_idx].stop_reason.take(),
+                                    out.events[prev_idx].usage.take(),
+                                )
+                            } else {
+                                (None, None)
+                            };
+                            if let Some(idx) = attach_stop_and_usage(
+                                &mut out,
+                                start,
+                                stop.or(carried_stop),
+                                usage.or(carried_usage),
+                            ) {
+                                last_assistant_msg = Some((id.to_string(), idx));
+                            }
+                        } else if let Some(prev_idx) = prev {
+                            if let Some(reason) = stop {
+                                out.events[prev_idx].stop_reason = Some(reason);
+                            }
+                            if let Some(u) = usage {
+                                out.events[prev_idx].usage = Some(u);
+                            }
+                        }
+                    } else {
+                        attach_stop_and_usage(&mut out, start, stop, usage);
+                        last_assistant_msg = None;
+                    }
+                } else {
+                    last_assistant_msg = None;
+                }
             }
             _ => out.skip(ty, line.len()),
         }
@@ -152,5 +209,47 @@ not json"#;
         assert_eq!(p.events[3].is_error, Some(true));
         assert_eq!(p.cwd.as_deref(), Some("/r"));
         assert_eq!(p.models, vec!["claude-opus-5-5"]);
+    }
+
+    #[test]
+    fn preserves_compaction_seams_stop_reasons_and_token_usage() {
+        let src = r#"{"type":"user","timestamp":"2026-11-01T10:00:00Z","message":{"role":"user","content":"check"}}
+{"type":"assistant","timestamp":"2026-11-01T10:00:01Z","message":{"id":"m1","role":"assistant","model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":100,"output_tokens":3,"cache_read_input_tokens":40,"cache_creation_input_tokens":10},"content":[{"type":"thinking","thinking":"plan"}]}}
+{"type":"assistant","timestamp":"2026-11-01T10:00:02Z","message":{"id":"m1","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":100,"output_tokens":25,"cache_read_input_tokens":40,"cache_creation_input_tokens":10},"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"path":"a"}}]}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-11-01T10:00:03Z","content":"Conversation compacted"}
+{"type":"user","isCompactSummary":true,"timestamp":"2026-11-01T10:00:04Z","message":{"role":"user","content":"Summary of earlier turns."}}
+{"type":"assistant","timestamp":"2026-11-01T10:00:05Z","message":{"role":"assistant","model":"claude-opus-5-5","stop_reason":"end_turn","usage":{"input_tokens":200,"output_tokens":50},"content":[{"type":"text","text":"Done."}]}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 6);
+        // Untouched user event omits all three optional fields.
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        // Multi-frame assistant message moves usage to the final frame without double-counting.
+        assert_eq!(p.events[1].usage, None);
+        assert_eq!(p.events[1].stop_reason, None);
+        assert_eq!(p.events[2].stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(
+            p.events[2].usage,
+            Some(crate::model::TokenUsage {
+                input: Some(100),
+                output: Some(25),
+                cache_read: Some(40),
+                cache_write: Some(10),
+            })
+        );
+        // Both compact_boundary and isCompactSummary are marked compaction: Some(true).
+        assert_eq!(p.events[3].kind, EventKind::System);
+        assert_eq!(p.events[3].compaction, Some(true));
+        assert_eq!(p.events[3].text.as_deref(), Some("Conversation compacted"));
+        assert_eq!(p.events[4].kind, EventKind::System);
+        assert_eq!(p.events[4].compaction, Some(true));
+        assert_eq!(
+            p.events[4].text.as_deref(),
+            Some("Summary of earlier turns.")
+        );
+        assert_eq!(p.events[5].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p.events[5].usage.as_ref().unwrap().output, Some(50));
     }
 }

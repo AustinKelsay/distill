@@ -4,7 +4,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use super::blocks::{first_text, push_content, result_text, ts};
+use super::blocks::{
+    attach_stop_and_usage, first_text, normalize_stop_reason, parse_usage, push_compaction,
+    push_content, result_text, ts,
+};
 use crate::model::{Event, EventKind, Parsed};
 
 /// Record types the parser skips on purpose: a change of thinking level holds no part of the
@@ -50,13 +53,32 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                         at,
                         None,
                     ),
-                    "assistant" => push_content(
-                        &mut out,
-                        EventKind::Assistant,
-                        msg.get("content").unwrap_or(&Value::Null),
-                        at,
-                        model,
-                    ),
+                    "assistant" => {
+                        let start = out.events.len();
+                        push_content(
+                            &mut out,
+                            EventKind::Assistant,
+                            msg.get("content").unwrap_or(&Value::Null),
+                            at.clone(),
+                            model,
+                        );
+                        let stop = msg
+                            .get("stopReason")
+                            .or_else(|| msg.get("stop_reason"))
+                            .and_then(Value::as_str)
+                            .and_then(normalize_stop_reason);
+                        let usage = msg.get("usage").and_then(parse_usage);
+                        if attach_stop_and_usage(&mut out, start, stop.clone(), usage.clone())
+                            .is_none()
+                            && (stop.is_some() || usage.is_some())
+                        {
+                            let mut e = Event::new(EventKind::Assistant).at(at);
+                            e.model = model.map(str::to_string);
+                            e.stop_reason = stop;
+                            e.usage = usage;
+                            out.push(e);
+                        }
+                    }
                     "system" => push_content(
                         &mut out,
                         EventKind::System,
@@ -83,8 +105,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
             }
             // The summary that replaces earlier turns in the model's context.
             "compaction" => {
-                let summary = v.get("summary").and_then(Value::as_str).unwrap_or("");
-                out.push(Event::text(EventKind::System, summary).at(ts(&v)));
+                push_compaction(&mut out, v.get("summary").and_then(Value::as_str), ts(&v));
             }
             // An extension's own entry; only the kinds known to hold text are read.
             "custom" => {
@@ -169,6 +190,8 @@ mod tests {
             p.events[0].text.as_deref(),
             Some("Earlier: fixed the parser.")
         );
+        assert_eq!(p.events[0].compaction, Some(true));
+        assert_eq!(p.events[1].compaction, None);
         assert_eq!(
             p.events[1].text.as_deref(),
             Some("Wired the index.\n\nNext: Add tests.")
@@ -179,5 +202,37 @@ mod tests {
             names,
             vec!["custom:some-ext-state", "custom_message:other-note"]
         );
+    }
+
+    #[test]
+    fn extracts_assistant_stop_reason_and_usage() {
+        let src = r#"{"type":"session","id":"p3","cwd":"/r","version":3}
+{"type":"message","message":{"role":"user","content":"go","timestamp":1794436930000}}
+{"type":"message","message":{"role":"assistant","model":"glm-5","stopReason":"toolUse","usage":{"input":400,"output":60,"cacheRead":120,"cacheWrite":15},"content":[{"type":"thinking","thinking":"check"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"cmd":"ls"}}],"timestamp":1794436931000}}
+{"type":"message","message":{"role":"assistant","model":"glm-5","stopReason":"aborted","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"content":[{"type":"text","text":""}],"timestamp":1794436931500}}
+{"type":"message","message":{"role":"assistant","model":"glm-5","stopReason":"stop","usage":{"input":500,"output":40},"content":[{"type":"text","text":"done"}],"timestamp":1794436932000}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 5);
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        assert_eq!(p.events[1].usage, None);
+        assert_eq!(p.events[2].stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(
+            p.events[2].usage,
+            Some(crate::model::TokenUsage {
+                input: Some(400),
+                output: Some(60),
+                cache_read: Some(120),
+                cache_write: Some(15),
+            })
+        );
+        // Empty-content aborted assistant turn is preserved with its stop_reason and usage.
+        assert_eq!(p.events[3].kind, EventKind::Assistant);
+        assert_eq!(p.events[3].stop_reason.as_deref(), Some("aborted"));
+        assert_eq!(p.events[3].usage.as_ref().unwrap().input, Some(0));
+        assert_eq!(p.events[4].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p.events[4].usage.as_ref().unwrap().output, Some(40));
     }
 }

@@ -4,7 +4,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use super::blocks::{PlanTracker, first_text, plan_line, push_content, ts};
+use super::blocks::{
+    PlanTracker, attach_stop_and_usage, first_text, normalize_stop_reason, parse_usage, plan_line,
+    push_compaction, push_content, ts,
+};
 use crate::model::{Event, EventKind, Parsed};
 
 /// Record types the parser skips on purpose. Any other type it skips is reported as format drift.
@@ -46,6 +49,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                 if let Some(m) = model {
                     out.add_model(m);
                 }
+                let start = out.events.len();
                 push_content(
                     &mut out,
                     role,
@@ -53,6 +57,20 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     ts(&v),
                     model,
                 );
+                if role == EventKind::Assistant {
+                    let stop = msg
+                        .get("stop_reason")
+                        .or_else(|| msg.get("stopReason"))
+                        .or_else(|| v.get("stop_reason"))
+                        .or_else(|| v.get("stopReason"))
+                        .and_then(Value::as_str)
+                        .and_then(normalize_stop_reason);
+                    let usage = msg
+                        .get("usage")
+                        .or_else(|| v.get("usage"))
+                        .and_then(parse_usage);
+                    attach_stop_and_usage(&mut out, start, stop, usage);
+                }
             }
             // The summary the model wrote when the context was compacted.
             "compaction_state" => {
@@ -62,9 +80,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
                     &["summaryText", "summary", "compactionSummary", "text"],
                 )
                 .or_else(|| first_text(&v, &["summaryText", "summary", "text"]));
-                if let Some(s) = summary {
-                    out.push(Event::text(EventKind::System, s).at(ts(&v)));
-                }
+                push_compaction(&mut out, summary, ts(&v));
             }
             // The model's plan, repeated in full on every update: kept when it changes. Droid
             // writes it as text under `todos.todos` (seen in a real archive); a list of steps
@@ -145,6 +161,8 @@ mod tests {
         assert_eq!(p.events.len(), 4);
         assert!(p.events.iter().all(|e| e.kind == EventKind::System));
         assert_eq!(p.events[0].text.as_deref(), Some("We fixed the parser."));
+        assert_eq!(p.events[0].compaction, Some(true));
+        assert_eq!(p.events[1].compaction, None);
         assert_eq!(
             p.events[1].text.as_deref(),
             Some("[done] write test\n[in progress] ship")
@@ -157,6 +175,33 @@ mod tests {
         assert_eq!(
             p.events[3].text.as_deref(),
             Some("1. [completed] write test\n2. [completed] ship\n3. [pending] announce")
+        );
+    }
+
+    #[test]
+    fn extracts_assistant_stop_reason_and_usage() {
+        let src = r#"{"type":"session_start","id":"d3","cwd":"/r"}
+{"type":"message","timestamp":"2026-10-01T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"go"}]}}
+{"type":"compaction_state","timestamp":"2026-10-01T00:00:00Z"}
+{"type":"message","timestamp":"2026-10-01T00:00:01Z","message":{"role":"assistant","model":"claude-opus-5-5","stop_reason":"end_turn","usage":{"input_tokens":90,"output_tokens":15,"cache_read_input_tokens":30},"content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"done"}]}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 4);
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        assert_eq!(p.events[1].kind, EventKind::System);
+        assert_eq!(p.events[1].compaction, Some(true));
+        assert_eq!(p.events[2].usage, None);
+        assert_eq!(p.events[3].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(
+            p.events[3].usage,
+            Some(crate::model::TokenUsage {
+                input: Some(90),
+                output: Some(15),
+                cache_read: Some(30),
+                cache_write: None,
+            })
         );
     }
 }

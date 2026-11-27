@@ -7,7 +7,10 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{Event, EventKind, Parsed};
+use crate::model::{Event, EventKind, Parsed, TokenUsage};
+
+/// Fallback label when a harness records a context-compaction boundary with no summary text.
+pub const COMPACTION_MARKER: &str = "[context compacted]";
 
 /// Call `f` on each line of a stream, as `str::lines` would on the whole text (invalid UTF-8
 /// becomes U+FFFD), holding one line at a time.
@@ -143,6 +146,143 @@ pub fn push_content(
         }
         _ => {}
     }
+}
+
+/// Normalize a harness's stop/finish reason to a short lowercase token (`end_turn`, `tool_use`,
+/// `max_tokens`, `aborted`, or a lowercase snake_case fallback).
+pub fn normalize_stop_reason(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut snake = String::with_capacity(trimmed.len());
+    let mut prev_sep = true;
+    let mut prev_lower = false;
+    for ch in trimmed.chars() {
+        if ch == '-' || ch == '_' || ch.is_whitespace() {
+            if !prev_sep {
+                snake.push('_');
+                prev_sep = true;
+            }
+            prev_lower = false;
+        } else if ch.is_ascii_uppercase() {
+            if prev_lower && !prev_sep {
+                snake.push('_');
+            }
+            snake.push(ch.to_ascii_lowercase());
+            prev_sep = false;
+            prev_lower = false;
+        } else {
+            snake.push(ch.to_ascii_lowercase());
+            prev_sep = false;
+            prev_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        }
+    }
+    while snake.ends_with('_') {
+        snake.pop();
+    }
+    if snake.is_empty() {
+        return None;
+    }
+    let canonical = match snake.as_str() {
+        "end_turn" | "stop" => "end_turn",
+        "tool_use" | "tool_calls" | "tool_call" | "function_call" => "tool_use",
+        "max_tokens" | "length" | "max_output_tokens" => "max_tokens",
+        "aborted" | "abort" | "cancelled" | "canceled" | "interrupted" => "aborted",
+        other => other,
+    };
+    Some(canonical.to_string())
+}
+
+/// Extract token usage from a harness's usage/tokens JSON object without inventing missing fields.
+pub fn parse_usage(v: &Value) -> Option<TokenUsage> {
+    if !v.is_object() {
+        return None;
+    }
+    let u64_of = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(Value::as_u64));
+    let input = u64_of(&[
+        "input_tokens",
+        "inputTokens",
+        "prompt_tokens",
+        "promptTokens",
+        "input",
+    ]);
+    let output = u64_of(&[
+        "output_tokens",
+        "outputTokens",
+        "completion_tokens",
+        "completionTokens",
+        "output",
+    ]);
+    let cache_read = u64_of(&[
+        "cache_read_input_tokens",
+        "cacheReadInputTokens",
+        "cached_input_tokens",
+        "cachedInputTokens",
+        "cache_read_tokens",
+        "cacheReadTokens",
+        "cacheRead",
+        "cache_read",
+    ])
+    .or_else(|| v.pointer("/cache/read").and_then(Value::as_u64))
+    .or_else(|| {
+        v.pointer("/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+    })
+    .or_else(|| {
+        v.pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+    });
+    let cache_write = u64_of(&[
+        "cache_creation_input_tokens",
+        "cacheCreationInputTokens",
+        "cache_write_input_tokens",
+        "cacheWriteInputTokens",
+        "cache_write_tokens",
+        "cacheWriteTokens",
+        "cacheWrite",
+        "cache_write",
+    ])
+    .or_else(|| v.pointer("/cache/write").and_then(Value::as_u64));
+    TokenUsage {
+        input,
+        output,
+        cache_read,
+        cache_write,
+    }
+    .non_empty()
+}
+
+/// Emit a context-compaction seam as a `System` event, using [`COMPACTION_MARKER`] when the
+/// harness recorded no summary text.
+pub fn push_compaction(out: &mut Parsed, summary: Option<&str>, ts: Option<String>) {
+    let text = summary
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(COMPACTION_MARKER);
+    let mut e = Event::text(EventKind::System, text).at(ts);
+    e.compaction = Some(true);
+    out.push(e);
+}
+
+/// Attach per-turn `stop_reason` and `usage` to the last event emitted since `start_len` so a
+/// multi-block assistant turn does not duplicate token counts across every block.
+pub fn attach_stop_and_usage(
+    out: &mut Parsed,
+    start_len: usize,
+    stop_reason: Option<String>,
+    usage: Option<TokenUsage>,
+) -> Option<usize> {
+    if out.events.len() <= start_len {
+        return None;
+    }
+    let idx = out.events.len() - 1;
+    if let Some(reason) = stop_reason {
+        out.events[idx].stop_reason = Some(reason);
+    }
+    if let Some(u) = usage {
+        out.events[idx].usage = Some(u);
+    }
+    Some(idx)
 }
 
 /// The first of `keys` in `v` that holds non-blank text.

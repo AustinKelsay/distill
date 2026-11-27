@@ -31,20 +31,26 @@ use crate::util::{read_jsonl, safe_component, write_atomic, write_atomic_with, w
 /// Bump a harness's version when its parser's output changes; its sessions are parsed again.
 pub fn parser_version(kind: Harness) -> Option<u32> {
     match kind {
-        Harness::ClaudeCode => Some(2),
+        // 3: compaction seams, stop reasons and token usage on events.
+        Harness::ClaudeCode => Some(3),
         // 2: agent messages, tool searches and image generations are events.
-        Harness::Codex => Some(2),
+        // 3: compaction seams, stop reasons and token usage on events.
+        Harness::Codex => Some(3),
         // 2: a spilled tool output's tool result holds the full output.
-        Harness::OpenCode => Some(2),
+        // 3: compaction seams, stop reasons and token usage on events.
+        Harness::OpenCode => Some(3),
         // 2: compaction summaries and plans are system events.
-        Harness::Droid => Some(2),
+        // 3: compaction flag, stop reasons and token usage on events.
+        Harness::Droid => Some(3),
         // 2: compactions, summary recaps and background terminal results are events.
-        Harness::Pi => Some(2),
+        // 3: compaction flag, stop reasons and token usage on events.
+        Harness::Pi => Some(3),
         Harness::Grok => Some(1),
         Harness::Antigravity => Some(1),
         Harness::Hermes => Some(4),
         // 8: answers, requests and plans are events.
-        Harness::T3Code => Some(8),
+        // 9: compaction flag, stop reasons and token usage on events.
+        Harness::T3Code => Some(9),
         Harness::Cursor => Some(4),
         Harness::Goose => Some(2),
     }

@@ -19,6 +19,30 @@ pub enum EventKind {
     ToolResult,
 }
 
+/// Per-turn token usage recorded by a harness. Fields are omitted when not recorded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<u64>,
+}
+
+impl TokenUsage {
+    /// `Some(self)` when at least one token count is present, else `None`.
+    pub fn non_empty(self) -> Option<Self> {
+        (self.input.is_some()
+            || self.output.is_some()
+            || self.cache_read.is_some()
+            || self.cache_write.is_some())
+        .then_some(self)
+    }
+}
+
 /// One event: a step of a session. Tool calls and results are kept in full, not only chat text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
@@ -40,6 +64,16 @@ pub struct Event {
     pub is_error: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// `Some(true)` on events representing a context-compaction boundary or summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<bool>,
+    /// Normalized short lowercase stop/finish reason when the harness records it (e.g.
+    /// `end_turn`, `tool_use`, `max_tokens`, `aborted`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    /// Per-turn token usage when the harness records it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl Event {
@@ -54,6 +88,9 @@ impl Event {
             input: None,
             is_error: None,
             model: None,
+            compaction: None,
+            stop_reason: None,
+            usage: None,
         }
     }
     pub fn text(kind: EventKind, text: impl Into<String>) -> Self {
@@ -535,7 +572,14 @@ impl Parsed {
 
     pub fn push(&mut self, mut e: Event) {
         let empty_text = e.text.as_deref().is_none_or(|t| t.trim().is_empty());
-        if empty_text && e.input.is_none() && e.tool.is_none() && e.kind != EventKind::ToolResult {
+        if empty_text
+            && e.input.is_none()
+            && e.tool.is_none()
+            && e.kind != EventKind::ToolResult
+            && e.stop_reason.is_none()
+            && e.usage.is_none()
+            && e.compaction != Some(true)
+        {
             return;
         }
         e.seq = self.events.len() as u64;
@@ -830,5 +874,35 @@ mod tests {
             duration_secs(Some("not-a-ts"), Some("2026-11-01T10:00:00Z")),
             None
         );
+    }
+
+    #[test]
+    fn event_optional_seam_fields_omit_when_none_and_round_trip() {
+        let plain = Event::text(EventKind::Assistant, "done");
+        let v = serde_json::to_value(&plain).unwrap();
+        assert!(v.get("compaction").is_none());
+        assert!(v.get("stop_reason").is_none());
+        assert!(v.get("usage").is_none());
+        assert_eq!(serde_json::from_value::<Event>(v).unwrap(), plain);
+
+        let mut rich = Event::text(EventKind::Assistant, "answer");
+        rich.compaction = Some(true);
+        rich.stop_reason = Some("end_turn".into());
+        rich.usage = TokenUsage {
+            input: Some(120),
+            output: Some(45),
+            cache_read: Some(80),
+            cache_write: None,
+        }
+        .non_empty();
+        let v = serde_json::to_value(&rich).unwrap();
+        assert_eq!(v["compaction"], true);
+        assert_eq!(v["stop_reason"], "end_turn");
+        assert_eq!(v["usage"]["input"], 120);
+        assert_eq!(v["usage"]["output"], 45);
+        assert_eq!(v["usage"]["cache_read"], 80);
+        assert!(v["usage"].get("cache_write").is_none());
+        assert_eq!(serde_json::from_value::<Event>(v).unwrap(), rich);
+        assert_eq!(TokenUsage::default().non_empty(), None);
     }
 }

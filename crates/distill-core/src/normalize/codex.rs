@@ -1,30 +1,126 @@
 //! Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta`, `turn_context`,
 //! `response_item` and `event_msg` records.
 
+use std::borrow::Cow;
 use std::io::BufRead;
 
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::blocks::{each_line, is_ignored_record, result_text, ts};
-use crate::model::{Event, EventKind, Parsed};
+use super::blocks::{
+    COMPACTION_MARKER, each_line, first_text, normalize_stop_reason, parse_usage, push_compaction,
+    result_text, ts,
+};
+use crate::model::{Event, EventKind, Parsed, TokenUsage};
 
-/// Record types the parser skips on purpose: `event_msg` records repeat what the response items
-/// hold, for the harness's own display; a ghost snapshot is the git state Codex keeps to undo a
-/// turn; `compacted` replays the history the parser already read; and the rest are environment
-/// snapshots, token usage, tool manifests and settings. Checked against parsed sessions in a
-/// real archive (#104). Any other type it skips is reported as format drift.
+/// Record types the parser skips on purpose: unhandled `event_msg` subtypes repeat what the
+/// response items hold, for the harness's own display; a ghost snapshot is the git state Codex
+/// keeps to undo a turn; `compacted` replays the history the parser already read (only its narrow
+/// `message` summary is read when present); and the rest are environment snapshots, tool
+/// manifests and settings. Checked against parsed sessions in a real archive (#104). Any other
+/// type it skips is reported as format drift.
 pub const IGNORED: &[&str] = &[
     "event_msg",
     "response_item:ghost_snapshot",
     "compacted",
     "world_state",
-    "token_usage_record",
     "inter_agent_communication_metadata",
     "realtime_item",
     "response_item:additional_tools",
     "response_item:configuration_update",
 ];
+
+/// Fast-path classification of one JSONL line from its top-level `type` (and `payload.type` for
+/// `event_msg`), without building a full `Value` tree for skipped or giant records.
+enum LineAction {
+    Skip,
+    Compacted,
+    Parse,
+}
+
+fn classify_line(line: &str) -> LineAction {
+    #[derive(Deserialize)]
+    struct Head<'a> {
+        #[serde(borrow)]
+        r#type: Option<Cow<'a, str>>,
+        #[serde(borrow)]
+        payload: Option<Payload<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Payload<'a> {
+        #[serde(borrow)]
+        r#type: Option<Cow<'a, str>>,
+    }
+    let Ok(head) = serde_json::from_str::<Head>(line) else {
+        return LineAction::Parse;
+    };
+    match head.r#type.as_deref() {
+        Some("compacted") => LineAction::Compacted,
+        Some("event_msg") => match head.payload.and_then(|p| p.r#type).as_deref() {
+            Some(
+                "context_compacted" | "token_count" | "turn_aborted" | "task_started"
+                | "task_complete",
+            ) => LineAction::Parse,
+            _ => LineAction::Skip,
+        },
+        Some(ty) if IGNORED.contains(&ty) => LineAction::Skip,
+        _ => LineAction::Parse,
+    }
+}
+
+/// Narrow deserializer for a `compacted` checkpoint: reads only `timestamp` and `payload.message`,
+/// skipping multi-megabyte `replacement_history` arrays without allocating them.
+#[derive(Deserialize)]
+struct CompactedRecord {
+    timestamp: Option<Value>,
+    payload: Option<CompactedPayload>,
+}
+
+#[derive(Deserialize)]
+struct CompactedPayload {
+    message: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompactionSource {
+    Compacted,
+    ContextCompacted,
+}
+
+/// Push a compaction seam, coalescing only when a `compacted` checkpoint and its paired legacy
+/// `context_compacted` event appear back-to-back without intervening turn or response records.
+fn record_compaction(
+    out: &mut Parsed,
+    pending: &mut Option<CompactionSource>,
+    source: CompactionSource,
+    summary: Option<&str>,
+    at: Option<String>,
+) {
+    let text = summary.filter(|s| !s.trim().is_empty());
+    let paired = match source {
+        CompactionSource::Compacted => CompactionSource::ContextCompacted,
+        CompactionSource::ContextCompacted => CompactionSource::Compacted,
+    };
+    if *pending == Some(paired)
+        && let Some(prev) = out.events.last_mut()
+        && prev.kind == EventKind::System
+        && prev.compaction == Some(true)
+    {
+        if let Some(s) = text
+            && prev.text.as_deref().is_none_or(|t| t == COMPACTION_MARKER)
+        {
+            prev.text = Some(s.to_string());
+        }
+        if prev.ts.is_none() {
+            prev.ts = at;
+        }
+        *pending = None;
+        return;
+    }
+    push_compaction(out, text, at);
+    *pending = Some(source);
+}
 
 pub fn parse(bytes: &[u8]) -> Result<Parsed> {
     parse_reader(bytes)
@@ -35,9 +131,34 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed> {
 pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
     let mut out = Parsed::default();
     let mut model: Option<String> = None;
+    let mut last_model_event: Option<usize> = None;
+    let mut current_turn_id: Option<String> = None;
+    let mut last_total_usage: Option<TokenUsage> = None;
+    let mut pending_compaction: Option<CompactionSource> = None;
     each_line(reader, |line| {
-        if is_ignored_record(line, IGNORED) {
-            return;
+        match classify_line(line) {
+            LineAction::Skip => return,
+            LineAction::Compacted => {
+                if let Ok(rec) = serde_json::from_str::<CompactedRecord>(line)
+                    && let Some(msg) = rec.payload.and_then(|p| p.message)
+                {
+                    let at = rec.timestamp.as_ref().and_then(|t| match t {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Number(n) => n.as_i64().map(super::blocks::millis_to_rfc3339),
+                        _ => None,
+                    });
+                    record_compaction(
+                        &mut out,
+                        &mut pending_compaction,
+                        CompactionSource::Compacted,
+                        Some(msg.as_str()),
+                        at,
+                    );
+                    last_model_event = None;
+                }
+                return;
+            }
+            LineAction::Parse => {}
         }
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return;
@@ -73,7 +194,110 @@ pub fn parse_reader(reader: impl BufRead) -> Result<Parsed> {
                     out.cwd = p.get("cwd").and_then(Value::as_str).map(str::to_string);
                 }
             }
-            "response_item" => push_item(&mut out, p, at, model.as_deref()),
+            "response_item" => {
+                pending_compaction = None;
+                let start = out.events.len();
+                push_item(&mut out, p, at, model.as_deref());
+                for (offset, e) in out.events[start..].iter().enumerate() {
+                    match e.kind {
+                        EventKind::Assistant | EventKind::ToolCall | EventKind::Reasoning => {
+                            last_model_event = Some(start + offset);
+                        }
+                        EventKind::User => {
+                            last_model_event = None;
+                        }
+                        // Keep `last_model_event` across tool results: Codex can emit
+                        // `token_count` after `function_call_output` or an inline
+                        // `image_generation_call` result.
+                        EventKind::ToolResult | EventKind::System => {}
+                    }
+                }
+            }
+            "token_usage_record" => {
+                if let Some(idx) = last_model_event
+                    && out.events[idx].usage.is_none()
+                    && let Some(u) = p.get("usage").and_then(parse_usage)
+                {
+                    out.events[idx].usage = Some(u);
+                }
+            }
+            "event_msg" => match p.get("type").and_then(Value::as_str).unwrap_or("") {
+                "task_started" => {
+                    pending_compaction = None;
+                    current_turn_id = p.get("turn_id").and_then(Value::as_str).map(str::to_string);
+                    last_model_event = None;
+                }
+                "context_compacted" => {
+                    record_compaction(
+                        &mut out,
+                        &mut pending_compaction,
+                        CompactionSource::ContextCompacted,
+                        first_text(p, &["message", "summary", "text"]),
+                        at,
+                    );
+                    last_model_event = None;
+                }
+                "token_count" => {
+                    let total = p.pointer("/info/total_token_usage").and_then(parse_usage);
+                    if total.is_some() && total == last_total_usage {
+                        return;
+                    }
+                    if total.is_some() {
+                        last_total_usage = total;
+                    }
+                    if let Some(idx) = last_model_event
+                        && out.events[idx].usage.is_none()
+                        && let Some(u) = p.pointer("/info/last_token_usage").and_then(parse_usage)
+                    {
+                        out.events[idx].usage = Some(u);
+                    }
+                }
+                "turn_aborted" => {
+                    if let Some(idx) = last_model_event {
+                        let reason = p
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .and_then(normalize_stop_reason)
+                            .unwrap_or_else(|| "aborted".to_string());
+                        out.events[idx].stop_reason = Some(reason);
+                    }
+                }
+                "task_complete" => {
+                    pending_compaction = None;
+                    let turn_matches = match (
+                        current_turn_id.as_deref(),
+                        p.get("turn_id").and_then(Value::as_str),
+                    ) {
+                        (Some(cur), Some(done)) => cur == done,
+                        _ => true,
+                    };
+                    if !turn_matches {
+                        return;
+                    }
+                    if let Some(err) = p.get("error").filter(|e| !e.is_null()) {
+                        let reason = err
+                            .get("codex_error_info")
+                            .and_then(Value::as_str)
+                            .and_then(normalize_stop_reason)
+                            .unwrap_or_else(|| "error".to_string());
+                        if let Some(idx) = last_model_event {
+                            out.events[idx].stop_reason = Some(reason);
+                        } else {
+                            let mut e = Event::new(EventKind::Assistant).at(at);
+                            e.model = model.clone();
+                            e.stop_reason = Some(reason);
+                            out.push(e);
+                        }
+                    } else if let Some(idx) = last_model_event
+                        && out.events[idx].kind == EventKind::Assistant
+                        && out.events[idx].stop_reason.is_none()
+                        && p.get("last_agent_message").is_none_or(|m| !m.is_null())
+                    {
+                        out.events[idx].stop_reason = Some("end_turn".to_string());
+                    }
+                }
+                _ => out.skip(ty, line.len()),
+            },
             _ => out.skip(ty, line.len()),
         }
     })?;
@@ -93,6 +317,13 @@ fn push_item(out: &mut Parsed, p: &Value, at: Option<String>, model: Option<&str
             let mut e = Event::text(role, text).at(at);
             if role == EventKind::Assistant {
                 e.model = model.map(str::to_string);
+                e.stop_reason = p
+                    .pointer("/incomplete_details/reason")
+                    .or_else(|| p.get("stop_reason"))
+                    .or_else(|| p.get("finish_reason"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stop_reason);
+                e.usage = p.get("usage").and_then(parse_usage);
             }
             out.push(e);
         }
@@ -343,5 +574,98 @@ mod tests {
         assert_eq!(e[4].text.as_deref(), Some("[image generated]"));
         assert_eq!(e[4].call_id.as_deref(), Some("ig_1"));
         assert!(!serde_json::to_string(e).unwrap().contains("QUJD"));
+    }
+
+    #[test]
+    fn preserves_compaction_token_usage_and_abort_or_finish_reasons() {
+        let src = r#"{"timestamp":"2026-11-03T08:30:54Z","type":"turn_context","payload":{"model":"gpt-6"}}
+{"timestamp":"2026-11-03T08:30:55Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-11-03T08:30:55Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"run checks"}]}}
+{"timestamp":"2026-11-03T08:30:56Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}","call_id":"c1"}}
+{"timestamp":"2026-11-03T08:30:57Z","type":"token_usage_record","payload":{"turn_id":"t1","response_id":"r1","usage":{"input_tokens":500,"cached_input_tokens":200,"cache_write_input_tokens":7,"output_tokens":30}}}
+{"timestamp":"2026-11-03T08:30:58Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}
+{"timestamp":"2026-11-03T08:30:58Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":30},"last_token_usage":{"input_tokens":500,"output_tokens":30}}}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"compacted","payload":{"message":"Earlier work summary","replacement_history":[]}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-11-03T08:31:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"truncated"}],"incomplete_details":{"reason":"max_output_tokens"}}}
+{"timestamp":"2026-11-03T08:31:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"aborted turn"}]}}
+{"timestamp":"2026-11-03T08:31:01Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}
+{"timestamp":"2026-11-03T08:31:02Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}
+{"timestamp":"2026-11-03T08:31:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial commentary"}]}}
+{"timestamp":"2026-11-03T08:31:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":30},"last_token_usage":{"input_tokens":500,"output_tokens":30}}}}
+{"timestamp":"2026-11-03T08:31:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":null,"error":{"message":"failed","codex_error_info":"contextWindowExceeded"}}}
+{"timestamp":"2026-11-03T08:31:04Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t3"}}
+{"timestamp":"2026-11-03T08:31:04Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"all green"}]}}
+{"timestamp":"2026-11-03T08:31:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"output_tokens":75},"last_token_usage":{"input_tokens":700,"output_tokens":45}}}}
+{"timestamp":"2026-11-03T08:31:06Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t3","last_agent_message":"all green"}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+        assert_eq!(p.events.len(), 8);
+        let user_json = serde_json::to_value(&p.events[0]).unwrap();
+        assert!(user_json.get("compaction").is_none());
+        assert!(user_json.get("stop_reason").is_none());
+        assert!(user_json.get("usage").is_none());
+        // ToolCall gets token_usage_record (including cache_write_input_tokens).
+        assert_eq!(
+            p.events[1].usage,
+            Some(TokenUsage {
+                input: Some(500),
+                output: Some(30),
+                cache_read: Some(200),
+                cache_write: Some(7),
+            })
+        );
+        // Compacted + legacy context_compacted coalesce into one seam keeping the summary.
+        assert_eq!(p.events[3].kind, EventKind::System);
+        assert_eq!(p.events[3].compaction, Some(true));
+        assert_eq!(p.events[3].text.as_deref(), Some("Earlier work summary"));
+        // incomplete_details maps to max_tokens; turn_aborted maps to aborted.
+        assert_eq!(p.events[4].stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(p.events[5].stop_reason.as_deref(), Some("aborted"));
+        // Stale token_count is ignored and terminal error does not become end_turn.
+        assert_eq!(p.events[6].usage, None);
+        assert_eq!(
+            p.events[6].stop_reason.as_deref(),
+            Some("context_window_exceeded")
+        );
+        // Advancing token_count and clean task_complete attach to the final assistant event.
+        assert_eq!(p.events[7].stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(p.events[7].usage.as_ref().unwrap().input, Some(700));
+        assert_eq!(p.events[7].usage.as_ref().unwrap().output, Some(45));
+    }
+
+    #[test]
+    fn preserves_usage_error_and_distinct_compaction_edge_cases() {
+        let src = r#"{"timestamp":"2026-11-03T08:30:54Z","type":"turn_context","payload":{"model":"gpt-6"}}
+{"timestamp":"2026-11-03T08:30:55Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-11-03T08:30:56Z","type":"response_item","payload":{"type":"function_call","name":"echo","arguments":"{}","call_id":"c1"}}
+{"timestamp":"2026-11-03T08:30:57Z","type":"token_usage_record","payload":{"turn_id":"t1","response_id":"r1","usage":{"input_tokens":100,"output_tokens":20}}}
+{"timestamp":"2026-11-03T08:30:58Z","type":"token_usage_record","payload":{"turn_id":"t1","response_id":"r2","usage":{"input_tokens":150,"output_tokens":0}}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"compacted","payload":{"message":"First summary","replacement_history":[]}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"turn_context","payload":{"model":"gpt-6"}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20},"last_token_usage":{"input_tokens":100,"output_tokens":20}}}}
+{"timestamp":"2026-11-03T08:30:59Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-11-03T08:31:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}
+{"timestamp":"2026-11-03T08:31:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}
+{"timestamp":"2026-11-03T08:31:02Z","type":"compacted","payload":{"message":"Second summary","replacement_history":[]}}
+{"timestamp":"2026-11-03T08:31:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}}
+{"timestamp":"2026-11-03T08:31:04Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":null,"error":{"message":"boom","codex_error_info":"contextWindowExceeded"}}}"#;
+        let p = parse(src.as_bytes()).unwrap();
+        assert_eq!(p.events.len(), 5);
+        // Second token_usage_record does not clobber the first response's recorded usage.
+        assert_eq!(p.events[0].usage.as_ref().unwrap().input, Some(100));
+        assert_eq!(p.events[0].usage.as_ref().unwrap().output, Some(20));
+        // Distinct compactions separated by turn lifecycle records both remain.
+        assert_eq!(p.events[1].compaction, Some(true));
+        assert_eq!(p.events[1].text.as_deref(), Some("First summary"));
+        assert_eq!(p.events[2].compaction, Some(true));
+        assert_eq!(p.events[2].text.as_deref(), Some("Second summary"));
+        // Terminal error before any model output still records an assistant stop_reason.
+        assert_eq!(p.events[3].kind, EventKind::User);
+        assert_eq!(p.events[4].kind, EventKind::Assistant);
+        assert_eq!(
+            p.events[4].stop_reason.as_deref(),
+            Some("context_window_exceeded")
+        );
     }
 }
