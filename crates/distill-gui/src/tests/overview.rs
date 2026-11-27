@@ -33,7 +33,7 @@ fn each_spoke_says_its_host_and_captures_below_its_row() {
     let rt = runtime_sized(fixture::hub(), (1080.0, 2400.0));
     assert_eq!(
         text_of(&rt, "machine-nas/note"),
-        "me@nas.example · 230 captures"
+        "me@nas.example · 1,204 captures"
     );
 }
 

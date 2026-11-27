@@ -1017,8 +1017,9 @@ fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
         rt.state.setup.draft.machines[1].command.as_deref(),
         Some("/opt/bin/distill")
     );
-    assert_eq!(text_of(&rt, "machine-1/host"), "me@box · /opt/bin/distill");
-    assert_eq!(text_of(&rt, "machine-0/host"), "me@nas");
+    assert_eq!(text_of(&rt, "machine-1/host"), "me@box");
+    assert_eq!(text_of(&rt, "machine-1/command"), "/opt/bin/distill");
+    assert!(!on(&rt, "machine-0/command"));
     assert_eq!(rt.state.setup.machine_command.text, "", "the fields clear");
 
     press(&mut rt, "machine-1/remove");
@@ -1041,7 +1042,11 @@ fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
     press(&mut rt, "check");
     assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
 
-    // Removed while it is checked, and added again at the right host: it can be checked at once.
+    // Removed while it is checked, and added again as it was: it isn't left checking.
+    press(&mut rt, "remove");
+    add(&mut rt, "me@nas");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    // Added again at the right host: it can be checked at once.
     press(&mut rt, "remove");
     add(&mut rt, "me@nas.lan");
     assert_eq!(text_of(&rt, "machine-0/check"), "Check");

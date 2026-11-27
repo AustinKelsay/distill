@@ -46,7 +46,8 @@
               remove: Remove
                 label: Remove
             text: build-box
-              host: build-box · /opt/distill/bin/distill
+              host: build-box
+              command: /opt/distill/bin/distill
               checked: ssh build-box: Permission denied (publickey).
               check: Check
                 label: Check

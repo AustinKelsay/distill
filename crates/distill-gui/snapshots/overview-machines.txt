@@ -42,7 +42,7 @@
             size: 48.0 MB
             last: 20 min ago
             pulled: 5 min ago
-            note: me@nas.example · 230 captures
+            note: me@nas.example · 1,204 captures
           text: build-box
             health: Warning
             sessions: 37

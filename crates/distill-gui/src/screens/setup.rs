@@ -311,6 +311,8 @@ impl SetupState {
         if i < self.draft.machines.len() {
             let m = self.draft.machines.remove(i);
             self.checks.remove(&m.name);
+            // Its check still runs, but the row is gone: one added again can be checked at once.
+            self.checking_machines.retain(|c| c != &m);
         }
     }
 
@@ -1913,15 +1915,22 @@ fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &MachineConfig) -> El {
         .shrink()
         .child(text(m.name.clone()).font(p.k.ty.ui_medium).color(p.ink()))
         .child(
-            text(match &m.command {
-                Some(c) => format!("{} · {c}", m.host),
-                None => m.host.clone(),
-            })
-            .key("host")
-            .font(p.mono())
-            .color(p.muted())
-            .truncate(),
+            text(m.host.clone())
+                .key("host")
+                .font(p.mono())
+                .color(p.muted())
+                .truncate(),
         );
+    if let Some(c) = &m.command {
+        // A line of its own, so a long host doesn't hide it.
+        about = about.child(
+            text(c.clone())
+                .key("command")
+                .font(p.mono())
+                .color(p.muted())
+                .truncate(),
+        );
+    }
     if let Some(r) = d.checks.get(&m.name) {
         let (line, color) = match r {
             Ok(said) => (said.clone(), p.good()),

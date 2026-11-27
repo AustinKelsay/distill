@@ -569,7 +569,7 @@ pub fn hub() -> State {
     st.machines = serde_json::from_value(serde_json::json!([
         {
             "machine": "nas", "host": "me@nas.example", "health": "ok",
-            "sessions": 212, "captures": 230, "archive_bytes": 48_000_000u64,
+            "sessions": 212, "captures": 1204, "archive_bytes": 48_000_000u64,
             "last_capture": at(20), "last_pull": at(5),
             "harnesses": [], "note": null,
         },
