@@ -457,7 +457,7 @@ fn over_ssh(
     match took {
         Ok(()) => {
             let failed = status.as_ref().map_or(true, |s| !s.success());
-            if failed && !stopped && gave_up.load(Ordering::Relaxed) {
+            if !stopped && gave_up.load(Ordering::Relaxed) && status.as_ref().is_ok_and(killed) {
                 // What it sent is taken; only its ssh, which the watch stopped, didn't end.
                 pulled.error = Some(format!(
                     "{} sent everything, but its ssh didn't end, so it was stopped",
@@ -483,6 +483,12 @@ fn over_ssh(
         }
     }
     (pulled, waiting)
+}
+
+/// Whether ssh ended because the watch killed it, not on its own.
+fn killed(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(libc::SIGKILL)
 }
 
 #[cfg(test)]
