@@ -133,8 +133,10 @@ pub struct SetupState {
     pub machine_error: Option<String>,
     /// Each spoke's last check, by name: what it answered, or why it couldn't be reached.
     pub checks: BTreeMap<String, Result<String, String>>,
-    /// The spokes being checked, each as it was when Check was pressed.
-    pub checking_machines: Vec<MachineConfig>,
+    /// The checks running: each one's number, and its spoke as it was when Check was pressed.
+    pub checking_machines: Vec<(u64, MachineConfig)>,
+    /// The number the next check takes.
+    pub next_check: u64,
     /// Each target's last test, by name: what it holds, or why a backup there would fail.
     pub tests: BTreeMap<String, Result<String, String>>,
     pub testing: BTreeSet<String>,
@@ -203,6 +205,7 @@ impl SetupState {
             machine_error: None,
             checks: BTreeMap::new(),
             checking_machines: Vec::new(),
+            next_check: 0,
             tests: BTreeMap::new(),
             testing: BTreeSet::new(),
             has_key: None,
@@ -311,8 +314,9 @@ impl SetupState {
         if i < self.draft.machines.len() {
             let m = self.draft.machines.remove(i);
             self.checks.remove(&m.name);
-            // Its check still runs, but the row is gone: one added again can be checked at once.
-            self.checking_machines.retain(|c| c != &m);
+            // Its check still runs, but the row is gone: what it finds lands nowhere, and one
+            // added again can be checked at once.
+            self.checking_machines.retain(|(_, c)| c != &m);
         }
     }
 
@@ -523,23 +527,28 @@ fn test_backup(s: &mut State, name: String) {
 
 /// Check spoke `m` the way a pull starts, off the frame loop: it can take up to 30s.
 fn check_machine(s: &mut State, m: MachineConfig) {
-    if !s.setup.draft.machines.contains(&m) || s.setup.checking_machines.contains(&m) {
+    let d = &mut s.setup;
+    if !d.draft.machines.contains(&m) || d.checking_machines.iter().any(|(_, c)| c == &m) {
         return;
     }
-    s.setup.checking_machines.push(m.clone());
+    let n = d.next_check;
+    d.next_check += 1;
+    d.checking_machines.push((n, m.clone()));
     s.ask(Job::apart("check machine", move |core| {
         let r = jobs::caught(|| machines::check(&core.home, &m));
-        Box::new(move |s: &mut State| land_check(s, &m, r))
+        Box::new(move |s: &mut State| land_check(s, n, r))
     }));
 }
 
-/// The result of checking spoke `m`, as it was when Check was pressed. A spoke removed or
-/// changed while the check ran isn't the one checked, so the result is dropped.
-pub(crate) fn land_check(s: &mut State, m: &MachineConfig, r: Result<String, String>) {
-    s.setup.checking_machines.retain(|c| c != m);
-    if s.setup.draft.machines.contains(m) {
-        s.setup.checks.insert(m.name.clone(), r);
-    }
+/// The result of check `n`. A check whose spoke was removed while it ran checked a row that is
+/// gone, even when one like it was added since, so its result is dropped.
+pub(crate) fn land_check(s: &mut State, n: u64, r: Result<String, String>) {
+    let d = &mut s.setup;
+    let Some(i) = d.checking_machines.iter().position(|(c, _)| *c == n) else {
+        return;
+    };
+    let (_, m) = d.checking_machines.remove(i);
+    d.checks.insert(m.name, r);
 }
 
 /// Make the home's backup key now, and show it.
@@ -1895,7 +1904,7 @@ fn machines_step(d: &SetupState, p: &Paint) -> El {
 }
 
 fn machine_row(d: &SetupState, p: &Paint, i: usize, m: &MachineConfig) -> El {
-    let checking = d.checking_machines.contains(m);
+    let checking = d.checking_machines.iter().any(|(_, c)| c == m);
     let checked = m.clone();
     let check = Button::new(if checking { "Checking…" } else { "Check" })
         .control_size(ControlSize::Small)

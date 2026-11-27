@@ -658,6 +658,20 @@ fn the_backups_step_adds_and_tests_folders_and_makes_a_backup_key_to_keep() {
         "/opt/bin/distill",
     );
     press(&mut rt, "add-machine");
+    // Its check would run ssh: it is taken from the queue, and what it would say handed in.
+    press(&mut rt, "check");
+    let i = rt
+        .state
+        .outbox
+        .iter()
+        .position(|j| j.what == "check machine")
+        .unwrap();
+    rt.state.outbox.remove(i);
+    let (n, checked) = rt.state.setup.checking_machines[0].clone();
+    assert_eq!(checked.command.as_deref(), Some("/opt/bin/distill"));
+    rt.update(|s, _| crate::screens::setup::land_check(s, n, Ok("me@nas answers as nas".into())));
+    settle(&mut rt);
+    assert_eq!(text_of(&rt, "machine-0/checked"), "me@nas answers as nas");
     step(&mut rt, "Schedule");
     press(&mut rt, "finish");
     let core = t.core.clone();
@@ -1032,41 +1046,46 @@ fn the_machines_step_adds_and_removes_a_spoke_by_name_and_ssh_host() {
 fn a_check_lands_only_on_the_spoke_as_it_was_when_pressed() {
     let mut rt = runtime_sized(fixture::fresh(), (1080.0, 1600.0));
     step(&mut rt, "Machines");
-    let add = |rt: &mut Runtime<State>, host: &str| {
+    let add = |rt: &mut Runtime<State>| {
         type_into(rt, |s| &mut s.setup.machine_name, "nas");
-        type_into(rt, |s| &mut s.setup.machine_host, host);
+        type_into(rt, |s| &mut s.setup.machine_host, "me@nas");
         press(rt, "add-machine");
     };
-    add(&mut rt, "me@nas");
-    let first = rt.state.setup.draft.machines[0].clone();
-    press(&mut rt, "check");
-    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
-
-    // Removed while it is checked, and added again as it was: it isn't left checking.
-    press(&mut rt, "remove");
-    add(&mut rt, "me@nas");
-    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
-    // Added again at the right host: it can be checked at once.
-    press(&mut rt, "remove");
-    add(&mut rt, "me@nas.lan");
-    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
-    press(&mut rt, "check");
-    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
-    let second = rt.state.setup.draft.machines[0].clone();
-    // The checks would run ssh; their results are handed in as they would land.
-    let asked = std::mem::take(&mut rt.state.outbox);
-    assert_eq!(
-        asked.iter().map(|j| j.what).collect::<Vec<_>>(),
-        ["check machine", "check machine"]
-    );
-    let land = |rt: &mut Runtime<State>, m: &distill_core::config::MachineConfig, r| {
-        rt.update(|s, _| crate::screens::setup::land_check(s, m, r));
+    // The checks would run ssh: each is taken from the queue, and its result handed in.
+    let check = |rt: &mut Runtime<State>| {
+        press(rt, "check");
+        assert_eq!(text_of(rt, "machine-0/check"), "Checking…");
+        let asked = std::mem::take(&mut rt.state.outbox);
+        assert_eq!(
+            asked.iter().map(|j| j.what).collect::<Vec<_>>(),
+            ["check machine"]
+        );
+        rt.state.setup.checking_machines.last().unwrap().0
+    };
+    let land = |rt: &mut Runtime<State>, n: u64, r: &str| {
+        rt.update(|s, _| crate::screens::setup::land_check(s, n, Ok(r.into())));
         settle(rt);
     };
-    land(&mut rt, &first, Ok("me@nas answers as nas".into()));
-    assert!(!on(&rt, "checked"), "the first spoke's result is dropped");
-    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
-    land(&mut rt, &second, Err("ssh me@nas.lan: refused".into()));
-    assert_eq!(text_of(&rt, "machine-0/checked"), "ssh me@nas.lan: refused");
+    // Removed while it is checked and added again just as it was: a new row, checked at once.
+    add(&mut rt);
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add(&mut rt);
     assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    let new = check(&mut rt);
+    // The removed row's check lands first: dropped, and the new one still runs.
+    land(&mut rt, old, "the removed row's");
+    assert!(!on(&rt, "checked"), "{:?}", texts(&rt));
+    assert_eq!(text_of(&rt, "machine-0/check"), "Checking…");
+    land(&mut rt, new, "the new row's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "the new row's");
+    assert_eq!(text_of(&rt, "machine-0/check"), "Check");
+    // Or last: still dropped.
+    let old = check(&mut rt);
+    press(&mut rt, "remove");
+    add(&mut rt);
+    let new = check(&mut rt);
+    land(&mut rt, new, "the newest row's");
+    land(&mut rt, old, "the removed row's");
+    assert_eq!(text_of(&rt, "machine-0/checked"), "the newest row's");
 }
