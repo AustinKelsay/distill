@@ -23,7 +23,7 @@ impl Tool for ListFindings {
              `[secret: <kind> #<fingerprint>]`), its kind, how many sessions it appears in, \
              their harnesses, and when it was first and last seen. By default it lists secrets, \
              most widespread first: the rotation list. Filter by kind (`secrets`, `personal`, \
-             `all`, or one kind such as `github_token`), harness and session start date; sort \
+             `all`, or one kind such as `github_token`), harness, machine and session start date; sort \
              by spread or recency. At most {PAGE_MAX} fingerprints per call. Given a \
              `fingerprint` (whole or its short form), it instead lists every session that value \
              appears in, with the events it is in, for every fingerprint that starts with it. \
@@ -40,6 +40,7 @@ impl Tool for ListFindings {
                 "fingerprint": {"type": "string", "description": "A fingerprint or its short form: list every session it appears in. The other arguments are then ignored."},
                 "kind": {"type": "string", "description": "secrets (the default), personal, all, or one kind's name as placeholders write it."},
                 "harness": {"type": "string", "enum": harnesses, "description": "Only this harness's sessions."},
+                "machine": {"type": "string", "description": "Only sessions captured on this machine: a spoke by its name, or hub for the hub's own. A spoke's session keys start with its name and a colon."},
                 "since": {"type": "string", "description": "Only sessions that started on or after this day, YYYY-MM-DD (UTC)."},
                 "until": {"type": "string", "description": "Only sessions that started on or before this day, YYYY-MM-DD (UTC)."},
                 "sort": {"type": "string", "enum": ["spread", "recent"], "description": "spread (most sessions first, the default) or recent (most recently seen first)."},
@@ -64,6 +65,7 @@ impl Tool for ListFindings {
         let filter = FindingFilter {
             kinds,
             harness: harness(args)?,
+            machine: string(args, "machine")?,
             since: day(args, "since")?,
             until: day(args, "until")?,
         };

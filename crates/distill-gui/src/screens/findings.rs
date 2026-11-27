@@ -54,6 +54,7 @@ impl Filters {
         Ok(FindingFilter {
             kinds: self.kinds,
             harness: self.harness,
+            machine: None,
             since: parse_day(&self.since, "from")?,
             until: parse_day(&self.until, "to")?,
         })

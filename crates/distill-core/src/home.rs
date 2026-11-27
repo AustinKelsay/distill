@@ -430,6 +430,18 @@ pub fn machine_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuse [`HUB`] for a machine being named now, by `init --spoke` or by adding a spoke: a
+/// machine filter takes it for this hub's own sessions. A machine already named `hub` keeps its
+/// name.
+pub fn not_hub(name: &str) -> Result<()> {
+    if name == HUB {
+        anyhow::bail!(
+            "\"{HUB}\" can't name a spoke: a machine filter takes it for the hub's own sessions"
+        );
+    }
+    Ok(())
+}
+
 fn lock_at(path: &Path, name: &str) -> Result<fs::File> {
     if let Some(dir) = path.parent() {
         create_dir_private(dir)?;

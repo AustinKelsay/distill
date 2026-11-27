@@ -30,14 +30,20 @@ pub fn initialize(home: &Home, config: &Config, force: bool) -> Result<()> {
     }
     // A spoke keeps its name and stays a spoke: its hub knows its sessions by that name
     // (ADR 0010).
-    if let Some(was) = home.spoke()?
-        && config.spoke.as_ref() != Some(&was)
+    let was = home.spoke()?;
+    if let Some(was) = &was
+        && config.spoke.as_ref() != Some(was)
     {
         bail!(
             "this home is the spoke \"{0}\", and a machine keeps its name: run it again with \
              --spoke {0}",
             was.machine
         );
+    }
+    if let Some(spoke) = &config.spoke
+        && was.is_none()
+    {
+        crate::home::not_hub(&spoke.machine)?;
     }
     home.ensure()?;
     config.save(&home.config_path())
@@ -108,5 +114,27 @@ mod tests {
 
         // A window installed beside the command finds it there.
         assert_eq!(timer_cli(&bin.join("distill-gui"), None).unwrap(), cli);
+    }
+
+    #[test]
+    fn a_new_spoke_cant_be_named_hub_but_one_already_named_so_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let spoke = |machine: &str| Config {
+            spoke: Some(crate::config::Spoke {
+                machine: machine.into(),
+            }),
+            ..Config::default()
+        };
+        let home = Home::new(dir.path().join("new"));
+        let e = initialize(&home, &spoke("hub"), false).unwrap_err();
+        assert!(format!("{e:#}").contains("can't name a spoke"), "{e:#}");
+        assert!(!home.config_path().exists());
+        initialize(&home, &spoke("nas"), false).unwrap();
+
+        // A spoke an older build named hub is set up again under its name.
+        let old = Home::new(dir.path().join("old"));
+        old.ensure().unwrap();
+        spoke("hub").save(&old.config_path()).unwrap();
+        initialize(&old, &spoke("hub"), true).unwrap();
     }
 }

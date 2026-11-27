@@ -67,6 +67,9 @@ pub struct Lookup {
 pub struct FindingFilter {
     pub kinds: Kinds,
     pub harness: Option<Harness>,
+    /// Only the sessions of this machine: a spoke by its name, or [`crate::home::HUB`] for the
+    /// home's own.
+    pub machine: Option<String>,
     /// Sessions that started on or after this day (UTC).
     pub since: Option<NaiveDate>,
     /// Sessions that started on or before this day (UTC).
@@ -501,6 +504,7 @@ impl FindingFilter {
     fn matches(&self, m: &SessionMeta) -> bool {
         let day = times(m).0.map(|t| t.date_naive());
         self.harness.is_none_or(|h| m.harness == h)
+            && super::list::on_machine(self.machine.as_deref(), m)
             && self.since.is_none_or(|s| day.is_some_and(|d| d >= s))
             && self.until.is_none_or(|u| day.is_some_and(|d| d <= u))
     }
@@ -555,6 +559,8 @@ mod tests {
         said: Vec<String>,
         /// The key of the session this one mirrors.
         mirror_of: Option<&'static str>,
+        /// The spoke it was captured on, if not this home.
+        machine: Option<&'static str>,
     }
 
     fn session(
@@ -570,6 +576,7 @@ mod tests {
             ended: started,
             said: said.iter().map(|s| s.to_string()).collect(),
             mirror_of: None,
+            machine: None,
         }
     }
 
@@ -588,7 +595,7 @@ mod tests {
                 e.seq = i as u64;
             }
             let facts = SessionMeta {
-                machine: None,
+                machine: s.machine.map(str::to_string),
                 harness: s.harness,
                 session_id: s.id.into(),
                 cwd: Some("/work/app".into()),
@@ -619,9 +626,12 @@ mod tests {
                 mirror_refs: s.mirror_of.map(str::to_string).into_iter().collect(),
                 mirror_unresolved: Vec::new(),
             };
-            std::fs::create_dir_all(home.session_dir(None, s.harness, s.id)).unwrap();
+            if s.machine.is_some() {
+                std::fs::create_dir_all(home.raw_dir_of(s.machine)).unwrap();
+            }
+            std::fs::create_dir_all(home.session_dir(s.machine, s.harness, s.id)).unwrap();
             std::fs::write(
-                home.meta_path(None, s.harness, s.id),
+                home.meta_path(s.machine, s.harness, s.id),
                 serde_json::to_string(&facts).unwrap(),
             )
             .unwrap();
@@ -630,7 +640,7 @@ mod tests {
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
             std::fs::write(
-                home.events_path(None, s.harness, s.id),
+                home.events_path(s.machine, s.harness, s.id),
                 lines.join("\n") + "\n",
             )
             .unwrap();
@@ -824,6 +834,38 @@ mod tests {
                 (1, at("2026-11-02T09:00:00Z")),
             ]
         );
+    }
+
+    #[test]
+    fn it_filters_by_machine_with_hub_for_the_homes_own() {
+        let (a, b) = (fake(1), fake(2));
+        let mut spoke = session(Harness::ClaudeCode, "s2", "2026-11-02T09:00:00Z", &[&b]);
+        spoke.machine = Some("nas");
+        let (_d, home) = home_with(&[
+            session(Harness::ClaudeCode, "s1", "2026-11-01T09:00:00Z", &[&a]),
+            spoke,
+        ]);
+        let on = |machine: &str| -> Vec<u64> {
+            let filter = FindingFilter {
+                machine: Some(machine.into()),
+                ..Default::default()
+            };
+            owner_list(&home, &filter, Order::Spread)
+                .rows
+                .iter()
+                .map(|r| r.sessions)
+                .collect()
+        };
+        assert_eq!(
+            owner_list(&home, &FindingFilter::default(), Order::Spread)
+                .rows
+                .len(),
+            2
+        );
+        assert_eq!(on("nas"), [1]);
+        assert_eq!(on("NAS"), [1]);
+        assert_eq!(on("hub"), [1]);
+        assert_eq!(on("box"), Vec::<u64>::new());
     }
 
     fn owner_lookup(home: &Home, asked: &str) -> Lookup {
