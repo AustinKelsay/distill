@@ -39,11 +39,22 @@ On the spoke, the hub's key can run nothing but the export. Prefix its line in `
 command="distill export --ssh",restrict ssh-ed25519 AAAA… hub
 ```
 
+Give the hub a key kept for this (`ssh-keygen -t ed25519 -f ~/.ssh/distill`), and name it in the hub's `~/.ssh/config` for the spoke's host, so a pull can't log in with a key that has more access. With `IdentitiesOnly`, SSH offers only the keys named for that host, so name no other one for it, such as in a `Host *` block:
+
+```text
+Host nas
+  IdentityFile ~/.ssh/distill
+  IdentitiesOnly yes
+  StrictHostKeyChecking yes
+```
+
 `restrict` turns off a terminal, forwarding and `~/.ssh/rc`, whose output would break the export. With `--ssh`, the export takes where to start from what the hub asked to run (`SSH_ORIGINAL_COMMAND`), which must end `export --since <bytes>`; whatever else it asks for, only the export runs. Use the full path to `distill` if it isn't on SSH's `PATH`.
 
 ## What leaves the spoke
 
-An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went.
+An export is the spoke's raw captures, as they are, to the owner's own hub: not a read, and no reader gets it. It is protected on the wire by SSH alone. The spoke logs each export in `log/exports.jsonl`: when, from where to where in its manifest, and how many captures and bytes went. The hub records each pull in its run log: when it ended, the span of the manifest, the captures and blob bytes it stored, and why it failed, if it did (`distill --json runs`; `distill status` shows each spoke's last).
+
+Trust stays one tier, checked on the hub's read path. A spoke's read path serves no reader, the owner included, and its tick runs no model; it logs each refused call there, with who asked and for which session when one was named, never text (a home that was a hub also keeps its earlier lines). `distill exposure` on a spoke checks its modes, that no DISTILL process listens on a port, and, machine-wide, whether a disk is encrypted, as on the hub (`docs/known-gaps.md` says where that check falls short); a spoke never makes a fingerprint key, since the hub fingerprints what it pulls. The hub's private key stays in its `~/.ssh`, where SSH refuses a key file other accounts can read.
 
 ## Checking on them
 
