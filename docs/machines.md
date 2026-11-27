@@ -8,7 +8,7 @@ On the machine that runs agents:
 
 ```sh
 scripts/install.sh --spoke          # `distill` alone: no window, no MCP server
-distill init --spoke nas            # this machine's name: lowercase letters, digits and -
+distill init --spoke nas            # this machine's name: lowercase letters, digits and -, not hub
 distill schedule install            # its timer only sweeps
 ```
 
@@ -58,6 +58,6 @@ Trust stays one tier, checked on the hub's read path. A spoke's read path serves
 
 ## Checking on them
 
-`distill search` and `distill tags` take `--machine <name>` to keep to one spoke's sessions, or `--machine hub` for the hub's own (a spoke named `hub` can't be picked this way); the MCP tools take `machine` the same way.
+`distill search`, `distill tags` and `distill findings` take `--machine <name>` to keep to one spoke's sessions, or `--machine hub` for the hub's own, which is why a spoke can't be named `hub`; the MCP tools take `machine` the same way.
 
 On the hub, `distill status` has a line for each spoke: its health, its sessions and when a pull last took from it, then its harnesses as the hub's own are shown. A spoke whose newest pull failed says why. When a spoke in `[[machines]]` hasn't been pulled from for twice the timer's interval, status warns. On a spoke, the exports count among what left it, as `the hub, over ssh`.

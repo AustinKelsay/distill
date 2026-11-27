@@ -20,6 +20,9 @@ pub struct Args {
     /// Only this harness's sessions
     #[arg(long)]
     harness: Option<String>,
+    /// Only this machine's sessions: a spoke by its name, or `hub` for this hub's own
+    #[arg(long)]
+    machine: Option<String>,
     /// Only sessions that started on or after this day, YYYY-MM-DD (UTC)
     #[arg(long)]
     since: Option<String>,
@@ -53,6 +56,7 @@ pub fn run(ctx: &Ctx, a: Args) -> Result<()> {
     let filter = FindingFilter {
         kinds: Kinds::parse(&a.kind)?,
         harness: a.harness.as_deref().map(parse_harness).transpose()?,
+        machine: a.machine,
         since: day(&a.since)?,
         until: day(&a.until)?,
     };

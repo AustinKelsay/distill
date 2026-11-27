@@ -222,6 +222,7 @@ pub fn add(config: &mut Config, name: &str, host: &str) -> Result<()> {
         command: None,
     };
     m.check()?;
+    crate::home::new_machine_name(&m.name)?;
     if config.machines.iter().any(|x| x.name == m.name) {
         bail!("a machine is already named {:?}", m.name);
     }
@@ -540,6 +541,7 @@ mod tests {
             ("Nas", "me@nas", "not a machine name"),
             ("box", "-oProxyCommand=x", "not a host"),
             ("box", " ", "not a host"),
+            ("hub", "me@hub", "can't name a spoke"),
         ] {
             let e = add(&mut config, name, host).unwrap_err();
             assert!(format!("{e:#}").contains(says), "{name} {host}: {e:#}");

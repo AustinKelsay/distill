@@ -331,17 +331,7 @@ impl Filter {
             .map(|t| t.with_timezone(&chrono::Utc).date_naive());
         let model = self.model.as_deref().map(|s| s.trim().to_lowercase());
         self.harness.is_none_or(|h| m.harness == h)
-            && self
-                .machine
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(|want| match &m.machine {
-                    None => want.eq_ignore_ascii_case(crate::home::HUB),
-                    Some(have) => {
-                        !want.eq_ignore_ascii_case(crate::home::HUB)
-                            && have.eq_ignore_ascii_case(want)
-                    }
-                })
+            && on_machine(self.machine.as_deref(), m)
             && self.session.as_deref().is_none_or(|k| m.key() == k)
             && self.project.as_deref().is_none_or(|p| {
                 m.cwd
@@ -438,6 +428,17 @@ fn render(rows: &Rows, offset: usize) -> String {
         );
     }
     format!("{head}{NOTICE_START}\n{}\n{NOTICE_END}\n", defuse(&body))
+}
+
+/// Whether `m` is on the machine `want` names, if it names one: a spoke by its name, or
+/// [`crate::home::HUB`] for this home's own sessions, either way ignoring case.
+pub(super) fn on_machine(want: Option<&str>, m: &SessionMeta) -> bool {
+    want.map(str::trim).is_none_or(|want| match &m.machine {
+        None => want.eq_ignore_ascii_case(crate::home::HUB),
+        Some(have) => {
+            !want.eq_ignore_ascii_case(crate::home::HUB) && have.eq_ignore_ascii_case(want)
+        }
+    })
 }
 
 /// A session's facts on one line, for a model.

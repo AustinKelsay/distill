@@ -289,6 +289,10 @@ fn a_trusted_model_lists_findings_by_fingerprint_and_where_one_appears() {
     assert!(t.contains(&short), "{t}");
     let (_, t) = call(&s, "list_findings", json!({"kind": "personal"}));
     assert!(t.contains("No fingerprints match"), "{t}");
+    let (_, t) = call(&s, "list_findings", json!({"machine": "hub"}));
+    assert!(t.contains(&short), "{t}");
+    let (_, t) = call(&s, "list_findings", json!({"machine": "nas"}));
+    assert!(t.contains("No fingerprints match"), "{t}");
     for (args, says) in [
         (json!({"kind": "tea_leaves"}), "unknown kind"),
         (json!({"sort": "loudest"}), "sort"),
@@ -300,13 +304,13 @@ fn a_trusted_model_lists_findings_by_fingerprint_and_where_one_appears() {
         assert!(err && t.contains(says), "{args}: {t}");
     }
 
-    // The four calls that reached the read path are in its log, one line each.
+    // The six calls that reached the read path are in its log, one line each.
     let log = distill_core::readlog::list(&s.home, None, usize::MAX).unwrap();
     let results: Vec<_> = log
         .iter()
         .map(|e| serde_json::to_value(e).unwrap()["result"].clone())
         .collect();
-    assert_eq!(results, ["findings", "findings", "findings", "findings"]);
+    assert_eq!(results, ["findings"; 6]);
     assert!(log.iter().all(|e| e.reader == ollama()));
 }
 
